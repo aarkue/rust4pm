@@ -1,0 +1,8 @@
+[workspace]
+
+members = [
+	"footbridge",
+	"pm_rust",
+	"python_bridge",
+	"java_bridge",
+]

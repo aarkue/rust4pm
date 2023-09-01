@@ -1,0 +1,14 @@
+[package]
+name = "java_bridge"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate_type = ["cdylib"]
+[dependencies]
+pm_rust = {path = "../pm_rust"}
+jni =  "0.21.1"
+jni_fn = "0.1.2"
+# jnix = {version = "0.5.0", features = ["derive"] }
+serde_json = "1.0.105"
+serde = {version = "1.0.188", features = ["derive"]}
