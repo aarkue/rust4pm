@@ -5,6 +5,7 @@ edition = "2021"
 
 [lib]
 crate_type = ["cdylib"]
+
 [dependencies]
 pm_rust = {path = "../pm_rust"}
 jni =  "0.21.1"
