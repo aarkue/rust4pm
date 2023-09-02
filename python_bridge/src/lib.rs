@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 use pyo3::Python;
 use pm_rust::{loop_sum_sqrt, Event};
-use pythonize::{depythonize, pythonize};
+use pythonize::pythonize;
 /// Formats the sum of two numbers as string.
 #[pyfunction]
 fn get_event(act: String) -> pyo3::Py<PyAny> {
