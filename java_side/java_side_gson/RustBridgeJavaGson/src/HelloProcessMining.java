@@ -1,45 +1,52 @@
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 
 import java.io.*;
-import java.nio.file.FileSystems;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 
 class EventJava {
-    private HashMap<String,Object> attributes;
+    private HashMap<String, String> attributes;
+    public EventJava(){
 
-    public EventJava(String activity){
-        this.attributes = new HashMap<>();
-        this.attributes.put(EventLogJava.ACTIVITY_NAME,activity);
     }
-    public EventJava(HashMap<String,Object> attributes) {
+    public EventJava(String activity) {
+        this.attributes = new HashMap<>();
+        this.attributes.put(EventLogJava.ACTIVITY_NAME, activity);
+    }
+
+    public EventJava(HashMap<String, String> attributes) {
         this.attributes = attributes;
     }
 
-    public HashMap<String,Object> getAttributes() {
+    public HashMap<String, String> getAttributes() {
         return attributes;
     }
 }
 
 class TraceJava {
-    private HashMap<String,Object> attributes;
+    private HashMap<String, String> attributes;
     private ArrayList<EventJava> events;
+    public TraceJava(){
 
-    public TraceJava(String caseID){
-    this(caseID, new ArrayList<>());
     }
-    public TraceJava(String caseID, ArrayList<EventJava> events){
+    public TraceJava(String caseID) {
+        this(caseID, new ArrayList<>());
+    }
+
+    public TraceJava(String caseID, ArrayList<EventJava> events) {
         this.attributes = new HashMap<>();
-        this.attributes.put(EventLogJava.CASE_ID_NAME,caseID);
+        this.attributes.put(EventLogJava.CASE_ID_NAME, caseID);
         this.events = events;
     }
-    public TraceJava(HashMap<String,Object> attributes, ArrayList<EventJava> events) {
+
+    public TraceJava(HashMap<String, String> attributes, ArrayList<EventJava> events) {
         this.attributes = attributes;
         this.events = events;
     }
 
-    public HashMap<String,Object> getAttributes() {
+    public HashMap<String, String> getAttributes() {
         return attributes;
     }
 
@@ -52,18 +59,21 @@ class EventLogJava {
     public static final String CASE_ID_NAME = "case:concept:name";
     public static final String ACTIVITY_NAME = "concept:name";
 
-    private String logName;
+    private HashMap<String, String> attributes;
     private ArrayList<TraceJava> traces;
+    public EventLogJava(){
 
+    }
     public EventLogJava(String logName, ArrayList<TraceJava> traces) {
-        this.logName = logName;
+        this.attributes = new HashMap<>();
+        this.attributes.put("name", logName);
         this.traces = traces;
     }
 
-    public EventLogJava() {
-        int numTraces = 150_500;
-        int numEventsPerTrace = 20;
-        this.logName = "Test Log";
+    public EventLogJava(int numTraces, int numEventsPerTrace) {
+        this.attributes = new HashMap<>();
+        this.attributes.put("name", "Test Log");
+        System.out.println("Artificial log with " + numTraces + " Traces with " + numEventsPerTrace + " events per trace");
         this.traces = new ArrayList<>();
         for (int i = 0; i < numTraces; i++) {
             ArrayList<EventJava> events = new ArrayList<>();
@@ -74,6 +84,7 @@ class EventLogJava {
             this.traces.add(trace);
         }
     }
+    // Time until into/from: 69.67ms
 
     public ArrayList<TraceJava> getTraces() {
         return this.traces;
@@ -83,80 +94,104 @@ class EventLogJava {
         this.traces = traces;
     }
 
-    public String getLogName() {
-        return this.logName;
+    public HashMap<String, String> getAttributes() {
+        return this.attributes;
     }
 }
 
+class Test {
+    private ArrayList<String> data = new ArrayList<>(List.of(new String[]{"Hello", "World"}));
+}
 
 
 class HelloProcessMining {
-    public static void deleteFile(String filePath){
-        File file = new File(filePath);
-        file.delete();
-    }
-    private static native String addArtificialActs(String importPath, String exportPath);
+    static Gson gson = new Gson();
 
     static {
         System.loadLibrary("java_bridge");
     }
 
+    public static void deleteFile(String filePath) {
+        File file = new File(filePath);
+        file.delete();
+    }
+
+    private static native byte[] addArtificialActs(byte[] data);
+
+    private static native byte[] addArtificialActsAvro(byte[] data);
+
+    private static native String addArtificialActsUsingFiles(String importPath, String exportPath);
+
+    public static EventLogJava addArtificialActs(EventLogJava log) {
+        byte[] bytes = gson.toJson(log).getBytes();
+        bytes = addArtificialActs(bytes);
+        return gson.fromJson(new String(bytes), EventLogJava.class);
+    }
+
+    public static byte[] serializeWithGson(EventLogJava log) {
+        byte[] bytes = gson.toJson(log).getBytes();
+        System.out.println("Gson encoded #bytes: " +bytes.length);
+        return bytes;
+    }
+
+//    public static byte[] serializeWithAvron(EventLogJava log) throws IOException {
+//        Schema schema = ReflectData.get().getSchema(EventLogJava.class);
+//        ByteArrayOutputStream out = new ByteArrayOutputStream();
+//        ReflectDatumWriter<EventLogJava> writer = new ReflectDatumWriter<>(EventLogJava.class);
+//        DataFileWriter<EventLogJava> dataFileWriter = new DataFileWriter<>(writer);
+//        dataFileWriter.create(schema,out);
+//        dataFileWriter.append(log);
+//        dataFileWriter.close();
+//        out.close();
+//        byte[] bytes = out.toByteArray();
+//        System.out.println("Avro encoded #bytes: " +bytes.length);
+//        return bytes;
+//    }
+
+
+    public static EventLogJava addArtificialActsUsingFiles(EventLogJava log) throws IOException {
+        String importPath = File.createTempFile("process-mining-bridge-import", ".json").getAbsolutePath();
+        String exportPath = File.createTempFile("process-mining-bridge-export", ".json").getAbsolutePath();
+        Writer writer = new FileWriter(importPath);
+        gson.toJson(log, writer);
+        writer.flush();
+        writer.close();
+        String exportPathRes = addArtificialActsUsingFiles(importPath, exportPath);
+        Reader reader = new FileReader(exportPath);
+        deleteFile(importPath);
+        EventLogJava res =  gson.fromJson(reader, EventLogJava.class);
+        deleteFile(exportPath);
+        return res;
+    }
+
     public static void main(String[] args) throws IOException {
-        EventLogJava log = new EventLogJava();
-        Gson gson = new Gson();
-        System.out.println("Before Rust Call");
-        String tmpDir = System.getProperty("java.io.tmpdir");
+        int numTraces = 200_000;
+        int numEventsPerTrace = 25;
+        EventLogJava log = new EventLogJava(numTraces, numEventsPerTrace);
 
-        String importPath = File.createTempFile("process-mining-bridge-import",".json").getAbsolutePath();
-        String exportPath = File.createTempFile("process-mining-bridge-export",".json").getAbsolutePath();
-        long startTime = System.nanoTime();
-        try (Writer writer = new FileWriter(importPath)) {
-            gson.toJson(log, writer);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+        int n = 5;
+        System.out.println("--- byte[] JSON ---");
+        double[] timingResults = new double[n];
+        for (int i = 0; i < n; i++) {
+            long startTime = System.nanoTime();
+            EventLogJava res = addArtificialActs(log);
+            timingResults[i] = (System.nanoTime() -
+                    startTime) / 1000000.0;
         }
-        try{
-            String res = addArtificialActs(importPath,exportPath);
-            System.out.println("Res: " + res);
-            try (Reader reader = new FileReader(exportPath)) {
-                EventLogJava log2 = gson.fromJson(reader,EventLogJava.class);
-                System.out.println("Got back Log " + log2.getLogName());
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-        }catch (Exception e){
-            System.err.println(e);
-        } finally {
-            deleteFile(importPath);
-            deleteFile(exportPath);
+        System.out.println(Arrays.toString(timingResults));
+        System.out.println("Average [ms]: " + Arrays.stream(timingResults).average().getAsDouble());
+        System.out.println("-----------");
+        System.out.println("--- File JSON ---");
+        timingResults = new double[n];
+        for (int i = 0; i < n; i++) {
+            long startTime = System.nanoTime();
+            EventLogJava res = addArtificialActsUsingFiles(log);
+            timingResults[i] = (System.nanoTime() -
+                    startTime) / 1000000.0;
         }
-
-//        String res = addArtificialActs(FileSystems.getDefault().getPath("import.json").toAbsolutePath().toString());
-
-//        EventLogJava log2 = gson.fromJson(res,EventLogJava.class);
-//        EventLogJava log2 = addArtificialActs(log);
-        System.out.println("After Rust Call (took " + ((System.nanoTime() -
-                startTime) / 1000000.0) + "ms)");
-//
-//
-//        System.out.println("Before Java Call");
-//        startTime = System.nanoTime();
-//        for (TraceJava trace : log.getTraces()) {
-//            AttributesJava startAttributes = new AttributesJava();
-//            startAttributes.setAttribute(EventLogJava.ACTIVITY_NAME, "__START__");
-//            EventJava startEvent = new EventJava(startAttributes);
-//            trace.getEvents().add(0,startEvent);
-//            AttributesJava endAttributes = new AttributesJava();
-//            endAttributes.setAttribute(EventLogJava.ACTIVITY_NAME, "__END__");
-//            EventJava endEvent = new EventJava(endAttributes);
-//            trace.getEvents().add(endEvent);
-
-            // for (EventJava event : trace.getEvents()) {
-            //     System.out.println(event.getAttributes().getAttribute(EventLogJava.ACTIVITY_NAME));
-            // }
-//        }
-//        System.out.println("After Java Call (took " + ((System.nanoTime() -
-//                startTime) / 1000000.0) + "ms)");
+        System.out.println(Arrays.toString(timingResults));
+        System.out.println("Average [ms]: " + Arrays.stream(timingResults).average().getAsDouble());
+        System.out.println("-----------");
     }
 
 }
