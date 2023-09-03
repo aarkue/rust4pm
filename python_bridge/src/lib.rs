@@ -66,7 +66,7 @@ impl PyBridgeEvent {
 #[pymethods]
 impl PyBridgeEvent {
     #[new]
-    fn __new__(py: Python<'_>, attrs: HashMap<String, String>) -> PyResult<Self> {
+    fn __new__(_py: Python<'_>, attrs: HashMap<String, String>) -> PyResult<Self> {
         Ok(PyBridgeEvent::new(attrs))
     }
 }
@@ -114,7 +114,7 @@ pub struct PyBridgeEventLog {
 #[pymethods]
 impl PyBridgeEventLog {
     #[new]
-    fn new(py: Python<'_>) -> PyResult<Self> {
+    fn new(_py: Python<'_>) -> PyResult<Self> {
         let vec: Vec<PyBridgeTrace> = vec![];
         Ok(Self {
             attributes: PyBridgeAttributes::default(),
@@ -275,7 +275,7 @@ fn convert_df_to_log(df: &DataFrame) -> Result<PyBridgeEventLog, PolarsError> {
                 Some(ev) => ev
                     .attributes
                     .attributes
-                    .get(TRACE_ID_NAME.into())
+                    .get(TRACE_ID_NAME)
                     .unwrap_or(&"__NO_TRACE_ID__".to_string())
                     .clone(),
                 None => "__NO_TRACE_ID__".to_string(),
