@@ -8,12 +8,12 @@ use std::{
     rc::Rc,
 };
 
-const START_EVENT: &str = "__START__";
-const END_EVENT: &str = "__END__";
+pub const START_EVENT: &str = "__START__";
+pub const END_EVENT: &str = "__END__";
 
-const ACTIVITY_NAME: &str = "concept:name";
+pub const ACTIVITY_NAME: &str = "concept:name";
 #[allow(dead_code)]
-const TRACE_ID_NAME: &str = "case:concept:name";
+pub const TRACE_ID_NAME: &str = "case:concept:name";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Event {
