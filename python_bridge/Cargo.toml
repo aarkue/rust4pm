@@ -12,6 +12,6 @@ crate-type = ["cdylib"]
 pm_rust = {path = "../pm_rust"}
 pyo3 = "0.19.0"
 pythonize = "0.19.0"
-polars = {version = "0.32.1", features = ["docs", "zip_with", "csv", "temporal", "fmt", "dtype-slim", "rows","partition_by"]}
+polars = {version = "0.32.1", features = ["docs", "zip_with", "csv", "json", "temporal", "fmt", "dtype-slim", "rows","partition_by"]}
 pyo3-polars = "0.6.0"
 rayon = "1.7.0"
