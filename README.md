@@ -6,7 +6,7 @@ WIP Project to allow using a shared Rust library from both Python and Java.
   - Used for:
     - Python Bindings:`python_bridge/`
     - Java Bindings: `java_bridge/`
-    - Rust Program`footbridge/`
+    - Rust Program: `footbridge/`
   - Additionally:
     - Java Implementation using the Provided Bindings `java_side/`
    
