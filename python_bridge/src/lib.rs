@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::time::Instant;
 
 use pm_rust::add_start_end_acts;
@@ -11,7 +12,11 @@ use pm_rust::EventLogActivityProjection;
 use pm_rust::Trace;
 use pm_rust::TRACE_ID_NAME;
 use pm_rust::{loop_sum_sqrt, Event};
+use polars::prelude::AnyValue;
 use polars::prelude::DataFrame;
+use polars::prelude::PolarsError;
+use polars::prelude::SerReader;
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::Python;
@@ -205,10 +210,31 @@ fn test_bridge_log(pylog: PyBridgeEventLog) -> PyResult<PyBridgeEventLog> {
 }
 
 #[pyfunction]
-fn polars_df_to_log(pydf: PyDataFrame) -> PyResult<PyBridgeEventLog> {
-    let mut df: DataFrame = pydf.into();
-    df.as_single_chunk_par();
-    let groups = df.partition_by_stable([TRACE_ID_NAME], true).unwrap();
+fn test_df_pandas(json_df: String) -> PyResult<PyBridgeEventLog> {
+    println!("Called test_df_pandas!");
+    let df = polars::prelude::JsonReader::new(Cursor::new(json_df))
+        .finish()
+        .unwrap();
+    match convert_df_to_log(&df) {
+        Ok(log) => {
+            let mut log: EventLog = log.into();
+            add_start_end_acts(&mut log);
+            Ok(log.into())
+        }
+        Err(e) => Err(PyErr::new::<PyTypeError, _>(format!(
+            "Could not convert to EventLog: {}",
+            e.to_string()
+        ))),
+    }
+}
+
+/**
+Convert Polars DataFrame to PyBridgeEventLog
+- Extracts attributes as Strings (converting other formats using debug format macro)
+- Assumes valid EventLog structure of DataFrame (i.e., assuming that [TRACE_ID_NAME] is present)
+*/
+fn convert_df_to_log(df: &DataFrame) -> Result<PyBridgeEventLog, PolarsError> {
+    let groups = df.partition_by_stable([TRACE_ID_NAME], true)?;
     let columns = df.get_column_names();
     let mut log = PyBridgeEventLog {
         attributes: PyBridgeAttributes::default(),
@@ -221,33 +247,58 @@ fn polars_df_to_log(pydf: PyDataFrame) -> PyResult<PyBridgeEventLog> {
             let events: Vec<PyBridgeEvent> = (0..g.height())
                 .into_iter()
                 .map(|i| {
-                    let val = g.get_row(i).unwrap().0;
-                    let attributes: HashMap<String, String> = columns
-                        .iter()
-                        .zip(val.iter())
-                        .map(|(c, v)| {
-                            return (c.to_string(), format!("{:?}", v));
-                        })
-                        .collect();
+                    let attributes: HashMap<String, String> = match g.get_row(i) {
+                        Ok(val) => columns
+                            .iter()
+                            .zip(val.0.iter())
+                            .map(|(c, v)| {
+                                return (
+                                    c.to_string(),
+                                    match v {
+                                        AnyValue::Utf8(x) => x.to_string(),
+                                        o => {
+                                            format!("{:?}", o)
+                                        }
+                                    },
+                                );
+                            })
+                            .collect(),
+                        Err(_) => HashMap::default(),
+                    };
+
                     PyBridgeEvent {
                         attributes: attributes.into(),
                     }
                 })
                 .collect();
-            let mut trace = PyBridgeTrace::new(
-                events[0]
+            let trace_id = match events.get(0) {
+                Some(ev) => ev
                     .attributes
                     .attributes
-                    .get(TRACE_ID_NAME)
-                    .unwrap()
+                    .get(TRACE_ID_NAME.into())
+                    .unwrap_or(&"__NO_TRACE_ID__".to_string())
                     .clone(),
-            );
+                None => "__NO_TRACE_ID__".to_string(),
+            };
+            let mut trace = PyBridgeTrace::new(trace_id);
             trace.events = events;
             return trace;
         })
         .collect();
     log.traces = traces;
-    Ok(log)
+    return Ok(log);
+}
+
+#[pyfunction]
+fn polars_df_to_log(pydf: PyDataFrame) -> PyResult<PyBridgeEventLog> {
+    let df: DataFrame = pydf.into();
+    match convert_df_to_log(&df) {
+        Ok(log) => Ok(log),
+        Err(e) => Err(PyErr::new::<PyTypeError, _>(format!(
+            "Could not convert to EventLog: {}",
+            e.to_string()
+        ))),
+    }
 }
 
 #[pyfunction]
@@ -334,6 +385,7 @@ fn rust_bridge_pm_py(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(test_event_log_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(polars_df_to_log, m)?)?;
     m.add_function(wrap_pyfunction!(test_bridge_log, m)?)?;
+    m.add_function(wrap_pyfunction!(test_df_pandas, m)?)?;
     m.add_class::<PyBridgeEvent>()?;
     m.add_class::<PyBridgeTrace>()?;
     m.add_class::<PyBridgeEventLog>()?;
