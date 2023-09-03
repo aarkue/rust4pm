@@ -130,7 +130,7 @@ pub fn import_log<P: AsRef<Path>>(path: P) -> EventLog {
     return log;
 }
 
-pub fn import_log_from_byte_vec(bytes: &Vec<u8>) -> EventLog {
+pub fn import_log_from_byte_array(bytes: &[u8]) -> EventLog {
     let log: EventLog = serde_json::from_slice(&bytes).unwrap();
     return log;
 }

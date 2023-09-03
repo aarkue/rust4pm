@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use jni_fn::jni_fn;
 use pm_rust::{
-    add_start_end_acts, export_log, export_log_to_byte_vec, import_log, import_log_from_byte_vec,
+    add_start_end_acts, export_log, export_log_to_byte_vec, import_log, import_log_from_byte_array,
     EventLog, EventLogActivityProjection,
 };
 
@@ -26,7 +26,7 @@ pub fn addArtificialActs<'local>(
         now.elapsed()
     );
     now = Instant::now();
-    let mut log: EventLog = import_log_from_byte_vec(&d);
+    let mut log: EventLog = import_log_from_byte_array(&d);
 
     println!("Time until struct ready: {:.2?}", now.elapsed());
     now = Instant::now();
