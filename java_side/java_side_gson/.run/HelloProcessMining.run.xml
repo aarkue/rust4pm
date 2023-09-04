@@ -3,7 +3,7 @@
     <envs>
       <env name="LD_LIBRARY_PATH" value="$PROJECT_DIR$/../../target/release" />
     </envs>
-    <option name="MAIN_CLASS_NAME" value="HelloProcessMining" />
+    <option name="MAIN_CLASS_NAME" value="org.processmining.alpharevisitexperiments.bridge.HelloProcessMining" />
     <module name="java_side_gson" />
     <option name="VM_PARAMETERS" value="-Xms4g -Xmx8g" />
     <method v="2">
