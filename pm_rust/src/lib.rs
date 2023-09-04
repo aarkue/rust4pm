@@ -59,18 +59,14 @@ impl Into<EventLogActivityProjection<usize>> for EventLog {
         let acts_per_trace: Vec<Vec<String>> = self
             .traces
             .par_iter()
-            .map(|t| -> Vec<String> {
+            .map(|t| -> Option<Vec<String>> {
                 t.events
                     .iter()
-                    .map(|e| {
-                        e.attributes
-                            .get(ACTIVITY_NAME)
-                            .unwrap_or(&"__NO_ACTIVITY__".to_string())
-                            .clone()
-                    })
-                    .collect()
+                    .map(|e| e.attributes.get(ACTIVITY_NAME).cloned())
+                    .collect::<Option<Vec<String>>>()
             })
-            .collect();
+            .collect::<Option<Vec<Vec<String>>>>()
+            .unwrap();
         let activity_set: HashSet<&String> = acts_per_trace.iter().flatten().collect();
         let activities: Vec<String> = activity_set.into_iter().map(|s| s.clone()).collect();
         let act_to_index: HashMap<String, usize> = activities
@@ -134,7 +130,6 @@ pub fn import_log_from_byte_array(bytes: &[u8]) -> EventLog {
     let log: EventLog = serde_json::from_slice(&bytes).unwrap();
     return log;
 }
-
 
 // const raw_schema: &str = r#"
 // {"type":"record","name":"EventLogJava","fields":[{"name":"attributes","type":{"type":"map","values":"string"}},{"name":"traces","type":{"type":"array","items":{"type":"record","name":"TraceJava","fields":[{"name":"attributes","type":{"type":"map","values":"string"}},{"name":"events","type":{"type":"array","items":{"type":"record","name":"EventJava","fields":[{"name":"attributes","type":{"type":"map","values":"string"}}]},"java-class":"java.util.ArrayList"}}]},"java-class":"java.util.ArrayList"}}]}
