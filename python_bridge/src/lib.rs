@@ -210,11 +210,22 @@ fn test_bridge_log(pylog: PyBridgeEventLog) -> PyResult<PyBridgeEventLog> {
 }
 
 #[pyfunction]
-fn test_df_pandas(json_df: String) -> PyResult<PyBridgeEventLog> {
-    println!("Called test_df_pandas!");
-    let df = polars::prelude::JsonReader::new(Cursor::new(json_df))
-        .finish()
-        .unwrap();
+fn test_df_pandas(df_serialized: String, format: String) -> PyResult<PyBridgeEventLog> {
+    let df = match format.as_str() {
+        "json" => polars::prelude::JsonReader::new(Cursor::new(df_serialized))
+            .finish()
+            .or(Err(PyErr::new::<PyTypeError, _>(
+                "Failed to parse JSON DataFrame.",
+            ))),
+        "csv" => polars::prelude::CsvReader::new(Cursor::new(df_serialized))
+            .finish()
+            .or(Err(PyErr::new::<PyTypeError, _>(
+                "Failed to parse CSV DataFrame.",
+            ))),
+        _ => Err(PyErr::new::<PyTypeError, _>(
+            "No valid DF format passed. Valid formats are 'json' and 'csv'.",
+        )),
+    }?;
     match convert_df_to_log(&df) {
         Ok(log) => {
             let mut log: EventLog = log.into();
