@@ -623,8 +623,10 @@ dependencies = [
  "jni",
  "jni_fn",
  "pm_rust",
+ "rayon",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -1799,6 +1801,15 @@ name = "unindent"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1766d682d402817b5ac4490b3c3002d91dfa0d22812f341609f97b08757359c"
+
+[[package]]
+name = "uuid"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79daa5ed5740825c40b389c5e50312b9c86df53fccd33f281df655642b43869d"
+dependencies = [
+ "getrandom",
+]
 
 [[package]]
 name = "value-trait"
