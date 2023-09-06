@@ -1,3 +1,5 @@
+pub use chrono::NaiveDateTime;
+pub use chrono::{serde::ts_milliseconds, DateTime, Utc};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -7,6 +9,7 @@ use std::{
     path::Path,
     rc::Rc,
 };
+pub use uuid::Uuid;
 
 pub const START_EVENT: &str = "__START__";
 pub const END_EVENT: &str = "__END__";
@@ -15,29 +18,97 @@ pub const ACTIVITY_NAME: &str = "concept:name";
 #[allow(dead_code)]
 pub const TRACE_ID_NAME: &str = "case:concept:name";
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(tag = "type", content = "content")]
+pub enum AttributeValue {
+    String(String),
+    #[serde(with = "ts_milliseconds")]
+    Date(DateTime<Utc>),
+    Int(i64),
+    Float(f64),
+    Boolean(bool),
+    ID(Uuid),
+    List(Vec<Attribute>),
+    Container(Attributes),
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Attribute {
+    pub key: String,
+    pub value: AttributeValue,
+}
+impl Attribute {
+    pub fn new(key: String, attribute_val: AttributeValue) -> Self {
+        Self {
+            key,
+            value: attribute_val,
+        }
+    }
+    pub fn new_with_key(key: String, attribute_val: AttributeValue) -> (String, Self) {
+        (
+            key.clone(),
+            Self {
+                key,
+                value: attribute_val,
+            },
+        )
+    }
+}
+pub type Attributes = HashMap<String, Attribute>;
+pub trait AttributeAddable{
+    fn add_to_attributes(self: &mut Self, key: String, value: AttributeValue);
+}
+
+impl AttributeAddable for Attributes {
+    fn add_to_attributes(self: &mut Self, key: String, value: AttributeValue){
+        let (k,v) = Attribute::new_with_key(key, value);
+        self.insert(k,v);
+    }
+}
+pub fn add_to_attributes(attributes: &mut Attributes, key: String, value: AttributeValue){
+    let (k,v) = Attribute::new_with_key(key, value);
+    attributes.insert(k,v);
+}
+
+pub fn to_attributes(from: HashMap<String, AttributeValue>) -> Attributes {
+    from.into_iter()
+        .map(|(key, value)| {
+            (
+                key.clone(),
+                Attribute {
+                    key: key.clone(),
+                    value,
+                },
+            )
+        })
+        .collect()
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Event {
-    pub attributes: HashMap<String, String>,
+    pub attributes: Attributes,
 }
 impl Event {
     pub fn new(activity: String) -> Self {
         Event {
-            attributes: vec![(ACTIVITY_NAME.to_string(), activity)]
-                .into_iter()
-                .collect(),
+            attributes: to_attributes(
+                vec![(ACTIVITY_NAME.to_string(), AttributeValue::String(activity))]
+                    .into_iter()
+                    .collect(),
+            ),
         }
     }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Trace {
-    pub attributes: HashMap<String, String>,
+    pub attributes: Attributes,
     pub events: Vec<Event>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct EventLog {
-    pub attributes: HashMap<String, String>,
+    pub attributes: Attributes,
     pub traces: Vec<Trace>,
 }
 
@@ -59,14 +130,27 @@ impl Into<EventLogActivityProjection<usize>> for EventLog {
         let acts_per_trace: Vec<Vec<String>> = self
             .traces
             .par_iter()
-            .map(|t| -> Option<Vec<String>> {
+            .map(|t| -> Vec<String> {
                 t.events
                     .iter()
-                    .map(|e| e.attributes.get(ACTIVITY_NAME).cloned())
-                    .collect::<Option<Vec<String>>>()
+                    .map(|e| {
+                        match e
+                            .attributes
+                            .get(ACTIVITY_NAME)
+                            .cloned()
+                            .unwrap_or(Attribute {
+                                key: ACTIVITY_NAME.into(),
+                                value: AttributeValue::String("No Activity".into()),
+                            })
+                            .value
+                        {
+                            AttributeValue::String(s) => s,
+                            _ => "No Activity".into(),
+                        }
+                    })
+                    .collect::<Vec<String>>()
             })
-            .collect::<Option<Vec<Vec<String>>>>()
-            .unwrap();
+            .collect();
         let activity_set: HashSet<&String> = acts_per_trace.iter().flatten().collect();
         let activities: Vec<String> = activity_set.into_iter().map(|s| s.clone()).collect();
         let act_to_index: HashMap<String, usize> = activities
@@ -130,20 +214,6 @@ pub fn import_log_from_byte_array(bytes: &[u8]) -> EventLog {
     let log: EventLog = serde_json::from_slice(&bytes).unwrap();
     return log;
 }
-
-// const raw_schema: &str = r#"
-// {"type":"record","name":"EventLogJava","fields":[{"name":"attributes","type":{"type":"map","values":"string"}},{"name":"traces","type":{"type":"array","items":{"type":"record","name":"TraceJava","fields":[{"name":"attributes","type":{"type":"map","values":"string"}},{"name":"events","type":{"type":"array","items":{"type":"record","name":"EventJava","fields":[{"name":"attributes","type":{"type":"map","values":"string"}}]},"java-class":"java.util.ArrayList"}}]},"java-class":"java.util.ArrayList"}}]}
-// "#;
-// pub fn import_log_from_byte_vec_avro(bytes: &Vec<u8>) -> Option<EventLog> {
-//     let reader_schema = Schema::parse_str(&raw_schema).unwrap();
-//     let reader = Reader::with_schema(&reader_schema, &bytes[..]).unwrap();
-//     for value in reader {
-//         // println!("{:?}", val);
-//         let log: EventLog = apache_avro::from_value(&value.unwrap()).unwrap();
-//         return Some(log);
-//     }
-//     return None;
-// }
 
 pub fn import_log_from_str(json: String) -> EventLog {
     serde_json::from_str(&json).unwrap()

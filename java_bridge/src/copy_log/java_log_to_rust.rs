@@ -6,7 +6,7 @@ use jni::{
 use std::collections::HashMap;
 
 use jni_fn::jni_fn;
-use pm_rust::{Event, EventLog, Trace};
+use pm_rust::{Attributes, Event, EventLog, Trace};
 
 use super::copy_log_shared::JTrace;
 
@@ -18,7 +18,7 @@ use super::copy_log_shared::JTrace;
 /// This struct is heavily used in unsafe code, to allow efficient copying of XLogs to [EventLog]s
 struct EventLogConstruction {
     traces: Vec<Box<Trace>>,
-    attributes: HashMap<String, String>,
+    attributes: Attributes,
 }
 
 /// Intialize [EventLogConstruction] stub for (parallel) copying of Java XLog
@@ -43,7 +43,7 @@ pub unsafe fn createRustEventLogPar<'local>(
         .to_str()
         .unwrap()
         .to_string();
-    let attributes: HashMap<String, String> = serde_json::from_str(&attribute_str).unwrap();
+    let attributes: Attributes = serde_json::from_str(&attribute_str).unwrap();
     let traces: Vec<Box<Trace>> = (0..num_traces)
         .map(|_| {
             Box::new(Trace {
@@ -79,10 +79,9 @@ pub unsafe fn setTracePar<'local>(
         .traces
         .get_mut(trace_index as usize)
         .unwrap();
-    let trace_attributes: HashMap<String, String> =
-        serde_json::from_str(&trace_attributes_str).unwrap();
+    let trace_attributes: Attributes = serde_json::from_str(&trace_attributes_str).unwrap();
     trace.attributes = trace_attributes;
-    let event_attrs: Vec<HashMap<String, String>> = serde_json::from_str(
+    let event_attrs: Vec<Attributes> = serde_json::from_str(
         env.get_string(&event_attributes_json)
             .unwrap()
             .to_str()

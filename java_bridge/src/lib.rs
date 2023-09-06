@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
-
+pub use copy_log::copy_log_shared::JEvent;
 mod copy_log {
-    mod copy_log_shared;
+    pub mod copy_log_shared;
     mod java_log_to_rust;
     mod rust_log_to_java;
 }
@@ -12,7 +12,7 @@ use jni::{
 };
 
 use jni_fn::jni_fn;
-use pm_rust::{add_start_end_acts, EventLog};
+use pm_rust::{add_start_end_acts, Attribute, AttributeValue, EventLog};
 
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
 pub unsafe fn addStartEndToRustLog<'local>(mut _env: JNIEnv<'local>, _: JClass, pointer: jlong) {
@@ -22,8 +22,8 @@ pub unsafe fn addStartEndToRustLog<'local>(mut _env: JNIEnv<'local>, _: JClass, 
 }
 
 /// Get attributes of (boxed) [EventLog] referenced by `pointer`
-/// 
-/// Attributes are converted to JSON String (encoding a [HashMap<String,String>]) 
+///
+/// Attributes are converted to JSON String (encoding a [HashMap<String,String>])
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
 pub unsafe fn getRustLogAttributes<'local>(
     mut _env: JNIEnv<'local>,
@@ -31,10 +31,11 @@ pub unsafe fn getRustLogAttributes<'local>(
     pointer: jlong,
 ) -> JString<'local> {
     let mut log_pointer = Box::from_raw(pointer as *mut EventLog);
-    log_pointer.attributes.insert(
+    let (k, a) = Attribute::new_with_key(
         "__NUM_TRACES__".to_string(),
-        log_pointer.traces.len().to_string(),
+        AttributeValue::Int(log_pointer.traces.len() as i64),
     );
+    log_pointer.attributes.insert(k, a);
     let attributes_json = serde_json::to_string(&log_pointer.attributes).unwrap();
     // memory of log_pointer should _not_ be destroyed!
     let _log_pointer = Box::into_raw(log_pointer);
@@ -43,7 +44,7 @@ pub unsafe fn getRustLogAttributes<'local>(
 
 /// Get the lengths of all traces in (boxed) [EventLog] referenced by `pointer`
 ///
-/// The lengths are returned as a [JIntArray] of size of `EventLog.traces`, 
+/// The lengths are returned as a [JIntArray] of size of `EventLog.traces`,
 /// where each entry contains the length of the trace (i.e., the length of `Trace.events`) at the corresponding index
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
 pub unsafe fn getRustTraceLengths<'local>(

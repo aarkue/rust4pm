@@ -2,33 +2,23 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use pm_rust::{Event, EventLog, Trace};
-
-/// Used for Java-compatible XLog JSON generation
-/// 
-/// Corresponds to XAttribute (attributeType is currently unused & always 'string')
-#[derive(Debug, Serialize, Deserialize)]
-struct JAttribute {
-    key: String,
-    attributeType: String,
-    value: String,
-}
+use pm_rust::{Attribute, Attributes, Event, EventLog, Trace};
 
 /// Used for Java-compatible XLog JSON generation
 ///
 /// Corresponds to XEvent
 #[derive(Debug, Serialize, Deserialize)]
-struct JEvent {
+pub struct JEvent {
     uuid: String,
-    attributes: HashMap<String, JAttribute>,
+    pub attributes: HashMap<String, Attribute>,
 }
 
 /// Used for Java-compatible XLog JSON generation
-/// 
+///
 /// Corresponds to XTrace
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JTrace {
-    attributes: HashMap<String, JAttribute>,
+    attributes: HashMap<String, Attribute>,
     events: Vec<JEvent>,
 }
 /// Used for Java-compatible XLog JSON generation <p>
@@ -36,36 +26,27 @@ pub struct JTrace {
 /// Corresponds to XLog
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JEventLog {
-    attributes: HashMap<String, JAttribute>,
+    attributes: HashMap<String, Attribute>,
     traces: Vec<JTrace>,
 }
 
-/// Converts a [HashMap<String,String>] to a [HashMap<String,JAttribute>] (i.e., to a mapping to [JAttribute]s)
+/// Converts a [HashMap<String,String>] to a [HashMap<String,Attribute>] (i.e., to a mapping to [Attribute]s)
 ///
 /// Currently required for converting an [EventLog] to an [JEventLog] (+ all subtypes)
-fn stringMapToJAttributeMap(map: &HashMap<String, String>) -> HashMap<String, JAttribute> {
+fn stringMapToAttributeMap(map: &Attributes) -> HashMap<String, Attribute> {
     map.iter()
-        .map(|(key, value)| {
-            (
-                key.clone(),
-                JAttribute {
-                    key: key.clone(),
-                    attributeType: "String".into(),
-                    value: value.clone(),
-                },
-            )
-        })
+        .map(|(key, value)| (key.clone(), value.clone()))
         .collect()
 }
 
-/// Converts as [HashMap<String, JAttribute>] to a [HashMap<String, String>] (i.e., from a mapping of [JAttribute]s)
+/// Converts as [HashMap<String, Attribute>] to a [Attributes] (i.e., from a mapping of [Attribute]s)
 ///
-/// Currently, [JAttribute]s can only hold Strings, so this just un-wraps that container
-/// 
+/// Currently, [Attribute]s can only hold Strings, so this just un-wraps that container
+///
 /// Required for converting a [JEventLog] to an [EventLog] (+ all subtypes)
-fn jAttributeMapToStringMap(map: &HashMap<String, JAttribute>) -> HashMap<String, String> {
+fn AttributeMapToStringMap(map: &HashMap<String, Attribute>) -> Attributes {
     map.iter()
-        .map(|(key, value)| (key.clone(), value.value.clone()))
+        .map(|(key, value)| (key.clone(), value.clone()))
         .collect()
 }
 
@@ -73,7 +54,7 @@ impl From<&Event> for JEvent {
     /// Note: Generates new uuids for the resulting [JEvent]!
     fn from(value: &Event) -> Self {
         JEvent {
-            attributes: stringMapToJAttributeMap(&value.attributes),
+            attributes: stringMapToAttributeMap(&value.attributes),
             uuid: Uuid::new_v4().to_string(),
         }
     }
@@ -82,7 +63,7 @@ impl From<&Event> for JEvent {
 impl From<&Trace> for JTrace {
     fn from(value: &Trace) -> Self {
         JTrace {
-            attributes: stringMapToJAttributeMap(&value.attributes),
+            attributes: stringMapToAttributeMap(&value.attributes),
             events: value.events.iter().map(|e| e.into()).collect(),
         }
     }
@@ -91,7 +72,7 @@ impl From<&Trace> for JTrace {
 impl From<&EventLog> for JEventLog {
     fn from(value: &EventLog) -> Self {
         JEventLog {
-            attributes: stringMapToJAttributeMap(&value.attributes),
+            attributes: stringMapToAttributeMap(&value.attributes),
             traces: value.traces.iter().map(|e| e.into()).collect(),
         }
     }
@@ -100,7 +81,7 @@ impl From<&EventLog> for JEventLog {
 impl Into<Event> for &JEvent {
     fn into(self) -> Event {
         Event {
-            attributes: jAttributeMapToStringMap(&self.attributes),
+            attributes: AttributeMapToStringMap(&self.attributes),
         }
     }
 }
@@ -108,7 +89,7 @@ impl Into<Event> for &JEvent {
 impl Into<Trace> for JTrace {
     fn into(self) -> Trace {
         Trace {
-            attributes: jAttributeMapToStringMap(&self.attributes),
+            attributes: AttributeMapToStringMap(&self.attributes),
             events: self.events.iter().map(|e| e.into()).collect(),
         }
     }

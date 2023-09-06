@@ -4,17 +4,16 @@ use jni::{
     JNIEnv,
 };
 
-use std::collections::HashMap;
 use uuid::Uuid;
 
 use jni_fn::jni_fn;
-use pm_rust::{EventLog, Trace};
+use pm_rust::{Attribute, AttributeValue, Attributes, EventLog, Trace};
 
 use super::copy_log_shared::{JEventLog, JTrace};
 
 /// Given the passed reference to a (boxed) [EventLog] and the given `index`, retrieve all attributes of the trace and events
 ///
-/// The returned String is a JSON-encoding of [Vec<HashMap<String, String>>], where:
+/// The returned String is a JSON-encoding of [Vec<Attributes>], where:
 /// - 0: Contains the trace attributes (of trace at index _index_)
 /// - i (1 to (n-1)): Contains the event attributes of the i'th event in the trace
 ///
@@ -28,11 +27,12 @@ pub unsafe fn getCompleteRustTraceAsString<'local>(
 ) -> JString<'local> {
     let log_pointer = Box::from_raw(pointer as *mut EventLog);
     let trace = log_pointer.traces.get(index as usize).unwrap();
-    let mut events_json: Vec<HashMap<String, String>> = Vec::with_capacity(1 + trace.events.len());
+    let mut events_json: Vec<Attributes> = Vec::with_capacity(1 + trace.events.len());
     events_json.push(trace.attributes.clone());
     trace.events.iter().for_each(|e| {
-        let mut attrs: HashMap<String, String> = e.attributes.clone();
-        attrs.insert("__UUID__".into(), Uuid::new_v4().to_string());
+        let mut attrs: Attributes = e.attributes.clone();
+        let (k, a) = Attribute::new_with_key("__UUID__".into(), AttributeValue::ID(Uuid::new_v4()));
+        attrs.insert(k, a);
         events_json.push(attrs)
     });
     let all_json: String = serde_json::to_string(&events_json).unwrap();
