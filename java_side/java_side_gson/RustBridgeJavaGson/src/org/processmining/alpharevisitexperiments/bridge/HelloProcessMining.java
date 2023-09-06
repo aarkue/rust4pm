@@ -31,6 +31,10 @@ public class HelloProcessMining {
     }.getType();
     static Type xAttributeMap = new TypeToken<XAttributeMapImpl>() {
     }.getType();
+    static Type xAttributeMapList = new TypeToken<XAttributeMapImpl[]>() {
+    }.getType();
+    static Type xAttributeList = new TypeToken<List<XAttribute>>() {
+    }.getType();
     static Type stringHashMap = new TypeToken<HashMap<String, String>>() {
     }.getType();
 
@@ -42,23 +46,26 @@ public class HelloProcessMining {
 
 
     private static native long createRustEventLogPar(int numTraces, String logAttributes);
+
     private static native void setTracePar(long constructionPointer, int traceIndex, String traceAttributes, String eventAttributes);
+
     private static native void setTraceParJsonCompatible(long constructionPointer, int traceIndex, String traceJSON);
+
     private static native long finishLogConstructionPar(long constructionPointer);
+
     private static native boolean destroyRustEventLog(long pointer);
+
     private static native void addStartEndToRustLog(long eventLogPointer);
+
     private static native String getRustLogAttributes(long eventLogPointer);
 
     private static native int[] getRustTraceLengths(long eventLogPointer);
+
     private static native String getCompleteRustTraceAsString(long eventLogPointer, int index);
 
     private static native String getCompleteRustTraceAsStringJsonCompatible(long eventLogPointer, int index);
 
     private static native String getCompleteRustLogAsStringJsonCompatible(long eventLogPointer);
-
-
-
-
 
 
     private static void addAllAttributesFromTo(XAttributeMap from, Map<String, String> to) {
@@ -84,15 +91,15 @@ public class HelloProcessMining {
     }
 
     private static XTraceImpl getxEvents(long logPointer, Integer traceIndex) {
-        Map<String, String>[] traceAndEventAttrs = gson.fromJson(getCompleteRustTraceAsString(logPointer, traceIndex), Map[].class);
-        XAttributeMapImpl traceAttrs = convertToXAttributeMap(traceAndEventAttrs[0]);
+        XAttributeMap[] traceAndEventAttrs = gson.fromJson(getCompleteRustTraceAsString(logPointer, traceIndex), xAttributeMapList);
+        XAttributeMap traceAttrs = traceAndEventAttrs[0];
         XTraceImpl trace = IntStream.range(1, traceAndEventAttrs.length).boxed().map(i -> {
-            Map<String, String> eventAttrs = traceAndEventAttrs[i];
-            String uuid = eventAttrs.get("__UUID__");
+            XAttributeMap eventAttrs = traceAndEventAttrs[i];
+            XID uuid = ((XAttributeIDImpl) eventAttrs.get("__UUID__")).getValue();
             eventAttrs.remove("__UUID__");
-            XAttributeMapImpl to = new XAttributeMapImpl(eventAttrs.size());
-            addAllAttributesFromTo(eventAttrs, to);
-            return new XEventImpl(XID.parse(uuid), to);
+//            XAttributeMapImpl to = new XAttributeMapImpl(eventAttrs.size());
+//            addAllAttributesFromTo(eventAttrs, to);
+            return new XEventImpl(uuid, eventAttrs);
         }).collect(Collectors.toCollection(() -> new XTraceImpl(traceAttrs)));
         return trace;
     }
@@ -100,10 +107,10 @@ public class HelloProcessMining {
 
     private static XLog rustLogToJavaMultiEventChunks(long logPointer) {
         String logAttributesJson = getRustLogAttributes(logPointer);
-        HashMap<String, String> logAttrs = gson.fromJson(logAttributesJson, stringHashMap);
-        int numTraces = Integer.parseInt(logAttrs.get("__NUM_TRACES__"));
-        logAttrs.remove("__NUM_TRACES__");
-        XAttributeMapImpl logAttrsX = convertToXAttributeMap(logAttrs);
+        XAttributeMap logAttrsX = gson.fromJson(logAttributesJson, xAttributeMap);
+        long numTraces = ((XAttributeDiscrete) logAttrsX.get("__NUM_TRACES__")).getValue();
+        logAttrsX.remove("__NUM_TRACES__");
+//        XAttributeMapImpl logAttrsX = convertToXAttributeMap(logAttrs);
         int chunks = Runtime.getRuntime().availableProcessors();
         ExecutorService execService = Executors.newFixedThreadPool(chunks);
         List<Future<XTrace>> futures = new ArrayList<>();
@@ -114,7 +121,7 @@ public class HelloProcessMining {
         return getxTraces(numTraces, logAttrsX, execService, futures);
     }
 
-    private static XLog getxTraces(int numTraces, XAttributeMapImpl logAttrsX, ExecutorService execService, List<Future<XTrace>> futures) {
+    private static XLog getxTraces(long numTraces, XAttributeMap logAttrsX, ExecutorService execService, List<Future<XTrace>> futures) {
         XLog newLog = futures.stream().map(f -> {
             try {
                 return f.get();
@@ -123,20 +130,16 @@ public class HelloProcessMining {
             }
         }).collect(Collectors.toCollection(() -> {
             XLogImpl tmp = new XLogImpl(logAttrsX);
-            tmp.ensureCapacity(numTraces);
+            tmp.ensureCapacity((int) numTraces);
             return tmp;
         }));
         execService.shutdown();
         return newLog;
     }
 
-    private static void setTraceParHelper(long pointer, Integer i, XTrace t, HashMap<String, String> traceAttributes) {
-        HashMap[] allTraceEventAttributes = t.stream().map(e -> {
-            HashMap<String, String> eventAttributes = new HashMap<>(e.getAttributes().size());
-            addAllAttributesFromTo(e.getAttributes(), eventAttributes);
-            return eventAttributes;
-        }).toArray(HashMap[]::new);
-        setTracePar(pointer, i, gson.toJson(traceAttributes), gson.toJson(allTraceEventAttributes, HashMap[].class));
+    private static void setTraceParHelper(long pointer, Integer i, XTrace t, XAttributeMap traceAttributes) {
+        XAttributeMap[] allTraceEventAttributes = t.stream().map(e -> e.getAttributes()).toArray(XAttributeMap[]::new);
+        setTracePar(pointer, i, gson.toJson(traceAttributes), gson.toJson(allTraceEventAttributes, XAttributeMap[].class));
     }
 
     /**
@@ -147,10 +150,10 @@ public class HelloProcessMining {
      * @return Pointer to Rust-side event log (as long); Needs to be manually destroyed by caller!
      */
     private static long javaLogToRustMultiEventsChunked(XLog l) {
-        HashMap<String, String> attributes = new HashMap<>();
-        attributes.put("name", "Java-called Rust Log Par :)");
-        long pointer = createRustEventLogPar(l.size(), gson.toJson(attributes));
-
+//        HashMap<String, String> attributes = new HashMap<>();
+//        attributes.put("name", "Java-called Rust Log Par :)");
+        long pointer = createRustEventLogPar(l.size(), gson.toJson(l.getAttributes()));
+        System.out.println("Created Rust EventLog Pointer " + pointer);
         int chunks = Runtime.getRuntime().availableProcessors();
         ExecutorService execService = Executors.newFixedThreadPool(chunks);
         List<Future> futures = new ArrayList<>();
@@ -158,9 +161,9 @@ public class HelloProcessMining {
             final int traceIndex = traceId;
             final XTrace t = l.get(traceIndex);
             futures.add(execService.submit(() -> {
-                HashMap<String, String> traceAttributes = new HashMap<>(t.getAttributes().size());
-                addAllAttributesFromTo(t.getAttributes(), traceAttributes);
-                setTraceParHelper(pointer, traceIndex, t, traceAttributes);
+//                HashMap<String, String> traceAttributes = new HashMap<>(t.getAttributes().size());
+//                addAllAttributesFromTo(t.getAttributes(), traceAttributes);
+                setTraceParHelper(pointer, traceIndex, t, t.getAttributes());
             }));
         }
         for (Future f : futures) {
@@ -175,9 +178,7 @@ public class HelloProcessMining {
     }
 
     private static long javaLogToRustMultiEventsJsonCompatibleChunked(XLog l) {
-        HashMap<String, String> attributes = new HashMap<>();
-        attributes.put("name", "Java-called Rust Log Par :)");
-        long pointer = createRustEventLogPar(l.size(), gson.toJson(attributes));
+        long pointer = createRustEventLogPar(l.size(), gson.toJson(l.getAttributes()));
 
         int chunks = Runtime.getRuntime().availableProcessors();
         ExecutorService execService = Executors.newFixedThreadPool(chunks);
@@ -201,7 +202,7 @@ public class HelloProcessMining {
         return finishLogConstructionPar(pointer);
     }
 
-    public static double createRustEventLogHelperPar(XLog l) {
+    public static XLog createRustEventLogHelperPar(XLog l) {
         System.out.println("createRustEventLogHelperPar #Traces:" + l.size());
         long startTime = System.nanoTime();
         long logPointer = javaLogToRustMultiEventsChunked(l);
@@ -239,16 +240,125 @@ public class HelloProcessMining {
         double duration = ((System.nanoTime() - startTime) / 1000000.0);
         System.out.println("Call took " + duration + "ms");
 
-        return duration;
+        return newLog;
     }
 
-    public static void test(XLog l) {
-        createRustEventLogHelperPar(l);
-        System.out.println("Finished parallel Rust test on log with size " + l.size());
+    public static XLog test(XLog l) {
+        System.out.println("Start parallel Rust test on log with size " + l.size());
+        return createRustEventLogHelperPar(l);
     }
 
     public static void main(String[] args) {
-        int numTraces = 200_000;
+        String json = "{\n" +
+                "  \"test\": {\n" +
+                "    \"key\": \"test\",\n" +
+                "    \"value\": {\n" +
+                "      \"type\": \"String\",\n" +
+                "      \"content\": \"Hello\"\n" +
+                "    }\n" +
+                "  },\n" +
+                "  \"boolean-test\": {\n" +
+                "    \"key\": \"boolean-test\",\n" +
+                "    \"value\": {\n" +
+                "      \"type\": \"Boolean\",\n" +
+                "      \"content\": true\n" +
+                "    }\n" +
+                "  },\n" +
+                "  \"date-test\": {\n" +
+                "    \"key\": \"date-test\",\n" +
+                "    \"value\": {\n" +
+                "      \"type\": \"Date\",\n" +
+                "      \"content\": 0\n" +
+                "    }\n" +
+                "  },\n" +
+                "  \"container-test\": {\n" +
+                "    \"key\": \"container-test\",\n" +
+                "    \"value\": {\n" +
+                "      \"type\": \"Container\",\n" +
+                "      \"content\": {\n" +
+                "        \"first\": {\n" +
+                "          \"key\": \"first\",\n" +
+                "          \"value\": {\n" +
+                "            \"type\": \"Int\",\n" +
+                "            \"content\": 1\n" +
+                "          }\n" +
+                "        },\n" +
+                "        \"second\": {\n" +
+                "          \"key\": \"second\",\n" +
+                "          \"value\": {\n" +
+                "            \"type\": \"Int\",\n" +
+                "            \"content\": 2\n" +
+                "          }\n" +
+                "        },\n" +
+                "        \"third\": {\n" +
+                "          \"key\": \"third\",\n" +
+                "          \"value\": {\n" +
+                "            \"type\": \"Int\",\n" +
+                "            \"content\": 3\n" +
+                "          }\n" +
+                "        }\n" +
+                "      }\n" +
+                "    }\n" +
+                "  },\n" +
+                "  \"float-test\": {\n" +
+                "    \"key\": \"float-test\",\n" +
+                "    \"value\": {\n" +
+                "      \"type\": \"Float\",\n" +
+                "      \"content\": 1.337\n" +
+                "    }\n" +
+                "  },\n" +
+                "  \"list-test\": {\n" +
+                "    \"key\": \"list-test\",\n" +
+                "    \"value\": {\n" +
+                "      \"type\": \"List\",\n" +
+                "      \"content\": [\n" +
+                "        {\n" +
+                "          \"key\": \"first\",\n" +
+                "          \"value\": {\n" +
+                "            \"type\": \"Int\",\n" +
+                "            \"content\": 1\n" +
+                "          }\n" +
+                "        },\n" +
+                "        {\n" +
+                "          \"key\": \"first\",\n" +
+                "          \"value\": {\n" +
+                "            \"type\": \"Float\",\n" +
+                "            \"content\": 1.1\n" +
+                "          }\n" +
+                "        },\n" +
+                "        {\n" +
+                "          \"key\": \"second\",\n" +
+                "          \"value\": {\n" +
+                "            \"type\": \"Int\",\n" +
+                "            \"content\": 2\n" +
+                "          }\n" +
+                "        }\n" +
+                "      ]\n" +
+                "    }\n" +
+                "  },\n" +
+                "  \"int-test\": {\n" +
+                "    \"key\": \"int-test\",\n" +
+                "    \"value\": {\n" +
+                "      \"type\": \"Int\",\n" +
+                "      \"content\": 42\n" +
+                "    }\n" +
+                "  },\n" +
+                "  \"id-test\": {\n" +
+                "    \"key\": \"id-test\",\n" +
+                "    \"value\": {\n" +
+                "      \"type\": \"ID\",\n" +
+                "      \"content\": \"6f535ff1-5523-43f3-9e06-a61394c356ec\"\n" +
+                "    }\n" +
+                "  }\n" +
+                "}";
+//        XAttributeMap attributeMap = gson.fromJson(json, xAttributeMap);
+//        System.out.println(attributeMap);
+//        String backToJson = gson.toJson(attributeMap, xAttributeMap);
+//        XAttributeMap backToMap = gson.fromJson(backToJson, xAttributeMap);
+//        System.out.println(backToMap);
+//        System.out.println(backToMap.equals(attributeMap));
+//        System.out.println("Nice!");
+        int numTraces = 20_000;
         int numEventsPerTrace = 20;
         XLog xlog = createHugeXLog(numTraces, numEventsPerTrace);
         createRustEventLogHelperPar(xlog);
@@ -272,6 +382,7 @@ public class HelloProcessMining {
         }
         return log;
     }
+
 
     private static class XEventTypeAdapter extends TypeAdapter<XEvent> {
         @Override
@@ -345,27 +456,122 @@ public class HelloProcessMining {
         }
     }
 
+    private enum AttributeType {
+        String("String"), Date("Date"), Int("Int"), Float("Float"), Boolean("Boolean"), ID("ID"), List("List"), Container("Container"), None("None");
+        private String type;
+
+        AttributeType(String type) {
+            this.type = type;
+        }
+
+        @Override
+        public String toString() {
+            return type;
+        }
+
+        public String getAttributeType() {
+            return type;
+        }
+    }
 
     private static class XAttributeTypeAdapter extends TypeAdapter<XAttribute> {
         @Override
         public void write(JsonWriter out, XAttribute value) throws IOException {
-            out.beginObject().name("key").value(value.getKey()).name("attributeType").value("string").name("value").value(value.toString()).endObject();
+            out.beginObject().name("key").value(value.getKey()).name("value").beginObject().name("type");
+            if (value instanceof XAttributeLiteral) {
+                out.value(AttributeType.String.type);
+                out.name("content");
+                out.value(((XAttributeLiteral) value).getValue());
+            } else if (value instanceof XAttributeTimestamp) {
+                out.value(AttributeType.Date.type);
+                out.name("content");
+                out.value(((XAttributeTimestamp) value).getValue().getTime());
+            } else if (value instanceof XAttributeDiscrete){
+                out.value(AttributeType.Int.type);
+                out.name("content");
+                out.value(((XAttributeDiscrete) value).getValue());
+            }else if (value instanceof XAttributeContinuous){
+                out.value(AttributeType.Float.type);
+                out.name("content");
+                out.value(((XAttributeContinuous) value).getValue());
+            }else if (value instanceof XAttributeBoolean){
+                out.value(AttributeType.Boolean.type);
+                out.name("content");
+                out.value(((XAttributeBoolean) value).getValue());
+            }else if (value instanceof XAttributeID){
+                out.value(AttributeType.ID.type);
+                out.name("content");
+                out.value(((XAttributeID) value).getValue().toString());
+            }else if (value instanceof XAttributeList){
+                out.value(AttributeType.List.type);
+                out.name("content");
+                gson.toJson(((XAttributeList) value).getCollection(),xAttributeMapList,out);
+            }else if (value instanceof  XAttributeContainer){
+                out.value(AttributeType.Container.type);
+                out.name("content");
+                gson.toJson(((XAttributeContainer) value).getAttributes(),xAttributeMap,out);
+            }else{
+                throw new IOException("Unknown XAttribute type");
+            }
+
+
+            out.endObject().endObject();
         }
+
 
         @Override
         public XAttribute read(JsonReader in) throws IOException {
             in.beginObject();
             String keyName = in.nextName();
-//            assert keyName.equals("key");
+            assert keyName.equals("key");
             String key = in.nextString();
-            String typeName = in.nextName();
-//            assert typeName.equals("attributeType");
-            String attributeType = in.nextString();
             String valueName = in.nextName();
-//            assert valueName.equals("value");
-            String value = in.nextString();
+            assert valueName.equals("value");
+            in.beginObject();
+            String typeName = in.nextName();
+            assert typeName.equals("type");
+            AttributeType type = AttributeType.valueOf(in.nextString());
+            String contentName = in.nextName();
+            assert contentName.equals("content");
+            XAttribute attr = null;
+            switch (type) {
+                case String:
+                    attr = new XAttributeLiteralImpl(key, in.nextString());
+                    break;
+                case Date:
+                    attr = new XAttributeTimestampImpl(key, new Date(in.nextLong()));
+                    break;
+                case Int:
+                    attr = new XAttributeDiscreteImpl(key, in.nextLong());
+                    break;
+                case Float:
+                    attr = new XAttributeContinuousImpl(key, in.nextDouble());
+                    break;
+                case Boolean:
+                    attr = new XAttributeBooleanImpl(key, in.nextBoolean());
+                    break;
+                case ID:
+                    attr = new XAttributeIDImpl(key, XID.parse(in.nextString()));
+                    break;
+                case List:
+                    XAttributeListImpl attrList = new XAttributeListImpl(key);
+                    List<XAttribute> childAttrs = gson.fromJson(in, xAttributeList);
+                    for (XAttribute c : childAttrs) {
+                        attrList.addToCollection(c);
+                    }
+                    attr = attrList;
+                    break;
+                case Container:
+                    XAttributeContainerImpl attrContainer = new XAttributeContainerImpl(key);
+                    XAttributeMapImpl containedAttrs = gson.fromJson(in, xAttributeMap);
+                    attrContainer.setAttributes(containedAttrs);
+                    attr = attrContainer;
+                    break;
+            }
             in.endObject();
-            return new XAttributeLiteralImpl(key, value);
+            in.endObject();
+            return attr;
         }
+
     }
 }
