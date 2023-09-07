@@ -117,7 +117,6 @@ fn any_value_to_attribute_value(from: &AnyValue) -> AttributeValue {
 
 fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
     let mut all_attributes: HashSet<String> = HashSet::new();
-    let now = Instant::now();
     log.traces.iter().for_each(|t| {
         t.attributes.keys().for_each(|s| {
             all_attributes.insert(TRACE_PREFIX.to_string() + s.as_str());
@@ -128,7 +127,6 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
             });
         })
     });
-    println!("Gathering all attribute names took {:.2?}", now.elapsed());
     let x: Vec<Series> = all_attributes
         .iter()
         .map(|k| {
@@ -148,12 +146,6 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
                 })
                 .flatten()
                 .collect();
-
-            println!(
-                "Before creation of series for {}: {:?}",
-                k,
-                entries.get(1).unwrap()
-            );
             Series::new(k, &entries)
         })
         .collect();
