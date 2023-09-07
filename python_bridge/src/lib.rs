@@ -1,216 +1,35 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::io::Cursor;
 use std::time::Instant;
 
+use chrono::DateTime;
+use chrono::NaiveDateTime;
 use pm_rust::add_start_end_acts;
-use pm_rust::export_log_to_byte_vec;
-use pm_rust::export_log_to_string;
-use pm_rust::import_log_from_byte_array;
-use pm_rust::import_log_from_str;
+use pm_rust::Attribute;
+use pm_rust::AttributeAddable;
+use pm_rust::AttributeValue;
+use pm_rust::Attributes;
+use pm_rust::Event;
 use pm_rust::EventLog;
-use pm_rust::EventLogActivityProjection;
 use pm_rust::Trace;
-use pm_rust::TRACE_ID_NAME;
-use pm_rust::{loop_sum_sqrt, Event};
+use pm_rust::Utc;
+use pm_rust::PREFIXED_TRACE_ID_NAME;
+use pm_rust::TRACE_PREFIX;
 use polars::prelude::AnyValue;
 use polars::prelude::DataFrame;
+use polars::prelude::NamedFrom;
 use polars::prelude::PolarsError;
 use polars::prelude::SerReader;
+use polars::series::Series;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
 use pyo3::Python;
 use pyo3_polars::PyDataFrame;
-use pythonize::depythonize;
-use pythonize::pythonize;
 use rayon::prelude::IntoParallelRefIterator;
 use rayon::prelude::ParallelIterator;
 
-#[pyclass]
-#[derive(Debug, Default, Clone)]
-pub struct PyBridgeAttributes {
-    pub attributes: HashMap<String, String>,
-}
-
-#[pymethods]
-impl PyBridgeAttributes {
-    fn set(&mut self, key: String, value: String) -> PyResult<()> {
-        self.attributes.insert(key, value);
-        Ok(())
-    }
-
-    fn get(&self, key: String, default: Option<String>) -> PyResult<Option<String>> {
-        match self.attributes.get(&key) {
-            Some(value) => Ok(Some(value.clone())),
-            None => Ok(default),
-        }
-    }
-}
-
-#[pyclass]
-#[derive(Debug, Clone)]
-pub struct PyBridgeEvent {
-    #[pyo3(get)]
-    pub attributes: PyBridgeAttributes,
-}
-impl PyBridgeEvent {
-    pub fn new(attrs: HashMap<String, String>) -> Self {
-        // let mut attr: PyBridgeAttributes = PyBridgeAttributes::default();
-        // attr.attributes.insert(ACTIVITY_NAME.to_string(), activity);
-        PyBridgeEvent {
-            attributes: attrs.into(),
-        }
-    }
-}
-
-#[pymethods]
-impl PyBridgeEvent {
-    #[new]
-    fn __new__(_py: Python<'_>, attrs: HashMap<String, String>) -> PyResult<Self> {
-        Ok(PyBridgeEvent::new(attrs))
-    }
-}
-
-#[pyclass]
-#[derive(Debug, Default, Clone)]
-pub struct PyBridgeTrace {
-    #[pyo3(get)]
-    pub attributes: PyBridgeAttributes,
-    #[pyo3(get, set)]
-    pub events: Vec<PyBridgeEvent>,
-}
-#[pymethods]
-impl PyBridgeTrace {
-    #[new]
-    fn new(trace_id: String) -> Self {
-        let mut trace = Self::default();
-        trace
-            .attributes
-            .set(TRACE_ID_NAME.into(), trace_id)
-            .unwrap();
-        return trace;
-    }
-    fn insert_event(&mut self, at_index: usize, event: PyBridgeEvent) {
-        self.events.insert(at_index, event);
-    }
-    fn append_event(&mut self, event: PyBridgeEvent) {
-        self.events.push(event);
-    }
-    fn remove_event_at(&mut self, at_index: usize) -> PyResult<()> {
-        self.events.remove(at_index);
-        Ok(())
-    }
-}
-
-#[pyclass]
-#[derive(Debug, Clone)]
-pub struct PyBridgeEventLog {
-    #[pyo3(get)]
-    pub attributes: PyBridgeAttributes,
-    #[pyo3(get)]
-    pub traces: Vec<PyBridgeTrace>,
-}
-
-#[pymethods]
-impl PyBridgeEventLog {
-    #[new]
-    fn new(_py: Python<'_>) -> PyResult<Self> {
-        let vec: Vec<PyBridgeTrace> = vec![];
-        Ok(Self {
-            attributes: PyBridgeAttributes::default(),
-            traces: vec,
-        })
-    }
-    fn insert_trace(&mut self, at_index: usize, trace: PyBridgeTrace) {
-        self.traces.insert(at_index, trace);
-    }
-    fn append_trace(&mut self, trace: PyBridgeTrace) {
-        self.traces.push(trace);
-    }
-    fn remove_trace_at(&mut self, at_index: usize) -> PyResult<()> {
-        self.traces.remove(at_index);
-        Ok(())
-    }
-}
-
-impl Into<Event> for PyBridgeEvent {
-    fn into(self) -> Event {
-        Event {
-            attributes: self.attributes.attributes,
-        }
-    }
-}
-
-impl Into<Trace> for PyBridgeTrace {
-    fn into(self) -> Trace {
-        Trace {
-            attributes: self.attributes.attributes,
-            events: self.events.into_iter().map(|e| e.into()).collect(),
-        }
-    }
-}
-
-impl Into<EventLog> for PyBridgeEventLog {
-    fn into(self) -> EventLog {
-        EventLog {
-            attributes: self.attributes.attributes,
-            traces: self.traces.into_iter().map(|t| t.into()).collect(),
-        }
-    }
-}
-
-impl From<HashMap<String, String>> for PyBridgeAttributes {
-    fn from(value: HashMap<String, String>) -> Self {
-        PyBridgeAttributes { attributes: value }
-    }
-}
-
-impl From<Event> for PyBridgeEvent {
-    fn from(value: Event) -> Self {
-        PyBridgeEvent {
-            attributes: value.attributes.into(),
-        }
-    }
-}
-
-impl From<Trace> for PyBridgeTrace {
-    fn from(value: Trace) -> Self {
-        PyBridgeTrace {
-            attributes: value.attributes.into(),
-            events: value.events.into_iter().map(|e| e.into()).collect(),
-        }
-    }
-}
-
-impl From<EventLog> for PyBridgeEventLog {
-    fn from(value: EventLog) -> Self {
-        PyBridgeEventLog {
-            attributes: value.attributes.into(),
-            traces: value.traces.into_iter().map(|t| t.into()).collect(),
-        }
-    }
-}
-
 #[pyfunction]
-fn get_event(act: String) -> pyo3::Py<PyAny> {
-    let ev = Event::new(act);
-    Python::with_gil(|py| {
-        let obj: Py<PyAny> = pythonize(py, &ev).unwrap();
-        obj
-    })
-}
-
-#[pyfunction]
-fn test_bridge_log(pylog: PyBridgeEventLog) -> PyResult<PyBridgeEventLog> {
-    let mut log: EventLog = pylog.into();
-    add_start_end_acts(&mut log);
-    let export_log: PyBridgeEventLog = log.into();
-    println!("Added start/end acts!");
-    Ok(export_log)
-}
-
-#[pyfunction]
-fn test_df_pandas(df_serialized: String, format: String) -> PyResult<PyBridgeEventLog> {
+fn test_df_pandas(df_serialized: String, format: String) -> PyResult<PyDataFrame> {
     let df = match format.as_str() {
         "json" => polars::prelude::JsonReader::new(Cursor::new(df_serialized))
             .finish()
@@ -227,10 +46,9 @@ fn test_df_pandas(df_serialized: String, format: String) -> PyResult<PyBridgeEve
         )),
     }?;
     match convert_df_to_log(&df) {
-        Ok(log) => {
-            let mut log: EventLog = log.into();
+        Ok(mut log) => {
             add_start_end_acts(&mut log);
-            Ok(log.into())
+            Ok(PyDataFrame(convert_log_to_df(&log).unwrap()))
         }
         Err(e) => Err(PyErr::new::<PyTypeError, _>(format!(
             "Could not convert to EventLog: {}",
@@ -239,61 +57,158 @@ fn test_df_pandas(df_serialized: String, format: String) -> PyResult<PyBridgeEve
     }
 }
 
+fn attribute_to_any_value(from_option: Option<&Attribute>) -> AnyValue {
+    match from_option {
+        Some(from) => {
+            let x = attribute_value_to_any_value(&from.value);
+            x
+        }
+        None => AnyValue::Null,
+    }
+}
+
+fn attribute_value_to_any_value(from: &AttributeValue) -> AnyValue {
+    match from {
+        AttributeValue::String(v) => AnyValue::Utf8Owned(v.into()),
+        AttributeValue::Date(v) => AnyValue::Datetime(
+            v.timestamp_nanos(),
+            polars::prelude::TimeUnit::Nanoseconds,
+            &None,
+        ),
+        AttributeValue::Int(v) => AnyValue::Int64(*v),
+        AttributeValue::Float(v) => AnyValue::Float64(*v),
+        AttributeValue::Boolean(v) => AnyValue::Boolean(*v),
+        AttributeValue::ID(v) => {
+            let s = v.to_string();
+            AnyValue::Utf8Owned(s.into())
+        }
+        AttributeValue::List(_) => todo!(),
+        AttributeValue::Container(_) => todo!(),
+        AttributeValue::None() => AnyValue::Null,
+    }
+}
+
+fn any_value_to_attribute_value(from: &AnyValue) -> AttributeValue {
+    match from {
+        AnyValue::Null => AttributeValue::None(),
+        AnyValue::Boolean(v) => AttributeValue::Boolean(*v),
+        AnyValue::Utf8(v) => AttributeValue::String(v.to_string()),
+        AnyValue::UInt8(v) => AttributeValue::Int((*v).into()),
+        AnyValue::UInt16(v) => AttributeValue::Int((*v).into()),
+        AnyValue::UInt32(v) => AttributeValue::Int((*v).into()),
+        // // AnyValue::UInt64(v) => AttributeValue::Int((*v).into()),
+        AnyValue::Int8(v) => AttributeValue::Int((*v).into()),
+        AnyValue::Int16(v) => AttributeValue::Int((*v).into()),
+        AnyValue::Int32(v) => AttributeValue::Int((*v).into()),
+        AnyValue::Int64(v) => AttributeValue::Int((*v).into()),
+        AnyValue::Float32(v) => AttributeValue::Float((*v).into()),
+        AnyValue::Float64(v) => AttributeValue::Float((*v).into()),
+        AnyValue::Datetime(ns, _, _) => {
+            // Convert nanos to micros; tz is not used!
+            let d: DateTime<Utc> = NaiveDateTime::from_timestamp_micros(ns / 1000)
+                .unwrap()
+                .and_utc();
+            AttributeValue::Date(d)
+        }
+        AnyValue::Utf8Owned(v) => AttributeValue::String(v.to_string()),
+        x => AttributeValue::String(format!("{:?}", x)),
+    }
+}
+
+fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
+    let mut all_attributes: HashSet<String> = HashSet::new();
+    let now = Instant::now();
+    log.traces.iter().for_each(|t| {
+        t.attributes.keys().for_each(|s| {
+            all_attributes.insert(TRACE_PREFIX.to_string() + s.as_str());
+        });
+        t.events.iter().for_each(|e| {
+            e.attributes.keys().for_each(|s| {
+                all_attributes.insert(s.into());
+            });
+        })
+    });
+    println!("Gathering all attribute names took {:.2?}", now.elapsed());
+    let x: Vec<Series> = all_attributes
+        .iter()
+        .map(|k| {
+            let entries: Vec<AnyValue> = log
+                .traces
+                .par_iter()
+                .map(|t| -> Vec<AnyValue> {
+                    if k.starts_with(TRACE_PREFIX) {
+                        let trace_k: String = k.chars().skip(TRACE_PREFIX.len()).collect();
+                        vec![attribute_to_any_value(t.attributes.get(&trace_k)); t.events.len()]
+                    } else {
+                        t.events
+                            .iter()
+                            .map(|e| attribute_to_any_value(e.attributes.get(k)))
+                            .collect()
+                    }
+                })
+                .flatten()
+                .collect();
+
+            println!(
+                "Before creation of series for {}: {:?}",
+                k,
+                entries.get(1).unwrap()
+            );
+            Series::new(k, &entries)
+        })
+        .collect();
+    let df = DataFrame::new(x).unwrap();
+    return Ok(df);
+}
+
 /**
 Convert Polars DataFrame to PyBridgeEventLog
 - Extracts attributes as Strings (converting other formats using debug format macro)
-- Assumes valid EventLog structure of DataFrame (i.e., assuming that [TRACE_ID_NAME] is present)
+- Assumes valid EventLog structure of DataFrame (i.e., assuming that [PREFIXED_TRACE_ID_NAME] is present)
 */
-fn convert_df_to_log(df: &DataFrame) -> Result<PyBridgeEventLog, PolarsError> {
-    let groups = df.partition_by_stable([TRACE_ID_NAME], true)?;
+fn convert_df_to_log(df: &DataFrame) -> Result<EventLog, PolarsError> {
+    let groups = df.partition_by_stable([PREFIXED_TRACE_ID_NAME], true)?;
     let columns = df.get_column_names();
-    let mut log = PyBridgeEventLog {
-        attributes: PyBridgeAttributes::default(),
+    let mut log = EventLog {
+        attributes: Attributes::default(),
         traces: vec![],
     };
-
-    let traces: Vec<PyBridgeTrace> = groups
+    let traces: Vec<Trace> = groups
         .par_iter()
         .map(|g| {
-            let events: Vec<PyBridgeEvent> = (0..g.height())
+            let mut trace_attributes: Attributes = Attributes::new();
+            let events: Vec<Event> = (0..g.height())
                 .into_iter()
                 .map(|i| {
-                    let attributes: HashMap<String, String> = match g.get_row(i) {
-                        Ok(val) => columns
-                            .iter()
-                            .zip(val.0.iter())
-                            .map(|(c, v)| {
-                                return (
+                    let mut event_attributes: Attributes = Attributes::new();
+                    columns
+                        .iter()
+                        .zip(g.get_row(i).unwrap().0.iter())
+                        .for_each(|(c, v)| {
+                            if c.starts_with(TRACE_PREFIX) {
+                                // e.g.,
+                                let (_, c) = c.split_once(TRACE_PREFIX).unwrap();
+                                trace_attributes.add_to_attributes(
                                     c.to_string(),
-                                    match v {
-                                        AnyValue::Utf8(x) => x.to_string(),
-                                        o => {
-                                            format!("{:?}", o)
-                                        }
-                                    },
-                                );
-                            })
-                            .collect(),
-                        Err(_) => HashMap::default(),
-                    };
+                                    any_value_to_attribute_value(v),
+                                )
+                            } else {
+                                event_attributes.add_to_attributes(
+                                    c.to_string(),
+                                    any_value_to_attribute_value(v),
+                                )
+                            }
+                        });
 
-                    PyBridgeEvent {
-                        attributes: attributes.into(),
+                    Event {
+                        attributes: event_attributes,
                     }
                 })
                 .collect();
-            let trace_id = match events.get(0) {
-                Some(ev) => ev
-                    .attributes
-                    .attributes
-                    .get(TRACE_ID_NAME)
-                    .unwrap_or(&"__NO_TRACE_ID__".to_string())
-                    .clone(),
-                None => "__NO_TRACE_ID__".to_string(),
+            return Trace {
+                attributes: trace_attributes,
+                events,
             };
-            let mut trace = PyBridgeTrace::new(trace_id);
-            trace.events = events;
-            return trace;
         })
         .collect();
     log.traces = traces;
@@ -301,10 +216,13 @@ fn convert_df_to_log(df: &DataFrame) -> Result<PyBridgeEventLog, PolarsError> {
 }
 
 #[pyfunction]
-fn polars_df_to_log(pydf: PyDataFrame) -> PyResult<PyBridgeEventLog> {
+fn polars_df_to_log(pydf: PyDataFrame) -> PyResult<PyDataFrame> {
     let df: DataFrame = pydf.into();
     match convert_df_to_log(&df) {
-        Ok(log) => Ok(log),
+        Ok(mut log) => {
+            add_start_end_acts(&mut log);
+            Ok(PyDataFrame(convert_log_to_df(&log).unwrap()))
+        }
         Err(e) => Err(PyErr::new::<PyTypeError, _>(format!(
             "Could not convert to EventLog: {}",
             e.to_string()
@@ -312,93 +230,9 @@ fn polars_df_to_log(pydf: PyDataFrame) -> PyResult<PyBridgeEventLog> {
     }
 }
 
-#[pyfunction]
-fn test_event_log(py: Python<'_>, log_py: Py<PyAny>) -> PyResult<Py<PyAny>> {
-    let mut now = Instant::now();
-    let mut log: EventLog = depythonize(log_py.as_ref(py)).unwrap();
-    println!("Time until struct ready: {:.2?}", now.elapsed());
-    now = Instant::now();
-    log.attributes.insert(
-        "name".to_string(),
-        "Transformed Rust Log from byte[]".into(),
-    );
-    println!("Time until into EventLog: {:.2?}", now.elapsed());
-    now = Instant::now();
-    add_start_end_acts(&mut log);
-    println!("Time until start/end added: {:.2?}", now.elapsed());
-    now = Instant::now();
-    let log_projection: EventLogActivityProjection<usize> = log.into();
-    let log_again: EventLog = log_projection.into();
-    println!("Time until into/from: {:.2?}", now.elapsed());
-    now = Instant::now();
-    let x: Py<PyAny> = pythonize(py, &log_again).unwrap();
-    println!("Export to python: {:.2?}", now.elapsed());
-    Ok(x)
-}
-
-#[pyfunction]
-fn test_event_log_str(log: String) -> PyResult<String> {
-    let mut log: EventLog = import_log_from_str(log);
-    //  Python::with_gil(|py| {
-    //     let mut log: EventLog = depythonize(log.as_ref(py)).unwrap();
-    add_start_end_acts(&mut log);
-    //     // let log_projection: EventLogActivityProjection<usize> = log.into();
-    //     // println!("Projection with activities {:?}",log_projection.activities);
-    //     // let log: EventLog = log_projection.into();
-    //     let back: Py<PyAny> = pythonize(py,&log).unwrap();
-    //     back
-    Ok(export_log_to_string(&log))
-    // })
-}
-
-#[pyfunction]
-fn test_event_log_bytes(py: Python<'_>, log_bytes: Py<PyBytes>) -> PyResult<&PyBytes> {
-    let mut now = Instant::now();
-    let bytes: &[u8] = log_bytes.extract(py).unwrap();
-    println!("Got {:?} bytes in {:.2?}", bytes.len(), now.elapsed());
-    now = Instant::now();
-    let mut log: EventLog = import_log_from_byte_array(&bytes);
-
-    println!("Time until struct ready: {:.2?}", now.elapsed());
-    now = Instant::now();
-    log.attributes.insert(
-        "name".to_string(),
-        "Transformed Rust Log from byte[]".into(),
-    );
-    println!("Time until into EventLog: {:.2?}", now.elapsed());
-    now = Instant::now();
-    add_start_end_acts(&mut log);
-    println!("Time until start/end added: {:.2?}", now.elapsed());
-    now = Instant::now();
-    let log_projection: EventLogActivityProjection<usize> = log.into();
-    let log_again: EventLog = log_projection.into();
-    println!("Time until into/from: {:.2?}", now.elapsed());
-    now = Instant::now();
-    let export_vec = export_log_to_byte_vec(&log_again);
-    println!("ExportVec to byte array: {:.2?}", now.elapsed());
-    let py_bytes = PyBytes::new(py, &export_vec);
-    Ok(py_bytes)
-}
-
-#[pyfunction]
-fn get_result_map(a: usize, b: usize) -> PyResult<HashMap<String, f32>> {
-    let mut map: HashMap<String, f32> = HashMap::new();
-    map.insert("Result".into(), loop_sum_sqrt(a, b));
-    Ok(map)
-}
-
 #[pymodule]
 fn rust_bridge_pm_py(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(get_event, m)?)?;
-    m.add_function(wrap_pyfunction!(get_result_map, m)?)?;
-    m.add_function(wrap_pyfunction!(test_event_log, m)?)?;
-    m.add_function(wrap_pyfunction!(test_event_log_str, m)?)?;
-    m.add_function(wrap_pyfunction!(test_event_log_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(polars_df_to_log, m)?)?;
-    m.add_function(wrap_pyfunction!(test_bridge_log, m)?)?;
     m.add_function(wrap_pyfunction!(test_df_pandas, m)?)?;
-    m.add_class::<PyBridgeEvent>()?;
-    m.add_class::<PyBridgeTrace>()?;
-    m.add_class::<PyBridgeEventLog>()?;
     Ok(())
 }
