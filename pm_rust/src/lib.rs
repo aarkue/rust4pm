@@ -1,5 +1,5 @@
 pub use chrono::NaiveDateTime;
-pub use chrono::{serde::ts_milliseconds, DateTime, Utc};
+pub use chrono::{serde::ts_milliseconds, DateTime, Utc, TimeZone};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -15,8 +15,9 @@ pub const START_EVENT: &str = "__START__";
 pub const END_EVENT: &str = "__END__";
 
 pub const ACTIVITY_NAME: &str = "concept:name";
-#[allow(dead_code)]
-pub const TRACE_ID_NAME: &str = "case:concept:name";
+pub const TRACE_PREFIX: &str = "case:";
+pub const TRACE_ID_NAME: &str = "concept:name";
+pub const PREFIXED_TRACE_ID_NAME: &str = "case:concept:name";
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(tag = "type", content = "content")]
@@ -30,6 +31,7 @@ pub enum AttributeValue {
     ID(Uuid),
     List(Vec<Attribute>),
     Container(Attributes),
+    None(),
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -55,19 +57,19 @@ impl Attribute {
     }
 }
 pub type Attributes = HashMap<String, Attribute>;
-pub trait AttributeAddable{
+pub trait AttributeAddable {
     fn add_to_attributes(self: &mut Self, key: String, value: AttributeValue);
 }
 
 impl AttributeAddable for Attributes {
-    fn add_to_attributes(self: &mut Self, key: String, value: AttributeValue){
-        let (k,v) = Attribute::new_with_key(key, value);
-        self.insert(k,v);
+    fn add_to_attributes(self: &mut Self, key: String, value: AttributeValue) {
+        let (k, v) = Attribute::new_with_key(key, value);
+        self.insert(k, v);
     }
 }
-pub fn add_to_attributes(attributes: &mut Attributes, key: String, value: AttributeValue){
-    let (k,v) = Attribute::new_with_key(key, value);
-    attributes.insert(k,v);
+pub fn add_to_attributes(attributes: &mut Attributes, key: String, value: AttributeValue) {
+    let (k, v) = Attribute::new_with_key(key, value);
+    attributes.insert(k, v);
 }
 
 pub fn to_attributes(from: HashMap<String, AttributeValue>) -> Attributes {
@@ -104,6 +106,18 @@ impl Event {
 pub struct Trace {
     pub attributes: Attributes,
     pub events: Vec<Event>,
+}
+impl Trace {
+    pub fn new(activity: String) -> Self {
+        Trace {
+            events: Vec::new(),
+            attributes: to_attributes(
+                vec![(TRACE_ID_NAME.to_string(), AttributeValue::String(activity))]
+                    .into_iter()
+                    .collect(),
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
