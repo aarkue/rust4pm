@@ -1,10 +1,7 @@
-use std::collections::HashSet;
-use std::io::Cursor;
-use std::time::Instant;
-
 use chrono::DateTime;
 use chrono::NaiveDateTime;
 use pm_rust::add_start_end_acts;
+use pm_rust::xes::import_xes::import_log_xes;
 use pm_rust::Attribute;
 use pm_rust::AttributeAddable;
 use pm_rust::AttributeValue;
@@ -27,35 +24,8 @@ use pyo3::Python;
 use pyo3_polars::PyDataFrame;
 use rayon::prelude::IntoParallelRefIterator;
 use rayon::prelude::ParallelIterator;
-
-#[pyfunction]
-fn test_df_pandas(df_serialized: String, format: String) -> PyResult<PyDataFrame> {
-    let df = match format.as_str() {
-        "json" => polars::prelude::JsonReader::new(Cursor::new(df_serialized))
-            .finish()
-            .or(Err(PyErr::new::<PyTypeError, _>(
-                "Failed to parse JSON DataFrame.",
-            ))),
-        "csv" => polars::prelude::CsvReader::new(Cursor::new(df_serialized))
-            .finish()
-            .or(Err(PyErr::new::<PyTypeError, _>(
-                "Failed to parse CSV DataFrame.",
-            ))),
-        _ => Err(PyErr::new::<PyTypeError, _>(
-            "No valid DF format passed. Valid formats are 'json' and 'csv'.",
-        )),
-    }?;
-    match convert_df_to_log(&df) {
-        Ok(mut log) => {
-            add_start_end_acts(&mut log);
-            Ok(PyDataFrame(convert_log_to_df(&log).unwrap()))
-        }
-        Err(e) => Err(PyErr::new::<PyTypeError, _>(format!(
-            "Could not convert to EventLog: {}",
-            e.to_string()
-        ))),
-    }
-}
+use std::collections::HashSet;
+use std::io::Cursor;
 
 fn attribute_to_any_value(from_option: Option<&Attribute>) -> AnyValue {
     match from_option {
@@ -222,9 +192,46 @@ fn polars_df_to_log(pydf: PyDataFrame) -> PyResult<PyDataFrame> {
     }
 }
 
+#[pyfunction]
+fn import_xes(path: String) -> PyResult<PyDataFrame> {
+    let log = import_log_xes(&path);
+    // add_start_end_acts(&mut log);
+    Ok(PyDataFrame(convert_log_to_df(&log).unwrap()))
+}
+
+#[pyfunction]
+fn test_df_pandas(df_serialized: String, format: String) -> PyResult<PyDataFrame> {
+    let df = match format.as_str() {
+        "json" => polars::prelude::JsonReader::new(Cursor::new(df_serialized))
+            .finish()
+            .or(Err(PyErr::new::<PyTypeError, _>(
+                "Failed to parse JSON DataFrame.",
+            ))),
+        "csv" => polars::prelude::CsvReader::new(Cursor::new(df_serialized))
+            .finish()
+            .or(Err(PyErr::new::<PyTypeError, _>(
+                "Failed to parse CSV DataFrame.",
+            ))),
+        _ => Err(PyErr::new::<PyTypeError, _>(
+            "No valid DF format passed. Valid formats are 'json' and 'csv'.",
+        )),
+    }?;
+    match convert_df_to_log(&df) {
+        Ok(mut log) => {
+            add_start_end_acts(&mut log);
+            Ok(PyDataFrame(convert_log_to_df(&log).unwrap()))
+        }
+        Err(e) => Err(PyErr::new::<PyTypeError, _>(format!(
+            "Could not convert to EventLog: {}",
+            e.to_string()
+        ))),
+    }
+}
+
 #[pymodule]
 fn rust_bridge_pm_py(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(polars_df_to_log, m)?)?;
     m.add_function(wrap_pyfunction!(test_df_pandas, m)?)?;
+    m.add_function(wrap_pyfunction!(import_xes, m)?)?;
     Ok(())
 }
