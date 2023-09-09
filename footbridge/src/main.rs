@@ -1,7 +1,7 @@
 use std::vec;
 
 use pm_rust::{
-    xes::import_xes::import_log_xes, Attribute, AttributeAddable, AttributeValue, Attributes,
+    event_log::import_xes::import_log_xes, Attribute, AttributeAddable, AttributeValue, Attributes,
     DateTime, Utc, Uuid,
 };
 fn main() {
@@ -53,6 +53,6 @@ fn main() {
     // let json = serde_json::to_string_pretty(&event.attributes).unwrap();
     // println!("{}", json);
 
-    let log =
+    let _log =
         import_log_xes(&"/home/aarkue/dow/event_logs/BPI_Challenge_2020_request_for_payments.xes");
 }

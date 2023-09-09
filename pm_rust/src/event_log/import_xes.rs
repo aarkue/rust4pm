@@ -7,13 +7,7 @@ use quick_xml::events::BytesStart;
 use quick_xml::Reader;
 use uuid::Uuid;
 
-use crate::AttributeAddable;
-use crate::AttributeValue;
-use crate::Attributes;
-
-use crate::Event;
-use crate::EventLog;
-use crate::Trace;
+use crate::event_log::event_log_struct::{AttributeValue, Attributes, Event, EventLog, Trace, AttributeAddable};
 
 #[derive(Clone, Copy)]
 enum Mode {
