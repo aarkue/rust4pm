@@ -1,4 +1,5 @@
 #![allow(non_snake_case)]
+
 pub use copy_log::copy_log_shared::JEvent;
 mod copy_log {
     pub mod copy_log_shared;
@@ -12,7 +13,11 @@ use jni::{
 };
 
 use jni_fn::jni_fn;
-use pm_rust::{add_start_end_acts, Attribute, AttributeValue, EventLog};
+use pm_rust::{
+    add_start_end_acts,
+    petri_net::petri_net_struct::{ArcType, PetriNet, PlaceID},
+    Attribute, AttributeValue, EventLog,
+};
 
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
 pub unsafe fn addStartEndToRustLog<'local>(mut _env: JNIEnv<'local>, _: JClass, pointer: jlong) {
@@ -64,4 +69,45 @@ pub unsafe fn getRustTraceLengths<'local>(
     // memory of log_pointer should _not_ be destroyed!
     let _log_pointer = Box::into_raw(log_pointer);
     trace_lengths_j
+}
+
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+pub unsafe fn addSampleDisconnectedNet<'local>(
+    mut env: JNIEnv<'local>,
+    _: JClass,
+    net_json: JString,
+) -> JString<'local> {
+    let mut net: PetriNet =
+        serde_json::from_str(env.get_string(&net_json).unwrap().to_str().unwrap()).unwrap();
+    let t1 = net.add_transition(Some("Use rust".into()), None);
+    let start_places: Vec<PlaceID> = net
+        .places
+        .iter()
+        .filter_map(|(_, p)| {
+            if net.preset_of_place(p.into()).is_empty() {
+                Some(p.into())
+            } else {
+                None
+            }
+        })
+        .collect();
+    let end_places: Vec<PlaceID> = net
+        .places
+        .iter()
+        .filter_map(|(_, p)| {
+            if net.postset_of_place(p.into()).is_empty() {
+                Some(p.into())
+            } else {
+                None
+            }
+        })
+        .collect();
+    start_places
+        .into_iter()
+        .for_each(|p| net.add_arc(ArcType::place_to_transition(p, t1), None));
+    end_places
+        .into_iter()
+        .for_each(|p| net.add_arc(ArcType::transition_to_place(t1,p), None));
+    let res_json = serde_json::to_string(&net).unwrap();
+    env.new_string(res_json).unwrap()
 }

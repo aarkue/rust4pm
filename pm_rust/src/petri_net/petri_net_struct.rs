@@ -2,18 +2,18 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-struct Place {
+pub struct Place {
     id: Uuid,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-struct Transition {
+pub struct Transition {
     label: Option<String>,
     id: Uuid,
 }
 
 #[derive(Debug)]
-enum PetriNetNodes {
+pub enum PetriNetNodes {
     None,
     Places(Vec<PlaceID>),
     Transitions(Vec<TransitionID>),
@@ -21,28 +21,28 @@ enum PetriNetNodes {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", content = "nodes")]
-enum ArcType {
+pub enum ArcType {
     PlaceTransition(Uuid, Uuid),
     TransitionPlace(Uuid, Uuid),
 }
 
 impl ArcType {
-  fn place_to_transition(from: PlaceID, to: TransitionID) -> ArcType{
+  pub fn place_to_transition(from: PlaceID, to: TransitionID) -> ArcType{
     return ArcType::PlaceTransition(from.0, to.0)
   }
-  fn transition_to_place(from: TransitionID, to: PlaceID) -> ArcType{
+  pub fn transition_to_place(from: TransitionID, to: PlaceID) -> ArcType{
     return ArcType::TransitionPlace(from.0, to.0)
   }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct Arc {
+pub struct Arc {
     from_to: ArcType,
     weight: u32,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-struct PlaceID(Uuid);
+pub struct PlaceID(Uuid);
 impl From<&Place> for PlaceID {
     fn from(value: &Place) -> Self {
         PlaceID(value.id)
@@ -50,7 +50,7 @@ impl From<&Place> for PlaceID {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
-struct TransitionID(Uuid);
+pub struct TransitionID(Uuid);
 impl From<&Transition> for TransitionID {
     fn from(value: &Transition) -> Self {
         TransitionID(value.id)
@@ -58,28 +58,28 @@ impl From<&Transition> for TransitionID {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct PetriNet {
+pub struct PetriNet {
     pub places: HashMap<Uuid, Place>,
     pub transitions: HashMap<Uuid, Transition>,
     pub arcs: Vec<Arc>,
 }
 
 impl PetriNet {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             places: HashMap::new(),
             transitions: HashMap::new(),
             arcs: Vec::new(),
         }
     }
-    fn add_place(&mut self, place_id: Option<Uuid>) -> PlaceID {
+    pub fn add_place(&mut self, place_id: Option<Uuid>) -> PlaceID {
         let place_id = place_id.unwrap_or(Uuid::new_v4());
         let place = Place { id: place_id };
         self.places.insert(place_id, place);
         return PlaceID(place_id)
     }
 
-    fn add_transition(&mut self, label: Option<String>, transition_id: Option<Uuid>) -> TransitionID {
+    pub fn add_transition(&mut self, label: Option<String>, transition_id: Option<Uuid>) -> TransitionID {
         let transition_id = transition_id.unwrap_or(Uuid::new_v4());
         let transition = Transition {
             id: transition_id,
@@ -88,14 +88,14 @@ impl PetriNet {
         self.transitions.insert(transition_id, transition);
         return TransitionID(transition_id)
     }
-    fn add_arc(&mut self, from_to: ArcType, weight: Option<u32>) {
+    pub fn add_arc(&mut self, from_to: ArcType, weight: Option<u32>) {
         self.arcs.push(Arc {
             from_to: from_to,
             weight: weight.unwrap_or(1),
         });
     }
 
-    fn preset_of(&self, id: Uuid) -> PetriNetNodes {
+    pub fn preset_of(&self, id: Uuid) -> PetriNetNodes {
         if self.places.contains_key(&id) {
             let p = self.places.get(&id).unwrap();
             PetriNetNodes::Transitions(self.preset_of_place(p.into()))
@@ -107,7 +107,7 @@ impl PetriNet {
         }
     }
 
-    fn preset_of_place(&self, p: PlaceID) -> Vec<TransitionID> {
+    pub fn preset_of_place(&self, p: PlaceID) -> Vec<TransitionID> {
         self.arcs
             .iter()
             .filter_map(|x: &Arc| match x.from_to {
@@ -117,7 +117,7 @@ impl PetriNet {
             .collect()
     }
 
-    fn preset_of_transition(&self, t: TransitionID) -> Vec<PlaceID> {
+    pub fn preset_of_transition(&self, t: TransitionID) -> Vec<PlaceID> {
         self.arcs
             .iter()
             .filter_map(|x: &Arc| match x.from_to {
@@ -127,7 +127,7 @@ impl PetriNet {
             .collect()
     }
  
-    fn postset_of(&self, id: Uuid) -> PetriNetNodes {
+    pub fn postset_of(&self, id: Uuid) -> PetriNetNodes {
       if self.places.contains_key(&id) {
           let p = self.places.get(&id).unwrap();
           PetriNetNodes::Transitions(self.postset_of_place(p.into()))
@@ -139,7 +139,7 @@ impl PetriNet {
       }
   }
 
-    fn postset_of_place(&self, p: PlaceID) -> Vec<TransitionID> {
+    pub fn postset_of_place(&self, p: PlaceID) -> Vec<TransitionID> {
         self.arcs
             .iter()
             .filter_map(|x: &Arc| match x.from_to {
@@ -149,7 +149,7 @@ impl PetriNet {
             .collect()
     }
 
-    fn postset_of_transition(&self, t: TransitionID) -> Vec<PlaceID> {
+    pub fn postset_of_transition(&self, t: TransitionID) -> Vec<PlaceID> {
         self.arcs
             .iter()
             .filter_map(|x: &Arc| match x.from_to {
