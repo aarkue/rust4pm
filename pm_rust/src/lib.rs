@@ -1,6 +1,7 @@
 pub use chrono::NaiveDateTime;
 pub use chrono::{serde::ts_milliseconds, DateTime, Utc, TimeZone};
 pub use event_log::event_log_struct::{EventLog, AttributeValue, Attribute, Attributes, Event, Trace, AttributeAddable};
+use petri_net::petri_net_struct::{PetriNet, PlaceID, ArcType};
 use rayon::prelude::*;
 use std::{
     fs::File,
@@ -35,6 +36,45 @@ pub fn add_start_end_acts(log: &mut EventLog) {
         t.events.insert(0, start_event);
         t.events.push(end_event);
     });
+}
+
+pub fn add_sample_transition(net: &mut PetriNet) {
+    let t1 = net.add_transition(Some("Use rust".into()), None);
+    let start_places: Vec<PlaceID> = net
+        .places
+        .iter()
+        .filter_map(|(_, p)| {
+            if net.preset_of_place(p.into()).is_empty() {
+                Some(p.into())
+            } else {
+                None
+            }
+        })
+        .collect();
+    let end_places: Vec<PlaceID> = net
+        .places
+        .iter()
+        .filter_map(|(_, p)| {
+            if net.postset_of_place(p.into()).is_empty() {
+                Some(p.into())
+            } else {
+                None
+            }
+        })
+        .collect();
+    start_places
+        .into_iter()
+        .for_each(|p| net.add_arc(ArcType::place_to_transition(p, t1), None));
+    end_places
+        .into_iter()
+        .for_each(|p| net.add_arc(ArcType::transition_to_place(t1,p), None));
+}
+
+pub fn petrinet_to_json(net: &PetriNet) -> String{
+    serde_json::to_string(net).unwrap()
+}
+pub fn json_to_petrinet(net_json: &str) -> PetriNet{
+    serde_json::from_str(&net_json).unwrap()
 }
 
 pub fn export_log<P: AsRef<Path>>(path: P, log: &EventLog) {

@@ -14,9 +14,9 @@ use jni::{
 
 use jni_fn::jni_fn;
 use pm_rust::{
-    add_start_end_acts,
+    add_sample_transition, add_start_end_acts, json_to_petrinet,
     petri_net::petri_net_struct::{ArcType, PetriNet, PlaceID},
-    Attribute, AttributeValue, EventLog,
+    petrinet_to_json, Attribute, AttributeValue, EventLog,
 };
 
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
@@ -77,37 +77,7 @@ pub unsafe fn addSampleDisconnectedNet<'local>(
     _: JClass,
     net_json: JString,
 ) -> JString<'local> {
-    let mut net: PetriNet =
-        serde_json::from_str(env.get_string(&net_json).unwrap().to_str().unwrap()).unwrap();
-    let t1 = net.add_transition(Some("Use rust".into()), None);
-    let start_places: Vec<PlaceID> = net
-        .places
-        .iter()
-        .filter_map(|(_, p)| {
-            if net.preset_of_place(p.into()).is_empty() {
-                Some(p.into())
-            } else {
-                None
-            }
-        })
-        .collect();
-    let end_places: Vec<PlaceID> = net
-        .places
-        .iter()
-        .filter_map(|(_, p)| {
-            if net.postset_of_place(p.into()).is_empty() {
-                Some(p.into())
-            } else {
-                None
-            }
-        })
-        .collect();
-    start_places
-        .into_iter()
-        .for_each(|p| net.add_arc(ArcType::place_to_transition(p, t1), None));
-    end_places
-        .into_iter()
-        .for_each(|p| net.add_arc(ArcType::transition_to_place(t1,p), None));
-    let res_json = serde_json::to_string(&net).unwrap();
-    env.new_string(res_json).unwrap()
+    let mut net: PetriNet = json_to_petrinet(&env.get_string(&net_json).unwrap().to_str().unwrap());
+    add_sample_transition(&mut net);
+    env.new_string(petrinet_to_json(&net)).unwrap()
 }

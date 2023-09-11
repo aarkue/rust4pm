@@ -1,5 +1,6 @@
 use chrono::DateTime;
 use chrono::NaiveDateTime;
+use pm_rust::add_sample_transition;
 use pm_rust::add_start_end_acts;
 use pm_rust::Attribute;
 use pm_rust::AttributeAddable;
@@ -12,6 +13,10 @@ use pm_rust::Utc;
 use pm_rust::event_log::constants::PREFIXED_TRACE_ID_NAME;
 use pm_rust::event_log::constants::TRACE_PREFIX;
 use pm_rust::event_log::import_xes::import_log_xes;
+use pm_rust::json_to_petrinet;
+use pm_rust::petri_net::petri_net_struct::PetriNet;
+use pm_rust::petri_net::petri_net_struct::SAMPLE_JSON_NET;
+use pm_rust::petrinet_to_json;
 use polars::prelude::AnyValue;
 use polars::prelude::DataFrame;
 use polars::prelude::NamedFrom;
@@ -228,10 +233,19 @@ fn test_df_pandas(df_serialized: String, format: String) -> PyResult<PyDataFrame
     }
 }
 
+
+#[pyfunction]
+fn test_petrinet(net_json: String) -> PyResult<String> {
+    let mut net: PetriNet = json_to_petrinet(&net_json);
+    add_sample_transition(&mut net);
+    Ok(petrinet_to_json(&net))
+}
+
 #[pymodule]
 fn rust_bridge_pm_py(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(polars_df_to_log, m)?)?;
     m.add_function(wrap_pyfunction!(test_df_pandas, m)?)?;
     m.add_function(wrap_pyfunction!(import_xes, m)?)?;
+    m.add_function(wrap_pyfunction!(test_petrinet, m)?)?;
     Ok(())
 }

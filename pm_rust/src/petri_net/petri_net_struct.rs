@@ -160,6 +160,110 @@ impl PetriNet {
     }
 }
 
+pub const SAMPLE_JSON_NET : &str =  r#"
+{
+    "places": {
+        "f20ded2a-d308-44d7-abb2-6d0acd30e43e": {
+            "id": "f20ded2a-d308-44d7-abb2-6d0acd30e43e"
+        },
+        "25f9c84b-f220-4e7f-a86e-bb3f82676bb9": {
+            "id": "25f9c84b-f220-4e7f-a86e-bb3f82676bb9"
+        },
+        "15810d3d-922c-43fc-bcd5-8d6e592ea537": {
+            "id": "15810d3d-922c-43fc-bcd5-8d6e592ea537"
+        },
+        "a75faf03-731d-4c8c-9810-5a36c7e8c26b": {
+            "id": "a75faf03-731d-4c8c-9810-5a36c7e8c26b"
+        }
+    },
+    "transitions": {
+        "0c768c77-6408-4f4f-88b8-13d9cc8fca20": {
+            "id": "0c768c77-6408-4f4f-88b8-13d9cc8fca20",
+            "label": "Inform User"
+        },
+        "54f78f93-523f-4e1e-a0f7-cd79e73dc473": {
+            "id": "54f78f93-523f-4e1e-a0f7-cd79e73dc473",
+            "label": "Register"
+        },
+        "f18e00b0-e90b-48f6-99b7-9ee526571213": {
+            "id": "f18e00b0-e90b-48f6-99b7-9ee526571213",
+            "label": "Archive Repair"
+        },
+        "97d666fc-a78b-481d-9a5a-0cad157682ca": {
+            "id": "97d666fc-a78b-481d-9a5a-0cad157682ca",
+            "label": "Analyze Defect"
+        },
+        "78266d34-8abf-43ab-99bc-69e5e93c24b1": {
+            "id": "78266d34-8abf-43ab-99bc-69e5e93c24b1",
+            "label": "Repair (Simple)"
+        },
+        "5e8f7aff-81d4-4822-a30f-875ecc0a06f0": {
+            "id": "5e8f7aff-81d4-4822-a30f-875ecc0a06f0",
+            "label": "Repair (Complex)"
+        },
+        "18915408-cc29-4a7c-ab93-8a33e78a277a": {
+            "id": "18915408-cc29-4a7c-ab93-8a33e78a277a",
+            "label": "Test Repair"
+        },
+        "2da04f6f-dacb-46ac-82fd-39d0dfe44c33": {
+            "id": "2da04f6f-dacb-46ac-82fd-39d0dfe44c33",
+            "label": "Restart Repair"
+        }
+    },
+    "arcs": [
+        {
+            "from_to": {
+                "type": "TransitionPlace",
+                "nodes": [
+                    "f18e00b0-e90b-48f6-99b7-9ee526571213",
+                    "f20ded2a-d308-44d7-abb2-6d0acd30e43e"
+                ]
+            },
+            "weight": 1
+        },
+        {
+            "from_to": {
+                "type": "TransitionPlace",
+                "nodes": [
+                    "0c768c77-6408-4f4f-88b8-13d9cc8fca20",
+                    "a75faf03-731d-4c8c-9810-5a36c7e8c26b"
+                ]
+            },
+            "weight": 1
+        },
+        {
+            "from_to": {
+                "type": "PlaceTransition",
+                "nodes": [
+                    "15810d3d-922c-43fc-bcd5-8d6e592ea537",
+                    "54f78f93-523f-4e1e-a0f7-cd79e73dc473"
+                ]
+            },
+            "weight": 1
+        },
+        {
+            "from_to": {
+                "type": "PlaceTransition",
+                "nodes": [
+                    "25f9c84b-f220-4e7f-a86e-bb3f82676bb9",
+                    "f18e00b0-e90b-48f6-99b7-9ee526571213"
+                ]
+            },
+            "weight": 1
+        },
+        {
+            "from_to": {
+                "type": "TransitionPlace",
+                "nodes": [
+                    "0c768c77-6408-4f4f-88b8-13d9cc8fca20",
+                    "25f9c84b-f220-4e7f-a86e-bb3f82676bb9"
+                ]
+            },
+            "weight": 1
+        }
+    ]
+}
+"#;
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,111 +287,8 @@ mod tests {
 
     #[test]
     fn deserialize_petri_net_test(){
-        let json = r#"
-        {
-            "places": {
-                "f20ded2a-d308-44d7-abb2-6d0acd30e43e": {
-                    "id": "f20ded2a-d308-44d7-abb2-6d0acd30e43e"
-                },
-                "25f9c84b-f220-4e7f-a86e-bb3f82676bb9": {
-                    "id": "25f9c84b-f220-4e7f-a86e-bb3f82676bb9"
-                },
-                "15810d3d-922c-43fc-bcd5-8d6e592ea537": {
-                    "id": "15810d3d-922c-43fc-bcd5-8d6e592ea537"
-                },
-                "a75faf03-731d-4c8c-9810-5a36c7e8c26b": {
-                    "id": "a75faf03-731d-4c8c-9810-5a36c7e8c26b"
-                }
-            },
-            "transitions": {
-                "0c768c77-6408-4f4f-88b8-13d9cc8fca20": {
-                    "id": "0c768c77-6408-4f4f-88b8-13d9cc8fca20",
-                    "label": "Inform User"
-                },
-                "54f78f93-523f-4e1e-a0f7-cd79e73dc473": {
-                    "id": "54f78f93-523f-4e1e-a0f7-cd79e73dc473",
-                    "label": "Register"
-                },
-                "f18e00b0-e90b-48f6-99b7-9ee526571213": {
-                    "id": "f18e00b0-e90b-48f6-99b7-9ee526571213",
-                    "label": "Archive Repair"
-                },
-                "97d666fc-a78b-481d-9a5a-0cad157682ca": {
-                    "id": "97d666fc-a78b-481d-9a5a-0cad157682ca",
-                    "label": "Analyze Defect"
-                },
-                "78266d34-8abf-43ab-99bc-69e5e93c24b1": {
-                    "id": "78266d34-8abf-43ab-99bc-69e5e93c24b1",
-                    "label": "Repair (Simple)"
-                },
-                "5e8f7aff-81d4-4822-a30f-875ecc0a06f0": {
-                    "id": "5e8f7aff-81d4-4822-a30f-875ecc0a06f0",
-                    "label": "Repair (Complex)"
-                },
-                "18915408-cc29-4a7c-ab93-8a33e78a277a": {
-                    "id": "18915408-cc29-4a7c-ab93-8a33e78a277a",
-                    "label": "Test Repair"
-                },
-                "2da04f6f-dacb-46ac-82fd-39d0dfe44c33": {
-                    "id": "2da04f6f-dacb-46ac-82fd-39d0dfe44c33",
-                    "label": "Restart Repair"
-                }
-            },
-            "arcs": [
-                {
-                    "from_to": {
-                        "type": "TransitionPlace",
-                        "nodes": [
-                            "f18e00b0-e90b-48f6-99b7-9ee526571213",
-                            "f20ded2a-d308-44d7-abb2-6d0acd30e43e"
-                        ]
-                    },
-                    "weight": 1
-                },
-                {
-                    "from_to": {
-                        "type": "TransitionPlace",
-                        "nodes": [
-                            "0c768c77-6408-4f4f-88b8-13d9cc8fca20",
-                            "a75faf03-731d-4c8c-9810-5a36c7e8c26b"
-                        ]
-                    },
-                    "weight": 1
-                },
-                {
-                    "from_to": {
-                        "type": "PlaceTransition",
-                        "nodes": [
-                            "15810d3d-922c-43fc-bcd5-8d6e592ea537",
-                            "54f78f93-523f-4e1e-a0f7-cd79e73dc473"
-                        ]
-                    },
-                    "weight": 1
-                },
-                {
-                    "from_to": {
-                        "type": "PlaceTransition",
-                        "nodes": [
-                            "25f9c84b-f220-4e7f-a86e-bb3f82676bb9",
-                            "f18e00b0-e90b-48f6-99b7-9ee526571213"
-                        ]
-                    },
-                    "weight": 1
-                },
-                {
-                    "from_to": {
-                        "type": "TransitionPlace",
-                        "nodes": [
-                            "0c768c77-6408-4f4f-88b8-13d9cc8fca20",
-                            "25f9c84b-f220-4e7f-a86e-bb3f82676bb9"
-                        ]
-                    },
-                    "weight": 1
-                }
-            ]
-        }
-        "#;
-        let pn : PetriNet = serde_json::from_str(json).unwrap();
+       
+        let pn : PetriNet = serde_json::from_str(SAMPLE_JSON_NET).unwrap();
         assert!(pn.places.len() == 4);
         assert!(pn.postset_of_transition(TransitionID(Uuid::parse_str("0c768c77-6408-4f4f-88b8-13d9cc8fca20").unwrap())).len() == 2);
     }
