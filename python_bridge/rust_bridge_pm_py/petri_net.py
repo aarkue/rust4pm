@@ -26,20 +26,17 @@ def dict_to_petrinet(net_dict) -> PetriNet:
 
 def petrinet_to_dict(net: PetriNet) -> dict:
     import uuid
-    name_to_id = dict()
+    # Used to save a mapping of python ids (e.g., id(p)) to the unique generated uuids (used in the dict)
+    pyid_to_uuid = dict()
     places = dict()
     for p in net.places:
         pid = str(uuid.uuid4())
-        if pid in name_to_id:
-            raise Exception("Same name used twice in petri net object")
-        name_to_id[id(p)] = pid
+        pyid_to_uuid[id(p)] = pid
         places[pid] = {"id": pid}
     transitions = dict()
     for t in net.transitions:
         tid = str(uuid.uuid4())
-        if tid in name_to_id:
-            raise Exception("Same name used twice in petri net object")
-        name_to_id[id(t)] = tid
+        pyid_to_uuid[id(t)] = tid
         transitions[tid] = {"id": tid, "label": t.label}
     arcs = [
         {
@@ -47,7 +44,7 @@ def petrinet_to_dict(net: PetriNet) -> dict:
                 "type": "PlaceTransition"
                 if type(arc.source) == PetriNet.Place
                 else "TransitionPlace",
-                "nodes": [name_to_id[id(arc.source)], name_to_id[id(arc.target)]],
+                "nodes": [pyid_to_uuid[id(arc.source)], pyid_to_uuid[id(arc.target)]],
             },
             "weight": arc.weight,
         }
