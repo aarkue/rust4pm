@@ -2,8 +2,6 @@ import pm4py
 from pm4py.objects.petri_net.obj import PetriNet
 
 
-// WORK IN PROGRESS
-
 def dict_to_petrinet(net_dict) -> PetriNet:
     places = {p["id"]: PetriNet.Place(p["id"])
               for p in net_dict["places"].values()}
@@ -41,7 +39,7 @@ def petrinet_to_dict(net: PetriNet) -> dict:
         tid = str(uuid.uuid4())
         if tid in name_to_id:
             raise Exception("Same name used twice in petri net object")
-        name_to_id[id(t)] = pid
+        name_to_id[id(t)] = tid
         transitions[tid] = {"id": tid, "label": t.label}
     arcs = [
         {
