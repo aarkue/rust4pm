@@ -2,6 +2,12 @@ use chrono::DateTime;
 use chrono::NaiveDateTime;
 use pm_rust::add_sample_transition;
 use pm_rust::add_start_end_acts;
+use pm_rust::event_log::constants::PREFIXED_TRACE_ID_NAME;
+use pm_rust::event_log::constants::TRACE_PREFIX;
+use pm_rust::event_log::import_xes::import_log_xes;
+use pm_rust::json_to_petrinet;
+use pm_rust::petri_net::petri_net_struct::PetriNet;
+use pm_rust::petrinet_to_json;
 use pm_rust::Attribute;
 use pm_rust::AttributeAddable;
 use pm_rust::AttributeValue;
@@ -10,13 +16,6 @@ use pm_rust::Event;
 use pm_rust::EventLog;
 use pm_rust::Trace;
 use pm_rust::Utc;
-use pm_rust::event_log::constants::PREFIXED_TRACE_ID_NAME;
-use pm_rust::event_log::constants::TRACE_PREFIX;
-use pm_rust::event_log::import_xes::import_log_xes;
-use pm_rust::json_to_petrinet;
-use pm_rust::petri_net::petri_net_struct::PetriNet;
-use pm_rust::petri_net::petri_net_struct::SAMPLE_JSON_NET;
-use pm_rust::petrinet_to_json;
 use polars::prelude::AnyValue;
 use polars::prelude::DataFrame;
 use polars::prelude::NamedFrom;
@@ -31,6 +30,7 @@ use rayon::prelude::IntoParallelRefIterator;
 use rayon::prelude::ParallelIterator;
 use std::collections::HashSet;
 use std::io::Cursor;
+use std::time::Instant;
 
 fn attribute_to_any_value(from_option: Option<&Attribute>) -> AnyValue {
     match from_option {
@@ -91,6 +91,8 @@ fn any_value_to_attribute_value(from: &AnyValue) -> AttributeValue {
 }
 
 fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
+    println!("Starting converting log to DataFrame");
+    let mut now = Instant::now();
     let mut all_attributes: HashSet<String> = HashSet::new();
     log.traces.iter().for_each(|t| {
         t.attributes.keys().for_each(|s| {
@@ -102,12 +104,14 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
             });
         })
     });
+    println!("Gathering all attributes took {:.2?}",now.elapsed());
+    now = Instant::now();
     let x: Vec<Series> = all_attributes
-        .iter()
+        .par_iter()
         .map(|k| {
             let entries: Vec<AnyValue> = log
                 .traces
-                .par_iter()
+                .iter()
                 .map(|t| -> Vec<AnyValue> {
                     if k.starts_with(TRACE_PREFIX) {
                         let trace_k: String = k.chars().skip(TRACE_PREFIX.len()).collect();
@@ -124,7 +128,11 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
             Series::new(k, &entries)
         })
         .collect();
+
+    println!("Creating a Series for every Attribute took {:.2?}",now.elapsed());
+    now = Instant::now();
     let df = DataFrame::new(x).unwrap();
+    println!("Constructing DF from Attribute Series took {:.2?}",now.elapsed());
     return Ok(df);
 }
 
@@ -199,9 +207,15 @@ fn polars_df_to_log(pydf: PyDataFrame) -> PyResult<PyDataFrame> {
 
 #[pyfunction]
 fn import_xes(path: String) -> PyResult<PyDataFrame> {
+    println!("Starting XES Import");
+    let mut now = Instant::now();
     let log = import_log_xes(&path);
+    println!("Importing XES Log took {:.2?}",now.elapsed());
+    now = Instant::now();
     // add_start_end_acts(&mut log);
-    Ok(PyDataFrame(convert_log_to_df(&log).unwrap()))
+    let converted_log  = convert_log_to_df(&log).unwrap();
+    println!("Finished Converting Log; Took {:.2?}",now.elapsed());
+    Ok(PyDataFrame(converted_log))
 }
 
 #[pyfunction]
