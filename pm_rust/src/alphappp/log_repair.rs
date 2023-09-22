@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::event_log::activity_projection::{ActivityProjectionDFG, EventLogActivityProjection};
+use crate::{
+    event_log::activity_projection::{ActivityProjectionDFG, EventLogActivityProjection},
+    END_EVENT, START_EVENT,
+};
 
 
-// Work In Progress #TODO
 pub fn add_artificial_acts_for_skips(
     log: EventLogActivityProjection,
     dfg_threshold: u64,
@@ -18,23 +20,27 @@ pub fn add_artificial_acts_for_skips(
                 .iter()
                 .filter(|x| dfg.df_between(*a, **x) >= dfg_threshold)
                 .collect();
-            let can_skip: HashSet<&usize> =
-            // dfg
-            //     .edges
-            //     .keys()
-            //     .filter(|(x, b)| {
-              out_from_a.iter().filter(|b| {
-                    if dfg.df_between(***b, ***b) < dfg_threshold  && dfg.df_between(***b, *a) < dfg_threshold {
+              // Here we consider any (a,b)'s in DFG (i.e. not just >= dfg_threshold)
+            let can_skip: HashSet<&usize> = dfg
+                .nodes
+                .iter()
+                .filter(|x| dfg.df_between(*a, **x) > 0)
+                .filter(|b| {
+                    if log.activities[**b] != START_EVENT
+                        && log.activities[**b] != END_EVENT
+                        && dfg.df_between(**b, **b) < dfg_threshold
+                        && dfg.df_between(**b, *a) < dfg_threshold
+                    {
                         let out_from_b: HashSet<&usize> = dfg
                             .nodes
                             .iter()
-                            .filter(|x| dfg.df_between(***b, **x) >= dfg_threshold)
+                            .filter(|x| dfg.df_between(**b, **x) >= dfg_threshold)
                             .collect();
                         return out_from_a.is_superset(&out_from_b);
                     } else {
                         return false;
                     }
-                }).map(|b| *b)
+                })
                 .collect();
             if can_skip.len() > 0 {
                 skips.insert(a, can_skip);
@@ -45,15 +51,15 @@ pub fn add_artificial_acts_for_skips(
     let new_artificial_acts: HashMap<usize, usize> = skips
         .iter()
         .enumerate()
-        .map(|(i, (e, _))| (**e,i + ret.activities.len() + 1))
+        .map(|(i, (e, _))| (**e, i + ret.activities.len() + 1))
         .collect();
     println!(
         "Adding new artificial activities ({:?} total): {:?}",
         new_artificial_acts.len(),
         new_artificial_acts.values()
     );
-    skips.iter().for_each(|(a,_)| {
-      println!("Skippable: {:?}",ret.activities[**a]);
+    skips.iter().for_each(|(a, _)| {
+        println!("Skippable: {:?}", ret.activities[**a]);
     });
     // Modify traces by inserting new artificial activities at appriate places
     ret.traces = ret
