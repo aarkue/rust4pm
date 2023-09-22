@@ -75,7 +75,7 @@ pub fn to_attributes(from: HashMap<String, AttributeValue>) -> Attributes {
         .collect()
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Event {
     pub attributes: Attributes,
 }
@@ -91,7 +91,7 @@ impl Event {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Trace {
     pub attributes: Attributes,
     pub events: Vec<Event>,
@@ -109,7 +109,7 @@ impl Trace {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct EventLog {
     pub attributes: Attributes,
     pub traces: Vec<Trace>,

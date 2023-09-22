@@ -21,6 +21,11 @@ pub mod petri_net {
     pub mod petri_net_struct;
 }
 
+
+pub mod alphappp {
+    pub mod log_repair;
+}
+
 pub const START_EVENT: &str = "__START__";
 pub const END_EVENT: &str = "__END__";
 
