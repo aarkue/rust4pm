@@ -16,15 +16,19 @@ use jni_fn::jni_fn;
 use pm_rust::{
     add_sample_transition, add_start_end_acts, json_to_petrinet,
     petri_net::petri_net_struct::{ArcType, PetriNet, PlaceID},
-    petrinet_to_json, Attribute, AttributeValue, EventLog,
+    petrinet_to_json, Attribute, AttributeValue, EventLog, event_log::activity_projection::EventLogActivityProjection, alphappp::log_repair,
 };
 
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
 pub unsafe fn addStartEndToRustLog<'local>(mut _env: JNIEnv<'local>, _: JClass, pointer: jlong) {
     let mut log_pointer = Box::from_raw(pointer as *mut EventLog);
     add_start_end_acts(&mut log_pointer);
+    let proj : EventLogActivityProjection = log_pointer.as_ref().into();
+    let res = log_repair::add_artificial_acts_for_skips(proj, 10);
     let _log_pointer = Box::into_raw(log_pointer);
 }
+
+
 
 /// Get attributes of (boxed) [EventLog] referenced by `pointer`
 ///
