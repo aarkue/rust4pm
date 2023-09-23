@@ -5,7 +5,6 @@ use crate::{
     END_EVENT, START_EVENT,
 };
 
-
 pub fn add_artificial_acts_for_skips(
     log: EventLogActivityProjection,
     dfg_threshold: u64,
@@ -20,7 +19,7 @@ pub fn add_artificial_acts_for_skips(
                 .iter()
                 .filter(|x| dfg.df_between(*a, **x) >= dfg_threshold)
                 .collect();
-              // Here we consider any (a,b)'s in DFG (i.e. not just >= dfg_threshold)
+            // Here we consider any (a,b)'s in DFG (i.e. not just >= dfg_threshold)
             let can_skip: HashSet<&usize> = dfg
                 .nodes
                 .iter()
@@ -58,10 +57,28 @@ pub fn add_artificial_acts_for_skips(
         new_artificial_acts.len(),
         new_artificial_acts.values()
     );
+    let mut new_art_acts_sorted: Vec<(usize, usize)> =
+        new_artificial_acts.clone().into_iter().collect();
+    new_art_acts_sorted.sort_by(|(_, new_act1), (_, new_acts2)| new_act1.cmp(new_acts2));
+    for (a, new_act) in new_art_acts_sorted {
+        let act_name = format!("skip_after_{}", ret.activities[a]);
+        ret.activities.push(act_name.clone());
+        ret.act_to_index.insert(act_name, new_act);
+    }
+
     skips.iter().for_each(|(a, _)| {
-        println!("Skippable: {:?}", ret.activities[**a]);
+        println!(
+            "Skippable: '{:?}': ({:?}) {:?}",
+            ret.activities[**a],
+            skips.get(a).unwrap().len(),
+            skips
+                .get(a)
+                .unwrap()
+                .iter()
+                .map(|act| ret.activities[**act].clone()).collect::<Vec<String>>()
+        );
     });
-    // Modify traces by inserting new artificial activities at appriate places
+    // Modify traces by inserting new artificial activities at appropriate places
     ret.traces = ret
         .traces
         .iter()
@@ -72,7 +89,7 @@ pub fn add_artificial_acts_for_skips(
             trace.iter().enumerate().for_each(|(i, e)| {
                 match prev {
                     Some(prev_e) => {
-                        if skips.contains_key(prev_e) && skips.get(prev_e).unwrap().contains(e) {
+                        if skips.contains_key(prev_e) && !skips.get(prev_e).unwrap().contains(e) {
                             // Note that insert_at_pos can only be set one time for a position i
                             // As new_artificial_acts.get(prev_e) is unique for an previous event prev_e (and thus i)
                             insert_at_pos.insert(i, *new_artificial_acts.get(prev_e).unwrap());
