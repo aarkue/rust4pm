@@ -1,8 +1,8 @@
 use std::vec;
 
 use pm_rust::{
-    event_log::import_xes::import_log_xes, Attribute, AttributeAddable, AttributeValue, Attributes,
-    DateTime, Utc, Uuid,
+    event_log::{import_xes::import_log_xes, activity_projection::{EventLogActivityProjection, ActivityProjectionDFG}}, Attribute, AttributeAddable, AttributeValue, Attributes,
+    DateTime, Utc, Uuid, alphappp::log_repair::get_reachable_bf, START_EVENT, add_start_end_acts, END_EVENT,
 };
 fn main() {
     let mut attributes = Attributes::new();
@@ -53,6 +53,19 @@ fn main() {
     // let json = serde_json::to_string_pretty(&event.attributes).unwrap();
     // println!("{}", json);
 
-    let _log =
+    let mut log =
         import_log_xes(&"/home/aarkue/dow/event_logs/BPI_Challenge_2020_request_for_payments.xes");
+    add_start_end_acts(&mut log);
+    let log_proj : EventLogActivityProjection = (&log).into();
+    let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
+    let reachable = get_reachable_bf(*log_proj.act_to_index.get(START_EVENT).unwrap(), &dfg, 1);
+    println!("Reachable: ");
+    reachable.iter().for_each(|r| {
+        let path : Vec<String> = r.iter().map(|a| log_proj.activities[*a].clone()).collect();
+        if path.last().unwrap().as_str() != END_EVENT {
+            println!("# {:?}", r);
+            println!("   > {:?}\n", path);
+        }
+    });
+
 }
