@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    rc::Rc,
-};
+use std::collections::{HashMap, HashSet};
 
 use rayon::prelude::*;
 
@@ -23,9 +20,34 @@ pub struct ActivityProjectionDFG {
 }
 
 impl ActivityProjectionDFG {
-    pub fn df_between(self: &Self, a : usize, b: usize) -> u64 {
-        *self.edges.get(&(a,b)).unwrap_or(&0)
+    pub fn df_between(self: &Self, a: usize, b: usize) -> u64 {
+        *self.edges.get(&(a, b)).unwrap_or(&0)
     }
+
+    pub fn df_preset_of<T: FromIterator<usize>>(self: &Self, act: usize, df_threshold: u64) -> T {
+        self.edges
+            .iter()
+            .filter_map(|((a, b), w)| {
+                if *b == act && *w >= df_threshold {
+                    return Some(*a);
+                } else {
+                    return None;
+                }
+            })
+            .collect()
+    }
+    pub fn df_postset_of<'a>(self: &Self, act: usize, df_threshold: u64) ->  impl Iterator<Item = usize> + '_ {
+        self.edges
+            .iter()
+            .filter_map(move |((a, b), w)| {
+                if *a == act && *w >= df_threshold {
+                    return Some(*b);
+                } else {
+                    return None;
+                }
+            })
+    }
+
     pub fn from_event_log_projection(log: &EventLogActivityProjection) -> Self {
         let mut dfg = ActivityProjectionDFG::default();
         dfg.nodes = (0..log.activities.len()).collect();

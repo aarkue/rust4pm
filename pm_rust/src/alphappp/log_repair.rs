@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
+
 use crate::{
     event_log::activity_projection::{ActivityProjectionDFG, EventLogActivityProjection},
     END_EVENT, START_EVENT,
@@ -7,7 +9,7 @@ use crate::{
 
 pub fn add_artificial_acts_for_skips(
     log: EventLogActivityProjection,
-    dfg_threshold: u64,
+    df_threshold: u64,
 ) -> EventLogActivityProjection {
     let mut ret = log.clone();
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log);
@@ -17,9 +19,9 @@ pub fn add_artificial_acts_for_skips(
             let out_from_a: HashSet<&usize> = dfg
                 .nodes
                 .iter()
-                .filter(|x| dfg.df_between(*a, **x) >= dfg_threshold)
+                .filter(|x| dfg.df_between(*a, **x) >= df_threshold)
                 .collect();
-            // Here we consider any (a,b)'s in DFG (i.e. not just >= dfg_threshold)
+            // Here we consider any (a,b)'s in DFG (i.e. not just >= df_threshold)
             let can_skip: HashSet<&usize> = dfg
                 .nodes
                 .iter()
@@ -27,13 +29,13 @@ pub fn add_artificial_acts_for_skips(
                 .filter(|b| {
                     if log.activities[**b] != START_EVENT
                         && log.activities[**b] != END_EVENT
-                        && dfg.df_between(**b, **b) < dfg_threshold
-                        && dfg.df_between(**b, *a) < dfg_threshold
+                        && dfg.df_between(**b, **b) < df_threshold
+                        && dfg.df_between(**b, *a) < df_threshold
                     {
                         let out_from_b: HashSet<&usize> = dfg
                             .nodes
                             .iter()
-                            .filter(|x| dfg.df_between(**b, **x) >= dfg_threshold)
+                            .filter(|x| dfg.df_between(**b, **x) >= df_threshold)
                             .collect();
                         return out_from_a.is_superset(&out_from_b);
                     } else {
@@ -75,13 +77,15 @@ pub fn add_artificial_acts_for_skips(
                 .get(a)
                 .unwrap()
                 .iter()
-                .map(|act| ret.activities[**act].clone()).collect::<Vec<String>>()
+                .map(|act| ret.activities[**act].clone())
+                .collect::<Vec<String>>()
         );
     });
+
     // Modify traces by inserting new artificial activities at appropriate places
     ret.traces = ret
         .traces
-        .iter()
+        .par_iter()
         .map(|trace| {
             // Insert activity new_act at position i : (i,new_act)
             let mut insert_at_pos: HashMap<usize, usize> = HashMap::new();
@@ -113,5 +117,64 @@ pub fn add_artificial_acts_for_skips(
                 .collect()
         })
         .collect();
+    return ret;
+}
+
+pub fn get_reachable_bf(
+    act: usize,
+    dfg: &ActivityProjectionDFG,
+    df_threshold: u64,
+) -> HashSet<Vec<usize>> {
+    let mut current_paths: HashSet<Vec<usize>> = dfg
+        .df_postset_of(act, df_threshold)
+        .map(|b| vec![act, b])
+        .collect();
+    let mut finished_paths: HashSet<Vec<usize>> = HashSet::new();
+    let mut expanded = true;
+    while expanded {
+        expanded = false;
+        current_paths = current_paths
+            .into_iter()
+            .flat_map(|path| {
+                let new_paths: Vec<Vec<usize>> = dfg
+                    .df_postset_of(*path.last().unwrap(), df_threshold)
+                    .filter_map(|b| {
+                        let mut new_path = path.clone();
+                        new_path.push(b);
+
+                        if path.contains(&b) {
+                            finished_paths.insert(new_path);
+                            // Loop found!
+                            None
+                        } else {
+                            Some(new_path)
+                        }
+                    })
+                    .collect();
+                if new_paths.is_empty() {
+                    // Can't expand any further
+                    finished_paths.insert(path);
+                } else {
+                    expanded = true
+                }
+                new_paths
+            })
+            .collect();
+    }
+    return finished_paths;
+}
+
+pub fn add_artificial_acts_for_loops(
+    log: EventLogActivityProjection,
+    df_threshold: u64,
+) -> EventLogActivityProjection {
+    let mut ret = log.clone();
+    let dfg = ActivityProjectionDFG::from_event_log_projection(&log);
+    if !log.activities.contains(&START_EVENT.to_string()) || !log.activities.contains(&END_EVENT.to_string()) { 
+        panic!("No Artificial START/END Activities ")
+    }
+    let reachable_paths = get_reachable_bf(*log.act_to_index.get(&START_EVENT.to_string()).unwrap(), &dfg, df_threshold);
+    let end_act = log.act_to_index.get(&END_EVENT.to_string()).unwrap();
+    let loops: Vec<Vec<usize>> = reachable_paths.into_iter().filter(|path| path.last().unwrap() == end_act).collect();
     return ret;
 }
