@@ -52,7 +52,7 @@ pub fn add_artificial_acts_for_skips(
     let new_artificial_acts: HashMap<usize, usize> = skips
         .iter()
         .enumerate()
-        .map(|(i, (e, _))| (**e, i + ret.activities.len() + 1))
+        .map(|(i, (e, _))| (**e, i + ret.activities.len()))
         .collect();
     println!(
         "Adding new artificial activities ({:?} total): {:?}",
@@ -170,11 +170,74 @@ pub fn add_artificial_acts_for_loops(
 ) -> EventLogActivityProjection {
     let mut ret = log.clone();
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log);
-    if !log.activities.contains(&START_EVENT.to_string()) || !log.activities.contains(&END_EVENT.to_string()) { 
+    if !log.activities.contains(&START_EVENT.to_string())
+        || !log.activities.contains(&END_EVENT.to_string())
+    {
         panic!("No Artificial START/END Activities ")
     }
-    let reachable_paths = get_reachable_bf(*log.act_to_index.get(&START_EVENT.to_string()).unwrap(), &dfg, df_threshold);
+    let reachable_paths = get_reachable_bf(
+        *log.act_to_index.get(&START_EVENT.to_string()).unwrap(),
+        &dfg,
+        df_threshold,
+    );
     let end_act = log.act_to_index.get(&END_EVENT.to_string()).unwrap();
-    let loops: Vec<Vec<usize>> = reachable_paths.into_iter().filter(|path| path.last().unwrap() == end_act).collect();
+    let loops: Vec<Vec<usize>> = reachable_paths
+        .into_iter()
+        .filter(|path| path.last().unwrap() != end_act)
+        .collect();
+    let taus: HashSet<(usize, usize)> = loops
+        .iter()
+        .filter_map(|path| {
+            if path.len() >= 2 {
+                Some((
+                    *path.get(path.len() - 2).unwrap(),
+                    *path.get(path.len() - 1).unwrap(),
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+    let insert_taus_between: HashMap<(usize, usize), usize> = taus
+        .into_iter()
+        .enumerate()
+        .map(|(i, e)| (e, log.activities.len() + i))
+        .collect();
+    // Add artificial activities to ret
+    ret.activities
+        .append(&mut vec![String::new(); insert_taus_between.len()]);
+    println!(
+        "before: {:?} {:?} {:?}",
+        insert_taus_between.len(),
+        log.activities.len(),
+        ret.activities.len()
+    );
+    println!("art acts: {:?}", insert_taus_between);
+    insert_taus_between.iter().for_each(|((a, b), art_act)| {
+        let art_act_name = format!("skip_loop_{}_{}", log.activities[*a], log.activities[*b]);
+        ret.activities[*art_act] = art_act_name.clone();
+        ret.act_to_index.insert(art_act_name, *art_act);
+    });
+    // Update traces to insert new artificial acts
+    ret.traces = ret
+        .traces
+        .par_iter()
+        .map(|trace| {
+            trace
+                .iter()
+                .enumerate()
+                .flat_map(|(i, e)| {
+                    if i > 0 {
+                        // Pair consists of previous activity and current activity
+                        let pair = &(*trace.get(i - 1).unwrap(), *e);
+                        if insert_taus_between.contains_key(pair) {
+                            return vec![*(insert_taus_between.get(pair).unwrap()), *e];
+                        }
+                    }
+                    return vec![*e];
+                })
+                .collect()
+        })
+        .collect();
     return ret;
 }
