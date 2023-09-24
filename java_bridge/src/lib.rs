@@ -15,7 +15,7 @@ use jni::{
 use jni_fn::jni_fn;
 use pm_rust::{
     add_sample_transition, add_start_end_acts, json_to_petrinet,
-    petri_net::petri_net_struct::{ArcType, PetriNet, PlaceID},
+    petri_net::petri_net_struct::PetriNet,
     petrinet_to_json, Attribute, AttributeValue, EventLog, event_log::activity_projection::EventLogActivityProjection, alphappp::log_repair,
 };
 
