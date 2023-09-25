@@ -24,6 +24,7 @@ pub mod petri_net {
 
 pub mod alphappp {
     pub mod log_repair;
+    pub mod candidate_building;
 }
 
 pub const START_EVENT: &str = "__START__";

@@ -2,7 +2,7 @@ use std::vec;
 
 use pm_rust::{
     event_log::{import_xes::import_log_xes, activity_projection::{EventLogActivityProjection, ActivityProjectionDFG}}, Attribute, AttributeAddable, AttributeValue, Attributes,
-    DateTime, Utc, Uuid, alphappp::log_repair::{get_reachable_bf, add_artificial_acts_for_skips, add_artificial_acts_for_loops}, START_EVENT, add_start_end_acts, END_EVENT,
+    DateTime, Utc, Uuid, alphappp::{log_repair::{get_reachable_bf, add_artificial_acts_for_skips, add_artificial_acts_for_loops, self}, candidate_building::build_candidates}, START_EVENT, add_start_end_acts, END_EVENT,
 };
 fn main() {
     let mut attributes = Attributes::new();
@@ -61,6 +61,8 @@ fn main() {
     log_proj = add_artificial_acts_for_skips(log_proj, df_threshold);
     log_proj = add_artificial_acts_for_loops(log_proj, df_threshold);
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
+    let cnds = build_candidates(&log_proj);
+    println!("Number of candidates {:?}",cnds.len());
     let reachable = get_reachable_bf(*log_proj.act_to_index.get(START_EVENT).unwrap(), &dfg, 1);
     println!("Reachable: ");
     reachable.iter().for_each(|r| {
