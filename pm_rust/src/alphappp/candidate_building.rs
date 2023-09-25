@@ -90,27 +90,37 @@ pub fn build_candidates(log: &EventLogActivityProjection) -> HashSet<(Vec<usize>
     let mut changed = true;
     while changed {
         changed = false;
-        let new_cnds: HashSet<(Vec<usize>, Vec<usize>)> = cnds.iter().flat_map(|(a1, b1)| {
-          cnds.par_iter().filter_map(|(a2, b2)| {
-                let mut a = [a1.as_slice(), a2.as_slice()].concat();
-                let mut b = [b1.as_slice(), b2.as_slice()].concat();
-                a.sort();
-                b.sort();
-                if a != b && satisfies_cnd_condition(&df_relations, &a, &b) {
-                    Some((a,b))
-                }else {
-                  None
-                }
-            }).collect::<HashSet<(Vec<usize>,Vec<usize>)>>()
-        }).collect();
+        let new_cnds: HashSet<(Vec<usize>, Vec<usize>)> = cnds
+            .par_iter()
+            .flat_map(|(a1, b1)| {
+                cnds.par_iter()
+                    .filter_map(|(a2, b2)| {
+                        let mut a = [a1.as_slice(), a2.as_slice()].concat();
+                        let mut b = [b1.as_slice(), b2.as_slice()].concat();
+                        a.sort();
+                        b.sort();
+                        a.dedup();
+                        b.dedup();
+                        if a != b && satisfies_cnd_condition(&df_relations, &a, &b) {
+                            if !cnds.contains(&(a.clone(), b.clone())) {
+                                Some((a, b))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<HashSet<(Vec<usize>, Vec<usize>)>>()
+            })
+            .collect();
         if new_cnds.len() > 0 {
             changed = true;
-            println!("Changed! New cnds: {:?}",new_cnds.len());
             for cnd in new_cnds {
                 final_cnds.insert(cnd.clone());
                 cnds.insert(cnd);
             }
         }
-      }
-      return final_cnds;
+    }
+    return final_cnds;
 }
