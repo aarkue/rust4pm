@@ -27,8 +27,8 @@ pub mod alphappp {
     pub mod candidate_building;
 }
 
-pub const START_EVENT: &str = "__START__";
-pub const END_EVENT: &str = "__END__";
+pub const START_EVENT: &str = "__START";
+pub const END_EVENT: &str = "__END";
 
 
 pub fn loop_sum_sqrt(from: usize, to: usize) -> f32 {
