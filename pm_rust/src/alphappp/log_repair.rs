@@ -7,7 +7,11 @@ use crate::{
     END_EVENT, START_EVENT,
 };
 
-pub fn filter_dfg(dfg: &ActivityProjectionDFG, df_thresh: f32) -> ActivityProjectionDFG {
+pub fn filter_dfg(
+    dfg: &ActivityProjectionDFG,
+    absolute_df_thresh: u64,
+    relative_df_thresh: f32,
+) -> ActivityProjectionDFG {
     let mut ret = ActivityProjectionDFG {
         nodes: dfg.nodes.clone(),
         edges: HashMap::new(),
@@ -29,9 +33,9 @@ pub fn filter_dfg(dfg: &ActivityProjectionDFG, df_thresh: f32) -> ActivityProjec
             let df_inc_sum: u64 = df_inc.iter().sum();
             let df_out_sum: u64 = df_out.iter().sum();
             let v = *v_u64 as f32;
-            if v >= df_thresh
-                && ((v >= 0.01 * (df_inc_sum as f32) / (df_inc.len() as f32))
-                    || (v >= 0.01 * (df_out_sum as f32) / (df_out.len() as f32)))
+            if *v_u64 >= absolute_df_thresh
+                && ((v >= relative_df_thresh * (df_inc_sum as f32) / (df_inc.len() as f32))
+                    || (v >= relative_df_thresh * (df_out_sum as f32) / (df_out.len() as f32)))
             {
                 Some(((*a, *b), *v_u64))
             } else {

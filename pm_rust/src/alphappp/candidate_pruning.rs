@@ -96,13 +96,35 @@ pub fn prune_candidates(
             act_count[*act] += 1;
         })
     });
-    let filtered_cnds: Vec<(Vec<usize>, Vec<usize>)> = cnds
+    let filtered_cnds: Vec<&(Vec<usize>, Vec<usize>)> = cnds
         .par_iter()
         .filter(|(a, b)| {
             return compute_balance(a, b, &act_count) >= balance_threshold
                 && compute_local_fitness(a, b, &log) >= fitness_threshold;
         })
+        .collect();
+
+    let sel: Vec<(Vec<usize>, Vec<usize>)> = filtered_cnds
+        .par_iter()
+        .filter(|(a, b)| {
+            let is_dominated = filtered_cnds.iter().any(|(a2, b2)| {
+                if a2.len() >= a.len() && b2.len() >= b.len() && a != a2 && b != b2 {
+                    let a_contained = a.into_iter().all(|e| a2.contains(e));
+                    if a_contained {
+                        let b_contained = b.into_iter().all(|e| b2.contains(e));
+                        if b_contained {
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    }
+                }
+                return false;
+            });
+            return !is_dominated;
+        })
         .map(|(a, b)| (a.clone(), b.clone()))
         .collect();
-    return filtered_cnds;
+
+    return sel;
 }
