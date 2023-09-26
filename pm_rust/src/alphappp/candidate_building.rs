@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use rayon::prelude::*;
 
-use crate::event_log::activity_projection::{ActivityProjectionDFG, EventLogActivityProjection};
+use crate::event_log::activity_projection::ActivityProjectionDFG;
 
 fn no_df_between(df_rel: &HashSet<(usize, usize)>, a: &HashSet<usize>, b: &HashSet<usize>) -> bool {
     for &a1 in a {
