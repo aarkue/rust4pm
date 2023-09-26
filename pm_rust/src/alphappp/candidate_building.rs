@@ -60,18 +60,18 @@ fn satisfies_cnd_condition(
         && not_all_dfs_between(df_rel, &b_without_a, &a_without_b);
 }
 
-pub fn build_candidates(log: &EventLogActivityProjection) -> HashSet<(Vec<usize>, Vec<usize>)> {
+pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec<usize>)> {
     let df_relations: HashSet<(usize, usize)> =
-        ActivityProjectionDFG::from_event_log_projection(&log)
+        dfg
             .edges
-            .into_iter()
-            .filter_map(|((a, b), w)| if w > 0 { Some((a, b)) } else { None })
+            .iter()
+            .filter_map(|((a, b), w)| if w > &0 { Some((*a, *b)) } else { None })
             .collect();
     println!("DF #{:?}", df_relations.len());
     let mut cnds: HashSet<(Vec<usize>, Vec<usize>)> = HashSet::new();
     let mut final_cnds: HashSet<(Vec<usize>, Vec<usize>)> = HashSet::new();
-    (0..log.activities.len()).for_each(|a| {
-        (0..log.activities.len()).for_each(|b| {
+    (0..dfg.nodes.len()).for_each(|a| {
+        (0..dfg.nodes.len()).for_each(|b| {
             if df_relations.contains(&(a, b))
                 && !df_relations.contains(&(b, a))
                 && !df_relations.contains(&(a, a))
