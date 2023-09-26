@@ -7,6 +7,42 @@ use crate::{
     END_EVENT, START_EVENT,
 };
 
+pub fn filter_dfg(dfg: &ActivityProjectionDFG, df_thresh: f32) -> ActivityProjectionDFG {
+    let mut ret = ActivityProjectionDFG {
+        nodes: dfg.nodes.clone(),
+        edges: HashMap::new(),
+    };
+    ret.edges = dfg
+        .edges
+        .iter()
+        .filter_map(|((a, b), v_u64)| {
+            let df_inc: Vec<u64> = dfg
+                .edges
+                .iter()
+                .filter_map(|((x, _), w)| if x == a { Some(*w) } else { None })
+                .collect();
+            let df_out: Vec<u64> = dfg
+                .edges
+                .iter()
+                .filter_map(|((_, y), w)| if y == b { Some(*w) } else { None })
+                .collect();
+            let df_inc_sum: u64 = df_inc.iter().sum();
+            let df_out_sum: u64 = df_out.iter().sum();
+            let v = *v_u64 as f32;
+            if v >= df_thresh
+                && ((v >= 0.01 * (df_inc_sum as f32) / (df_inc.len() as f32))
+                    || (v >= 0.01 * (df_out_sum as f32) / (df_out.len() as f32)))
+            {
+                Some(((*a, *b), *v_u64))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    return ret;
+}
+
 pub fn add_artificial_acts_for_skips(
     log: EventLogActivityProjection,
     df_threshold: u64,
