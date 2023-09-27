@@ -4,7 +4,6 @@ use crate::{
     add_start_end_acts_proj,
     event_log::activity_projection::{ActivityProjectionDFG, EventLogActivityProjection},
     petri_net::petri_net_struct::{ArcType, PetriNet, TransitionID},
-    EventLog,
 };
 
 use super::{

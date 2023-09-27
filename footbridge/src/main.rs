@@ -1,18 +1,12 @@
-use std::{
-    collections::HashSet,
-    fs::File,
-    io::BufReader,
-    vec,
-};
+use std::{collections::HashSet, fs::File, io::BufReader, vec};
 
 use pm_rust::{
-    add_start_end_acts,
-    alphappp::candidate_building::build_candidates,
+    alphappp::full::alphappp_discover_petri_net,
     event_log::{
         activity_projection::EventLogActivityProjection,
         import_xes::import_log_xes,
     },
-    Attribute, AttributeAddable, AttributeValue, Attributes, DateTime, Utc, Uuid,
+    Attribute, AttributeAddable, AttributeValue, Attributes, DateTime, Utc, Uuid, petri_net::pnml::export_petri_net_to_pnml,
 };
 use serde::{Deserialize, Serialize};
 fn main() {
@@ -64,36 +58,41 @@ fn main() {
     // let json = serde_json::to_string_pretty(&event.attributes).unwrap();
     // println!("{}", json);
 
-    let mut log =
+    let log =
         import_log_xes(&"/home/aarkue/dow/event_logs/BPI_Challenge_2020_request_for_payments.xes");
-    add_start_end_acts(&mut log);
-    let mut log_proj: EventLogActivityProjection = (&log).into();
-    let df_threshold = 10;
-    // log_proj = add_artificial_acts_for_skips(log_proj, df_threshold);
-    // log_proj = add_artificial_acts_for_loops(log_proj, df_threshold);
+    let log_proj: EventLogActivityProjection = (&log).into();
+    let pn = alphappp_discover_petri_net(&log_proj);
+    let pnml = export_petri_net_to_pnml(&pn,"net.pnml");
+    println!("Discovered Petri Net: {:?}", pnml);
+    // let df_threshold = 10;
+    // // log_proj = add_artificial_acts_for_skips(log_proj, df_threshold);
+    // // log_proj = add_artificial_acts_for_loops(log_proj, df_threshold);
     // let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
-    let cnds = build_candidates(&log_proj);
-    let mut cnds_strs: Vec<(Vec<String>, Vec<String>)> = cnds
-        .iter()
-        .map(|(a, b)| {
-            (
-                a.iter()
-                    .map(|act| log_proj.activities[*act].clone())
-                    .collect(),
-                b.iter()
-                    .map(|act| log_proj.activities[*act].clone())
-                    .collect(),
-            )
-        })
-        .collect();
+    // let dfg = filter_dfg(&dfg, 2,0.01);
+    // let cnds: HashSet<(Vec<usize>, Vec<usize>)> = build_candidates(&dfg);
+    // let filtered_cnds = prune_candidates(&cnds, 0.1, 0.8, &log_proj);
+    // let mut cnds_strs: Vec<(Vec<String>, Vec<String>)> = cnds
+    //     .iter()
+    //     .map(|(a, b)| {
+    //         (
+    //             a.iter()
+    //                 .map(|act| log_proj.activities[*act].clone())
+    //                 .collect(),
+    //             b.iter()
+    //                 .map(|act| log_proj.activities[*act].clone())
+    //                 .collect(),
+    //         )
+    //     })
+    //     .collect();
     // for (a, b) in &cnds_strs {
     //     println!("{:?} => {:?}\n", a, b);
     // }
-    compare_candidates(&mut cnds_strs,"candidates-prom.json".to_string());
+    // compare_candidates(&mut cnds_strs,"candidates-prom.json".to_string());
     // let file = File::create("candidates.json").unwrap();
     // let writer = BufWriter::new(file);
     // serde_json::to_writer_pretty(writer, &cnds_strs).unwrap();
-    println!("Number of candidates {:?}", cnds.len());
+    // println!("Number of candidates {:?}", cnds.len());
+    // println!("After filtering {:?}", filtered_cnds.len());
     // let reachable = get_reachable_bf(*log_proj.act_to_index.get(START_EVENT).unwrap(), &dfg, 1);
     // println!("Reachable: ");
     // reachable.iter().for_each(|r| {
@@ -115,7 +114,7 @@ pub fn compare_candidates(cnds: &mut Vec<(Vec<String>, Vec<String>)>, prom_cnds_
     let reader = BufReader::new(file);
     let other_cnds_java: Vec<JavaPair<Vec<String>, Vec<String>>> =
         serde_json::from_reader(reader).unwrap();
-        let mut other_cnds: Vec<(Vec<String>, Vec<String>)> = other_cnds_java
+    let mut other_cnds: Vec<(Vec<String>, Vec<String>)> = other_cnds_java
         .into_iter()
         .map(|jcnd| (jcnd.first, jcnd.second))
         .collect();
@@ -143,12 +142,13 @@ pub fn compare_candidates(cnds: &mut Vec<(Vec<String>, Vec<String>)>, prom_cnds_
         .map(|(a, b)| (a.clone(), b.clone()))
         .collect();
 
-    let diff : Vec<&(Vec<String>, Vec<String>)> = cnds_set.symmetric_difference(&other_cnds_set).collect();
+    let diff: Vec<&(Vec<String>, Vec<String>)> =
+        cnds_set.symmetric_difference(&other_cnds_set).collect();
     for (a, b) in &diff {
         if cnds_set.contains(&(a.clone(), b.clone())) {
-            println!("Candidate not in java: {:?} => {:?}\n",a,b);
-        }else{
-            println!("Candidate not in cnds: {:?} => {:?}\n",a,b);
+            println!("Candidate not in java: {:?} => {:?}\n", a, b);
+        } else {
+            println!("Candidate not in cnds: {:?} => {:?}\n", a, b);
         }
     }
     println!("#Differences: {:?}", diff.len());
