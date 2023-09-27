@@ -16,8 +16,8 @@ fn compute_balance(a: &Vec<usize>, b: &Vec<usize>, act_count: &Vec<u64>) -> f32 
     for out in b {
         bi += act_count[*out];
     }
-    let ai = ai as i32;
-    let bi = bi as i32;
+    let ai = ai as i64;
+    let bi = bi as i64;
     let diff = (ai - bi).abs() as f32;
     let max_freq = max(ai, bi) as f32;
     return diff / max_freq;
@@ -99,7 +99,7 @@ pub fn prune_candidates(
     let filtered_cnds: Vec<&(Vec<usize>, Vec<usize>)> = cnds
         .par_iter()
         .filter(|(a, b)| {
-            return compute_balance(a, b, &act_count) >= balance_threshold
+            return compute_balance(a, b, &act_count) <= balance_threshold
                 && compute_local_fitness(a, b, &log) >= fitness_threshold;
         })
         .collect();
