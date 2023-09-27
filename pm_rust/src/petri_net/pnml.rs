@@ -1,6 +1,7 @@
 use std::fs::File;
 
 use quick_xml::{events::BytesText, Writer};
+use uuid::Uuid;
 
 use super::petri_net_struct::PetriNet;
 
@@ -63,16 +64,32 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                                                         transition
                                                             .label
                                                             .clone()
-                                                            .unwrap_or_default()
+                                                            .unwrap_or("Tau".to_string())
                                                             .as_str(),
                                                     ))
                                                     .unwrap();
-                                                if transition.label.is_none() {
-                                                    // TODO: Add  something like <toolspecific tool="ProM" version="6.4" activity="$invisible$" localNodeID="..."/>
-                                                }
                                                 Ok(())
                                             })
                                             .unwrap();
+                                        if transition.label.is_none() {
+                                            // TODO: Add  something like <toolspecific tool="ProM" version="6.4" activity="$invisible$" localNodeID="..."/>
+                                            writer
+                                                .create_element("toolspecific")
+                                                .with_attributes(
+                                                    vec![
+                                                        ("tool", "ProM"),
+                                                        ("version", "6.4"),
+                                                        ("activity", "$invisible$"),
+                                                        (
+                                                            "localNodeID",
+                                                            Uuid::new_v4().to_string().as_str(),
+                                                        ),
+                                                    ]
+                                                    .into_iter(),
+                                                )
+                                                .write_empty()
+                                                .unwrap();
+                                        }
                                         Ok(())
                                     })
                                     .unwrap();

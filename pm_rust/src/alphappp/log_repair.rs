@@ -7,6 +7,8 @@ use crate::{
     END_EVENT, START_EVENT,
 };
 
+pub const SILENT_ACT_PREFIX: &str = "__SILENT__";
+
 pub fn filter_dfg(
     dfg: &ActivityProjectionDFG,
     absolute_df_thresh: u64,
@@ -61,30 +63,32 @@ pub fn add_artificial_acts_for_skips(
                 .iter()
                 .filter(|x| dfg.df_between(*a, **x) >= df_threshold)
                 .collect();
-            // Here we consider any (a,b)'s in DFG (i.e. not just >= df_threshold)
-            let can_skip: HashSet<&usize> = dfg
-                .nodes
-                .iter()
-                .filter(|x| dfg.df_between(*a, **x) > 0)
-                .filter(|b| {
-                    if log.activities[**b] != START_EVENT
-                        && log.activities[**b] != END_EVENT
-                        && dfg.df_between(**b, **b) < df_threshold
-                        && dfg.df_between(**b, *a) < df_threshold
-                    {
-                        let out_from_b: HashSet<&usize> = dfg
-                            .nodes
-                            .iter()
-                            .filter(|x| dfg.df_between(**b, **x) >= df_threshold)
-                            .collect();
-                        return out_from_a.is_superset(&out_from_b);
-                    } else {
-                        return false;
-                    }
-                })
-                .collect();
-            if can_skip.len() > 0 {
-                skips.insert(a, can_skip);
+            if !out_from_a.is_empty() {
+                // Here we consider any (a,b)'s in DFG (i.e. not just >= df_threshold)
+                let can_skip: HashSet<&usize> = dfg
+                    .nodes
+                    .iter()
+                    .filter(|x| dfg.df_between(*a, **x) > 0)
+                    .filter(|b| {
+                        if log.activities[**b] != START_EVENT
+                            && log.activities[**b] != END_EVENT
+                            && dfg.df_between(**b, **b) < df_threshold
+                            && dfg.df_between(**b, *a) < df_threshold
+                        {
+                            let out_from_b: HashSet<&usize> = dfg
+                                .nodes
+                                .iter()
+                                .filter(|x| dfg.df_between(**b, **x) >= df_threshold)
+                                .collect();
+                            return out_from_a.is_superset(&out_from_b);
+                        } else {
+                            return false;
+                        }
+                    })
+                    .collect();
+                if can_skip.len() > 0 {
+                    skips.insert(a, can_skip);
+                }
             }
         }
     });
@@ -94,34 +98,14 @@ pub fn add_artificial_acts_for_skips(
         .enumerate()
         .map(|(i, (e, _))| (**e, i + ret.activities.len()))
         .collect();
-    println!(
-        "Adding new artificial activities ({:?} total): {:?}",
-        new_artificial_acts.len(),
-        new_artificial_acts.values()
-    );
     let mut new_art_acts_sorted: Vec<(usize, usize)> =
         new_artificial_acts.clone().into_iter().collect();
     new_art_acts_sorted.sort_by(|(_, new_act1), (_, new_acts2)| new_act1.cmp(new_acts2));
     for (a, new_act) in new_art_acts_sorted {
-        let act_name = format!("skip_after_{}", ret.activities[a]);
+        let act_name = format!("{}skip_after_{}", SILENT_ACT_PREFIX, ret.activities[a]);
         ret.activities.push(act_name.clone());
         ret.act_to_index.insert(act_name, new_act);
     }
-
-    skips.iter().for_each(|(a, _)| {
-        println!(
-            "Skippable: '{:?}': ({:?}) {:?}",
-            ret.activities[**a],
-            skips.get(a).unwrap().len(),
-            skips
-                .get(a)
-                .unwrap()
-                .iter()
-                .map(|act| ret.activities[**act].clone())
-                .collect::<Vec<String>>()
-        );
-    });
-
     // Modify traces by inserting new artificial activities at appropriate places
     ret.traces = ret
         .traces
@@ -246,15 +230,11 @@ pub fn add_artificial_acts_for_loops(
     // Add artificial activities to ret
     ret.activities
         .append(&mut vec![String::new(); insert_taus_between.len()]);
-    println!(
-        "before: {:?} {:?} {:?}",
-        insert_taus_between.len(),
-        log.activities.len(),
-        ret.activities.len()
-    );
-    println!("art acts: {:?}", insert_taus_between);
     insert_taus_between.iter().for_each(|((a, b), art_act)| {
-        let art_act_name = format!("skip_loop_{}_{}", log.activities[*a], log.activities[*b]);
+        let art_act_name = format!(
+            "{}skip_loop_{}_{}",
+            SILENT_ACT_PREFIX, log.activities[*a], log.activities[*b]
+        );
         ret.activities[*art_act] = art_act_name.clone();
         ret.act_to_index.insert(art_act_name, *art_act);
     });
