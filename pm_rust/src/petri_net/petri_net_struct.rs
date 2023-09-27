@@ -8,7 +8,7 @@ pub struct Place {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Transition {
-    label: Option<String>,
+    pub label: Option<String>,
     id: Uuid,
 }
 
@@ -37,8 +37,8 @@ impl ArcType {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Arc {
-    from_to: ArcType,
-    weight: u32,
+    pub from_to: ArcType,
+    pub weight: u32,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]

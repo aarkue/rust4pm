@@ -48,7 +48,7 @@ pub fn filter_dfg(
 }
 
 pub fn add_artificial_acts_for_skips(
-    log: EventLogActivityProjection,
+    log: &EventLogActivityProjection,
     df_threshold: u64,
 ) -> EventLogActivityProjection {
     let mut ret = log.clone();
@@ -205,7 +205,7 @@ pub fn get_reachable_bf(
 }
 
 pub fn add_artificial_acts_for_loops(
-    log: EventLogActivityProjection,
+    log: &EventLogActivityProjection,
     df_threshold: u64,
 ) -> EventLogActivityProjection {
     let mut ret = log.clone();

@@ -1,7 +1,10 @@
 pub use chrono::NaiveDateTime;
-pub use chrono::{serde::ts_milliseconds, DateTime, Utc, TimeZone};
-pub use event_log::event_log_struct::{EventLog, AttributeValue, Attribute, Attributes, Event, Trace, AttributeAddable};
-use petri_net::petri_net_struct::{PetriNet, PlaceID, ArcType};
+pub use chrono::{serde::ts_milliseconds, DateTime, TimeZone, Utc};
+use event_log::activity_projection::EventLogActivityProjection;
+pub use event_log::event_log_struct::{
+    Attribute, AttributeAddable, AttributeValue, Attributes, Event, EventLog, Trace,
+};
+use petri_net::petri_net_struct::{ArcType, PetriNet, PlaceID};
 use rayon::prelude::*;
 use std::{
     fs::File,
@@ -11,29 +14,61 @@ use std::{
 pub use uuid::Uuid;
 
 pub mod event_log {
-    pub mod event_log_struct;
-    pub mod constants;
     pub mod activity_projection;
+    pub mod constants;
+    pub mod event_log_struct;
     pub mod import_xes;
 }
 
 pub mod petri_net {
     pub mod petri_net_struct;
+    pub mod pnml;
 }
 
-
 pub mod alphappp {
-    pub mod log_repair;
     pub mod candidate_building;
     pub mod candidate_pruning;
+    pub mod full;
+    pub mod log_repair;
 }
 
 pub const START_EVENT: &str = "__START";
 pub const END_EVENT: &str = "__END";
 
-
 pub fn loop_sum_sqrt(from: usize, to: usize) -> f32 {
     (from..to).map(|x| (x as f32).sqrt()).sum()
+}
+
+pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
+    let start_act = match log.act_to_index.get(&START_EVENT.to_string()) {
+        Some(a) => {
+            eprintln!("Start activity ({}) already present in activity set! Still adding start/end to every trace, which might not be the desired outcome.", START_EVENT);
+            *a
+        }
+        None => {
+            let a = log.activities.len();
+            log.activities.push(START_EVENT.to_string());
+            log.act_to_index.insert(START_EVENT.to_string(), a);
+            a
+        }
+    };
+    let end_act = match log.act_to_index.get(&END_EVENT.to_string()) {
+        Some(a) => {
+            eprintln!("End activity ({}) already present in activity set! Still adding start/end to every trace, which might not be the desired outcome.", END_EVENT);
+            *a
+        }
+        None => {
+            let a = log.activities.len();
+            log.activities.push(END_EVENT.to_string());
+            log.act_to_index.insert(END_EVENT.to_string(), a);
+            a
+        }
+    };
+
+    log.traces.par_iter_mut().for_each(|t| {
+        t.insert(0, start_act);
+        t.push(end_act);
+    });
 }
 
 pub fn add_start_end_acts(log: &mut EventLog) {
@@ -74,13 +109,13 @@ pub fn add_sample_transition(net: &mut PetriNet) {
         .for_each(|p| net.add_arc(ArcType::place_to_transition(p, t1), None));
     end_places
         .into_iter()
-        .for_each(|p| net.add_arc(ArcType::transition_to_place(t1,p), None));
+        .for_each(|p| net.add_arc(ArcType::transition_to_place(t1, p), None));
 }
 
-pub fn petrinet_to_json(net: &PetriNet) -> String{
+pub fn petrinet_to_json(net: &PetriNet) -> String {
     serde_json::to_string(net).unwrap()
 }
-pub fn json_to_petrinet(net_json: &str) -> PetriNet{
+pub fn json_to_petrinet(net_json: &str) -> PetriNet {
     serde_json::from_str(&net_json).unwrap()
 }
 
