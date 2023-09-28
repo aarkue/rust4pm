@@ -1,12 +1,10 @@
 use std::{collections::HashSet, fs::File, io::BufReader, vec};
 
 use pm_rust::{
-    alphappp::full::alphappp_discover_petri_net,
-    event_log::{
-        activity_projection::EventLogActivityProjection,
-        import_xes::import_xes_file,
-    },
-    Attribute, AttributeAddable, AttributeValue, Attributes, DateTime, Utc, Uuid, petri_net::pnml::export_petri_net_to_pnml,
+    alphappp::full::{alphappp_discover_petri_net, AlphaPPPConfig},
+    event_log::{activity_projection::EventLogActivityProjection, import_xes::import_xes_file},
+    petri_net::pnml::export_petri_net_to_pnml,
+    Attribute, AttributeAddable, AttributeValue, Attributes, DateTime, Utc, Uuid,
 };
 use serde::{Deserialize, Serialize};
 fn main() {
@@ -59,10 +57,20 @@ fn main() {
     // println!("{}", json);
 
     let log =
-    import_xes_file(&"/home/aarkue/dow/event_logs/BPI_Challenge_2020_request_for_payments.xes");
+        import_xes_file(&"/home/aarkue/dow/event_logs/BPI_Challenge_2020_request_for_payments.xes");
     let log_proj: EventLogActivityProjection = (&log).into();
-    let pn = alphappp_discover_petri_net(&log_proj);
-    let pnml = export_petri_net_to_pnml(&pn,"net.pnml");
+    let pn = alphappp_discover_petri_net(
+        &log_proj,
+        AlphaPPPConfig {
+            balance_thresh: 0.1,
+            fitness_thresh: 0.8,
+            log_repair_skip_df_thresh: 25,
+            log_repair_loop_df_thresh: 25,
+            absolute_df_clean_thresh: 5,
+            relative_df_clean_thresh: 0.05,
+        },
+    );
+    let pnml = export_petri_net_to_pnml(&pn, "net.pnml");
     println!("Discovered Petri Net: {:?}", pnml);
     // let df_threshold = 10;
     // // log_proj = add_artificial_acts_for_skips(log_proj, df_threshold);

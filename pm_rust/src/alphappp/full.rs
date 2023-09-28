@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     add_start_end_acts_proj,
     event_log::activity_projection::{ActivityProjectionDFG, EventLogActivityProjection},
@@ -14,16 +16,36 @@ use super::{
     },
 };
 
-pub fn alphappp_discover_petri_net(log_proj: &EventLogActivityProjection) -> PetriNet {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AlphaPPPConfig {
+    pub balance_thresh: f32,
+    pub fitness_thresh: f32,
+    pub log_repair_skip_df_thresh: u64,
+    pub log_repair_loop_df_thresh: u64,
+    pub absolute_df_clean_thresh: u64,
+    pub relative_df_clean_thresh: f32,
+}
+pub fn alphappp_discover_petri_net(
+    log_proj: &EventLogActivityProjection,
+    config: AlphaPPPConfig,
+) -> PetriNet {
     let mut log_proj = log_proj.clone();
     add_start_end_acts_proj(&mut log_proj);
-    let df_threshold = 50;
-    let log_proj = add_artificial_acts_for_skips(&log_proj, df_threshold);
-    let log_proj = add_artificial_acts_for_loops(&log_proj, df_threshold);
+    let log_proj = add_artificial_acts_for_skips(&log_proj, config.log_repair_skip_df_thresh);
+    let log_proj = add_artificial_acts_for_loops(&log_proj, config.log_repair_loop_df_thresh);
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
-    let dfg = filter_dfg(&dfg, 2, 0.01);
+    let dfg = filter_dfg(
+        &dfg,
+        config.absolute_df_clean_thresh,
+        config.relative_df_clean_thresh,
+    );
     let cnds: HashSet<(Vec<usize>, Vec<usize>)> = build_candidates(&dfg);
-    let sel = prune_candidates(&cnds, 0.1, 0.8, &log_proj);
+    let sel = prune_candidates(
+        &cnds,
+        config.balance_thresh,
+        config.fitness_thresh,
+        &log_proj,
+    );
     let mut pn = PetriNet::new();
     let transitions: Vec<TransitionID> = log_proj
         .activities
