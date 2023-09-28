@@ -1,6 +1,6 @@
 use std::fs::File;
 
-use quick_xml::{events::BytesText, Writer};
+use quick_xml::{events::{BytesText, BytesDecl}, Writer};
 use uuid::Uuid;
 
 use super::petri_net_struct::PetriNet;
@@ -9,6 +9,7 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
     let file = File::create(path).unwrap();
     // let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 4);
     let mut writer = Writer::new_with_indent(file, b' ', 4);
+    writer.write_event(quick_xml::events::Event::Decl(BytesDecl::new("1.0", Some("utf8"), None))).unwrap();
     writer
         .create_element("pnml")
         .write_inner_content(|writer| {
@@ -29,7 +30,7 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                         .create_element("page")
                         .with_attribute(("id", "n0"))
                         .write_inner_content(|writer| {
-                            pn.places.iter().for_each(|(id, _place)| {
+                            pn.places.iter().for_each(|(id, place)| {
                                 writer
                                     .create_element("place")
                                     .with_attribute(("id", id.to_string().as_str()))
@@ -46,6 +47,28 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                                                 Ok(())
                                             })
                                             .unwrap();
+                                        match pn.initial_marking.clone() {
+                                            Some(initial_marking) => {
+                                                if initial_marking.contains_key(&place.into()) {
+                                                    let tokens =
+                                                        initial_marking.get(&place.into()).unwrap();
+                                                    writer
+                                                        .create_element("initialMarking")
+                                                        .write_inner_content(|writer| {
+                                                            writer
+                                                                .create_element("text")
+                                                                .write_text_content(BytesText::new(
+                                                                    tokens.to_string().as_str(),
+                                                                ))
+                                                                .unwrap();
+                                                            Ok(())
+                                                        })
+                                                        .unwrap();
+                                                }
+                                            }
+                                            None => {}
+                                        }
+
                                         Ok(())
                                     })
                                     .unwrap();
@@ -118,6 +141,49 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                             Ok(())
                         })
                         .unwrap();
+
+                    match pn.final_markings.clone() {
+                        Some(final_markings) => {
+                            writer
+                                .create_element("finalmarkings")
+                                .write_inner_content(|writer| {
+                                    final_markings.iter().for_each(|marking| {
+                                        writer
+                                            .create_element("marking")
+                                            .write_inner_content(|writer| {
+                                                marking.iter().for_each(|(place_id, tokens)| {
+                                                    writer
+                                                        .create_element("place")
+                                                        .with_attribute((
+                                                            "idref",
+                                                            place_id
+                                                                .get_uuid()
+                                                                .to_string()
+                                                                .as_str(),
+                                                        ))
+                                                        .write_inner_content(|writer| {
+                                                            writer
+                                                                .create_element("text")
+                                                                .write_text_content(BytesText::new(
+                                                                    tokens.to_string().as_str(),
+                                                                ))
+                                                                .unwrap();
+                                                            Ok(())
+                                                        })
+                                                        .unwrap();
+                                                });
+                                                Ok(())
+                                            })
+                                            .unwrap();
+                                    });
+                                    Ok(())
+                                })
+                                .unwrap();
+                        }
+                        None => {}
+                    }
+
+                    // </net>
                     Ok(())
                 })
                 .unwrap();
