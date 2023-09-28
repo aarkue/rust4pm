@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::str::FromStr;
 use std::time::Instant;
 
@@ -7,7 +7,9 @@ use quick_xml::events::BytesStart;
 use quick_xml::Reader;
 use uuid::Uuid;
 
-use crate::event_log::event_log_struct::{AttributeValue, Attributes, Event, EventLog, Trace, AttributeAddable};
+use crate::event_log::event_log_struct::{
+    AttributeAddable, AttributeValue, Attributes, Event, EventLog, Trace,
+};
 
 #[derive(Clone, Copy)]
 enum Mode {
@@ -75,10 +77,10 @@ fn add_attribute_from_tag(t: &BytesStart, mode: Mode, log: &mut EventLog) {
     }
 }
 
-pub fn import_log_xes(path: &str) -> EventLog {
-    let now = Instant::now();
-    let mut reader = Reader::from_file(path).unwrap();
-
+pub fn import_xes<T>(reader: &mut Reader<T>) -> EventLog
+where
+    T: BufRead,
+{
     reader.trim_text(true);
     let mut buf: Vec<u8> = Vec::new();
 
@@ -138,7 +140,16 @@ pub fn import_log_xes(path: &str) -> EventLog {
         }
     }
     buf.clear();
-    println!("Parsing XES took {:.2?}", now.elapsed());
     // println!("Read event log with {:?} traces.", log.traces.len());
     return log;
+}
+
+pub fn import_xes_file(path: &str) -> EventLog {
+    let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();
+    return import_xes(&mut reader);
+}
+
+pub fn import_xes_str(xes_str: &str) -> EventLog {
+    let mut reader: Reader<&[u8]> = Reader::from_str(&xes_str);
+    return import_xes(&mut reader);
 }

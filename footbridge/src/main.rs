@@ -4,7 +4,7 @@ use pm_rust::{
     alphappp::full::alphappp_discover_petri_net,
     event_log::{
         activity_projection::EventLogActivityProjection,
-        import_xes::import_log_xes,
+        import_xes::import_xes_file,
     },
     Attribute, AttributeAddable, AttributeValue, Attributes, DateTime, Utc, Uuid, petri_net::pnml::export_petri_net_to_pnml,
 };
@@ -59,7 +59,7 @@ fn main() {
     // println!("{}", json);
 
     let log =
-        import_log_xes(&"/home/aarkue/dow/event_logs/BPI_Challenge_2020_request_for_payments.xes");
+    import_xes_file(&"/home/aarkue/dow/event_logs/BPI_Challenge_2020_request_for_payments.xes");
     let log_proj: EventLogActivityProjection = (&log).into();
     let pn = alphappp_discover_petri_net(&log_proj);
     let pnml = export_petri_net_to_pnml(&pn,"net.pnml");

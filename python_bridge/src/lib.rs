@@ -4,7 +4,7 @@ use pm_rust::add_sample_transition;
 use pm_rust::add_start_end_acts;
 use pm_rust::event_log::constants::PREFIXED_TRACE_ID_NAME;
 use pm_rust::event_log::constants::TRACE_PREFIX;
-use pm_rust::event_log::import_xes::import_log_xes;
+use pm_rust::event_log::import_xes::import_xes_file;
 use pm_rust::json_to_petrinet;
 use pm_rust::petri_net::petri_net_struct::PetriNet;
 use pm_rust::petrinet_to_json;
@@ -209,7 +209,7 @@ fn polars_df_to_log(pydf: PyDataFrame) -> PyResult<PyDataFrame> {
 fn import_xes(path: String) -> PyResult<PyDataFrame> {
     println!("Starting XES Import");
     let mut now = Instant::now();
-    let log = import_log_xes(&path);
+    let log = import_xes_file(&path);
     println!("Importing XES Log took {:.2?}",now.elapsed());
     now = Instant::now();
     // add_start_end_acts(&mut log);
