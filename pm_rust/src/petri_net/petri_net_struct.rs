@@ -72,6 +72,10 @@ impl PetriNet {
             arcs: Vec::new(),
         }
     }
+
+    pub fn to_json(self) -> String {
+        serde_json::to_string(&self).unwrap()
+    } 
     pub fn add_place(&mut self, place_id: Option<Uuid>) -> PlaceID {
         let place_id = place_id.unwrap_or(Uuid::new_v4());
         let place = Place { id: place_id };
