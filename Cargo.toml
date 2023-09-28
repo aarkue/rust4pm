@@ -5,4 +5,5 @@ members = [
 	"pm_rust",
 	"python_bridge",
 	"java_bridge",
+	"pm_wasm"
 ]

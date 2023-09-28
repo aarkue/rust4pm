@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en-US">
+
+<head>
+  <meta charset="utf-8" />
+  <title>POC pm_wasm</title>
+</head>
+
+<body>
+  <input type="file" id="log-input" />
+  <button id="go-button">Go!</button>
+  <script type="module">
+    import init, { wasm_discover_alphappp_petri_net } from "./pkg/pm_wasm.js";
+    init().then(() => {
+      let go_button = document.getElementById("go-button");
+      go_button.addEventListener("click", (ev) => {
+        let input = document.getElementById("log-input");
+        input.files[0].text().then((str) => {
+          let petriNet = wasm_discover_alphappp_petri_net(str);
+          console.log({ petriNet });
+          alert("DONE");
+        })
+      });
+    });
+  </script>
+</body>
+
+</html>
