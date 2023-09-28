@@ -1,4 +1,4 @@
-# _Python_&nbsp;&nbsp;&nbsp;↔️&nbsp;&nbsp;&nbsp;Rust&nbsp;&nbsp;&nbsp;↔️&nbsp;&nbsp;&nbsp;_Java_
+# _Python_ 🌉 Rust 🌉 _Java_
 WIP Project to allow using a shared Rust library from both Python and Java.
 
 ## Structure
@@ -29,6 +29,12 @@ WIP Project to allow using a shared Rust library from both Python and Java.
 - JSON-encoding/decoding possible (using faster `orjson`), but still no great passing performance
   - `bytes` encoding/decoding e.g., Event Logs is implemented
 - Easier support to construct and use Rust struct from python
-  - Used for wrapper structs like `PyBridgeEventLog`; Idea: Do heavy work on Rust side 
+  - Used for wrapper structs like `PyBridgeEventLog`; Idea: Do heavy work on Rust side
 - Polars: Allows converting PM4Py's pandas DataFrame to a Polars DataFrame; Can then easily be used on Rust side
   - But: Requires Polars dependency (also in python!)
+
+
+## WASM Proof of Concept
+- `pm_wasm/` contains a proof of concept of WASM bindings for the main library, e.g., exposed to JavaScript and executed in the browser.
+- After building with `wasm-pack build --target web --release` the `index.html` file can be served (at root): The resulting webpage contains a file input allowing an XES event log to be selected.
+After selecting a file, clicking the 'Go' button will execute the generated WASM and discover a Petri net, which will be logged in the console as JSON once the call finishes. Note that the in-browser WASM execution performance is limited, so some patience might be required.  
