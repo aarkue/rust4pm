@@ -1,10 +1,12 @@
+from typing import Optional, Tuple
 import pm4py
-from pm4py.objects.petri_net.obj import PetriNet
+from pm4py.objects.petri_net.obj import PetriNet, Marking
 
 
-def dict_to_petrinet(net_dict) -> PetriNet:
-    places = {p["id"]: PetriNet.Place(p["id"])
-              for p in net_dict["places"].values()}
+def dict_to_petrinet(
+    net_dict,
+) -> Tuple[PetriNet, Optional[Marking], Optional[Marking]]:
+    places = {p["id"]: PetriNet.Place(p["id"]) for p in net_dict["places"].values()}
     transitions = {
         t["id"]: PetriNet.Transition(t["id"], t["label"])
         for t in net_dict["transitions"].values()
@@ -21,11 +23,32 @@ def dict_to_petrinet(net_dict) -> PetriNet:
 
     arcs = [get_arc_for(arc_dict) for arc_dict in net_dict["arcs"]]
     net = PetriNet(None, places.values(), transitions.values(), arcs)
-    return net
+
+    # Initial and Final Markings
+    im = None
+    if net_dict["initial_marking"] is not None:
+        im = Marking()
+        for place_id in net_dict["initial_marking"]:
+            im[places[place_id]] = net_dict["initial_marking"][place_id]
+    fm = None
+    if net_dict["final_markings"] is not None:
+        if len(net_dict["final_markings"]) > 0:
+            if len(net_dict["final_markings"]) > 1:
+                print(
+                    "Warning: PetriNet contains more than one final marking. For compability only the first final marking will be considered. This might not be the intended outcome!"
+                )
+        fm = Marking()
+        for place_id in net_dict["final_markings"][0]:
+            fm[places[place_id]] = net_dict["final_markings"][0][place_id]
+
+    return (net, im, fm)
 
 
-def petrinet_to_dict(net: PetriNet) -> dict:
+def petrinet_to_dict(
+    net: PetriNet, im: Optional[Marking] = None, fms: Optional[list[Marking]] = None
+) -> dict:
     import uuid
+
     # Used to save a mapping of python ids (e.g., id(p)) to the unique generated uuids (used in the dict)
     pyid_to_uuid = dict()
     places = dict()
@@ -50,4 +73,25 @@ def petrinet_to_dict(net: PetriNet) -> dict:
         }
         for arc in net.arcs
     ]
-    return {"places": places, "transitions": transitions, "arcs": arcs}
+    initial_marking = None
+    if im is not None:
+        initial_marking = dict()
+        for p, n in im.items():
+            initial_marking[pyid_to_uuid[id(p)]] = n
+
+    final_markings = None
+    if fms is not None:
+        final_markings = list()
+        for fm in fms:
+            final_marking = dict()
+            for p, n in fm.items():
+                final_marking[pyid_to_uuid[id(p)]] = n
+            final_markings.append(final_marking)
+
+    return {
+        "places": places,
+        "transitions": transitions,
+        "arcs": arcs,
+        "initial_marking": initial_marking,
+        "final_markings": final_markings,
+    }
