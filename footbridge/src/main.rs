@@ -2,9 +2,9 @@ use std::{collections::HashSet, fs::File, io::BufReader, vec};
 
 use pm_rust::{
     alphappp::full::{alphappp_discover_petri_net, AlphaPPPConfig},
-    event_log::{activity_projection::EventLogActivityProjection, import_xes::import_xes_file},
+    event_log::{activity_projection::{EventLogActivityProjection, ActivityProjectionDFG}, import_xes::import_xes_file},
     petri_net::pnml::export_petri_net_to_pnml,
-    Attribute, AttributeAddable, AttributeValue, Attributes, DateTime, Utc, Uuid,
+    Attribute, AttributeAddable, AttributeValue, Attributes, DateTime, Utc, Uuid, add_start_end_acts_proj,
 };
 use serde::{Deserialize, Serialize};
 fn main() {
@@ -57,21 +57,29 @@ fn main() {
     // println!("{}", json);
 
     let log =
-        import_xes_file(&"/home/aarkue/dow/event_logs/BPI_Challenge_2020_request_for_payments.xes");
+        import_xes_file(&"/home/aarkue/doc/sciebo/alpha-revisit/Sepsis Cases - Event Log.xes");
+    let mut log_proj: EventLogActivityProjection = (&log).into();
+    add_start_end_acts_proj(&mut log_proj);
+    let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
+    let dfg_sum : u64 = dfg.edges.values().sum();
+    let mean_dfg = dfg_sum as f32 / dfg.edges.len() as f32;
+    let repair_thresh = 4.0;
+    println!("Repair thresh: {}",repair_thresh * mean_dfg);
     let log_proj: EventLogActivityProjection = (&log).into();
     let pn = alphappp_discover_petri_net(
         &log_proj,
         AlphaPPPConfig {
-            balance_thresh: 0.1,
+            balance_thresh: 0.4,
             fitness_thresh: 0.8,
-            log_repair_skip_df_thresh: 25,
-            log_repair_loop_df_thresh: 25,
-            absolute_df_clean_thresh: 5,
-            relative_df_clean_thresh: 0.05,
+            log_repair_skip_df_thresh: (repair_thresh * mean_dfg).ceil() as u64,
+            log_repair_loop_df_thresh: (repair_thresh* mean_dfg).ceil() as u64,
+            absolute_df_clean_thresh: 1,
+            relative_df_clean_thresh: 0.01,
         },
     );
-    let pnml = export_petri_net_to_pnml(&pn, "net.pnml");
-    println!("Discovered Petri Net: {:?}", pnml);
+    panic!("Test123");
+    export_petri_net_to_pnml(&pn, "net.pnml");
+    println!("Discovered Petri Net: {:?}", pn.to_json());
     // let df_threshold = 10;
     // // log_proj = add_artificial_acts_for_skips(log_proj, df_threshold);
     // // log_proj = add_artificial_acts_for_loops(log_proj, df_threshold);

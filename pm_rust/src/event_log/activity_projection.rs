@@ -140,3 +140,11 @@ impl Into<EventLogActivityProjection> for &EventLog {
         }
     }
 }
+
+impl EventLogActivityProjection {
+    pub fn acts_to_names(self: &Self,acts: &Vec<usize>) -> Vec<String> {
+        let mut ret: Vec<String> = acts.iter().map(|act| self.activities[*act].clone()).collect();
+        ret.sort();
+        return ret;
+    }
+}

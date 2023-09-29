@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use rayon::prelude::*;
+use rayon::{prelude::*, vec};
 
 use crate::event_log::activity_projection::ActivityProjectionDFG;
 
@@ -77,7 +77,9 @@ pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec
                 && !df_relations.contains(&(a, a))
                 && !df_relations.contains(&(b, b))
             {
-                final_cnds.insert((vec![a], vec![b]));
+                // if satisfies_cnd_condition(&df_relations,&vec![a],& vec![b]) {
+                    final_cnds.insert((vec![a], vec![b]));
+                // }
                 cnds.insert((vec![a], vec![b]));
             } else {
                 cnds.insert((vec![a], vec![b]));
@@ -113,11 +115,11 @@ pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec
             })
             .collect();
         if new_cnds.len() > 0 {
-            changed = true;
-            for cnd in new_cnds {
-                final_cnds.insert(cnd.clone());
-                cnds.insert(cnd);
-            }
+                changed = true;
+                for cnd in new_cnds {
+                    final_cnds.insert(cnd.clone());
+                    cnds.insert(cnd);
+                }
         }
     }
     return final_cnds;

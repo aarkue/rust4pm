@@ -52,12 +52,14 @@ pub fn filter_dfg(
 pub fn add_artificial_acts_for_skips(
     log: &EventLogActivityProjection,
     df_threshold: u64,
-) -> EventLogActivityProjection {
+) -> (EventLogActivityProjection,Vec<String>) {
     let mut ret = log.clone();
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log);
     let mut skips: HashMap<&usize, HashSet<&usize>> = HashMap::new();
+    let start_act = log.act_to_index.get(START_EVENT).unwrap();
+    let end_act = log.act_to_index.get(END_EVENT).unwrap();
     dfg.nodes.iter().for_each(|a| {
-        if dfg.df_between(*a, *a) == 0 {
+        if dfg.df_between(*a, *a) == 0 && a != start_act {
             let out_from_a: HashSet<&usize> = dfg
                 .nodes
                 .iter()
@@ -70,8 +72,7 @@ pub fn add_artificial_acts_for_skips(
                     .iter()
                     .filter(|x| dfg.df_between(*a, **x) > 0)
                     .filter(|b| {
-                        if log.activities[**b] != START_EVENT
-                            && log.activities[**b] != END_EVENT
+                        if *b != end_act
                             && dfg.df_between(**b, **b) < df_threshold
                             && dfg.df_between(**b, *a) < df_threshold
                         {
@@ -100,10 +101,12 @@ pub fn add_artificial_acts_for_skips(
         .collect();
     let mut new_art_acts_sorted: Vec<(usize, usize)> =
         new_artificial_acts.clone().into_iter().collect();
+    let mut new_acts: Vec<String> = Vec::new();
     new_art_acts_sorted.sort_by(|(_, new_act1), (_, new_acts2)| new_act1.cmp(new_acts2));
     for (a, new_act) in new_art_acts_sorted {
         let act_name = format!("{}skip_after_{}", SILENT_ACT_PREFIX, ret.activities[a]);
         ret.activities.push(act_name.clone());
+        new_acts.push(act_name.clone());
         ret.act_to_index.insert(act_name, new_act);
     }
     // Modify traces by inserting new artificial activities at appropriate places
@@ -141,7 +144,7 @@ pub fn add_artificial_acts_for_skips(
                 .collect()
         })
         .collect();
-    return ret;
+    return (ret,new_acts);
 }
 
 pub fn get_reachable_bf(
@@ -154,6 +157,7 @@ pub fn get_reachable_bf(
         .map(|b| vec![act, b])
         .collect();
     let mut finished_paths: HashSet<Vec<usize>> = HashSet::new();
+    let mut dead_ends: HashSet<Vec<usize>> = HashSet::new();
     let mut expanded = true;
     while expanded {
         expanded = false;
@@ -177,7 +181,7 @@ pub fn get_reachable_bf(
                     .collect();
                 if new_paths.is_empty() {
                     // Can't expand any further
-                    finished_paths.insert(path);
+                    dead_ends.insert(path.clone());
                 } else {
                     expanded = true
                 }
@@ -185,13 +189,13 @@ pub fn get_reachable_bf(
             })
             .collect();
     }
-    return finished_paths;
+    return finished_paths
 }
 
 pub fn add_artificial_acts_for_loops(
     log: &EventLogActivityProjection,
     df_threshold: u64,
-) -> EventLogActivityProjection {
+) -> (EventLogActivityProjection,Vec<String>) {
     let mut ret = log.clone();
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log);
     if !log.activities.contains(&START_EVENT.to_string())
@@ -209,6 +213,8 @@ pub fn add_artificial_acts_for_loops(
         .into_iter()
         .filter(|path| path.last().unwrap() != end_act)
         .collect();
+    println!("Loops {}: {:?}\n",loops.len(), loops);
+    println!("Activities: {:?}\n",log.activities);
     let taus: HashSet<(usize, usize)> = loops
         .iter()
         .filter_map(|path| {
@@ -230,12 +236,14 @@ pub fn add_artificial_acts_for_loops(
     // Add artificial activities to ret
     ret.activities
         .append(&mut vec![String::new(); insert_taus_between.len()]);
+    let mut new_acts : Vec<String> = Vec::new();
     insert_taus_between.iter().for_each(|((a, b), art_act)| {
         let art_act_name = format!(
             "{}skip_loop_{}_{}",
             SILENT_ACT_PREFIX, log.activities[*a], log.activities[*b]
         );
         ret.activities[*art_act] = art_act_name.clone();
+        new_acts.push(art_act_name.clone());
         ret.act_to_index.insert(art_act_name, *art_act);
     });
     // Update traces to insert new artificial acts
@@ -259,5 +267,5 @@ pub fn add_artificial_acts_for_loops(
                 .collect()
         })
         .collect();
-    return ret;
+    return (ret,new_acts);
 }
