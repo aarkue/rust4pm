@@ -29,6 +29,17 @@ fn all_dfs_between(
     }
     return true;
 }
+
+fn all_dfs_between_vec(df_rel: &HashSet<(usize, usize)>, a: &Vec<usize>, b: &Vec<usize>) -> bool {
+    for &a1 in a {
+        for &b1 in b {
+            if !df_rel.contains(&(a1, b1)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
 fn not_all_dfs_between(
     df_rel: &HashSet<(usize, usize)>,
     a: &HashSet<usize>,
@@ -61,12 +72,11 @@ pub fn satisfies_cnd_condition(
 }
 
 pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec<usize>)> {
-    let df_relations: HashSet<(usize, usize)> =
-        dfg
-            .edges
-            .iter()
-            .filter_map(|((a, b), w)| if w > &0 { Some((*a, *b)) } else { None })
-            .collect();
+    let df_relations: HashSet<(usize, usize)> = dfg
+        .edges
+        .iter()
+        .filter_map(|((a, b), w)| if w > &0 { Some((*a, *b)) } else { None })
+        .collect();
     println!("DF #{:?}", df_relations.len());
     let mut cnds: HashSet<(Vec<usize>, Vec<usize>)> = HashSet::new();
     let mut final_cnds: HashSet<(Vec<usize>, Vec<usize>)> = HashSet::new();
@@ -77,7 +87,7 @@ pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec
                 && !df_relations.contains(&(a, a))
                 && !df_relations.contains(&(b, b))
             {
-                    final_cnds.insert((vec![a], vec![b]));
+                final_cnds.insert((vec![a], vec![b]));
                 cnds.insert((vec![a], vec![b]));
             } else {
                 cnds.insert((vec![a], vec![b]));
@@ -89,21 +99,25 @@ pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec
     // let end = *log.act_to_index.get(&END_EVENT.to_string()).unwrap();
 
     let mut changed = true;
+    let mut new_cnds: HashSet<(Vec<usize>, Vec<usize>)> = cnds.clone();
     while changed {
         changed = false;
-        let new_cnds: HashSet<(Vec<usize>, Vec<usize>)> = cnds
+        let added_cnds: HashSet<(Vec<usize>, Vec<usize>)> = new_cnds
             .par_iter()
             .flat_map(|(a1, b1)| {
                 cnds.par_iter()
                     .filter_map(|(a2, b2)| {
                         let mut a = [a1.as_slice(), a2.as_slice()].concat();
                         let mut b = [b1.as_slice(), b2.as_slice()].concat();
+                        if !all_dfs_between_vec(&df_relations, &a1, &b2) || !all_dfs_between_vec(&df_relations, &a2, &b1) || all_dfs_between_vec(&df_relations, &b, &a) {
+                            return None
+                        }
                         a.sort();
                         a.dedup();
                         b.sort();
                         b.dedup();
-                        if a != b && satisfies_cnd_condition(&df_relations, &a, &b) {
-                            if !cnds.contains(&(a.clone(), b.clone())) {
+                        if !cnds.contains(&(a.clone(), b.clone())) {
+                            if a != b && satisfies_cnd_condition(&df_relations, &a, &b) {
                                 return Some((a, b));
                             }
                         }
@@ -112,12 +126,13 @@ pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec
                     .collect::<HashSet<(Vec<usize>, Vec<usize>)>>()
             })
             .collect();
-        if new_cnds.len() > 0 {
-                changed = true;
-                for cnd in new_cnds {
-                    final_cnds.insert(cnd.clone());
-                    cnds.insert(cnd);
-                }
+        if added_cnds.len() > 0 {
+            changed = true;
+            for cnd in &added_cnds {
+                final_cnds.insert(cnd.clone());
+                cnds.insert(cnd.clone());
+            }
+            new_cnds = added_cnds;
         }
     }
     return final_cnds;

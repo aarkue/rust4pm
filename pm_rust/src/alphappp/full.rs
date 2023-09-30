@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -35,18 +35,25 @@ pub fn alphappp_discover_petri_net(
     log_proj: &EventLogActivityProjection,
     config: AlphaPPPConfig,
 ) -> PetriNet {
+    println!("Started Alpha+++ Discovery");
+    let total_start = Instant::now();
+    let mut now = Instant::now();
     let mut log_proj = log_proj.clone();
     add_start_end_acts_proj(&mut log_proj);
+    println!("Adding start/end acts took: {:.2?}",now.elapsed());
+    now = Instant::now();
     let (log_proj, added_loop) =
         add_artificial_acts_for_loops(&log_proj, config.log_repair_loop_df_thresh);
     println!(
         "Using Loop Log Repair with df_threshold of {}",
         config.log_repair_loop_df_thresh
     );
-    println!("Added for loop {}: {:?}", added_loop.len(), added_loop);
+    println!("#Added for loop: {}", added_loop.len());
     let (log_proj, added_skip) =
         add_artificial_acts_for_skips(&log_proj, config.log_repair_skip_df_thresh);
-    println!("Added for skip {}: {:?}", added_skip.len(), added_skip);
+    println!("#Added for skip: {}", added_skip.len());
+    println!("Log Skip/Loop Repair took: {:.2?}",now.elapsed());
+    now = Instant::now();
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
     let dfg = filter_dfg(
         &dfg,
@@ -60,19 +67,17 @@ pub fn alphappp_discover_petri_net(
     );
     let cnds: HashSet<(Vec<usize>, Vec<usize>)> = build_candidates(&dfg);
     println!("Built candidates {}", cnds.len());
+    println!("Building candidates took: {:.2?}",now.elapsed());
+    now = Instant::now();
     let sel = prune_candidates(
         &cnds,
         config.balance_thresh,
         config.fitness_thresh,
         &log_proj,
     );
-    println!(
-        "Final pruned candidates: {}",
-        sel.len()
-    );
-    cnds_to_names(&log_proj, &sel).iter().for_each(|(a,b)| {
-        println!("{:?} => {:?}",a,b)
-    });
+    println!("Final pruned candidates: {}", sel.len());
+    println!("Pruning candidates took: {:.2?}",now.elapsed());
+    now = Instant::now();
     let mut pn = PetriNet::new();
     let mut initial_marking: Marking = Marking::new();
     let mut final_marking: Marking = Marking::new();
@@ -123,6 +128,9 @@ pub fn alphappp_discover_petri_net(
 
     pn.initial_marking = Some(initial_marking);
     pn.final_markings = Some(vec![final_marking]);
+    println!("Building PN took: {:.2?}",now.elapsed());
+
+    println!("\n====\nWhole Discovery took: {:.2?}",total_start.elapsed());
     return pn;
 }
 
