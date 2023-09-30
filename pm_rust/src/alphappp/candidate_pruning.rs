@@ -3,35 +3,34 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
-use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator, IntoParallelIterator};
 
-use crate::event_log::activity_projection::EventLogActivityProjection;
+use crate::{event_log::activity_projection::EventLogActivityProjection, END_EVENT, START_EVENT};
 
-fn compute_balance(a: &Vec<usize>, b: &Vec<usize>, act_count: &Vec<u64>) -> (f32, i128, i128) {
-    let mut ai: u64 = 0;
-    let mut bi: u64 = 0;
+fn compute_balance(a: &Vec<usize>, b: &Vec<usize>, act_count: &Vec<i128>) -> f32 {
+    let mut ai: i128 = 0;
+    let mut bi: i128 = 0;
     for inc in a {
         ai += act_count[*inc];
     }
     for out in b {
         bi += act_count[*out];
     }
-    let ai = ai as i128;
-    let bi = bi as i128;
     let diff: f32 = (ai - bi).abs() as f32;
     let max_freq = max(ai, bi) as f32;
-    return (diff / max_freq, ai, bi);
+    return diff / max_freq;
 }
 
 fn compute_local_fitness(
     a: &Vec<usize>,
     b: &Vec<usize>,
     log: &EventLogActivityProjection,
+    strict: bool,
 ) -> (f32, f32) {
     let mut relevant_variants_with_freq: HashMap<Vec<&usize>, u64> = HashMap::new();
     let proc_vars: Vec<Vec<&usize>> = log
         .traces
-        .iter()
+        .par_iter()
         .filter_map(|var| {
             let filtered_var: Vec<&usize> = var
                 .iter()
@@ -52,11 +51,27 @@ fn compute_local_fitness(
     });
     let mut num_traces_containg_act = vec![0; log.activities.len()];
     let mut num_fitting_traces_containg_act = vec![0; log.activities.len()];
+
+    let start_act = log.act_to_index.get(&START_EVENT.to_string()).unwrap();
+    let end_act = log.act_to_index.get(&END_EVENT.to_string()).unwrap();
+
     let num_fitting_traces: u64 = relevant_variants_with_freq
         .iter()
         .map(|(var, freq)| -> u64 {
             let mut num_tokens = 0;
             let mut var_copy = var.clone();
+            if strict {
+                // Do not consider START/END as "relevant acts" in strict mode
+                if var_copy.contains(&start_act) {
+                    var_copy.remove(0);
+                }
+                if var_copy.contains(&end_act) {
+                    var_copy.pop();
+                }
+                if var_copy.is_empty() {
+                    return 0
+                }
+            }
             var_copy.sort();
             var_copy.dedup();
             for act in &var_copy {
@@ -65,21 +80,21 @@ fn compute_local_fitness(
 
             for act in var {
                 // Check below would make replay more restrictive for self loops...
-                // if a.contains(act) && b.contains(act) {
-                //     if num_tokens <= 0 {
-                //         return 0;
-                //     }
-                // } else {
-                if a.contains(act) {
-                    num_tokens += 1;
+                if strict && a.contains(act) && b.contains(act) {
+                    if num_tokens <= 0 {
+                        return 0;
+                    }
+                } else {
+                    if a.contains(act) {
+                        num_tokens += 1;
+                    }
+                    if b.contains(act) {
+                        num_tokens -= 1;
+                    }
+                    if num_tokens < 0 {
+                        return 0;
+                    }
                 }
-                if b.contains(act) {
-                    num_tokens -= 1;
-                }
-                if num_tokens < 0 {
-                    return 0;
-                }
-                // }
             }
             if num_tokens > 0 {
                 return 0;
@@ -87,23 +102,39 @@ fn compute_local_fitness(
                 return 0;
             } else {
                 for act in &var_copy {
-                    num_fitting_traces_containg_act[**act] += freq;
+                    num_fitting_traces_containg_act[**act] += *freq;
                 }
                 return *freq;
             }
         })
         .sum();
-    let num_relevant_traces: u64 = relevant_variants_with_freq
-        .into_iter()
-        .map(|(_, f)| f)
-        .sum();
+
+    let num_relevant_traces: u64 = match strict {
+        true => relevant_variants_with_freq
+            .into_iter()
+            .map(|(trace, f)| {
+                // START END a
+                if trace.len() == 1 && vec![start_act, end_act].contains(&trace[0])
+                    || trace.len() == 2 && vec![start_act, end_act] == trace
+                {
+                    return 0;
+                } else {
+                    return f;
+                }
+            })
+            .sum(),
+        false => relevant_variants_with_freq
+            .into_iter()
+            .map(|(_, f)| f)
+            .sum(),
+    };
     if num_relevant_traces == 0 {
         return (0.0, 0.0);
     }
     let min_fitness_per_act = num_traces_containg_act
         .into_iter()
         .zip(num_fitting_traces_containg_act.into_iter())
-        .filter(|(num, _)| num > &0)
+        .filter(|(num, _)| *num > 0)
         .map(|(num, num_fit)| num_fit as f32 / num as f32)
         .min_by(|a, b| a.partial_cmp(b).expect("Per activity fitness contains NaN"))
         .unwrap_or(0.0);
@@ -117,27 +148,32 @@ pub fn prune_candidates(
     cnds: &HashSet<(Vec<usize>, Vec<usize>)>,
     balance_threshold: f32,
     fitness_threshold: f32,
+    replay_threshold: f32,
+    act_count: Vec<i128>,
     log: &EventLogActivityProjection,
 ) -> Vec<(Vec<usize>, Vec<usize>)> {
-    let mut act_count = vec![0 as u64; log.activities.len()];
-    log.traces.iter().for_each(|trace| {
-        trace.iter().for_each(|act| {
-            act_count[*act] += 1;
-        })
-    });
     // let end_act = log.act_to_index.get(END_EVENT).unwrap();
     let filtered_cnds: Vec<&(Vec<usize>, Vec<usize>)> = cnds
         .par_iter()
         .filter(|(a, b)| {
             let balance = compute_balance(a, b, &act_count);
-            if balance.0 <= balance_threshold {
-                let (fitness, min_per_act_fitness) = compute_local_fitness(a, b, &log);
-                return fitness >= fitness_threshold && min_per_act_fitness >= fitness_threshold;
+            if balance <= balance_threshold {
+                return true
             } else {
                 return false;
             }
         })
         .collect();
+        println!("After balance: {}", filtered_cnds.len());
+        let filtered_cnds: Vec<&(Vec<usize>, Vec<usize>)> = filtered_cnds
+        .into_par_iter()
+        .filter(|(a, b)| {
+            let (fitness, min_per_act_fitness) = compute_local_fitness(a, b, &log, false);
+            return fitness >= fitness_threshold && min_per_act_fitness >= fitness_threshold;
+        })
+        .collect();
+    println!("After fitness: {}", filtered_cnds.len());
+
 
     let sel: Vec<(Vec<usize>, Vec<usize>)> = filtered_cnds
         .par_iter()
@@ -161,5 +197,9 @@ pub fn prune_candidates(
         .map(|(a, b)| (a.clone(), b.clone()))
         .collect();
 
-    return sel;
+        println!("After maximal (sel): {}", filtered_cnds.len());
+    return sel
+        .into_iter()
+        .filter(|(a, b)| compute_local_fitness(&a, &b, log, true) > (replay_threshold, -1.0))
+        .collect();
 }

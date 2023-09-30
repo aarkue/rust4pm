@@ -24,7 +24,6 @@ pub unsafe fn addStartEndToRustLog<'local>(mut _env: JNIEnv<'local>, _: JClass, 
     let mut log_pointer = Box::from_raw(pointer as *mut EventLog);
     add_start_end_acts(&mut log_pointer);
     let proj : EventLogActivityProjection = log_pointer.as_ref().into();
-    let res = log_repair::add_artificial_acts_for_skips(&proj, 10);
     let _log_pointer = Box::into_raw(log_pointer);
 }
 

@@ -1,6 +1,5 @@
 use chrono::DateTime;
 use chrono::NaiveDateTime;
-use pm_rust::add_sample_transition;
 use pm_rust::add_start_end_acts;
 use pm_rust::alphappp::full::AlphaPPPConfig;
 use pm_rust::alphappp::full::alphappp_discover_petri_net;
@@ -261,7 +260,7 @@ fn discover_net_alphappp(xes_path: String, alphappp_config: String) -> PyResult<
     now = Instant::now();
     let config : AlphaPPPConfig = AlphaPPPConfig::parse_from_json(&alphappp_config);
     println!("Discovering net took {:.2?}",now.elapsed());
-    let net = alphappp_discover_petri_net(&log_proj, config);
+    let (net,dur) = alphappp_discover_petri_net(&log_proj, config);
     Ok(petrinet_to_json(&net))
 }
 

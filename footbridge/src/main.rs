@@ -79,8 +79,9 @@ fn main() {
     let config = AlphaPPPConfig {
         balance_thresh: 0.3,
         fitness_thresh: 0.7,
-        log_repair_skip_df_thresh: (repair_thresh * mean_dfg).ceil() as u64,
-        log_repair_loop_df_thresh: (repair_thresh * mean_dfg).ceil() as u64,
+        replay_thresh: 0.6,
+        log_repair_skip_df_thresh_rel: repair_thresh,
+        log_repair_loop_df_thresh_rel: repair_thresh,
         absolute_df_clean_thresh: 1,
         relative_df_clean_thresh: 0.01,
     };

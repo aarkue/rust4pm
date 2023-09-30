@@ -1,11 +1,12 @@
 use std::{collections::HashSet, time::Instant};
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{
     add_start_end_acts_proj,
     event_log::activity_projection::{ActivityProjectionDFG, EventLogActivityProjection},
-    petri_net::petri_net_struct::{ArcType, Marking, PetriNet, TransitionID},
+    petri_net::petri_net_struct::{ArcType, Marking, PetriNet, Transition, TransitionID},
     END_EVENT, START_EVENT,
 };
 
@@ -31,8 +32,9 @@ pub struct AlgoDuration {
 pub struct AlphaPPPConfig {
     pub balance_thresh: f32,
     pub fitness_thresh: f32,
-    pub log_repair_skip_df_thresh: u64,
-    pub log_repair_loop_df_thresh: u64,
+    pub replay_thresh: f32,
+    pub log_repair_skip_df_thresh_rel: f32,
+    pub log_repair_loop_df_thresh_rel: f32,
     pub absolute_df_clean_thresh: u64,
     pub relative_df_clean_thresh: f32,
 }
@@ -58,18 +60,61 @@ pub fn alphappp_discover_petri_net(
     let mut now = Instant::now();
     let mut log_proj = log_proj.clone();
     add_start_end_acts_proj(&mut log_proj);
+    let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
+    let dfg_sum: u64 = dfg.edges.values().sum();
+    let mean_dfg = dfg_sum as f32 / dfg.edges.len() as f32;
+    
+    // LEGACY BEHAVIOR
+    // let mut act_count = vec![0 as i128; log_proj.activities.len()];
+    // log_proj.traces.iter().for_each(|trace| {
+    //     trace.iter().for_each(|act| {
+    //         act_count[*act] += 1;
+    //     })
+    // });
+    // log_proj.traces = log_proj.traces.into_iter().filter(|trace| trace.len() > 3).collect();
+    // ---
+    
+
+    let start_act = log_proj.act_to_index.get(&START_EVENT.to_string()).unwrap();
+    let end_act = log_proj.act_to_index.get(&END_EVENT.to_string()).unwrap();
+
+
     println!("Adding start/end acts took: {:.2?}", now.elapsed());
     now = Instant::now();
-    let (log_proj, added_loop) =
-        add_artificial_acts_for_loops(&log_proj, config.log_repair_loop_df_thresh);
-        algo_dur.loop_repair = now.elapsed().as_secs_f32();
+    let (log_proj, added_loop) = add_artificial_acts_for_loops(
+        &log_proj,
+        (config.log_repair_loop_df_thresh_rel * mean_dfg).ceil() as u64,
+    );
+    algo_dur.loop_repair = now.elapsed().as_secs_f32();
     println!(
         "Using Loop Log Repair with df_threshold of {}",
-        config.log_repair_loop_df_thresh
+        (config.log_repair_loop_df_thresh_rel * mean_dfg).ceil() as u64,
     );
     println!("#Added for loop: {}", added_loop.len());
-    let (log_proj, added_skip) =
-    add_artificial_acts_for_skips(&log_proj, config.log_repair_skip_df_thresh);
+    let (log_proj, added_skip) = add_artificial_acts_for_skips(
+        &log_proj,
+        (config.log_repair_skip_df_thresh_rel * mean_dfg).ceil() as u64,
+    );
+    // LEGACY BEHAVIOR
+    // let added_acts: HashSet<&usize> = [added_loop.as_slice(),added_skip.as_slice()].concat().into_iter().map(|act| log_proj.act_to_index.get(&act).unwrap()).collect();
+    // (act_count.len()..log_proj.activities.len()).for_each(|_|{
+    //     act_count.push(0);
+    // });
+    // log_proj.traces.iter().for_each(|trace| {
+    //     trace.iter().for_each(|act| {
+    //         if added_acts.contains(act){
+    //             act_count[*act] += 1;
+    //         }
+    //     })
+    // });
+    // 
+    let mut act_count = vec![0 as i128; log_proj.activities.len()];
+    log_proj.traces.iter().for_each(|trace| {
+        trace.iter().for_each(|act| {
+            act_count[*act] += 1;
+        })
+    });
+
     algo_dur.skip_repair = now.elapsed().as_secs_f32();
     println!("Log Skip/Loop Repair took: {:.2?}", now.elapsed());
     now = Instant::now();
@@ -95,6 +140,8 @@ pub fn alphappp_discover_petri_net(
         &cnds,
         config.balance_thresh,
         config.fitness_thresh,
+        config.replay_thresh,
+        act_count,
         &log_proj,
     );
     println!("Final pruned candidates: {}", sel.len());
@@ -104,8 +151,6 @@ pub fn alphappp_discover_petri_net(
     let mut pn = PetriNet::new();
     let mut initial_marking: Marking = Marking::new();
     let mut final_marking: Marking = Marking::new();
-    let start_act = log_proj.act_to_index.get(&START_EVENT.to_string()).unwrap();
-    let end_act = log_proj.act_to_index.get(&END_EVENT.to_string()).unwrap();
     let transitions: Vec<Option<TransitionID>> = log_proj
         .activities
         .iter()
@@ -147,6 +192,16 @@ pub fn alphappp_discover_petri_net(
                 )
             }
         });
+    });
+
+    let trans_copy = pn.transitions.clone();
+    trans_copy.into_iter().for_each(|(id, t)| {
+        if t.label.is_none()
+            && pn.postset_of_transition((&t).into()).is_empty()
+            && pn.preset_of_transition((&t).into()).is_empty()
+        {
+            pn.transitions.remove(&id).unwrap();
+        }
     });
 
     pn.initial_marking = Some(initial_marking);
