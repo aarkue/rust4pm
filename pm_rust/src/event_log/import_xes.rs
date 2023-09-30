@@ -1,8 +1,10 @@
+use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::str::FromStr;
 
 
 use chrono::DateTime;
+use flate2::bufread::GzDecoder;
 use quick_xml::events::BytesStart;
 use quick_xml::Reader;
 use uuid::Uuid;
@@ -145,8 +147,18 @@ where
 }
 
 pub fn import_xes_file(path: &str) -> EventLog {
-    let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();
-    return import_xes(&mut reader);
+    if path.ends_with(".gz") {
+        let file = File::open(path).unwrap();
+        let reader = BufReader::new(&file);
+        let mut dec = GzDecoder::new(reader);
+        let mut s = String::new();
+        dec.read_to_string(&mut s).unwrap();
+        let mut reader: Reader<&[u8]> = Reader::from_str(&s);
+        return import_xes(&mut reader);
+    }else {
+        let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();
+        return import_xes(&mut reader);
+    }
 }
 
 pub fn import_xes_str(xes_str: &str) -> EventLog {
