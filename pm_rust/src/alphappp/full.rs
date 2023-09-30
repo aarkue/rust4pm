@@ -18,6 +18,16 @@ use super::{
 };
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct AlgoDuration {
+    pub loop_repair: f32,
+    pub skip_repair: f32,
+    pub cnd_building: f32,
+    pub prune_cnd: f32,
+    pub build_net: f32,
+    pub total: f32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub struct AlphaPPPConfig {
     pub balance_thresh: f32,
     pub fitness_thresh: f32,
@@ -34,26 +44,36 @@ impl AlphaPPPConfig {
 pub fn alphappp_discover_petri_net(
     log_proj: &EventLogActivityProjection,
     config: AlphaPPPConfig,
-) -> PetriNet {
+) -> (PetriNet, AlgoDuration) {
     println!("Started Alpha+++ Discovery");
+    let mut algo_dur = AlgoDuration {
+        loop_repair: 0.0,
+        skip_repair: 0.0,
+        cnd_building: 0.0,
+        prune_cnd: 0.0,
+        build_net: 0.0,
+        total: 0.0,
+    };
     let total_start = Instant::now();
     let mut now = Instant::now();
     let mut log_proj = log_proj.clone();
     add_start_end_acts_proj(&mut log_proj);
-    println!("Adding start/end acts took: {:.2?}",now.elapsed());
+    println!("Adding start/end acts took: {:.2?}", now.elapsed());
     now = Instant::now();
     let (log_proj, added_loop) =
         add_artificial_acts_for_loops(&log_proj, config.log_repair_loop_df_thresh);
+        algo_dur.loop_repair = now.elapsed().as_secs_f32();
     println!(
         "Using Loop Log Repair with df_threshold of {}",
         config.log_repair_loop_df_thresh
     );
     println!("#Added for loop: {}", added_loop.len());
     let (log_proj, added_skip) =
-        add_artificial_acts_for_skips(&log_proj, config.log_repair_skip_df_thresh);
-    println!("#Added for skip: {}", added_skip.len());
-    println!("Log Skip/Loop Repair took: {:.2?}",now.elapsed());
+    add_artificial_acts_for_skips(&log_proj, config.log_repair_skip_df_thresh);
+    algo_dur.skip_repair = now.elapsed().as_secs_f32();
+    println!("Log Skip/Loop Repair took: {:.2?}", now.elapsed());
     now = Instant::now();
+    println!("#Added for skip: {}", added_skip.len());
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
     let dfg = filter_dfg(
         &dfg,
@@ -67,7 +87,9 @@ pub fn alphappp_discover_petri_net(
     );
     let cnds: HashSet<(Vec<usize>, Vec<usize>)> = build_candidates(&dfg);
     println!("Built candidates {}", cnds.len());
-    println!("Building candidates took: {:.2?}",now.elapsed());
+
+    algo_dur.cnd_building = now.elapsed().as_secs_f32();
+    println!("Building candidates took: {:.2?}", now.elapsed());
     now = Instant::now();
     let sel = prune_candidates(
         &cnds,
@@ -76,7 +98,8 @@ pub fn alphappp_discover_petri_net(
         &log_proj,
     );
     println!("Final pruned candidates: {}", sel.len());
-    println!("Pruning candidates took: {:.2?}",now.elapsed());
+    algo_dur.prune_cnd = now.elapsed().as_secs_f32();
+    println!("Pruning candidates took: {:.2?}", now.elapsed());
     now = Instant::now();
     let mut pn = PetriNet::new();
     let mut initial_marking: Marking = Marking::new();
@@ -128,10 +151,15 @@ pub fn alphappp_discover_petri_net(
 
     pn.initial_marking = Some(initial_marking);
     pn.final_markings = Some(vec![final_marking]);
-    println!("Building PN took: {:.2?}",now.elapsed());
+    algo_dur.build_net = now.elapsed().as_secs_f32();
+    println!("Building PN took: {:.2?}", now.elapsed());
 
-    println!("\n====\nWhole Discovery took: {:.2?}",total_start.elapsed());
-    return pn;
+    algo_dur.total = total_start.elapsed().as_secs_f32();
+    println!(
+        "\n====\nWhole Discovery took: {:.2?}",
+        total_start.elapsed()
+    );
+    return (pn, algo_dur);
 }
 
 pub fn cnds_to_names(

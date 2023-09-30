@@ -1,4 +1,9 @@
-use std::{collections::HashSet, fs::File, io::BufReader, vec};
+use std::{
+    collections::HashSet,
+    fs::File,
+    io::{BufReader, BufWriter},
+    vec,
+};
 
 use pm_rust::{
     add_start_end_acts_proj,
@@ -7,6 +12,7 @@ use pm_rust::{
         activity_projection::{ActivityProjectionDFG, EventLogActivityProjection},
         import_xes::import_xes_file,
     },
+    petri_net::pnml::export_petri_net_to_pnml,
     Attribute, AttributeAddable, AttributeValue, Attributes, DateTime, Utc, Uuid,
 };
 use serde::{Deserialize, Serialize};
@@ -59,27 +65,34 @@ fn main() {
     // let json = serde_json::to_string_pretty(&event.attributes).unwrap();
     // println!("{}", json);
 
+    let log_name = "Sepsis Cases - Event Log.xes";
     let log =
-        import_xes_file(&"/home/aarkue/doc/sciebo/alpha-revisit/Sepsis Cases - Event Log.xes");
+        import_xes_file(format!("/home/aarkue/doc/sciebo/alpha-revisit/{}", log_name).as_str());
     let mut log_proj: EventLogActivityProjection = (&log).into();
     add_start_end_acts_proj(&mut log_proj);
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
     let dfg_sum: u64 = dfg.edges.values().sum();
     let mean_dfg = dfg_sum as f32 / dfg.edges.len() as f32;
-    let repair_thresh = 2.0;
+    let repair_thresh = 4.0;
     println!("Repair thresh: {}", repair_thresh * mean_dfg);
     let log_proj: EventLogActivityProjection = (&log).into();
-    let pn = alphappp_discover_petri_net(
-        &log_proj,
-        AlphaPPPConfig {
-            balance_thresh: 0.3,
-            fitness_thresh: 0.6,
-            log_repair_skip_df_thresh: (repair_thresh * mean_dfg).ceil() as u64,
-            log_repair_loop_df_thresh: (repair_thresh * mean_dfg).ceil() as u64,
-            absolute_df_clean_thresh: 1,
-            relative_df_clean_thresh: 0.01,
-        },
+    let config = AlphaPPPConfig {
+        balance_thresh: 0.3,
+        fitness_thresh: 0.7,
+        log_repair_skip_df_thresh: (repair_thresh * mean_dfg).ceil() as u64,
+        log_repair_loop_df_thresh: (repair_thresh * mean_dfg).ceil() as u64,
+        absolute_df_clean_thresh: 1,
+        relative_df_clean_thresh: 0.01,
+    };
+    let (pn, algo_dur) = alphappp_discover_petri_net(&log_proj, config);
+    let res_name = format!(
+        "res-{}-α+++|{:.1}|b{:.1}|t{:.1}|",
+        log_name, repair_thresh, config.balance_thresh, config.fitness_thresh
     );
+    let file = File::create(format!("{}.json", res_name)).unwrap();
+    export_petri_net_to_pnml(&pn, format!("{}.pnml", res_name).as_str());
+    let writer = BufWriter::new(file);
+    serde_json::to_writer_pretty(writer, &algo_dur).unwrap();
     // export_petri_net_to_pnml(&pn, "net.pnml");
     // println!("Discovered Petri Net: {:?}", pn.to_json());
     // let df_threshold = 10;

@@ -74,7 +74,7 @@ pub fn satisfies_cnd_condition(
 pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec<usize>)> {
     let df_relations: HashSet<(usize, usize)> = dfg
         .edges
-        .iter()
+        .par_iter()
         .filter_map(|((a, b), w)| if w > &0 { Some((*a, *b)) } else { None })
         .collect();
     println!("DF #{:?}", df_relations.len());
@@ -95,9 +95,6 @@ pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec
         });
     });
 
-    // let start = *log.act_to_index.get(&START_EVENT.to_string()).unwrap();
-    // let end = *log.act_to_index.get(&END_EVENT.to_string()).unwrap();
-
     let mut changed = true;
     let mut new_cnds: HashSet<(Vec<usize>, Vec<usize>)> = cnds.clone();
     while changed {
@@ -107,19 +104,25 @@ pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec
             .flat_map(|(a1, b1)| {
                 cnds.par_iter()
                     .filter_map(|(a2, b2)| {
+                        if !all_dfs_between_vec(&df_relations, &a1, &b2)
+                            || !all_dfs_between_vec(&df_relations, &a2, &b1)
+                        {
+                            return None;
+                        }
                         let mut a = [a1.as_slice(), a2.as_slice()].concat();
                         let mut b = [b1.as_slice(), b2.as_slice()].concat();
-                        if !all_dfs_between_vec(&df_relations, &a1, &b2) || !all_dfs_between_vec(&df_relations, &a2, &b1) || all_dfs_between_vec(&df_relations, &b, &a) {
-                            return None
+                        if all_dfs_between_vec(&df_relations, &b, &a) {
+                            return None;
                         }
                         a.sort();
                         a.dedup();
                         b.sort();
                         b.dedup();
-                        if !cnds.contains(&(a.clone(), b.clone())) {
-                            if a != b && satisfies_cnd_condition(&df_relations, &a, &b) {
-                                return Some((a, b));
-                            }
+                        if a != b
+                            && !cnds.contains(&(a.clone(), b.clone()))
+                            && satisfies_cnd_condition(&df_relations, &a, &b)
+                        {
+                            return Some((a, b));
                         }
                         return None;
                     })
