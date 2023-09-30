@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use rayon::{prelude::*, vec};
+use rayon::prelude::*;
 
 use crate::event_log::activity_projection::ActivityProjectionDFG;
 
@@ -44,7 +44,7 @@ fn not_all_dfs_between(
     return false;
 }
 
-fn satisfies_cnd_condition(
+pub fn satisfies_cnd_condition(
     df_rel: &HashSet<(usize, usize)>,
     a: &Vec<usize>,
     b: &Vec<usize>,
@@ -77,9 +77,7 @@ pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec
                 && !df_relations.contains(&(a, a))
                 && !df_relations.contains(&(b, b))
             {
-                // if satisfies_cnd_condition(&df_relations,&vec![a],& vec![b]) {
                     final_cnds.insert((vec![a], vec![b]));
-                // }
                 cnds.insert((vec![a], vec![b]));
             } else {
                 cnds.insert((vec![a], vec![b]));

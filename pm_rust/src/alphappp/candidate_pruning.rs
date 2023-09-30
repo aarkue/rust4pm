@@ -5,7 +5,7 @@ use std::{
 
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
-use crate::{event_log::activity_projection::EventLogActivityProjection, END_EVENT};
+use crate::event_log::activity_projection::EventLogActivityProjection;
 
 fn compute_balance(a: &Vec<usize>, b: &Vec<usize>, act_count: &Vec<u64>) -> (f32, i128, i128) {
     let mut ai: u64 = 0;
@@ -70,17 +70,17 @@ fn compute_local_fitness(
                 //         return 0;
                 //     }
                 // } else {
-                    if a.contains(act) {
-                        num_tokens += 1;
-                    }
-                    if b.contains(act) {
-                        num_tokens -= 1;
-                    }
+                if a.contains(act) {
+                    num_tokens += 1;
+                }
+                if b.contains(act) {
+                    num_tokens -= 1;
                 }
                 if num_tokens < 0 {
                     return 0;
                 }
-            // }
+                // }
+            }
             if num_tokens > 0 {
                 return 0;
             } else if num_tokens < 0 {
@@ -97,10 +97,13 @@ fn compute_local_fitness(
         .into_iter()
         .map(|(_, f)| f)
         .sum();
+    if num_relevant_traces == 0 {
+        return (0.0, 0.0);
+    }
     let min_fitness_per_act = num_traces_containg_act
         .into_iter()
         .zip(num_fitting_traces_containg_act.into_iter())
-        .filter(|(num, num_fit)| num > &0)
+        .filter(|(num, _)| num > &0)
         .map(|(num, num_fit)| num_fit as f32 / num as f32)
         .min_by(|a, b| a.partial_cmp(b).expect("Per activity fitness contains NaN"))
         .unwrap_or(0.0);
@@ -128,20 +131,7 @@ pub fn prune_candidates(
         .filter(|(a, b)| {
             let balance = compute_balance(a, b, &act_count);
             if balance.0 <= balance_threshold {
-                let (fitness,min_per_act_fitness) = compute_local_fitness(a, b, &log);
-                // if fitness >= fitness_threshold && min_per_act_fitness >= fitness_threshold {    
-                //     println!("Fitness: {}, Min per act: {}", fitness, min_per_act_fitness);
-                // }
-                // if b.contains(&end_act) {
-                //     println!(
-                //         "Contains END: {:?} Balance: {}, Fitness: {}\t {:?}",
-                //         (a, b),
-                //         balance.0,
-                //         fitness,
-                //         log.activities
-                //     );
-                //     println!("--> : {:?}", balance);
-                // }
+                let (fitness, min_per_act_fitness) = compute_local_fitness(a, b, &log);
                 return fitness >= fitness_threshold && min_per_act_fitness >= fitness_threshold;
             } else {
                 return false;
