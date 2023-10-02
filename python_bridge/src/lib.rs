@@ -1,8 +1,8 @@
 use chrono::DateTime;
 use chrono::NaiveDateTime;
 use pm_rust::add_start_end_acts;
-use pm_rust::alphappp::full::AlphaPPPConfig;
 use pm_rust::alphappp::full::alphappp_discover_petri_net;
+use pm_rust::alphappp::full::AlphaPPPConfig;
 use pm_rust::event_log::activity_projection::EventLogActivityProjection;
 use pm_rust::event_log::constants::PREFIXED_TRACE_ID_NAME;
 use pm_rust::event_log::constants::TRACE_PREFIX;
@@ -106,7 +106,7 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
             });
         })
     });
-    println!("Gathering all attributes took {:.2?}",now.elapsed());
+    println!("Gathering all attributes took {:.2?}", now.elapsed());
     now = Instant::now();
     let x: Vec<Series> = all_attributes
         .par_iter()
@@ -131,10 +131,16 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
         })
         .collect();
 
-    println!("Creating a Series for every Attribute took {:.2?}",now.elapsed());
+    println!(
+        "Creating a Series for every Attribute took {:.2?}",
+        now.elapsed()
+    );
     now = Instant::now();
     let df = DataFrame::new(x).unwrap();
-    println!("Constructing DF from Attribute Series took {:.2?}",now.elapsed());
+    println!(
+        "Constructing DF from Attribute Series took {:.2?}",
+        now.elapsed()
+    );
     return Ok(df);
 }
 
@@ -212,11 +218,11 @@ fn import_xes(path: String) -> PyResult<PyDataFrame> {
     println!("Starting XES Import");
     let mut now = Instant::now();
     let log = import_xes_file(&path);
-    println!("Importing XES Log took {:.2?}",now.elapsed());
+    println!("Importing XES Log took {:.2?}", now.elapsed());
     now = Instant::now();
     // add_start_end_acts(&mut log);
-    let converted_log  = convert_log_to_df(&log).unwrap();
-    println!("Finished Converting Log; Took {:.2?}",now.elapsed());
+    let converted_log = convert_log_to_df(&log).unwrap();
+    println!("Finished Converting Log; Took {:.2?}", now.elapsed());
     Ok(PyDataFrame(converted_log))
 }
 
@@ -249,19 +255,18 @@ fn test_df_pandas(df_serialized: String, format: String) -> PyResult<PyDataFrame
     }
 }
 
-
 #[pyfunction]
-fn discover_net_alphappp(xes_path: String, alphappp_config: String) -> PyResult<String> {
+fn discover_net_alphappp(xes_path: String, alphappp_config: String) -> PyResult<(String, String)> {
     println!("Starting XES Import");
     let mut now = Instant::now();
     let log = import_xes_file(&xes_path);
     let log_proj: EventLogActivityProjection = (&log).into();
-    println!("Importing XES Log took {:.2?}",now.elapsed());
+    println!("Importing XES Log took {:.2?}", now.elapsed());
     now = Instant::now();
-    let config : AlphaPPPConfig = AlphaPPPConfig::parse_from_json(&alphappp_config);
-    println!("Discovering net took {:.2?}",now.elapsed());
-    let (net,dur) = alphappp_discover_petri_net(&log_proj, config);
-    Ok(petrinet_to_json(&net))
+    let config: AlphaPPPConfig = AlphaPPPConfig::parse_from_json(&alphappp_config);
+    println!("Discovering net took {:.2?}", now.elapsed());
+    let (net, dur) = alphappp_discover_petri_net(&log_proj, config);
+    Ok((petrinet_to_json(&net), dur.to_json()))
 }
 
 #[pyfunction]

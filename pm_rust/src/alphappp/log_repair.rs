@@ -52,47 +52,57 @@ pub fn filter_dfg(
 pub fn add_artificial_acts_for_skips(
     log: &EventLogActivityProjection,
     df_threshold: u64,
-) -> (EventLogActivityProjection,Vec<String>) {
+) -> (EventLogActivityProjection, Vec<String>) {
     let mut ret = log.clone();
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log);
-    let mut skips: HashMap<&usize, HashSet<&usize>> = HashMap::new();
     let start_act = log.act_to_index.get(START_EVENT).unwrap();
     let end_act = log.act_to_index.get(END_EVENT).unwrap();
-    dfg.nodes.iter().for_each(|a| {
-        if dfg.df_between(*a, *a) == 0 && a != start_act {
-            let out_from_a: HashSet<&usize> = dfg
-                .nodes
-                .iter()
-                .filter(|x| dfg.df_between(*a, **x) >= df_threshold)
-                .collect();
-            if !out_from_a.is_empty() {
-                // Here we consider any (a,b)'s in DFG (i.e. not just >= df_threshold)
-                let can_skip: HashSet<&usize> = dfg
-                    .nodes
+    let out_from_act: HashMap<usize, HashSet<&usize>> = dfg
+        .nodes
+        .iter()
+        .map(|act| {
+            (
+                *act,
+                dfg.nodes
                     .iter()
-                    .filter(|x| dfg.df_between(*a, **x) > 0)
-                    .filter(|b| {
-                        if *b != end_act
-                            && dfg.df_between(**b, **b) < df_threshold
-                            && dfg.df_between(**b, *a) < df_threshold
-                        {
-                            let out_from_b: HashSet<&usize> = dfg
-                                .nodes
-                                .iter()
-                                .filter(|x| dfg.df_between(**b, **x) >= df_threshold)
-                                .collect();
-                            return out_from_a.is_superset(&out_from_b);
-                        } else {
-                            return false;
-                        }
-                    })
-                    .collect();
-                if can_skip.len() > 0 {
-                    skips.insert(a, can_skip);
+                    .filter(|x| dfg.df_between(*act, **x) >= df_threshold)
+                    .collect(),
+            )
+        })
+        .collect();
+
+    let skips: HashMap<&usize, HashSet<&usize>> = dfg
+        .nodes
+        .iter()
+        .filter_map(|a| {
+            if dfg.df_between(*a, *a) == 0 && a != start_act {
+                let out_from_a: &HashSet<&usize> = out_from_act.get(a).unwrap();
+                if !out_from_a.is_empty() {
+                    // Here we consider any (a,b)'s in DFG (i.e. not just >= df_threshold)
+                    let can_skip: HashSet<&usize> = dfg
+                        .nodes
+                        .iter()
+                        .filter(|x| dfg.df_between(*a, **x) > 0)
+                        .filter(|b| {
+                            if *b != end_act
+                                && dfg.df_between(**b, **b) < df_threshold
+                                && dfg.df_between(**b, *a) < df_threshold
+                            {
+                                let out_from_b: &HashSet<&usize> = out_from_act.get(b).unwrap();
+                                return out_from_a.is_superset(&out_from_b);
+                            } else {
+                                return false;
+                            }
+                        })
+                        .collect();
+                    if can_skip.len() > 0 {
+                        return Some((a, can_skip));
+                    }
                 }
             }
-        }
-    });
+            return None;
+        })
+        .collect();
     // Map (skippable) activity a to the new artificial activity for this skip
     let new_artificial_acts: HashMap<usize, usize> = skips
         .iter()
@@ -113,7 +123,7 @@ pub fn add_artificial_acts_for_skips(
     ret.traces = ret
         .traces
         .par_iter()
-        .map(|trace| {
+        .map(|(trace, weight)| {
             // Insert activity new_act at position i : (i,new_act)
             let mut insert_at_pos: HashMap<usize, usize> = HashMap::new();
             let mut prev: Option<&usize> = None;
@@ -130,21 +140,24 @@ pub fn add_artificial_acts_for_skips(
                 }
                 prev = Some(e);
             });
-            trace
-                .iter()
-                .enumerate()
-                .map(|(i, e)| {
-                    if insert_at_pos.contains_key(&i) {
-                        return vec![*(insert_at_pos.get(&i).unwrap()), *e];
-                    } else {
-                        return vec![*e];
-                    }
-                })
-                .flatten()
-                .collect()
+            (
+                trace
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| {
+                        if insert_at_pos.contains_key(&i) {
+                            return vec![*(insert_at_pos.get(&i).unwrap()), *e];
+                        } else {
+                            return vec![*e];
+                        }
+                    })
+                    .flatten()
+                    .collect(),
+                *weight,
+            )
         })
         .collect();
-    return (ret,new_acts);
+    return (ret, new_acts);
 }
 
 pub fn get_reachable_bf(
@@ -189,13 +202,13 @@ pub fn get_reachable_bf(
             })
             .collect();
     }
-    return finished_paths
+    return finished_paths;
 }
 
 pub fn add_artificial_acts_for_loops(
     log: &EventLogActivityProjection,
     df_threshold: u64,
-) -> (EventLogActivityProjection,Vec<String>) {
+) -> (EventLogActivityProjection, Vec<String>) {
     let mut ret = log.clone();
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log);
     if !log.activities.contains(&START_EVENT.to_string())
@@ -209,20 +222,20 @@ pub fn add_artificial_acts_for_loops(
         df_threshold,
     );
     let end_act = log.act_to_index.get(&END_EVENT.to_string()).unwrap();
-    let loops: Vec<Vec<usize>> = reachable_paths
+    let taus: HashSet<(usize, usize)> = reachable_paths
         .into_iter()
         .filter(|path| path.last().unwrap() != end_act)
-        .collect();
-    println!("Loops {}: {:?}\n",loops.len(), loops);
-    println!("Activities: {:?}\n",log.activities);
-    let taus: HashSet<(usize, usize)> = loops
-        .iter()
         .filter_map(|path| {
             if path.len() >= 2 {
-                Some((
+                let pair = (
                     *path.get(path.len() - 2).unwrap(),
                     *path.get(path.len() - 1).unwrap(),
-                ))
+                );
+                if pair.0 != pair.1 {
+                    Some(pair)
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -236,7 +249,7 @@ pub fn add_artificial_acts_for_loops(
     // Add artificial activities to ret
     ret.activities
         .append(&mut vec![String::new(); insert_taus_between.len()]);
-    let mut new_acts : Vec<String> = Vec::new();
+    let mut new_acts: Vec<String> = Vec::new();
     insert_taus_between.iter().for_each(|((a, b), art_act)| {
         let art_act_name = format!(
             "{}skip_loop_{}_{}",
@@ -250,22 +263,25 @@ pub fn add_artificial_acts_for_loops(
     ret.traces = ret
         .traces
         .par_iter()
-        .map(|trace| {
-            trace
-                .iter()
-                .enumerate()
-                .flat_map(|(i, e)| {
-                    if i > 0 {
+        .map(|(trace, weight)| {
+            (
+                trace
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(i, e)| {
+                        if i > 0 {
                         // Pair consists of previous activity and current activity
                         let pair = &(*trace.get(i - 1).unwrap(), *e);
                         if insert_taus_between.contains_key(pair) {
                             return vec![*(insert_taus_between.get(pair).unwrap()), *e];
                         }
-                    }
-                    return vec![*e];
-                })
-                .collect()
+                        }
+                        return vec![*e];
+                    })
+                    .collect(),
+                *weight,
+            )
         })
         .collect();
-    return (ret,new_acts);
+    return (ret, new_acts);
 }

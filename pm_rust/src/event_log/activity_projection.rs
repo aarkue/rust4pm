@@ -10,7 +10,7 @@ use super::constants::ACTIVITY_NAME;
 pub struct EventLogActivityProjection {
     pub activities: Vec<String>,
     pub act_to_index: HashMap<String, usize>,
-    pub traces: Vec<Vec<usize>>,
+    pub traces: Vec<(Vec<usize>,u64)>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -54,13 +54,13 @@ impl ActivityProjectionDFG {
         dfg.edges = log
             .traces
             .par_iter()
-            .map(|t| {
-                let mut trace_dfs: Vec<(usize, usize)> = Vec::new();
+            .map(|(t,w)| {
+                let mut trace_dfs: Vec<((usize, usize),u64)> = Vec::new();
                 let mut prev_event: Option<usize> = None;
                 for e in t {
                     match prev_event {
                         Some(prev_e) => {
-                            trace_dfs.push((prev_e, *e));
+                            trace_dfs.push(((prev_e, *e),*w));
                         }
                         None => {}
                     }
@@ -69,8 +69,8 @@ impl ActivityProjectionDFG {
                 trace_dfs
             })
             .flatten()
-            .fold(HashMap::<(usize, usize), u64>::new, |mut map, df_pair| {
-                *map.entry(df_pair).or_insert(0) += 1;
+            .fold(HashMap::<(usize, usize), u64>::new, |mut map, (df_pair,w)| {
+                *map.entry(df_pair).or_insert(0) += w;
                 map
             })
             .reduce_with(|mut m1, mut m2| {
@@ -125,18 +125,20 @@ impl Into<EventLogActivityProjection> for &EventLog {
             .enumerate()
             .map(|(i, act)| (act, i))
             .collect();
-        let traces: Vec<Vec<usize>> = acts_per_trace
-            .par_iter()
-            .map(|t| -> Vec<usize> {
-                t.iter()
+        let mut traces_set: HashMap<Vec<usize>,u64>  = HashMap::new();
+        acts_per_trace
+            .iter()
+            .for_each(|t| {
+                let trace: Vec<usize> = t.iter()
                     .map(|act| *act_to_index.get(act).unwrap())
-                    .collect()
-            })
-            .collect();
+                    .collect();
+                *traces_set.entry(trace).or_insert(0) += 1;
+            });
+      
         EventLogActivityProjection {
             activities,
             act_to_index,
-            traces,
+            traces: traces_set.into_iter().collect(),
         }
     }
 }

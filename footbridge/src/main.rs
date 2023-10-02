@@ -77,9 +77,9 @@ fn main() {
     println!("Repair thresh: {}", repair_thresh * mean_dfg);
     let log_proj: EventLogActivityProjection = (&log).into();
     let config = AlphaPPPConfig {
-        balance_thresh: 0.3,
-        fitness_thresh: 0.7,
-        replay_thresh: 0.6,
+        balance_thresh: 0.5,
+        fitness_thresh: 0.5,
+        replay_thresh: 0.5,
         log_repair_skip_df_thresh_rel: repair_thresh,
         log_repair_loop_df_thresh_rel: repair_thresh,
         absolute_df_clean_thresh: 1,

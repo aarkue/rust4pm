@@ -65,7 +65,7 @@ pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
         }
     };
 
-    log.traces.par_iter_mut().for_each(|t| {
+    log.traces.iter_mut().for_each(|(t,_)| {
         t.insert(0, start_act);
         t.push(end_act);
     });
