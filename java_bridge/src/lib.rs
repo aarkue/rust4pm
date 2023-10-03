@@ -14,20 +14,19 @@ use jni::{
 
 use jni_fn::jni_fn;
 use pm_rust::{
-    add_sample_transition, add_start_end_acts, json_to_petrinet,
-    petri_net::petri_net_struct::PetriNet,
-    petrinet_to_json, Attribute, AttributeValue, EventLog, event_log::activity_projection::EventLogActivityProjection, alphappp::log_repair,
+    add_start_end_acts,
+    alphappp::full::{alphappp_discover_petri_net, AlphaPPPConfig},
+    event_log::activity_projection::EventLogActivityProjection,
+    petrinet_to_json, Attribute, AttributeValue, EventLog,
 };
 
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
 pub unsafe fn addStartEndToRustLog<'local>(mut _env: JNIEnv<'local>, _: JClass, pointer: jlong) {
     let mut log_pointer = Box::from_raw(pointer as *mut EventLog);
     add_start_end_acts(&mut log_pointer);
-    let proj : EventLogActivityProjection = log_pointer.as_ref().into();
+    let proj: EventLogActivityProjection = log_pointer.as_ref().into();
     let _log_pointer = Box::into_raw(log_pointer);
 }
-
-
 
 /// Get attributes of (boxed) [EventLog] referenced by `pointer`
 ///
@@ -75,12 +74,16 @@ pub unsafe fn getRustTraceLengths<'local>(
 }
 
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
-pub unsafe fn addSampleDisconnectedNet<'local>(
+pub unsafe fn discoverPetriNetAlphaPPP<'local>(
     mut env: JNIEnv<'local>,
     _: JClass,
-    net_json: JString,
+    log_pointer: jlong,
+    algo_config: JString,
 ) -> JString<'local> {
-    let mut net: PetriNet = json_to_petrinet(&env.get_string(&net_json).unwrap().to_str().unwrap());
-    add_sample_transition(&mut net);
+    let algo_config =
+        AlphaPPPConfig::from_json(&env.get_string(&algo_config).unwrap().to_str().unwrap());
+    println!("[Rust] Got config {:?}", algo_config);
+    let log_boxed = Box::from_raw(log_pointer as *mut EventLog);
+    let (net, duration) = alphappp_discover_petri_net(&(log_boxed.as_ref()).into(), algo_config);
     env.new_string(petrinet_to_json(&net)).unwrap()
 }

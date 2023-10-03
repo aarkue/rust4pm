@@ -34,6 +34,9 @@ impl AlgoDuration {
     pub fn to_json(self: &Self) -> String {
         serde_json::to_string(self).unwrap()
     }
+    pub fn from_json(json: &str) -> Self {
+        serde_json::from_str(json).unwrap()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
@@ -47,7 +50,10 @@ pub struct AlphaPPPConfig {
     pub relative_df_clean_thresh: f32,
 }
 impl AlphaPPPConfig {
-    pub fn parse_from_json(json: &str) -> Self {
+    pub fn to_json(self: &Self) -> String {
+        serde_json::to_string(self).unwrap()
+    }
+    pub fn from_json(json: &str) -> Self {
         serde_json::from_str(&json).unwrap()
     }
 }

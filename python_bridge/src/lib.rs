@@ -263,7 +263,7 @@ fn discover_net_alphappp(xes_path: String, alphappp_config: String) -> PyResult<
     let log_proj: EventLogActivityProjection = (&log).into();
     println!("Importing XES Log took {:.2?}", now.elapsed());
     now = Instant::now();
-    let config: AlphaPPPConfig = AlphaPPPConfig::parse_from_json(&alphappp_config);
+    let config: AlphaPPPConfig = AlphaPPPConfig::from_json(&alphappp_config);
     println!("Discovering net took {:.2?}", now.elapsed());
     let (net, dur) = alphappp_discover_petri_net(&log_proj, config);
     Ok((petrinet_to_json(&net), dur.to_json()))
