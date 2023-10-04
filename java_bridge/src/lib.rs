@@ -18,7 +18,7 @@ use jni_fn::jni_fn;
 use pm_rust::{
     add_start_end_acts,
     alphappp::full::{alphappp_discover_petri_net, AlphaPPPConfig},
-    event_log::activity_projection::EventLogActivityProjection,
+    event_log::{activity_projection::EventLogActivityProjection, import_xes::{self, import_xes, import_xes_file}},
     petrinet_to_json, Attribute, AttributeValue, EventLog,
 };
 
@@ -128,4 +128,13 @@ pub unsafe fn discoverPetriNetAlphaPPPFromActProj<'local>(
         .collect();
     let (net, duration) = alphappp_discover_petri_net(&log_proj, algo_config);
     env.new_string(petrinet_to_json(&net)).unwrap()
+}
+
+
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+pub unsafe fn importXESLog<'local>(mut env: JNIEnv<'local>, _: JClass, path: JString) -> jlong {
+    let log: EventLog = import_xes_file(&env.get_string(&path).unwrap().to_str().unwrap());
+    let log_box = Box::new(log);
+    let pointer = Box::into_raw(log_box) as jlong;
+    pointer
 }
