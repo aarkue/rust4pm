@@ -9,7 +9,7 @@ use crate::{
     add_start_end_acts_proj,
     event_log::activity_projection::{ActivityProjectionDFG, EventLogActivityProjection},
     petri_net::petri_net_struct::{ArcType, Marking, PetriNet, TransitionID},
-    END_EVENT, START_EVENT,
+    END_ACTIVITY, START_ACTIVITY,
 };
 
 use super::{
@@ -79,8 +79,8 @@ pub fn alphappp_discover_petri_net(
     let dfg_sum: u64 = dfg.edges.values().sum();
     let mean_dfg = dfg_sum as f32 / dfg.edges.len() as f32;
 
-    let start_act = log_proj.act_to_index.get(&START_EVENT.to_string()).unwrap();
-    let end_act = log_proj.act_to_index.get(&END_EVENT.to_string()).unwrap();
+    let start_act = log_proj.act_to_index.get(&START_ACTIVITY.to_string()).unwrap();
+    let end_act = log_proj.act_to_index.get(&END_ACTIVITY.to_string()).unwrap();
 
     println!("Adding start/end acts took: {:.2?}", now.elapsed());
     now = Instant::now();
@@ -196,7 +196,7 @@ pub fn alphappp_discover_petri_net(
         .activities
         .iter()
         .map(|act_name| {
-            if act_name != &START_EVENT.to_string() && act_name != &END_EVENT.to_string() {
+            if act_name != &START_ACTIVITY.to_string() && act_name != &END_ACTIVITY.to_string() {
                 Some(pn.add_transition(
                     if act_name.starts_with(SILENT_ACT_PREFIX) {
                         None

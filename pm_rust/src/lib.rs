@@ -32,49 +32,60 @@ pub mod alphappp {
     pub mod log_repair;
 }
 
-pub const START_EVENT: &str = "__START";
-pub const END_EVENT: &str = "__END";
+pub const START_ACTIVITY: &str = "__START";
+pub const END_ACTIVITY: &str = "__END";
 
 pub fn loop_sum_sqrt(from: usize, to: usize) -> f32 {
     (from..to).map(|x| (x as f32).sqrt()).sum()
 }
 
 pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
-    let start_act = match log.act_to_index.get(&START_EVENT.to_string()) {
+    let mut should_add_start = true;
+    let start_act = match log.act_to_index.get(&START_ACTIVITY.to_string()) {
         Some(a) => {
-            eprintln!("Start activity ({}) already present in activity set! Still adding start/end to every trace, which might not be the desired outcome.", START_EVENT);
+            eprintln!("Start activity ({}) already present in activity set! Will skip adding a start activity to every trace, which might not be the desired outcome.", START_ACTIVITY);
+            should_add_start = false;
             *a
         }
         None => {
             let a = log.activities.len();
-            log.activities.push(START_EVENT.to_string());
-            log.act_to_index.insert(START_EVENT.to_string(), a);
-            a
-        }
-    };
-    let end_act = match log.act_to_index.get(&END_EVENT.to_string()) {
-        Some(a) => {
-            eprintln!("End activity ({}) already present in activity set! Still adding start/end to every trace, which might not be the desired outcome.", END_EVENT);
-            *a
-        }
-        None => {
-            let a = log.activities.len();
-            log.activities.push(END_EVENT.to_string());
-            log.act_to_index.insert(END_EVENT.to_string(), a);
+            log.activities.push(START_ACTIVITY.to_string());
+            log.act_to_index.insert(START_ACTIVITY.to_string(), a);
             a
         }
     };
 
-    log.traces.iter_mut().for_each(|(t,_)| {
-        t.insert(0, start_act);
-        t.push(end_act);
-    });
+    let mut should_add_end = true;
+    let end_act = match log.act_to_index.get(&END_ACTIVITY.to_string()) {
+        Some(a) => {
+            eprintln!("End activity ({}) already present in activity set! Still adding an end activity to every trace, which might not be the desired outcome.", END_ACTIVITY);
+            should_add_end = false;
+            *a
+        }
+        None => {
+            let a = log.activities.len();
+            log.activities.push(END_ACTIVITY.to_string());
+            log.act_to_index.insert(END_ACTIVITY.to_string(), a);
+            a
+        }
+    };
+
+    if should_add_start || should_add_start {
+        log.traces.iter_mut().for_each(|(t, _)| {
+            if should_add_start {
+                t.insert(0, start_act);
+            }
+            if should_add_end {
+                t.push(end_act);
+            }
+        });
+    }
 }
 
 pub fn add_start_end_acts(log: &mut EventLog) {
     log.traces.par_iter_mut().for_each(|t| {
-        let start_event = Event::new(START_EVENT.to_string());
-        let end_event = Event::new(END_EVENT.to_string());
+        let start_event = Event::new(START_ACTIVITY.to_string());
+        let end_event = Event::new(END_ACTIVITY.to_string());
         t.events.insert(0, start_event);
         t.events.push(end_event);
     });

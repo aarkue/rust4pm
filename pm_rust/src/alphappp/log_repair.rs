@@ -4,7 +4,7 @@ use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
     event_log::activity_projection::{ActivityProjectionDFG, EventLogActivityProjection},
-    END_EVENT, START_EVENT,
+    END_ACTIVITY, START_ACTIVITY,
 };
 
 pub const SILENT_ACT_PREFIX: &str = "__SILENT__";
@@ -55,8 +55,8 @@ pub fn add_artificial_acts_for_skips(
 ) -> (EventLogActivityProjection, Vec<String>) {
     let mut ret = log.clone();
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log);
-    let start_act = log.act_to_index.get(START_EVENT).unwrap();
-    let end_act = log.act_to_index.get(END_EVENT).unwrap();
+    let start_act = log.act_to_index.get(START_ACTIVITY).unwrap();
+    let end_act = log.act_to_index.get(END_ACTIVITY).unwrap();
     let out_from_act: HashMap<usize, HashSet<&usize>> = dfg
         .nodes
         .iter()
@@ -211,17 +211,17 @@ pub fn add_artificial_acts_for_loops(
 ) -> (EventLogActivityProjection, Vec<String>) {
     let mut ret = log.clone();
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log);
-    if !log.activities.contains(&START_EVENT.to_string())
-        || !log.activities.contains(&END_EVENT.to_string())
+    if !log.activities.contains(&START_ACTIVITY.to_string())
+        || !log.activities.contains(&END_ACTIVITY.to_string())
     {
         panic!("No Artificial START/END Activities ")
     }
     let reachable_paths = get_reachable_bf(
-        *log.act_to_index.get(&START_EVENT.to_string()).unwrap(),
+        *log.act_to_index.get(&START_ACTIVITY.to_string()).unwrap(),
         &dfg,
         df_threshold,
     );
-    let end_act = log.act_to_index.get(&END_EVENT.to_string()).unwrap();
+    let end_act = log.act_to_index.get(&END_ACTIVITY.to_string()).unwrap();
     let taus: HashSet<(usize, usize)> = reachable_paths
         .into_iter()
         .filter(|path| path.last().unwrap() != end_act)

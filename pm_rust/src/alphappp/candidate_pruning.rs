@@ -5,7 +5,7 @@ use std::{
 
 use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
-use crate::{event_log::activity_projection::EventLogActivityProjection, END_EVENT, START_EVENT};
+use crate::{event_log::activity_projection::EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY};
 
 fn compute_balance(a: &Vec<usize>, b: &Vec<usize>, act_count: &Vec<i128>) -> f32 {
     let mut ai: i128 = 0;
@@ -52,8 +52,8 @@ fn compute_local_fitness(
     let mut num_traces_containg_act = vec![0; log.activities.len()];
     let mut num_fitting_traces_containg_act = vec![0; log.activities.len()];
 
-    let start_act = log.act_to_index.get(&START_EVENT.to_string()).unwrap();
-    let end_act = log.act_to_index.get(&END_EVENT.to_string()).unwrap();
+    let start_act = log.act_to_index.get(&START_ACTIVITY.to_string()).unwrap();
+    let end_act = log.act_to_index.get(&END_ACTIVITY.to_string()).unwrap();
 
     let num_fitting_traces: i128 = relevant_variants_with_freq
         .iter()
@@ -199,7 +199,7 @@ pub fn prune_candidates(
         .map(|(a, b)| (a.clone(), b.clone()))
         .collect();
 
-    println!("After maximal (sel): {}", filtered_cnds.len());
+    println!("After maximal (sel): {}", sel.len());
     return sel
         .into_iter()
         .filter(|(a, b)| {
