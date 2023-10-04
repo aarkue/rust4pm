@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+use std::collections::HashMap;
+
 pub use copy_log::copy_log_shared::JEvent;
 mod copy_log {
     pub mod copy_log_shared;
@@ -85,5 +87,45 @@ pub unsafe fn discoverPetriNetAlphaPPP<'local>(
     println!("[Rust] Got config {:?}", algo_config);
     let log_boxed = Box::from_raw(log_pointer as *mut EventLog);
     let (net, duration) = alphappp_discover_petri_net(&(log_boxed.as_ref()).into(), algo_config);
+    env.new_string(petrinet_to_json(&net)).unwrap()
+}
+
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+pub unsafe fn discoverPetriNetAlphaPPPFromActProj<'local>(
+    mut env: JNIEnv<'local>,
+    _: JClass,
+    variants_json: JString,
+    activities_json: JString,
+    algo_config_json: JString,
+) -> JString<'local> {
+    let algo_config =
+        AlphaPPPConfig::from_json(&env.get_string(&algo_config_json).unwrap().to_str().unwrap());
+    println!("[Rust] Got config {:?}", algo_config);
+    let acts: Vec<String> =
+        serde_json::from_str(&env.get_string(&activities_json).unwrap().to_str().unwrap()).unwrap();
+    let variants: HashMap<String, u64> =
+        serde_json::from_str(&env.get_string(&variants_json).unwrap().to_str().unwrap()).unwrap();
+    let mut log_proj = EventLogActivityProjection {
+        activities: acts.clone(),
+        act_to_index: acts
+            .into_iter()
+            .enumerate()
+            .map(|(i, a)| (a.clone(), i))
+            .collect(),
+        traces: Vec::new(),
+    };
+
+    log_proj.traces = variants
+        .iter()
+        .map(|(var, count)| {
+            (
+                var.split(",").into_iter()
+                    .map(|a| *log_proj.act_to_index.get(a).unwrap())
+                    .collect(),
+                *count,
+            )
+        })
+        .collect();
+    let (net, duration) = alphappp_discover_petri_net(&log_proj, algo_config);
     env.new_string(petrinet_to_json(&net)).unwrap()
 }
