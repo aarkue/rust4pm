@@ -22,7 +22,7 @@ use pm_rust::{
     petrinet_to_json, Attribute, AttributeValue, EventLog,
 };
 
-#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn addStartEndToRustLog<'local>(mut _env: JNIEnv<'local>, _: JClass, pointer: jlong) {
     let mut log_pointer = Box::from_raw(pointer as *mut EventLog);
     add_start_end_acts(&mut log_pointer);
@@ -33,7 +33,7 @@ pub unsafe fn addStartEndToRustLog<'local>(mut _env: JNIEnv<'local>, _: JClass, 
 /// Get attributes of (boxed) [EventLog] referenced by `pointer`
 ///
 /// Attributes are converted to JSON String (encoding a [HashMap<String,String>])
-#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn getRustLogAttributes<'local>(
     mut _env: JNIEnv<'local>,
     _: JClass,
@@ -55,7 +55,7 @@ pub unsafe fn getRustLogAttributes<'local>(
 ///
 /// The lengths are returned as a [JIntArray] of size of `EventLog.traces`,
 /// where each entry contains the length of the trace (i.e., the length of `Trace.events`) at the corresponding index
-#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn getRustTraceLengths<'local>(
     mut _env: JNIEnv<'local>,
     _: JClass,
@@ -75,7 +75,7 @@ pub unsafe fn getRustTraceLengths<'local>(
     trace_lengths_j
 }
 
-#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn discoverPetriNetAlphaPPP<'local>(
     mut env: JNIEnv<'local>,
     _: JClass,
@@ -90,7 +90,7 @@ pub unsafe fn discoverPetriNetAlphaPPP<'local>(
     env.new_string(petrinet_to_json(&net)).unwrap()
 }
 
-#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn discoverPetriNetAlphaPPPFromActProj<'local>(
     mut env: JNIEnv<'local>,
     _: JClass,
@@ -131,7 +131,7 @@ pub unsafe fn discoverPetriNetAlphaPPPFromActProj<'local>(
 }
 
 
-#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn importXESLog<'local>(mut env: JNIEnv<'local>, _: JClass, path: JString) -> jlong {
     let log: EventLog = import_xes_file(&env.get_string(&path).unwrap().to_str().unwrap());
     let log_box = Box::new(log);

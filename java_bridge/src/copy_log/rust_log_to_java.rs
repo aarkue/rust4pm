@@ -18,7 +18,7 @@ use super::copy_log_shared::{JEventLog, JTrace};
 /// - i (1 to (n-1)): Contains the event attributes of the i'th event in the trace
 ///
 /// Note: This does not free/destroy the passed boxed [EventLog]
-#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn getCompleteRustTraceAsString<'local>(
     mut _env: JNIEnv<'local>,
     _: JClass,
@@ -48,7 +48,7 @@ pub unsafe fn getCompleteRustTraceAsString<'local>(
 /// All events contained in the [Trace]/[JTrace] are also included (see [JTrace] struct)
 ///
 /// Note: This does not free/destroy the passed boxed [EventLog]
-#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn getCompleteRustTraceAsStringJsonCompatible<'local>(
     mut _env: JNIEnv<'local>,
     _: JClass,
@@ -71,7 +71,7 @@ pub unsafe fn getCompleteRustTraceAsStringJsonCompatible<'local>(
 /// All traces (and recursively events) contained in the [EventLog] are also included (see [JEventLog] struct)
 ///
 /// Note: This does not free/destroy the passed boxed [EventLog]
-#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn getCompleteRustLogAsStringJsonCompatible<'local>(
     mut _env: JNIEnv<'local>,
     _: JClass,

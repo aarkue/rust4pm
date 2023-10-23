@@ -204,12 +204,11 @@ pub fn prune_candidates(
         .into_iter()
         .filter(|(a, b)| {
             let strict_fit = compute_local_fitness(&a, &b, log, true);
-
-            let mut a = log.acts_to_names(a);
-            let mut b = log.acts_to_names(b);
-            a.sort();
-            b.sort();
-            println!("{:?} => {:?}: {:?}", a, b, strict_fit);
+            // let mut a = log.acts_to_names(a);
+            // let mut b = log.acts_to_names(b);
+            // a.sort();
+            // b.sort();
+            // println!("{:?} => {:?}: {:?}", a, b, strict_fit);
             strict_fit > (replay_threshold, -1.0)
         })
         .collect();

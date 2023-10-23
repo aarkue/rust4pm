@@ -256,18 +256,19 @@ fn test_df_pandas(df_serialized: String, format: String) -> PyResult<PyDataFrame
 }
 
 #[pyfunction]
-fn discover_net_alphappp(xes_path: String, alphappp_config: String) -> PyResult<(String, String)> {
-    println!("Starting XES Import");
+fn discover_net_alphappp(pydf: PyDataFrame, alphappp_config: String) -> PyResult<(String, String)> {
     let mut now = Instant::now();
-    let log = import_xes_file(&xes_path);
+    let df: DataFrame = pydf.into();
+    let log = convert_df_to_log(&df).unwrap();
     let log_proj: EventLogActivityProjection = (&log).into();
-    println!("Importing XES Log took {:.2?}", now.elapsed());
+    println!("Converting Log took {:.2?}", now.elapsed());
     now = Instant::now();
     let config: AlphaPPPConfig = AlphaPPPConfig::from_json(&alphappp_config);
     println!("Discovering net took {:.2?}", now.elapsed());
     let (net, dur) = alphappp_discover_petri_net(&log_proj, config);
     Ok((petrinet_to_json(&net), dur.to_json()))
 }
+
 
 #[pyfunction]
 fn test_petrinet(net_json: String) -> PyResult<String> {

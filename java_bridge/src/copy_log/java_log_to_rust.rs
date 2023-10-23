@@ -30,7 +30,7 @@ struct EventLogConstruction {
 /// Otherwise, memory is leaked.
 ///
 /// TODO: Add destroyRustEventLogConstruction binding
-#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn createRustEventLogPar<'local>(
     mut env: JNIEnv<'local>,
     _: JClass,
@@ -64,7 +64,7 @@ pub unsafe fn createRustEventLogPar<'local>(
 /// - `event_attributes_json`: JSON-encoed string containing [Vec<HashMap<String,String>]-like event attributes (i.e., one entry for each event)
 ///
 /// Note: The passed (referenced) [EventLogConstruction] _is not_ destroyed, freed or finalized by this function but __trace at index `trace_index` is modified__
-#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn setTracePar<'local>(
     mut env: JNIEnv<'local>,
     _: JClass,
@@ -105,7 +105,7 @@ pub unsafe fn setTracePar<'local>(
 /// `trace_index` indicates trace on `EventLogConstruction` which to _replace_ with converted [JTrace] (first converted to a [Trace])
 ///
 /// Note: The passed (referenced) [EventLogConstruction] _is not_ destroyed, freed or finalized by this function but __trace at index `trace_index` is modified__
-#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn setTraceParJsonCompatible<'local>(
     mut env: JNIEnv<'local>,
     _: JClass,
@@ -132,7 +132,7 @@ pub unsafe fn setTraceParJsonCompatible<'local>(
 /// The __caller must guarantee__ to (eventually) call __[destroyRustEventLog]__ with the returned pointer!
 ///
 /// Otherwise, memory is leaked.
-#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn finishLogConstructionPar<'local>(
     mut _env: JNIEnv<'local>,
     _: JClass,
@@ -156,7 +156,7 @@ pub unsafe fn finishLogConstructionPar<'local>(
 /// Destroys the (boxed) [EventLog] referenced by `pointer` and frees associated memory
 ///
 /// This function __must__ be called for each created [EventLog], which is behind a pointer (e.g., `long` in Java)
-#[jni_fn("org.processmining.alpharevisitexperiments.bridge.HelloProcessMining")]
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn destroyRustEventLog<'local>(
     mut _env: JNIEnv<'local>,
     _: JClass,

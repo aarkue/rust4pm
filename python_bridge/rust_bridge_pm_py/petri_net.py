@@ -1,7 +1,7 @@
 from typing import Optional, Tuple
 import pm4py
 from pm4py.objects.petri_net.obj import PetriNet, Marking
-
+from pm4py.objects.petri_net.utils.petri_utils import add_arc_from_to
 
 def dict_to_petrinet(
     net_dict,
@@ -12,6 +12,7 @@ def dict_to_petrinet(
         for t in net_dict["transitions"].values()
     }
 
+    net = PetriNet(None, places.values(), transitions.values())
     def get_arc_for(arc_dict):
         if arc_dict["from_to"]["type"] == "PlaceTransition":
             fr = places.get(arc_dict["from_to"]["nodes"][0])
@@ -19,10 +20,9 @@ def dict_to_petrinet(
         else:
             fr = transitions.get(arc_dict["from_to"]["nodes"][0])
             to = places.get(arc_dict["from_to"]["nodes"][1])
-        return PetriNet.Arc(fr, to, arc_dict["weight"])
+        return add_arc_from_to(fr,to,net,arc_dict["weight"])
 
     arcs = [get_arc_for(arc_dict) for arc_dict in net_dict["arcs"]]
-    net = PetriNet(None, places.values(), transitions.values(), arcs)
 
     # Initial and Final Markings
     im = None
