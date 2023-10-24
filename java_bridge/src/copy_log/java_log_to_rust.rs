@@ -147,6 +147,8 @@ pub unsafe fn finishLogConstructionPar<'local>(
             .into_iter()
             .map(|t_box| *t_box)
             .collect(),
+            classifiers: None,
+            extensions: None
     };
     let log_box = Box::new(log);
     let pointer = Box::into_raw(log_box) as jlong;

@@ -40,14 +40,17 @@ fn main() {
             Attribute {
                 key: "first".into(),
                 value: AttributeValue::Int(1),
+                own_attributes: None
             },
             Attribute {
                 key: "first".into(),
                 value: AttributeValue::Float(1.1),
+                own_attributes: None
             },
             Attribute {
                 key: "second".into(),
                 value: AttributeValue::Int(2),
+                own_attributes: None
             },
         ]),
     );

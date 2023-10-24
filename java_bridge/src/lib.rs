@@ -26,7 +26,7 @@ use pm_rust::{
 pub unsafe fn addStartEndToRustLog<'local>(mut _env: JNIEnv<'local>, _: JClass, pointer: jlong) {
     let mut log_pointer = Box::from_raw(pointer as *mut EventLog);
     add_start_end_acts(&mut log_pointer);
-    let proj: EventLogActivityProjection = log_pointer.as_ref().into();
+    let _proj: EventLogActivityProjection = log_pointer.as_ref().into();
     let _log_pointer = Box::into_raw(log_pointer);
 }
 
@@ -86,7 +86,7 @@ pub unsafe fn discoverPetriNetAlphaPPP<'local>(
         AlphaPPPConfig::from_json(&env.get_string(&algo_config).unwrap().to_str().unwrap());
     println!("[Rust] Got config {:?}", algo_config);
     let log_boxed = Box::from_raw(log_pointer as *mut EventLog);
-    let (net, duration) = alphappp_discover_petri_net(&(log_boxed.as_ref()).into(), algo_config);
+    let (net, _duration) = alphappp_discover_petri_net(&(log_boxed.as_ref()).into(), algo_config);
     env.new_string(petrinet_to_json(&net)).unwrap()
 }
 
@@ -126,7 +126,7 @@ pub unsafe fn discoverPetriNetAlphaPPPFromActProj<'local>(
             )
         })
         .collect();
-    let (net, duration) = alphappp_discover_petri_net(&log_proj, algo_config);
+    let (net, _duration) = alphappp_discover_petri_net(&log_proj, algo_config);
     env.new_string(petrinet_to_json(&net)).unwrap()
 }
 

@@ -107,6 +107,7 @@ impl Into<EventLogActivityProjection> for &EventLog {
                             .unwrap_or(Attribute {
                                 key: ACTIVITY_NAME.into(),
                                 value: AttributeValue::String("No Activity".into()),
+                                own_attributes: None
                             })
                             .value
                         {

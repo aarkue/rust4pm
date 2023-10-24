@@ -167,6 +167,8 @@ fn convert_df_to_log(df: &DataFrame) -> Result<EventLog, PolarsError> {
     let mut log = EventLog {
         attributes: Attributes::default(),
         traces: vec![],
+        classifiers: None,
+        extensions: None
     };
     let traces: Vec<Trace> = groups
         .par_iter()
@@ -186,12 +188,12 @@ fn convert_df_to_log(df: &DataFrame) -> Result<EventLog, PolarsError> {
                                 trace_attributes.add_to_attributes(
                                     c.to_string(),
                                     any_value_to_attribute_value(v),
-                                )
+                                );
                             } else {
                                 event_attributes.add_to_attributes(
                                     c.to_string(),
                                     any_value_to_attribute_value(v),
-                                )
+                                );
                             }
                         });
 
