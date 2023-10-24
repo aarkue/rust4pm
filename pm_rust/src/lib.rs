@@ -18,6 +18,9 @@ pub mod event_log {
     pub mod constants;
     pub mod event_log_struct;
     pub mod import_xes;
+    pub mod ocel {
+        pub mod ocel_struct;
+    }
 }
 
 pub mod petri_net {
@@ -31,6 +34,7 @@ pub mod alphappp {
     pub mod full;
     pub mod log_repair;
 }
+
 
 pub const START_ACTIVITY: &str = "__START";
 pub const END_ACTIVITY: &str = "__END";
