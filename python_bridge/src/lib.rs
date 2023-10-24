@@ -34,24 +34,32 @@ use std::collections::HashSet;
 use std::io::Cursor;
 use std::time::Instant;
 
-fn attribute_to_any_value(from_option: Option<&Attribute>) -> AnyValue {
+fn attribute_to_any_value<'a>(
+    from_option: Option<&Attribute>,
+    utc_tz: &'a Option<String>,
+) -> AnyValue<'a> {
     match from_option {
         Some(from) => {
-            let x = attribute_value_to_any_value(&from.value);
+            let x = attribute_value_to_any_value(&from.value, utc_tz);
             x
         }
         None => AnyValue::Null,
     }
 }
 
-fn attribute_value_to_any_value(from: &AttributeValue) -> AnyValue {
+fn attribute_value_to_any_value<'a>(
+    from: &AttributeValue,
+    utc_tz: &'a Option<String>,
+) -> AnyValue<'a> {
     match from {
         AttributeValue::String(v) => AnyValue::Utf8Owned(v.into()),
-        AttributeValue::Date(v) => AnyValue::Datetime(
-            v.timestamp_nanos(),
-            polars::prelude::TimeUnit::Nanoseconds,
-            &None,
-        ),
+        AttributeValue::Date(v) => {
+            return AnyValue::Datetime(
+                v.timestamp_nanos(),
+                polars::prelude::TimeUnit::Nanoseconds,
+                utc_tz,
+            )
+        }
         AttributeValue::Int(v) => AnyValue::Int64(*v),
         AttributeValue::Float(v) => AnyValue::Float64(*v),
         AttributeValue::Boolean(v) => AnyValue::Boolean(*v),
@@ -107,6 +115,7 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
         })
     });
     println!("Gathering all attributes took {:.2?}", now.elapsed());
+    let utc_tz = Some("UTC".to_string());
     now = Instant::now();
     let x: Vec<Series> = all_attributes
         .par_iter()
@@ -117,11 +126,14 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
                 .map(|t| -> Vec<AnyValue> {
                     if k.starts_with(TRACE_PREFIX) {
                         let trace_k: String = k.chars().skip(TRACE_PREFIX.len()).collect();
-                        vec![attribute_to_any_value(t.attributes.get(&trace_k)); t.events.len()]
+                        vec![
+                            attribute_to_any_value(t.attributes.get(&trace_k), &utc_tz);
+                            t.events.len()
+                        ]
                     } else {
                         t.events
                             .iter()
-                            .map(|e| attribute_to_any_value(e.attributes.get(k)))
+                            .map(|e| attribute_to_any_value(e.attributes.get(k), &utc_tz))
                             .collect()
                     }
                 })
@@ -268,7 +280,6 @@ fn discover_net_alphappp(pydf: PyDataFrame, alphappp_config: String) -> PyResult
     let (net, dur) = alphappp_discover_petri_net(&log_proj, config);
     Ok((petrinet_to_json(&net), dur.to_json()))
 }
-
 
 #[pyfunction]
 fn test_petrinet(net_json: String) -> PyResult<String> {

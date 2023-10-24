@@ -18,7 +18,7 @@ use jni_fn::jni_fn;
 use pm_rust::{
     add_start_end_acts,
     alphappp::full::{alphappp_discover_petri_net, AlphaPPPConfig},
-    event_log::{activity_projection::EventLogActivityProjection, import_xes::{self, import_xes, import_xes_file}},
+    event_log::{activity_projection::EventLogActivityProjection, import_xes::import_xes_file},
     petrinet_to_json, Attribute, AttributeValue, EventLog,
 };
 
