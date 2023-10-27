@@ -3,8 +3,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::str::FromStr;
 
-use chrono::DateTime;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use flate2::bufread::GzDecoder;
+use quick_xml::escape::unescape;
 use quick_xml::events::BytesStart;
 use quick_xml::Reader;
 use uuid::Uuid;
@@ -42,33 +43,77 @@ fn parse_attribute_from_tag(t: &BytesStart, mode: Mode) -> (String, AttributeVal
         }
     });
     let attribute_val: Option<AttributeValue> = match t.name().as_ref() {
-        b"string" => Some(AttributeValue::String(value)),
-        b"date" => Some(AttributeValue::Date(
-            DateTime::parse_from_rfc3339(&value).unwrap().into(),
+        b"string" => Some(AttributeValue::String(
+            unescape(value.as_str()).unwrap().into(),
         )),
-        b"int" => Some(AttributeValue::Int(value.parse::<i64>().unwrap())),
-        b"float" => Some(AttributeValue::Float(value.parse::<f64>().unwrap())),
-        b"boolean" => Some(AttributeValue::Boolean(value.parse::<bool>().unwrap())),
-        b"id" => Some(AttributeValue::ID(Uuid::from_str(&value).unwrap())),
+        b"date" => {
+            let dt = DateTime::parse_from_rfc3339(&value);
+            Some(AttributeValue::Date(match dt {
+                Ok(dt) => dt.into(),
+                Err(_e) => match NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M:%S%.f") {
+                    Ok(dt) => dt.and_local_timezone(Utc).unwrap().into(),
+                    Err(e) => {
+                        eprintln!("Could not parse datetime '{}'. Will use datetime epoch 0 instead.\nError {:?}",value,e);
+                        DateTime::default()
+                    }
+                },
+            }))
+        }
+        b"int" => {
+            let parsed_val = match value.parse::<i64>() {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Could not parse integer {:?}: Error {}", value, e);
+                    i64::default()
+                }
+            };
+            Some(AttributeValue::Int(parsed_val))
+        }
+        b"float" => {
+            let parsed_val = match value.parse::<f64>() {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Could not parse float {:?}: Error {}", value, e);
+                    f64::default()
+                }
+            };
+            Some(AttributeValue::Float(parsed_val))
+        }
+        b"boolean" => {
+            let parsed_val = match value.parse::<bool>() {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Could not parse boolean {:?}: Error {}", value, e);
+                    bool::default()
+                }
+            };
+            Some(AttributeValue::Boolean(parsed_val))
+        }
+        b"id" => {
+            let parsed_val = match Uuid::from_str(&value) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Could not parse UUID {:?}: Error {}", value, e);
+                    Uuid::default()
+                }
+            };
+
+            Some(AttributeValue::ID(parsed_val))
+        }
         b"container" => Some(AttributeValue::Container(HashMap::new())),
         b"list" => Some(AttributeValue::List(Vec::new())),
-        _ => {
-            match mode {
-                Mode::None => {
-                    // We do not parse any log-level attributes etc.
-                    None
-                }
-                m => {
-                    let mut name_str = String::new();
-                    t.name().as_ref().read_to_string(&mut name_str).unwrap();
-                    eprintln!(
-                        "Attribute type not implemented '{}' in mode {:?}",
-                        name_str, m
-                    );
-                    None
-                }
+        _ => match mode {
+            Mode::None => None,
+            m => {
+                let mut name_str = String::new();
+                t.name().as_ref().read_to_string(&mut name_str).unwrap();
+                eprintln!(
+                    "Attribute type not implemented '{}' in mode {:?}",
+                    name_str, m
+                );
+                None
             }
-        }
+        },
     };
     return (key, attribute_val.unwrap_or(AttributeValue::None()));
 }
@@ -84,23 +129,36 @@ fn add_attribute_from_tag(
 ) {
     let (key, val) = parse_attribute_from_tag(t, mode);
     match mode {
-        Mode::Trace => {
-            log.traces
-                .last_mut()
-                .unwrap()
-                .attributes
-                .add_to_attributes(key, val);
-        }
-        Mode::Event => {
-            log.traces
-                .last_mut()
-                .unwrap()
-                .events
-                .last_mut()
-                .unwrap()
-                .attributes
-                .add_to_attributes(key, val);
-        }
+        Mode::Trace => match log.traces.last_mut() {
+            Some(t) => {
+                t.attributes.add_to_attributes(key, val);
+            }
+            None => {
+                eprintln!(
+                    "No current trace when parsing trace attribute: Key {:?}, Value {:?}",
+                    key, val
+                );
+            }
+        },
+        Mode::Event => match log.traces.last_mut() {
+            Some(t) => match t.events.last_mut() {
+                Some(e) => {
+                    e.attributes.add_to_attributes(key, val);
+                }
+                None => {
+                    eprintln!(
+                        "No current event when parsing event attribute: Key {:?}, Value {:?}",
+                        key, val
+                    )
+                }
+            },
+            None => {
+                eprintln!(
+                    "No current trace when parsing event attribute: Key {:?}, Value {:?}",
+                    key, val
+                );
+            }
+        },
 
         Mode::None => {
             log.attributes.add_to_attributes(key, val);
@@ -169,12 +227,25 @@ where
                         }
                         b"event" => {
                             current_mode = Mode::Event;
-                            log.traces.last_mut().unwrap().events.push(Event {
-                                attributes: Attributes::new(),
-                            });
+                            match log.traces.last_mut() {
+                                Some(t) => {
+                                    t.events.push(Event {
+                                        attributes: Attributes::new(),
+                                    });
+                                }
+                                None => {
+                                    eprintln!("Invalid XES format: Event without trace")
+                                }
+                            }
                         }
                         b"global" => {
-                            last_mode_before_attr = current_mode;
+                            match current_mode {
+                                Mode::Global => {}
+                                Mode::Attribute => {}
+                                m => {
+                                    last_mode_before_attr = m;
+                                }
+                            }
                             current_mode = Mode::Global;
                         }
                         x => {
@@ -191,6 +262,7 @@ where
                                         });
                                         match current_mode {
                                             Mode::Attribute => {}
+                                            Mode::Global => {}
                                             m => {
                                                 last_mode_before_attr = m;
                                             }
