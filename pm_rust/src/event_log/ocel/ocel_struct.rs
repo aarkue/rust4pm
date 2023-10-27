@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OCEL {
     #[serde(rename = "eventTypes")]
     pub event_types: Vec<OCELType>,
@@ -11,26 +11,26 @@ pub struct OCEL {
     pub objects: Vec<OCELObject>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OCELType {
     pub name: String,
     pub attributes: Vec<OCELTypeAttribute>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OCELTypeAttribute {
     pub name: String,
     #[serde(rename = "type")]
     pub value_type: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OCELEventAttribute {
     pub name: String,
     pub value: OCELAttributeValue,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OCELEvent {
     pub id: String,
     #[serde(rename = "type")]
@@ -40,30 +40,30 @@ pub struct OCELEvent {
     pub relationships: Option<Vec<OCELRelationship>>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OCELRelationship {
     #[serde(rename = "objectId")]
-    object_id: String,
-    qualifier: String,
+    pub object_id: String,
+    pub qualifier: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OCELObject {
-    id: String,
+    pub id: String,
     #[serde(rename = "type")]
-    object_type: String,
-    attributes: Vec<OCELObjectAttribute>,
-    relationships: Option<Vec<OCELRelationship>>,
+    pub object_type: String,
+    pub attributes: Vec<OCELObjectAttribute>,
+    pub relationships: Option<Vec<OCELRelationship>>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OCELObjectAttribute {
-    name: String,
-    value: OCELAttributeValue,
-    time: DateTime<Utc>,
+    pub name: String,
+    pub value: OCELAttributeValue,
+    pub time: DateTime<Utc>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum OCELAttributeValue {
     String(String),
