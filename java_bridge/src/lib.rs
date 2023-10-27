@@ -133,7 +133,7 @@ pub unsafe fn discoverPetriNetAlphaPPPFromActProj<'local>(
 
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn importXESLog<'local>(mut env: JNIEnv<'local>, _: JClass, path: JString) -> jlong {
-    let log: EventLog = import_xes_file(&env.get_string(&path).unwrap().to_str().unwrap());
+    let log: EventLog = import_xes_file(&env.get_string(&path).unwrap().to_str().unwrap(), None);
     let log_box = Box::new(log);
     let pointer = Box::into_raw(log_box) as jlong;
     pointer

@@ -285,11 +285,11 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
 /// Returns a tuple of a Polars [DataFrame] for the event data and a json-encoding of  all log attributes/extensions/classifiers
 ///
 #[pyfunction]
-fn import_xes(path: String) -> PyResult<(PyDataFrame, String)> {
+fn import_xes_rs(path: String, date_format: Option<&str>) -> PyResult<(PyDataFrame, String)> {
     println!("Starting XES Import");
     let start_now = Instant::now();
     let mut now = Instant::now();
-    let log = import_xes_file(&path);
+    let log = import_xes_file(&path, date_format);
     println!("Importing XES Log took {:.2?}", now.elapsed());
     now = Instant::now();
     // add_start_end_acts(&mut log);
@@ -382,7 +382,7 @@ fn polars_df_to_log(pydf: PyDataFrame) -> PyResult<PyDataFrame> {
 fn rust_bridge_pm_py(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(polars_df_to_log, m)?)?;
     m.add_function(wrap_pyfunction!(test_df_pandas, m)?)?;
-    m.add_function(wrap_pyfunction!(import_xes, m)?)?;
+    m.add_function(wrap_pyfunction!(import_xes_rs, m)?)?;
     m.add_function(wrap_pyfunction!(test_petrinet, m)?)?;
     m.add_function(wrap_pyfunction!(discover_net_alphappp, m)?)?;
     Ok(())

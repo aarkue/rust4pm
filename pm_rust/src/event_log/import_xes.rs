@@ -27,7 +27,12 @@ enum Mode {
     None,
 }
 
-fn parse_attribute_from_tag(t: &BytesStart, mode: Mode) -> (String, AttributeValue) {
+
+fn parse_attribute_from_tag(
+    t: &BytesStart,
+    mode: Mode,
+    date_format: Option<&str>,
+) -> (String, AttributeValue) {
     let mut value = String::new();
     let mut key = String::new();
     t.attributes().for_each(|a| {
@@ -44,21 +49,41 @@ fn parse_attribute_from_tag(t: &BytesStart, mode: Mode) -> (String, AttributeVal
     });
     let attribute_val: Option<AttributeValue> = match t.name().as_ref() {
         b"string" => Some(AttributeValue::String(
-            unescape(value.as_str()).unwrap().into(),
+            unescape(value.as_str())
+                .unwrap_or(value.clone().into())
+                .into(),
         )),
-        b"date" => {
-            let dt = DateTime::parse_from_rfc3339(&value);
-            Some(AttributeValue::Date(match dt {
-                Ok(dt) => dt.into(),
-                Err(_e) => match NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M:%S%.f") {
-                    Ok(dt) => dt.and_local_timezone(Utc).unwrap().into(),
-                    Err(e) => {
-                        eprintln!("Could not parse datetime '{}'. Will use datetime epoch 0 instead.\nError {:?}",value,e);
-                        DateTime::default()
+        b"date" => match date_format {
+            // If a format is specified, try parsing with this format: First as DateTime (has to include a time zone)
+            //   If this fails, retry parsing as NaiveDateTime (without time zone, assuming UTC)
+            Some(dt_format) => match DateTime::parse_from_str(&value, dt_format) {
+                Ok(dt) => Some(AttributeValue::Date(dt.into())),
+                Err(dt_error) => Some(AttributeValue::Date(
+                    match NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M:%S%.f") {
+                        Ok(dt) => dt.and_local_timezone(Utc).unwrap(),
+                        Err(ndt_error) => {
+                            eprintln!("Could not parse datetime '{}' with provided format '{}'. Will use datetime epoch 0 instead.\nError (when parsing as DateTime): {:?}\nError (when parsing as NaiveDateTime, without TZ): {:?}", value, dt_format, dt_error, ndt_error);
+                            DateTime::default()
+                        }
+                    },
+                )),
+            },
+            // If no format is specified try two very common formats (rfc3339 standardized and one without timezone)
+            None => Some(AttributeValue::Date(
+                match DateTime::parse_from_rfc3339(&value) {
+                    Ok(dt) => dt.into(),
+                    Err(_e) => {
+                        match NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M:%S%.f") {
+                            Ok(dt) => dt.and_local_timezone(Utc).unwrap().into(),
+                            Err(e) => {
+                                eprintln!("Could not parse datetime '{}'. Will use datetime epoch 0 instead.\nError {:?}",value,e);
+                                DateTime::default()
+                            }
+                        }
                     }
                 },
-            }))
-        }
+            )),
+        },
         b"int" => {
             let parsed_val = match value.parse::<i64>() {
                 Ok(n) => n,
@@ -126,8 +151,9 @@ fn add_attribute_from_tag(
     mode: Mode,
     log: &mut EventLog,
     current_nested_attributes: &mut Vec<Attribute>,
+    date_format: Option<&str>,
 ) {
-    let (key, val) = parse_attribute_from_tag(t, mode);
+    let (key, val) = parse_attribute_from_tag(t, mode, date_format);
     match mode {
         Mode::Trace => match log.traces.last_mut() {
             Some(t) => {
@@ -195,7 +221,7 @@ fn add_attribute_from_tag(
 ///
 /// Import an XES [EventLog] from a [Reader]
 ///
-pub fn import_xes<T>(reader: &mut Reader<T>) -> EventLog
+pub fn import_xes<T>(reader: &mut Reader<T>, date_format: Option<&str>) -> EventLog
 where
     T: BufRead,
 {
@@ -253,7 +279,8 @@ where
                                 b"log" => {}
                                 _ => {
                                     // Nested attribute!
-                                    let (key, value) = parse_attribute_from_tag(&t, current_mode);
+                                    let (key, value) =
+                                        parse_attribute_from_tag(&t, current_mode, date_format);
                                     if !(key == "" && matches!(value, AttributeValue::None())) {
                                         current_nested_attributes.push(Attribute {
                                             key,
@@ -324,6 +351,7 @@ where
                             current_mode,
                             &mut log,
                             &mut current_nested_attributes,
+                            date_format
                         ),
                     },
                     quick_xml::events::Event::End(t) => {
@@ -401,7 +429,7 @@ where
 ///
 /// Import an XES [EventLog] from a file path
 ///
-pub fn import_xes_file(path: &str) -> EventLog {
+pub fn import_xes_file(path: &str, date_format: Option<&str>) -> EventLog {
     if path.ends_with(".gz") {
         let file = File::open(path).unwrap();
         let reader = BufReader::new(&file);
@@ -409,17 +437,17 @@ pub fn import_xes_file(path: &str) -> EventLog {
         let mut s = String::new();
         dec.read_to_string(&mut s).unwrap();
         let mut reader: Reader<&[u8]> = Reader::from_str(&s);
-        return import_xes(&mut reader);
+        return import_xes(&mut reader, date_format);
     } else {
         let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();
-        return import_xes(&mut reader);
+        return import_xes(&mut reader, date_format);
     }
 }
 
 ///
 /// Import an XES [EventLog] directly from a string
 ///
-pub fn import_xes_str(xes_str: &str) -> EventLog {
+pub fn import_xes_str(xes_str: &str, date_format: Option<&str>) -> EventLog {
     let mut reader: Reader<&[u8]> = Reader::from_str(&xes_str);
-    return import_xes(&mut reader);
+    return import_xes(&mut reader, date_format);
 }
