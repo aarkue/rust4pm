@@ -100,42 +100,6 @@ pub fn alphappp_discover_petri_net(
         &log_proj,
         (config.log_repair_skip_df_thresh_rel * mean_dfg).ceil() as u64,
     );
-
-    // let variants: HashSet<String> = log_proj
-    //     .traces
-    //     .iter()
-    //     .map(|t| {
-    //         let trace: Vec<String> = t
-    //             .iter()
-    //             .map(|act| log_proj.activities[*act].clone())
-    //             .collect();
-    //         trace.join(",")
-    //     })
-    //     .collect();
-    // println!("Variants after repair: {}", variants.len());
-
-    // let mut variants_with_skip: Vec<String> = variants
-    //     .into_iter()
-    //     .filter(|var| var.contains("skip"))
-    //     .collect();
-    // variants_with_skip.sort();
-    // let f = File::create("skip-variants-rs.json").unwrap();
-    // let writer = BufWriter::new(f);
-    // serde_json::to_writer_pretty(writer, &variants_with_skip).unwrap();
-    // println!("Variants with skips: {}", variants_with_skip.len());
-    // LEGACY BEHAVIOR
-    // let added_acts: HashSet<&usize> = [added_loop.as_slice(),added_skip.as_slice()].concat().into_iter().map(|act| log_proj.act_to_index.get(&act).unwrap()).collect();
-    // (act_count.len()..log_proj.activities.len()).for_each(|_|{
-    //     act_count.push(0);
-    // });
-    // log_proj.traces.iter().for_each(|trace| {
-    //     trace.iter().for_each(|act| {
-    //         if added_acts.contains(act){
-    //             act_count[*act] += 1;
-    //         }
-    //     })
-    // });
-    //
     algo_dur.skip_repair = now.elapsed().as_secs_f32();
     println!("Log Skip/Loop Repair took: {:.2?}", now.elapsed());
     now = Instant::now();
@@ -265,3 +229,5 @@ pub fn cnds_to_names(
         .map(|(a, b)| (log_proj.acts_to_names(a), log_proj.acts_to_names(b)))
         .collect()
 }
+
+

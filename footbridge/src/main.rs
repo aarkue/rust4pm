@@ -5,98 +5,100 @@ use std::{
     vec,
 };
 
-use pm_rust::{
-    add_start_end_acts_proj,
-    alphappp::full::{alphappp_discover_petri_net, AlphaPPPConfig},
-    event_log::{
-        activity_projection::{ActivityProjectionDFG, EventLogActivityProjection},
-        import_xes::import_xes_file,
-    },
-    petri_net::pnml::export_petri_net_to_pnml,
-    Attribute, AttributeAddable, AttributeValue, Attributes, DateTime, Utc, Uuid,
-};
+use pm_rust::{event_log::{ocel::ocel_struct::OCEL, import_xes::import_xes_file, activity_projection::EventLogActivityProjection}, alphappp::auto_parameters::alphappp_discover_with_auto_parameters};
 use serde::{Deserialize, Serialize};
 fn main() {
-    let mut attributes = Attributes::new();
-    attributes.add_to_attributes("test".into(), AttributeValue::String("Hello".into()));
+    // let file = File::open("/home/aarkue/dow/order-management.json").unwrap();
+    // let reader = BufReader::new(file);
+    // let ocel: OCEL = serde_json::from_reader(reader).unwrap();
+    // println!("{:#?}",ocel.objects.len());
 
-    attributes.add_to_attributes(
-        "date-test".into(),
-        AttributeValue::Date(DateTime::<Utc>::default()),
-    );
+    // let export_file = File::create("/home/aarkue/dow/order-management_copy.json").unwrap();
+    // let writer = BufWriter::new(export_file);
+    // serde_json::to_writer(writer, &ocel).unwrap();
+    // let mut attributes = Attributes::new();
+    // attributes.add_to_attributes("test".into(), AttributeValue::String("Hello".into()));
 
-    attributes.add_to_attributes("int-test".into(), AttributeValue::Int(42));
+    // attributes.add_to_attributes(
+    //     "date-test".into(),
+    //     AttributeValue::Date(DateTime::<Utc>::default()),
+    // );
 
-    attributes.add_to_attributes(
-        "date-test".into(),
-        AttributeValue::Date(DateTime::<Utc>::default()),
-    );
-    attributes.add_to_attributes("float-test".into(), AttributeValue::Float(1.337));
-    attributes.add_to_attributes("boolean-test".into(), AttributeValue::Boolean(true));
-    attributes.add_to_attributes("id-test".into(), AttributeValue::ID(Uuid::new_v4()));
-    attributes.add_to_attributes(
-        "list-test".into(),
-        AttributeValue::List(vec![
-            Attribute {
-                key: "first".into(),
-                value: AttributeValue::Int(1),
-                own_attributes: None
-            },
-            Attribute {
-                key: "first".into(),
-                value: AttributeValue::Float(1.1),
-                own_attributes: None
-            },
-            Attribute {
-                key: "second".into(),
-                value: AttributeValue::Int(2),
-                own_attributes: None
-            },
-        ]),
-    );
+    // attributes.add_to_attributes("int-test".into(), AttributeValue::Int(42));
 
-    let mut container_test_inner = Attributes::new();
-    container_test_inner.add_to_attributes("first".into(), AttributeValue::Int(1));
-    container_test_inner.add_to_attributes("second".into(), AttributeValue::Int(2));
-    container_test_inner.add_to_attributes("third".into(), AttributeValue::Int(3));
-    attributes.add_to_attributes(
-        "container-test".into(),
-        AttributeValue::Container(container_test_inner),
-    );
-    // let event: Event = Event { attributes };
-    // println!("Hello, world!");
-    // let json = serde_json::to_string_pretty(&event.attributes).unwrap();
-    // println!("{}", json);
+    // attributes.add_to_attributes(
+    //     "date-test".into(),
+    //     AttributeValue::Date(DateTime::<Utc>::default()),
+    // );
+    // attributes.add_to_attributes("float-test".into(), AttributeValue::Float(1.337));
+    // attributes.add_to_attributes("boolean-test".into(), AttributeValue::Boolean(true));
+    // attributes.add_to_attributes("id-test".into(), AttributeValue::ID(Uuid::new_v4()));
+    // attributes.add_to_attributes(
+    //     "list-test".into(),
+    //     AttributeValue::List(vec![
+    //         Attribute {
+    //             key: "first".into(),
+    //             value: AttributeValue::Int(1),
+    //             own_attributes: None
+    //         },
+    //         Attribute {
+    //             key: "first".into(),
+    //             value: AttributeValue::Float(1.1),
+    //             own_attributes: None
+    //         },
+    //         Attribute {
+    //             key: "second".into(),
+    //             value: AttributeValue::Int(2),
+    //             own_attributes: None
+    //         },
+    //     ]),
+    // );
+
+    // let mut container_test_inner = Attributes::new();
+    // container_test_inner.add_to_attributes("first".into(), AttributeValue::Int(1));
+    // container_test_inner.add_to_attributes("second".into(), AttributeValue::Int(2));
+    // container_test_inner.add_to_attributes("third".into(), AttributeValue::Int(3));
+    // attributes.add_to_attributes(
+    //     "container-test".into(),
+    //     AttributeValue::Container(container_test_inner),
+    // );
+    // // let event: Event = Event { attributes };
+    // // println!("Hello, world!");
+    // // let json = serde_json::to_string_pretty(&event.attributes).unwrap();
+    // // println!("{}", json);
 
     let log_name = "Sepsis Cases - Event Log.xes";
     let log =
-        import_xes_file(format!("/home/aarkue/doc/sciebo/alpha-revisit/{}", log_name).as_str());
+        import_xes_file(format!("/home/aarkue/doc/sciebo/alpha-revisit/{}", log_name).as_str(), None);
     let mut log_proj: EventLogActivityProjection = (&log).into();
-    add_start_end_acts_proj(&mut log_proj);
-    let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
-    let dfg_sum: u64 = dfg.edges.values().sum();
-    let mean_dfg = dfg_sum as f32 / dfg.edges.len() as f32;
-    let repair_thresh = 4.0;
-    println!("Repair thresh: {}", repair_thresh * mean_dfg);
-    let log_proj: EventLogActivityProjection = (&log).into();
-    let config = AlphaPPPConfig {
-        balance_thresh: 0.5,
-        fitness_thresh: 0.5,
-        replay_thresh: 0.5,
-        log_repair_skip_df_thresh_rel: repair_thresh,
-        log_repair_loop_df_thresh_rel: repair_thresh,
-        absolute_df_clean_thresh: 1,
-        relative_df_clean_thresh: 0.01,
-    };
-    let (pn, algo_dur) = alphappp_discover_petri_net(&log_proj, config);
-    let res_name = format!(
-        "res-{}-α+++|{:.1}|b{:.1}|t{:.1}|",
-        log_name, repair_thresh, config.balance_thresh, config.fitness_thresh
-    );
-    let file = File::create(format!("{}.json", res_name)).unwrap();
-    export_petri_net_to_pnml(&pn, format!("{}.pnml", res_name).as_str());
-    let writer = BufWriter::new(file);
-    serde_json::to_writer_pretty(writer, &algo_dur).unwrap();
+    alphappp_discover_with_auto_parameters(&log_proj);
+    // add_start_end_acts_proj(&mut log_proj);
+    // let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
+    // let dfg_sum: u64 = dfg.edges.values().sum();
+    // let mean_dfg = dfg_sum as f32 / dfg.edges.len() as f32;
+    // let repair_thresh = 4.0;
+    // println!("Repair thresh: {}", repair_thresh * mean_dfg);
+    // let log_proj: EventLogActivityProjection = (&log).into();
+    // let config = AlphaPPPConfig {
+    //     balance_thresh: 0.5,
+    //     fitness_thresh: 0.5,
+    //     replay_thresh: 0.5,
+    //     log_repair_skip_df_thresh_rel: repair_thresh,
+    //     log_repair_loop_df_thresh_rel: repair_thresh,
+    //     absolute_df_clean_thresh: 1,
+    //     relative_df_clean_thresh: 0.01,
+    // };
+    // let (pn, algo_dur) = alphappp_discover_petri_net(&log_proj, config);
+    // let res_name = format!(
+    //     "res-{}-α+++|{:.1}|b{:.1}|t{:.1}|",
+    //     log_name, repair_thresh, config.balance_thresh, config.fitness_thresh
+    // );
+    // let file = File::create(format!("{}.json", res_name)).unwrap();
+    // export_petri_net_to_pnml(&pn, format!("{}.pnml", res_name).as_str());
+    // let writer = BufWriter::new(file);
+    // serde_json::to_writer_pretty(writer, &algo_dur).unwrap();
+
+
     // export_petri_net_to_pnml(&pn, "net.pnml");
     // println!("Discovered Petri Net: {:?}", pn.to_json());
     // let df_threshold = 10;

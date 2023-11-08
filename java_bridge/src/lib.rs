@@ -17,10 +17,15 @@ use jni::{
 use jni_fn::jni_fn;
 use pm_rust::{
     add_start_end_acts,
-    alphappp::full::{alphappp_discover_petri_net, AlphaPPPConfig},
+    alphappp::{
+        auto_parameters::alphappp_discover_with_auto_parameters,
+        full::{alphappp_discover_petri_net, AlphaPPPConfig},
+    },
     event_log::{activity_projection::EventLogActivityProjection, import_xes::import_xes_file},
+    petri_net::petri_net_struct::PetriNet,
     petrinet_to_json, Attribute, AttributeValue, EventLog,
 };
+use serde::{Deserialize, Serialize};
 
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn addStartEndToRustLog<'local>(mut _env: JNIEnv<'local>, _: JClass, pointer: jlong) {
@@ -91,6 +96,52 @@ pub unsafe fn discoverPetriNetAlphaPPP<'local>(
 }
 
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
+pub unsafe fn discoverPetriNetAlphaPPPFromActProjAuto<'local>(
+    mut env: JNIEnv<'local>,
+    _: JClass,
+    variants_json: JString,
+    activities_json: JString,
+) -> JString<'local> {
+    let acts: Vec<String> =
+        serde_json::from_str(&env.get_string(&activities_json).unwrap().to_str().unwrap()).unwrap();
+    let variants: HashMap<String, u64> =
+        serde_json::from_str(&env.get_string(&variants_json).unwrap().to_str().unwrap()).unwrap();
+    let mut log_proj = EventLogActivityProjection {
+        activities: acts.clone(),
+        act_to_index: acts
+            .into_iter()
+            .enumerate()
+            .map(|(i, a)| (a.clone(), i))
+            .collect(),
+        traces: Vec::new(),
+    };
+    log_proj.traces = variants
+    .iter()
+    .map(|(var, count)| {
+        (
+            var.split(",")
+                .into_iter()
+                .map(|a| *log_proj.act_to_index.get(a).unwrap())
+                .collect(),
+            *count,
+        )
+    })
+    .collect();
+    let (config, net) = alphappp_discover_with_auto_parameters(&log_proj);
+    #[derive(Serialize, Deserialize)]
+    struct AutoDiscoveryResult {
+        petri_net: PetriNet,
+        config: AlphaPPPConfig,
+    }
+    let res = AutoDiscoveryResult {
+        petri_net: net,
+        config: config,
+    };
+    env.new_string(serde_json::to_string(&res).unwrap())
+        .unwrap()
+}
+
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn discoverPetriNetAlphaPPPFromActProj<'local>(
     mut env: JNIEnv<'local>,
     _: JClass,
@@ -119,7 +170,8 @@ pub unsafe fn discoverPetriNetAlphaPPPFromActProj<'local>(
         .iter()
         .map(|(var, count)| {
             (
-                var.split(",").into_iter()
+                var.split(",")
+                    .into_iter()
                     .map(|a| *log_proj.act_to_index.get(a).unwrap())
                     .collect(),
                 *count,
@@ -129,7 +181,6 @@ pub unsafe fn discoverPetriNetAlphaPPPFromActProj<'local>(
     let (net, _duration) = alphappp_discover_petri_net(&log_proj, algo_config);
     env.new_string(petrinet_to_json(&net)).unwrap()
 }
-
 
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn importXESLog<'local>(mut env: JNIEnv<'local>, _: JClass, path: JString) -> jlong {

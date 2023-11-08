@@ -9,6 +9,12 @@
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="library" name="google.code.gson" level="project" />
     <orderEntry type="library" name="apache.avro" level="project" />
-    <orderEntry type="library" name="OpenXES" level="project" />
+    <orderEntry type="library" name="AcceptingPetriNet-latest" level="project" />
+    <orderEntry type="library" name="BasicUtils-latest" level="project" />
+    <orderEntry type="library" name="ProM-Models-latest" level="project" />
+    <orderEntry type="library" name="PetriNets-latest" level="project" />
+    <orderEntry type="library" name="OpenXES-20211004" level="project" />
+    <orderEntry type="library" name="ProM-Framework-latest" level="project" />
+    <orderEntry type="library" name="google.guava" level="project" />
   </component>
 </module>

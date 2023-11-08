@@ -33,6 +33,7 @@ pub mod alphappp {
     pub mod candidate_pruning;
     pub mod full;
     pub mod log_repair;
+    pub mod auto_parameters;
 }
 
 

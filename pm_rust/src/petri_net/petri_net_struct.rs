@@ -61,9 +61,13 @@ impl From<&Transition> for TransitionID {
         TransitionID(value.id)
     }
 }
+impl TransitionID {
+    pub fn get_uuid(self) -> Uuid {
+        self.0
+    }
+}
 
 pub type Marking = HashMap<PlaceID, u64>;
-
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct PetriNet {
@@ -177,6 +181,20 @@ impl PetriNet {
                 _ => None,
             })
             .collect()
+    }
+
+    pub fn is_in_initial_marking(&self, p: &PlaceID) -> bool {
+        self.initial_marking.is_some() && self.initial_marking.as_ref().unwrap().contains_key(p)
+    }
+
+    pub fn is_in_a_final_marking(&self, p: &PlaceID) -> bool {
+        self.final_markings.is_some()
+            && self
+                .final_markings
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|m| m.contains_key(p))
     }
 }
 
