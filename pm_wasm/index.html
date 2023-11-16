@@ -8,21 +8,10 @@
 
 <body>
   <input type="file" id="log-input" />
+  <label><input id="checkbox-multithread" type="checkbox"/> Multiple Threads</label>
   <button id="go-button">Go!</button>
-  <script type="module">
-    import init, { wasm_discover_alphappp_petri_net } from "./pkg/pm_wasm.js";
-    init().then(() => {
-      let go_button = document.getElementById("go-button");
-      go_button.addEventListener("click", (ev) => {
-        let input = document.getElementById("log-input");
-        input.files[0].text().then((str) => {
-          let petriNet = wasm_discover_alphappp_petri_net(str);
-          console.log({ petriNet });
-          alert("DONE");
-        })
-      });
-    });
-  </script>
+  <pre id="pre-content"></pre>
+  <script type="module" src="index.js"></script>
 </body>
 
 </html>

@@ -1,11 +1,11 @@
 use std::{
     collections::HashSet,
-    fs::File,
+    fs::{File, read_to_string},
     io::{BufReader, BufWriter},
     vec,
 };
 
-use pm_rust::{event_log::{ocel::ocel_struct::OCEL, import_xes::import_xes_file, activity_projection::EventLogActivityProjection}, alphappp::auto_parameters::alphappp_discover_with_auto_parameters};
+use pm_rust::{event_log::{ocel::ocel_struct::OCEL, import_xes::{import_xes_file, import_xes_str}, activity_projection::EventLogActivityProjection}, alphappp::auto_parameters::alphappp_discover_with_auto_parameters};
 use serde::{Deserialize, Serialize};
 fn main() {
     // let file = File::open("/home/aarkue/dow/order-management.json").unwrap();
@@ -67,11 +67,14 @@ fn main() {
     // // let json = serde_json::to_string_pretty(&event.attributes).unwrap();
     // // println!("{}", json);
 
-    let log_name = "Sepsis Cases - Event Log.xes";
-    let log =
-        import_xes_file(format!("/home/aarkue/doc/sciebo/alpha-revisit/{}", log_name).as_str(), None);
-    let mut log_proj: EventLogActivityProjection = (&log).into();
-    alphappp_discover_with_auto_parameters(&log_proj);
+    let log_name = "BPI_Challenge_2017.xes";
+    let str = read_to_string(format!("/home/aarkue/doc/sciebo/alpha-revisit/{}", log_name).as_str()).unwrap();
+    // let log =
+    //     import_xes_file(format!("/home/aarkue/doc/sciebo/alpha-revisit/{}", log_name).as_str(), None);
+    let log = import_xes_str(&str, None);
+    let log_proj: EventLogActivityProjection = (&log).into();
+    let res = alphappp_discover_with_auto_parameters(&log_proj);
+    println!("After; Best config: {:#?}",res.0);
     // add_start_end_acts_proj(&mut log_proj);
     // let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
     // let dfg_sum: u64 = dfg.edges.values().sum();

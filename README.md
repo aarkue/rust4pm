@@ -38,3 +38,5 @@ WIP Project to allow using a shared Rust library from both Python and Java.
 - `pm_wasm/` contains a proof of concept of WASM bindings for the main library, e.g., exposed to JavaScript and executed in the browser.
 - After building with `wasm-pack build --target web --release` the `index.html` file can be served (at root): The resulting webpage contains a file input allowing an XES event log to be selected.
 After selecting a file, clicking the 'Go' button will execute the generated WASM and discover a Petri net, which will be logged in the console as JSON once the call finishes. Note that the in-browser WASM execution performance is limited, so some patience might be required.  
+
+- For easy usage of `wasm-bindgen-rayon` we use the `parcel` bundler. The dev server can be started with `npx parcel index.html`

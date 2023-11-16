@@ -13,3 +13,4 @@ wasm-bindgen = "0.2"
 pm_rust = {path = "../pm_rust"}
 getrandom = { version = "0.2", features = ["js"] }
 console_error_panic_hook = "0.1.7"
+wasm-bindgen-rayon = {version = "1.0"}
