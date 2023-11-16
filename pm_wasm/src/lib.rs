@@ -26,7 +26,7 @@ pub fn wasm_discover_alphappp_petri_net(xes_str: &str) -> String {
             relative_df_clean_thresh: 0.05,
         },
         &|| {
-            return 0.0;
+            return 0;
         }
     );
     pn.to_json()

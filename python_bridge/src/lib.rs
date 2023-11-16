@@ -358,7 +358,7 @@ fn discover_net_alphappp(pydf: PyDataFrame, alphappp_config: String) -> PyResult
 
 #[pyfunction]
 fn test_petrinet(net_json: String) -> PyResult<String> {
-    let mut net: PetriNet = json_to_petrinet(&net_json);
+    let net: PetriNet = json_to_petrinet(&net_json);
     // add_sample_transition(&mut net);
     Ok(petrinet_to_json(&net))
 }

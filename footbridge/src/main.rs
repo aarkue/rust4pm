@@ -1,11 +1,9 @@
-use std::{
-    collections::HashSet,
-    fs::{File, read_to_string},
-    io::{BufReader, BufWriter},
-    vec,
-};
+use std::{collections::HashSet, fs::File, io::BufReader};
 
-use pm_rust::{event_log::{ocel::ocel_struct::OCEL, import_xes::{import_xes_file, import_xes_str}, activity_projection::EventLogActivityProjection}, alphappp::auto_parameters::alphappp_discover_with_auto_parameters};
+use pm_rust::{
+    alphappp::full::{alphappp_discover_petri_net, AlphaPPPConfig},
+    event_log::{activity_projection::EventLogActivityProjection, import_xes::import_xes_file},
+};
 use serde::{Deserialize, Serialize};
 fn main() {
     // let file = File::open("/home/aarkue/dow/order-management.json").unwrap();
@@ -68,30 +66,33 @@ fn main() {
     // // println!("{}", json);
 
     let log_name = "BPI_Challenge_2017.xes";
-    let str = read_to_string(format!("/home/aarkue/doc/sciebo/alpha-revisit/{}", log_name).as_str()).unwrap();
-    // let log =
-    //     import_xes_file(format!("/home/aarkue/doc/sciebo/alpha-revisit/{}", log_name).as_str(), None);
-    let log = import_xes_str(&str, None);
+    // let str = read_to_string(format!("/home/aarkue/doc/sciebo/alpha-revisit/{}", log_name).as_str()).unwrap();
+    // let log = import_xes_str(&str, None);
+    let log = import_xes_file(
+        format!("/home/aarkue/doc/sciebo/alpha-revisit/{}", log_name).as_str(),
+        None,
+    );
     let log_proj: EventLogActivityProjection = (&log).into();
-    let res = alphappp_discover_with_auto_parameters(&log_proj);
-    println!("After; Best config: {:#?}",res.0);
+
+    // let res = alphappp_discover_with_auto_parameters(&log_proj);
+    // println!("After; Best config: {:#?}",res.0);
     // add_start_end_acts_proj(&mut log_proj);
     // let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
     // let dfg_sum: u64 = dfg.edges.values().sum();
     // let mean_dfg = dfg_sum as f32 / dfg.edges.len() as f32;
-    // let repair_thresh = 4.0;
-    // println!("Repair thresh: {}", repair_thresh * mean_dfg);
-    // let log_proj: EventLogActivityProjection = (&log).into();
-    // let config = AlphaPPPConfig {
-    //     balance_thresh: 0.5,
-    //     fitness_thresh: 0.5,
-    //     replay_thresh: 0.5,
-    //     log_repair_skip_df_thresh_rel: repair_thresh,
-    //     log_repair_loop_df_thresh_rel: repair_thresh,
-    //     absolute_df_clean_thresh: 1,
-    //     relative_df_clean_thresh: 0.01,
-    // };
-    // let (pn, algo_dur) = alphappp_discover_petri_net(&log_proj, config);
+    let repair_thresh = 4.0;
+    // // println!("Repair thresh: {}", repair_thresh * mean_dfg);
+    // // let log_proj: EventLogActivityProjection = (&log).into();
+    let config = AlphaPPPConfig {
+        balance_thresh: 0.5,
+        fitness_thresh: 0.5,
+        replay_thresh: 0.5,
+        log_repair_skip_df_thresh_rel: repair_thresh,
+        log_repair_loop_df_thresh_rel: repair_thresh,
+        absolute_df_clean_thresh: 1,
+        relative_df_clean_thresh: 0.01,
+    };
+    let (_pn, _algo_dur) = alphappp_discover_petri_net(&log_proj, config);
     // let res_name = format!(
     //     "res-{}-α+++|{:.1}|b{:.1}|t{:.1}|",
     //     log_name, repair_thresh, config.balance_thresh, config.fitness_thresh
@@ -100,7 +101,6 @@ fn main() {
     // export_petri_net_to_pnml(&pn, format!("{}.pnml", res_name).as_str());
     // let writer = BufWriter::new(file);
     // serde_json::to_writer_pretty(writer, &algo_dur).unwrap();
-
 
     // export_petri_net_to_pnml(&pn, "net.pnml");
     // println!("Discovered Petri Net: {:?}", pn.to_json());
