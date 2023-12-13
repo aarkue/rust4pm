@@ -1,4 +1,7 @@
-use std::{collections::HashSet, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    collections::HashSet,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -37,7 +40,10 @@ impl AlgoDuration {
 }
 
 pub fn get_current_time_millis() -> u128 {
-    return SystemTime::now().duration_since(UNIX_EPOCH).expect("Time went backwards ;)").as_millis()
+    return SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards ;)")
+        .as_millis();
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
@@ -97,7 +103,10 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
         .act_to_index
         .get(&END_ACTIVITY.to_string())
         .unwrap();
-    println!("Adding start/end acts took: {:.4}s", get_time_millis_fn() - start);
+    println!(
+        "Adding start/end acts took: {:.4}s",
+        get_time_millis_fn() - start
+    );
     start = get_time_millis_fn();
     let (log_proj, added_loop) = add_artificial_acts_for_loops(
         &log_proj,

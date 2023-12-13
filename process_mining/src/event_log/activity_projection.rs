@@ -10,7 +10,7 @@ use super::constants::ACTIVITY_NAME;
 pub struct EventLogActivityProjection {
     pub activities: Vec<String>,
     pub act_to_index: HashMap<String, usize>,
-    pub traces: Vec<(Vec<usize>,u64)>,
+    pub traces: Vec<(Vec<usize>, u64)>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -36,16 +36,18 @@ impl ActivityProjectionDFG {
             })
             .collect()
     }
-    pub fn df_postset_of<'a>(self: &Self, act: usize, df_threshold: u64) ->  impl Iterator<Item = usize> + '_ {
-        self.edges
-            .iter()
-            .filter_map(move |((a, b), w)| {
-                if *a == act && *w >= df_threshold {
-                    return Some(*b);
-                } else {
-                    return None;
-                }
-            })
+    pub fn df_postset_of<'a>(
+        self: &Self,
+        act: usize,
+        df_threshold: u64,
+    ) -> impl Iterator<Item = usize> + '_ {
+        self.edges.iter().filter_map(move |((a, b), w)| {
+            if *a == act && *w >= df_threshold {
+                return Some(*b);
+            } else {
+                return None;
+            }
+        })
     }
 
     pub fn from_event_log_projection(log: &EventLogActivityProjection) -> Self {
@@ -54,13 +56,13 @@ impl ActivityProjectionDFG {
         dfg.edges = log
             .traces
             .par_iter()
-            .map(|(t,w)| {
-                let mut trace_dfs: Vec<((usize, usize),u64)> = Vec::new();
+            .map(|(t, w)| {
+                let mut trace_dfs: Vec<((usize, usize), u64)> = Vec::new();
                 let mut prev_event: Option<usize> = None;
                 for e in t {
                     match prev_event {
                         Some(prev_e) => {
-                            trace_dfs.push(((prev_e, *e),*w));
+                            trace_dfs.push(((prev_e, *e), *w));
                         }
                         None => {}
                     }
@@ -69,10 +71,13 @@ impl ActivityProjectionDFG {
                 trace_dfs
             })
             .flatten()
-            .fold(HashMap::<(usize, usize), u64>::new, |mut map, (df_pair,w)| {
-                *map.entry(df_pair).or_insert(0) += w;
-                map
-            })
+            .fold(
+                HashMap::<(usize, usize), u64>::new,
+                |mut map, (df_pair, w)| {
+                    *map.entry(df_pair).or_insert(0) += w;
+                    map
+                },
+            )
             .reduce_with(|mut m1, mut m2| {
                 if m1.len() < m2.len() {
                     for (k, v) in m2 {
@@ -107,7 +112,7 @@ impl Into<EventLogActivityProjection> for &EventLog {
                             .unwrap_or(Attribute {
                                 key: ACTIVITY_NAME.into(),
                                 value: AttributeValue::String("No Activity".into()),
-                                own_attributes: None
+                                own_attributes: None,
                             })
                             .value
                         {
@@ -126,16 +131,15 @@ impl Into<EventLogActivityProjection> for &EventLog {
             .enumerate()
             .map(|(i, act)| (act, i))
             .collect();
-        let mut traces_set: HashMap<Vec<usize>,u64>  = HashMap::new();
-        acts_per_trace
-            .iter()
-            .for_each(|t| {
-                let trace: Vec<usize> = t.iter()
-                    .map(|act| *act_to_index.get(act).unwrap())
-                    .collect();
-                *traces_set.entry(trace).or_insert(0) += 1;
-            });
-      
+        let mut traces_set: HashMap<Vec<usize>, u64> = HashMap::new();
+        acts_per_trace.iter().for_each(|t| {
+            let trace: Vec<usize> = t
+                .iter()
+                .map(|act| *act_to_index.get(act).unwrap())
+                .collect();
+            *traces_set.entry(trace).or_insert(0) += 1;
+        });
+
         EventLogActivityProjection {
             activities,
             act_to_index,
@@ -145,8 +149,11 @@ impl Into<EventLogActivityProjection> for &EventLog {
 }
 
 impl EventLogActivityProjection {
-    pub fn acts_to_names(self: &Self,acts: &Vec<usize>) -> Vec<String> {
-        let mut ret: Vec<String> = acts.iter().map(|act| self.activities[*act].clone()).collect();
+    pub fn acts_to_names(self: &Self, acts: &Vec<usize>) -> Vec<String> {
+        let mut ret: Vec<String> = acts
+            .iter()
+            .map(|act| self.activities[*act].clone())
+            .collect();
         ret.sort();
         return ret;
     }

@@ -27,7 +27,6 @@ enum Mode {
     None,
 }
 
-
 fn parse_attribute_from_tag(
     t: &BytesStart,
     mode: Mode,
@@ -351,7 +350,7 @@ where
                             current_mode,
                             &mut log,
                             &mut current_nested_attributes,
-                            date_format
+                            date_format,
                         ),
                     },
                     quick_xml::events::Event::End(t) => {

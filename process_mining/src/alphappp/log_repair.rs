@@ -270,11 +270,11 @@ pub fn add_artificial_acts_for_loops(
                     .enumerate()
                     .flat_map(|(i, e)| {
                         if i > 0 {
-                        // Pair consists of previous activity and current activity
-                        let pair = &(*trace.get(i - 1).unwrap(), *e);
-                        if insert_taus_between.contains_key(pair) {
-                            return vec![*(insert_taus_between.get(pair).unwrap()), *e];
-                        }
+                            // Pair consists of previous activity and current activity
+                            let pair = &(*trace.get(i - 1).unwrap(), *e);
+                            if insert_taus_between.contains_key(pair) {
+                                return vec![*(insert_taus_between.get(pair).unwrap()), *e];
+                            }
                         }
                         return vec![*e];
                     })

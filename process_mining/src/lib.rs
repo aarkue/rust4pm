@@ -29,13 +29,12 @@ pub mod petri_net {
 }
 
 pub mod alphappp {
+    pub mod auto_parameters;
     pub mod candidate_building;
     pub mod candidate_pruning;
     pub mod full;
     pub mod log_repair;
-    pub mod auto_parameters;
 }
-
 
 pub const START_ACTIVITY: &str = "__START";
 pub const END_ACTIVITY: &str = "__END";

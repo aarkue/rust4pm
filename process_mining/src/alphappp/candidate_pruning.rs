@@ -5,7 +5,9 @@ use std::{
 
 use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
-use crate::{event_log::activity_projection::EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY};
+use crate::{
+    event_log::activity_projection::EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY,
+};
 
 fn compute_balance(a: &Vec<usize>, b: &Vec<usize>, act_count: &Vec<i128>) -> f32 {
     let mut ai: i128 = 0;
@@ -28,10 +30,10 @@ fn compute_local_fitness(
     strict: bool,
 ) -> (f32, f32) {
     let mut relevant_variants_with_freq: HashMap<Vec<&usize>, u64> = HashMap::new();
-    let proc_vars: Vec<(Vec<&usize>,&u64)> = log
+    let proc_vars: Vec<(Vec<&usize>, &u64)> = log
         .traces
         .par_iter()
-        .filter_map(|(var,weight)| {
+        .filter_map(|(var, weight)| {
             let filtered_var: Vec<&usize> = var
                 .iter()
                 .filter(|v| a.contains(v) || b.contains(v))
@@ -39,12 +41,12 @@ fn compute_local_fitness(
             if filtered_var.is_empty() {
                 return None;
             } else {
-                return Some((filtered_var,weight));
+                return Some((filtered_var, weight));
             }
         })
         .collect();
 
-    proc_vars.into_iter().for_each(|(var,w)| {
+    proc_vars.into_iter().for_each(|(var, w)| {
         let val: &u64 = relevant_variants_with_freq.get(&var).unwrap_or(&0);
         let new_val = val + w;
         relevant_variants_with_freq.insert(var, new_val);
@@ -164,7 +166,7 @@ pub fn prune_candidates(
         .par_iter()
         .filter(|(a, b)| {
             let balance = compute_balance(a, b, &act_count);
-            balance <= balance_threshold 
+            balance <= balance_threshold
         })
         .collect();
     println!("After balance: {}", filtered_cnds.len());

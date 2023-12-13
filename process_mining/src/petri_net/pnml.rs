@@ -1,6 +1,9 @@
 use std::fs::File;
 
-use quick_xml::{events::{BytesText, BytesDecl}, Writer};
+use quick_xml::{
+    events::{BytesDecl, BytesText},
+    Writer,
+};
 use uuid::Uuid;
 
 use super::petri_net_struct::PetriNet;
@@ -9,7 +12,13 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
     let file = File::create(path).unwrap();
     // let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 4);
     let mut writer = Writer::new_with_indent(file, b' ', 4);
-    writer.write_event(quick_xml::events::Event::Decl(BytesDecl::new("1.0", Some("utf8"), None))).unwrap();
+    writer
+        .write_event(quick_xml::events::Event::Decl(BytesDecl::new(
+            "1.0",
+            Some("utf8"),
+            None,
+        )))
+        .unwrap();
     writer
         .create_element("pnml")
         .write_inner_content(|writer| {
