@@ -6,7 +6,7 @@ use jni::{
 use std::collections::HashMap;
 
 use jni_fn::jni_fn;
-use pm_rust::{Attributes, Event, EventLog, Trace};
+use process_mining::{Attributes, Event, EventLog, Trace};
 
 use super::copy_log_shared::JTrace;
 

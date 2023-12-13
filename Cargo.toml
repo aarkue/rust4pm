@@ -2,7 +2,7 @@
 
 members = [
 	"footbridge",
-	"pm_rust",
+	"process_mining",
 	"python_bridge",
 	"java_bridge",
 	"pm_wasm"

@@ -15,7 +15,7 @@ use jni::{
 };
 
 use jni_fn::jni_fn;
-use pm_rust::{
+use process_mining::{
     add_start_end_acts,
     alphappp::{
         auto_parameters::alphappp_discover_with_auto_parameters,
@@ -116,17 +116,17 @@ pub unsafe fn discoverPetriNetAlphaPPPFromActProjAuto<'local>(
         traces: Vec::new(),
     };
     log_proj.traces = variants
-    .iter()
-    .map(|(var, count)| {
-        (
-            var.split(",")
-                .into_iter()
-                .map(|a| *log_proj.act_to_index.get(a).unwrap())
-                .collect(),
-            *count,
-        )
-    })
-    .collect();
+        .iter()
+        .map(|(var, count)| {
+            (
+                var.split(",")
+                    .into_iter()
+                    .map(|a| *log_proj.act_to_index.get(a).unwrap())
+                    .collect(),
+                *count,
+            )
+        })
+        .collect();
     let (config, net) = alphappp_discover_with_auto_parameters(&log_proj);
     #[derive(Serialize, Deserialize)]
     struct AutoDiscoveryResult {
@@ -139,6 +139,43 @@ pub unsafe fn discoverPetriNetAlphaPPPFromActProjAuto<'local>(
     };
     env.new_string(serde_json::to_string(&res).unwrap())
         .unwrap()
+}
+
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
+pub unsafe fn testActProjPassPerformance<'local>(
+    mut env: JNIEnv<'local>,
+    _: JClass,
+    variants_json: JString,
+    activities_json: JString,
+) -> JString<'local> {
+    let acts: Vec<String> =
+        serde_json::from_str(&env.get_string(&activities_json).unwrap().to_str().unwrap()).unwrap();
+    let variants: HashMap<String, u64> =
+        serde_json::from_str(&env.get_string(&variants_json).unwrap().to_str().unwrap()).unwrap();
+    let mut log_proj = EventLogActivityProjection {
+        activities: acts.clone(),
+        act_to_index: acts
+            .into_iter()
+            .enumerate()
+            .map(|(i, a)| (a.clone(), i))
+            .collect(),
+        traces: Vec::new(),
+    };
+
+    log_proj.traces = variants
+        .iter()
+        .map(|(var, count)| {
+            (
+                var.split(",")
+                    .into_iter()
+                    .map(|a| *log_proj.act_to_index.get(a).unwrap())
+                    .collect(),
+                *count,
+            )
+        })
+        .collect();
+    let num_cases: u64 = log_proj.traces.iter().map(|(_, count)| count).sum();
+    env.new_string(format!("#Cases: {}", num_cases)).unwrap()
 }
 
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]

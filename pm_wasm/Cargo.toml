@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 wasm-bindgen = "0.2"
-pm_rust = {path = "../pm_rust"}
+process_mining = {path = "../process_mining"}
 getrandom = { version = "0.2", features = ["js"] }
 console_error_panic_hook = "0.1.7"
 wasm-bindgen-rayon = {version = "1.0"}

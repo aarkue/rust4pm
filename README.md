@@ -2,7 +2,7 @@
 WIP Project to allow using a shared Rust library from both Python and Java.
 
 ## Structure
-- Main (Shared) Rust Library: `pm_rust/`
+- Main (Shared) Rust Library: `process_mining/`
   - Used for:
     - Python Bindings:`python_bridge/`
     - Java Bindings: `java_bridge/`

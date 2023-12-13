@@ -424,7 +424,7 @@ name = "footbridge"
 version = "0.1.0"
 dependencies = [
  "java_bridge",
- "pm_rust",
+ "process_mining",
  "serde",
  "serde_json",
 ]
@@ -657,7 +657,7 @@ version = "0.1.0"
 dependencies = [
  "jni",
  "jni_fn",
- "pm_rust",
+ "process_mining",
  "rayon",
  "serde",
  "serde_json",
@@ -1007,25 +1007,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "pm_rust"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "flate2",
- "quick-xml",
- "rayon",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
 name = "pm_wasm"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "getrandom",
- "pm_rust",
+ "process_mining",
  "wasm-bindgen",
  "wasm-bindgen-rayon",
 ]
@@ -1317,6 +1304,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "process_mining"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "flate2",
+ "quick-xml",
+ "rayon",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "pyo3"
 version = "0.19.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1394,8 +1394,8 @@ name = "python_side"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "pm_rust",
  "polars",
+ "process_mining",
  "pyo3",
  "pyo3-polars",
  "rayon",

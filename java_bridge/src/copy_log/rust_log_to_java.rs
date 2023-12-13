@@ -7,7 +7,7 @@ use jni::{
 use uuid::Uuid;
 
 use jni_fn::jni_fn;
-use pm_rust::{Attribute, AttributeValue, Attributes, EventLog, Trace};
+use process_mining::{Attribute, AttributeValue, Attributes, EventLog, Trace};
 
 use super::copy_log_shared::{JEventLog, JTrace};
 

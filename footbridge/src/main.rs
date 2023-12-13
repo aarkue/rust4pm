@@ -1,6 +1,6 @@
-use std::{collections::HashSet, fs::File, io::BufReader};
+use std::{collections::HashSet, fs::File, io::BufReader, time::Instant};
 
-use pm_rust::{
+use process_mining::{
     alphappp::full::{alphappp_discover_petri_net, AlphaPPPConfig},
     event_log::{activity_projection::EventLogActivityProjection, import_xes::import_xes_file},
 };
@@ -65,7 +65,7 @@ fn main() {
     // // let json = serde_json::to_string_pretty(&event.attributes).unwrap();
     // // println!("{}", json);
 
-    let log_name = "BPI_Challenge_2017.xes";
+    let log_name = "Sepsis Cases - Event Log.xes.gz";
     // let str = read_to_string(format!("/home/aarkue/doc/sciebo/alpha-revisit/{}", log_name).as_str()).unwrap();
     // let log = import_xes_str(&str, None);
     let log = import_xes_file(
@@ -83,6 +83,7 @@ fn main() {
     let repair_thresh = 4.0;
     // // println!("Repair thresh: {}", repair_thresh * mean_dfg);
     // // let log_proj: EventLogActivityProjection = (&log).into();
+    let now = Instant::now();
     let config = AlphaPPPConfig {
         balance_thresh: 0.5,
         fitness_thresh: 0.5,
@@ -92,7 +93,9 @@ fn main() {
         absolute_df_clean_thresh: 1,
         relative_df_clean_thresh: 0.01,
     };
-    let (_pn, _algo_dur) = alphappp_discover_petri_net(&log_proj, config);
+
+    let (pn, algo_dur) = alphappp_discover_petri_net(&log_proj, config);
+    println!("Duration: {} | {:?}",algo_dur.total, now.elapsed());
     // let res_name = format!(
     //     "res-{}-α+++|{:.1}|b{:.1}|t{:.1}|",
     //     log_name, repair_thresh, config.balance_thresh, config.fitness_thresh

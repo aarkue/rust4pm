@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use pm_rust::{Attribute, Attributes, Event, EventLog, Trace};
+use process_mining::{Attribute, Attributes, Event, EventLog, Trace};
 
 /// Used for Java-compatible XLog JSON generation
 ///

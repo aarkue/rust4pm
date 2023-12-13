@@ -7,7 +7,7 @@ edition = "2021"
 crate_type = ["cdylib"]
 
 [dependencies]
-pm_rust = {path = "../pm_rust"}
+process_mining = {path = "../process_mining"}
 jni =  "0.21.1"
 jni_fn = "0.1.2"
 # jnix = {version = "0.5.0", features = ["derive"] }

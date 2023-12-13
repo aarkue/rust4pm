@@ -9,7 +9,7 @@ name = "rust_bridge_pm_py"
 crate-type = ["cdylib"]
 
 [dependencies]
-pm_rust = {path = "../pm_rust"}
+process_mining = {path = "../process_mining"}
 pyo3 = "0.19.0"
 polars = {version = "0.32.1", features = ["dtype-slim","csv","json","partition_by"]}
 pyo3-polars = "0.6.0"
