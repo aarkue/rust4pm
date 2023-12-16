@@ -6,7 +6,7 @@ use jni::{
 use std::collections::HashMap;
 
 use jni_fn::jni_fn;
-use process_mining::{Attributes, Event, EventLog, Trace};
+use process_mining::event_log::{Attributes, Event, EventLog, Trace};
 
 use super::copy_log_shared::JTrace;
 
@@ -147,8 +147,8 @@ pub unsafe fn finishLogConstructionPar<'local>(
             .into_iter()
             .map(|t_box| *t_box)
             .collect(),
-            classifiers: None,
-            extensions: None
+        classifiers: None,
+        extensions: None,
     };
     let log_box = Box::new(log);
     let pointer = Box::into_raw(log_box) as jlong;

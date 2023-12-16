@@ -2,9 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
-use crate::{
-    event_log::activity_projection::{ActivityProjectionDFG, EventLogActivityProjection},
-    END_ACTIVITY, START_ACTIVITY,
+use crate::event_log::activity_projection::{
+    ActivityProjectionDFG, EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY,
 };
 
 pub const SILENT_ACT_PREFIX: &str = "__SILENT__";

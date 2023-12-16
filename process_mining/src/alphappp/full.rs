@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     add_start_end_acts_proj,
-    event_log::activity_projection::{ActivityProjectionDFG, EventLogActivityProjection},
+    event_log::activity_projection::{
+        ActivityProjectionDFG, EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY,
+    },
     petri_net::petri_net_struct::{ArcType, Marking, PetriNet, TransitionID},
-    END_ACTIVITY, START_ACTIVITY,
 };
 
 use super::{
@@ -65,6 +66,11 @@ impl AlphaPPPConfig {
     }
 }
 
+///
+/// __Discover__ a [PetriNet] using the Alpha+++ Process Discovery algorithm
+///
+/// Additionally returns the durations for performance measurements
+///
 pub fn alphappp_discover_petri_net(
     log_proj: &EventLogActivityProjection,
     config: AlphaPPPConfig,

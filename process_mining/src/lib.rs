@@ -1,18 +1,16 @@
-pub use chrono::NaiveDateTime;
-pub use chrono::{serde::ts_milliseconds, DateTime, TimeZone, Utc};
-use event_log::activity_projection::EventLogActivityProjection;
-pub use event_log::event_log_struct::{
-    Attribute, AttributeAddable, AttributeValue, Attributes, Event, EventLog, Trace,
-};
-use petri_net::petri_net_struct::{ArcType, PetriNet, PlaceID};
-use rayon::prelude::*;
-use std::{
-    fs::File,
-    io::{BufReader, BufWriter},
-    path::Path,
-};
-pub use uuid::Uuid;
+//!  # Process Mining
+//!
+//! `process_mining` is a collection of functions, structs and utilitities related to Process Mining
+//!
 
+use event_log::activity_projection::{EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY};
+use event_log::event_log_struct::Event;
+use petri_net::petri_net_struct::PetriNet;
+use rayon::prelude::*;
+
+///
+/// Module for Event Logs (traditional and OCEL)
+///
 pub mod event_log {
     pub mod activity_projection;
     pub mod constants;
@@ -21,13 +19,34 @@ pub mod event_log {
     pub mod ocel {
         pub mod ocel_struct;
     }
+    pub use event_log_struct::{
+        Attribute, AttributeAddable, AttributeValue, Attributes, Event, EventLog, Trace,
+    };
 }
 
+///
+/// Module for Petri nets
+///
 pub mod petri_net {
     pub mod petri_net_struct;
     pub mod pnml;
 }
 
+#[doc(inline)]
+pub use alphappp::full::alphappp_discover_petri_net;
+
+#[doc(inline)]
+pub use event_log::import_xes::import_xes_file;
+
+#[doc(inline)]
+pub use event_log::event_log_struct::EventLog;
+
+#[doc(inline)]
+pub use event_log::ocel::ocel_struct::OCEL;
+
+///
+/// Module for the Alpha+++ Process Discovery algorithm
+///
 pub mod alphappp {
     pub mod auto_parameters;
     pub mod candidate_building;
@@ -36,13 +55,12 @@ pub mod alphappp {
     pub mod log_repair;
 }
 
-pub const START_ACTIVITY: &str = "__START";
-pub const END_ACTIVITY: &str = "__END";
-
-pub fn loop_sum_sqrt(from: usize, to: usize) -> f32 {
-    (from..to).map(|x| (x as f32).sqrt()).sum()
-}
-
+///
+/// Add artificial start and end activities to a given [EventLogActivityProjection]
+///
+/// Mutating the [EventLogActivityProjection] in place
+/// Additionally also checks if artificial [START_ACTIVITY] or [END_ACTIVITY] are already present in log
+///
 pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
     let mut should_add_start = true;
     let start_act = match log.act_to_index.get(&START_ACTIVITY.to_string()) {
@@ -86,6 +104,12 @@ pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
     }
 }
 
+///
+/// Add artificial start and end activities to a given [EventLog]
+///
+/// Mutating the [EventLog] in place
+/// Caution: Does not check if [START_ACTIVITY] or [END_ACTIVITY] are already present in the log
+///
 pub fn add_start_end_acts(log: &mut EventLog) {
     log.traces.par_iter_mut().for_each(|t| {
         let start_event = Event::new(START_ACTIVITY.to_string());
@@ -95,82 +119,45 @@ pub fn add_start_end_acts(log: &mut EventLog) {
     });
 }
 
-pub fn add_sample_transition(net: &mut PetriNet) {
-    let t1 = net.add_transition(Some("Use rust".into()), None);
-    let start_places: Vec<PlaceID> = net
-        .places
-        .iter()
-        .filter_map(|(_, p)| {
-            if net.preset_of_place(p.into()).is_empty() {
-                Some(p.into())
-            } else {
-                None
-            }
-        })
-        .collect();
-    let end_places: Vec<PlaceID> = net
-        .places
-        .iter()
-        .filter_map(|(_, p)| {
-            if net.postset_of_place(p.into()).is_empty() {
-                Some(p.into())
-            } else {
-                None
-            }
-        })
-        .collect();
-    start_places
-        .into_iter()
-        .for_each(|p| net.add_arc(ArcType::place_to_transition(p, t1), None));
-    end_places
-        .into_iter()
-        .for_each(|p| net.add_arc(ArcType::transition_to_place(t1, p), None));
-}
-
+///
+/// Serialize a [PetriNet] as a JSON-encoded [String]
+///
 pub fn petrinet_to_json(net: &PetriNet) -> String {
     serde_json::to_string(net).unwrap()
 }
+///
+/// Deserialize a [PetriNet] from a JSON-encoded [String]
+///
 pub fn json_to_petrinet(net_json: &str) -> PetriNet {
     serde_json::from_str(&net_json).unwrap()
 }
 
-pub fn export_log<P: AsRef<Path>>(path: P, log: &EventLog) {
-    let file = File::create(path).unwrap();
-    let writer = BufWriter::new(file);
-    serde_json::to_writer(writer, log).unwrap();
-}
+// pub fn export_log<P: AsRef<Path>>(path: P, log: &EventLog) {
+//     let file = File::create(path).unwrap();
+//     let writer = BufWriter::new(file);
+//     serde_json::to_writer(writer, log).unwrap();
+// }
 
-pub fn export_log_to_string(log: &EventLog) -> String {
-    serde_json::to_string(log).unwrap()
-}
+// pub fn export_log_to_string(log: &EventLog) -> String {
+//     serde_json::to_string(log).unwrap()
+// }
 
-pub fn export_log_to_byte_vec(log: &EventLog) -> Vec<u8> {
-    serde_json::to_vec(log).unwrap()
-}
+// pub fn export_log_to_byte_vec(log: &EventLog) -> Vec<u8> {
+//     serde_json::to_vec(log).unwrap()
+// }
 
-pub fn import_log<P: AsRef<Path>>(path: P) -> EventLog {
-    let file = File::open(path).unwrap();
-    let reader = BufReader::new(file);
-    let log: EventLog = serde_json::from_reader(reader).unwrap();
-    return log;
-}
+// pub fn import_log<P: AsRef<Path>>(path: P) -> EventLog {
+//     let file = File::open(path).unwrap();
+//     let reader = BufReader::new(file);
+//     let log: EventLog = serde_json::from_reader(reader).unwrap();
+//     return log;
+// }
 
-pub fn import_log_from_byte_array(bytes: &[u8]) -> EventLog {
-    let log: EventLog = serde_json::from_slice(&bytes).unwrap();
-    return log;
-}
+// pub fn import_log_from_byte_array(bytes: &[u8]) -> EventLog {
+//     let log: EventLog = serde_json::from_slice(&bytes).unwrap();
+//     return log;
+// }
 
-pub fn import_log_from_str(json: String) -> EventLog {
-    serde_json::from_str(&json).unwrap()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = loop_sum_sqrt(4, 5);
-        assert_eq!(result, 2.0);
-    }
-}
+// pub fn import_log_from_str(json: String) -> EventLog {
+//     serde_json::from_str(&json).unwrap()
+// }

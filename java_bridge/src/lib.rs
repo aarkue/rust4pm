@@ -21,9 +21,12 @@ use process_mining::{
         auto_parameters::alphappp_discover_with_auto_parameters,
         full::{alphappp_discover_petri_net, AlphaPPPConfig},
     },
-    event_log::{activity_projection::EventLogActivityProjection, import_xes::import_xes_file},
+    event_log::{
+        activity_projection::EventLogActivityProjection, import_xes::import_xes_file, Attribute,
+        AttributeValue, EventLog,
+    },
     petri_net::petri_net_struct::PetriNet,
-    petrinet_to_json, Attribute, AttributeValue, EventLog,
+    petrinet_to_json,
 };
 use serde::{Deserialize, Serialize};
 

@@ -1,6 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+///
+/// Object-centric Event Log
+///
+/// Consists of multiple [OCELEvent]s and [OCELObject]s with corresponding event and object [OCELType]s
+///
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OCEL {
     #[serde(rename = "eventTypes")]

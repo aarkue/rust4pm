@@ -148,7 +148,7 @@ impl Trace {
 }
 
 ///
-/// A event log consists of a list of traces and log attributes (See also [Trace] and [Attributes])
+/// Event log consisting of a list of [Trace]s and log [Attributes]
 ///
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventLog {

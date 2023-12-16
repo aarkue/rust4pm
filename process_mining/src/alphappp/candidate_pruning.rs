@@ -5,8 +5,8 @@ use std::{
 
 use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
-use crate::{
-    event_log::activity_projection::EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY,
+use crate::event_log::activity_projection::{
+    EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY,
 };
 
 fn compute_balance(a: &Vec<usize>, b: &Vec<usize>, act_count: &Vec<i128>) -> f32 {

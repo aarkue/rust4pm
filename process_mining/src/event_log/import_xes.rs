@@ -218,7 +218,7 @@ fn add_attribute_from_tag(
 }
 
 ///
-/// Import an XES [EventLog] from a [Reader]
+/// Import a XES [EventLog] from a [Reader]
 ///
 pub fn import_xes<T>(reader: &mut Reader<T>, date_format: Option<&str>) -> EventLog
 where
@@ -426,7 +426,7 @@ where
 }
 
 ///
-/// Import an XES [EventLog] from a file path
+/// __Import__ a __XES__ [EventLog] from a file path
 ///
 pub fn import_xes_file(path: &str, date_format: Option<&str>) -> EventLog {
     if path.ends_with(".gz") {
@@ -444,7 +444,7 @@ pub fn import_xes_file(path: &str, date_format: Option<&str>) -> EventLog {
 }
 
 ///
-/// Import an XES [EventLog] directly from a string
+/// Import a XES [EventLog] directly from a string
 ///
 pub fn import_xes_str(xes_str: &str, date_format: Option<&str>) -> EventLog {
     let mut reader: Reader<&[u8]> = Reader::from_str(&xes_str);

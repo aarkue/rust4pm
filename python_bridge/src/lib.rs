@@ -1,5 +1,13 @@
 use chrono::DateTime;
 use chrono::NaiveDateTime;
+use chrono::Utc;
+use polars::prelude::AnyValue;
+use polars::prelude::DataFrame;
+use polars::prelude::DataType;
+use polars::prelude::NamedFrom;
+use polars::prelude::PolarsError;
+use polars::prelude::SerReader;
+use polars::series::Series;
 use process_mining::add_start_end_acts;
 use process_mining::alphappp::full::alphappp_discover_petri_net;
 use process_mining::alphappp::full::AlphaPPPConfig;
@@ -9,24 +17,12 @@ use process_mining::event_log::constants::TRACE_PREFIX;
 use process_mining::event_log::event_log_struct::EventLogClassifier;
 use process_mining::event_log::event_log_struct::EventLogExtension;
 use process_mining::event_log::import_xes::import_xes_file;
+use process_mining::event_log::{
+    Attribute, AttributeAddable, AttributeValue, Attributes, Event, EventLog, Trace,
+};
 use process_mining::json_to_petrinet;
 use process_mining::petri_net::petri_net_struct::PetriNet;
 use process_mining::petrinet_to_json;
-use process_mining::Attribute;
-use process_mining::AttributeAddable;
-use process_mining::AttributeValue;
-use process_mining::Attributes;
-use process_mining::Event;
-use process_mining::EventLog;
-use process_mining::Trace;
-use process_mining::Utc;
-use polars::prelude::AnyValue;
-use polars::prelude::DataFrame;
-use polars::prelude::DataType;
-use polars::prelude::NamedFrom;
-use polars::prelude::PolarsError;
-use polars::prelude::SerReader;
-use polars::series::Series;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::Python;
@@ -359,7 +355,6 @@ fn discover_net_alphappp(pydf: PyDataFrame, alphappp_config: String) -> PyResult
 #[pyfunction]
 fn test_petrinet(net_json: String) -> PyResult<String> {
     let net: PetriNet = json_to_petrinet(&net_json);
-    // add_sample_transition(&mut net);
     Ok(petrinet_to_json(&net))
 }
 

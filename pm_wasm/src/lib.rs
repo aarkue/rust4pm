@@ -1,7 +1,9 @@
 use std::panic;
 
 use process_mining::{
-    alphappp::full::{alphappp_discover_petri_net, AlphaPPPConfig, alphappp_discover_petri_net_with_timing_fn},
+    alphappp::full::{
+        alphappp_discover_petri_net, alphappp_discover_petri_net_with_timing_fn, AlphaPPPConfig,
+    },
     event_log::{activity_projection::EventLogActivityProjection, import_xes::import_xes_str},
 };
 use wasm_bindgen::prelude::*;
@@ -14,7 +16,7 @@ pub fn wasm_discover_alphappp_petri_net(xes_str: &str) -> String {
     console_error_panic_hook::set_once();
     let log = import_xes_str(xes_str, None);
     let log_proj: EventLogActivityProjection = (&log).into();
-    let (pn,_) = alphappp_discover_petri_net_with_timing_fn(
+    let (pn, _) = alphappp_discover_petri_net_with_timing_fn(
         &log_proj,
         AlphaPPPConfig {
             balance_thresh: 0.1,
@@ -27,7 +29,7 @@ pub fn wasm_discover_alphappp_petri_net(xes_str: &str) -> String {
         },
         &|| {
             return 0;
-        }
+        },
     );
     pn.to_json()
 }

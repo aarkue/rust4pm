@@ -2,9 +2,12 @@ use std::collections::{HashMap, HashSet};
 
 use rayon::prelude::*;
 
-use crate::{Attribute, AttributeValue, EventLog};
+use super::event_log_struct::{Attribute, AttributeValue, EventLog};
 
 use super::constants::ACTIVITY_NAME;
+
+pub const START_ACTIVITY: &str = "__START";
+pub const END_ACTIVITY: &str = "__END";
 
 #[derive(Debug, Clone)]
 pub struct EventLogActivityProjection {

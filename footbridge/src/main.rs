@@ -95,7 +95,7 @@ fn main() {
     };
 
     let (pn, algo_dur) = alphappp_discover_petri_net(&log_proj, config);
-    println!("Duration: {} | {:?}",algo_dur.total, now.elapsed());
+    println!("Duration: {} | {:?}", algo_dur.total, now.elapsed());
     // let res_name = format!(
     //     "res-{}-α+++|{:.1}|b{:.1}|t{:.1}|",
     //     log_name, repair_thresh, config.balance_thresh, config.fitness_thresh
