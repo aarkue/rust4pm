@@ -7,6 +7,7 @@ use quick_xml::{
 use uuid::Uuid;
 
 use super::petri_net_struct::PetriNet;
+const OK: Result<(), quick_xml::Error> = Ok::<(), quick_xml::Error>(());
 
 pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
     let file = File::create(path).unwrap();
@@ -53,7 +54,7 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                                                         id.to_string().as_str(),
                                                     ))
                                                     .unwrap();
-                                                Ok(())
+                                                OK
                                             })
                                             .unwrap();
                                         match pn.initial_marking.clone() {
@@ -70,7 +71,7 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                                                                     tokens.to_string().as_str(),
                                                                 ))
                                                                 .unwrap();
-                                                            Ok(())
+                                                            OK
                                                         })
                                                         .unwrap();
                                                 }
@@ -78,7 +79,7 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                                             None => {}
                                         }
 
-                                        Ok(())
+                                        OK
                                     })
                                     .unwrap();
                             });
@@ -100,7 +101,7 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                                                             .as_str(),
                                                     ))
                                                     .unwrap();
-                                                Ok(())
+                                                OK
                                             })
                                             .unwrap();
                                         if transition.label.is_none() {
@@ -122,7 +123,7 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                                                 .write_empty()
                                                 .unwrap();
                                         }
-                                        Ok(())
+                                        OK
                                     })
                                     .unwrap();
                             });
@@ -147,7 +148,7 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                                     .write_empty()
                                     .unwrap();
                             });
-                            Ok(())
+                            OK
                         })
                         .unwrap();
 
@@ -177,15 +178,15 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                                                                     tokens.to_string().as_str(),
                                                                 ))
                                                                 .unwrap();
-                                                            Ok(())
+                                                            OK
                                                         })
                                                         .unwrap();
                                                 });
-                                                Ok(())
+                                                OK
                                             })
                                             .unwrap();
                                     });
-                                    Ok(())
+                                    OK
                                 })
                                 .unwrap();
                         }
@@ -193,10 +194,10 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                     }
 
                     // </net>
-                    Ok(())
+                    OK
                 })
                 .unwrap();
-            Ok(())
+            OK
         })
         .unwrap();
     // String::from_utf8(writer.into_inner().into_inner()).unwrap()

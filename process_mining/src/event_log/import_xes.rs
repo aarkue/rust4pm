@@ -450,3 +450,11 @@ pub fn import_xes_str(xes_str: &str, date_format: Option<&str>) -> EventLog {
     let mut reader: Reader<&[u8]> = Reader::from_str(&xes_str);
     return import_xes(&mut reader, date_format);
 }
+
+///
+/// Import a XES [EventLog] from a u8 Vec
+///
+pub fn import_xes_vec(xes_data: &Vec<u8>, date_format: Option<&str>) -> EventLog {
+    let mut reader: Reader<&[u8]> = Reader::from_reader(xes_data);
+    return import_xes(&mut reader, date_format);
+}
