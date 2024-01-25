@@ -1,7 +1,8 @@
 [workspace]
+resolver = "2"
 
 members = [
-	"footbridge",
+	"binary",
 	"process_mining",
 	"python_bridge",
 	"java_bridge",
