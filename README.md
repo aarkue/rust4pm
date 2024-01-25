@@ -31,6 +31,9 @@ See [process_mining/README.md](./process_mining/README.md) to view the dedicated
 Further information is also available at https://crates.io/crates/process_mining and https://docs.rs/process_mining.
 
 ## Bindings
+Here you can find some preliminary information about the binding implementations.
+For more details, please take a look at the source code or the full written report.
+
 ### Java
 - Uses `jni` to allow Java code to call shared Rust library
 - Object Passing:
