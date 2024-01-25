@@ -1,16 +1,25 @@
 # Rust Bridge for Process Mining
+
 This repository is a mono-repo containing the following parts:
 - `process_mining/` Process Mining library in Rust (See also https://crates.io/crates/process_mining)
 - `python_bridge/` Python Bindings
 - `java_bridge/` Java Bindings
+- `pm_wasm/` WASM / JavaScript Bindings PoC
 - `binary/` Rust Binary Executable
+
+The Java, Python and JavaScript bindings make use of the main `process_mining` library, which is written in Rust.
+Thus, complex algorithms or logic can be __implemented only once in Rust__. This implementation can then be exposed and used from Java, Python or JavaScript, in different enviroments.
+This not only reduces implementation effort (_write only once, use everywhere_), but also enables great performance.
+
+<img width="40%" src="https://github.com/aarkue/rust-bridge-process-mining/assets/20766652/fab66ce3-2547-4527-af2d-b5a25b3ca446" alt="Figure showcasing that one main Rust implementation can be used from Java, Python, or other languages."/>
   
 Additional information, as well as evaluation results, are published in a written report titled _Developing a High-Performance Process Mining Library with Java and Python Bindings in Rust_.
 
 Mostly, `cargo` is used to build and run this project. For more detailed instructions see https://github.com/aarkue/rust-bridge-template, which provides more details on how to build or run this and similar projects.
 
-## Starter Kit
-If you are interested in a starter kit __template__ to bootstrap similar Rust libraries with Java and Python bindings, see https://github.com/aarkue/rust-bridge-template.
+If you are looking for the Rust-based XES event log importer, see https://github.com/aarkue/rustxes, which contains the XES importer from `process_mining/` extracted to its own crate with full Python bindings.
+
+If you are interested in a __starter kit template__ to bootstrap similar Rust libraries with Java and Python bindings, see https://github.com/aarkue/rust-bridge-template.
 
 There you will find more information on how to get started, as well as build and run such projects.
 
