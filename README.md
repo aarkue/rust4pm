@@ -57,3 +57,7 @@ For more details, please take a look at the source code or the full written repo
 After selecting a file, clicking the 'Go' button will execute the generated WASM and discover a Petri net, which will be logged in the console as JSON once the call finishes. Note that the in-browser WASM execution performance is limited, so some patience might be required.  
 
 - For easy usage of `wasm-bindgen-rayon` we use `vite`. The dev server can be started with `npm run dev`.
+
+
+## LICENSE
+This project is licensed under either Apache License Version 2.0 or MIT License at your option.
