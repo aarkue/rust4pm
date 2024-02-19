@@ -280,7 +280,8 @@ where
                                     // Nested attribute!
                                     let (key, value) =
                                         parse_attribute_from_tag(&t, current_mode, date_format);
-                                    if !(key.is_empty() && matches!(value, AttributeValue::None())) {
+                                    if !(key.is_empty() && matches!(value, AttributeValue::None()))
+                                    {
                                         current_nested_attributes.push(Attribute {
                                             key,
                                             value,
@@ -449,9 +450,11 @@ pub fn import_xes_str(xes_str: &str, date_format: Option<&str>) -> EventLog {
 }
 
 ///
-/// Import a XES [EventLog] from a u8 Vec
+/// Import a XES [EventLog] from a byte slice (&\[u8\])
 ///
-pub fn import_xes_vec(
+/// * `is_compressed_gz`: Parse the passed `xes_data` as a compressed .gz archive
+///
+pub fn import_xes_slice(
     xes_data: &[u8],
     is_compressed_gz: bool,
     date_format: Option<&str>,
@@ -468,13 +471,10 @@ pub fn import_xes_vec(
     )
 }
 
-
-
-
 #[test]
 fn test_xes_gz_import() {
     let x = include_bytes!("test_data/Sepsis Cases - Event Log.xes.gz");
-    let log = import_xes_vec(x, true, None);
+    let log = import_xes_slice(x, true, None);
 
     // Log has 1050 cases total
     assert_eq!(log.traces.len(), 1050);
