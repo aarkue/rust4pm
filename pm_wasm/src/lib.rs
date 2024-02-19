@@ -2,8 +2,9 @@ use process_mining::{
     alphappp::full::{alphappp_discover_petri_net_with_timing_fn, AlphaPPPConfig},
     event_log::{
         activity_projection::EventLogActivityProjection,
-        import_xes::{import_xes_str, import_xes_vec},
+        import_xes::{import_xes_str, import_xes_slice},
     },
+    OCEL,
 };
 use wasm_bindgen::prelude::*;
 pub use wasm_bindgen_rayon::init_thread_pool;
@@ -37,6 +38,7 @@ macro_rules! console_log {
 pub fn wasm_discover_alphappp_petri_net_from_xes_string(xes_str: &str) -> String {
     console_error_panic_hook::set_once();
     let log = import_xes_str(xes_str, None);
+    console_log!("Got log: {}", log.traces.len());
     let log_proj: EventLogActivityProjection = (&log).into();
     let (pn, _) = alphappp_discover_petri_net_with_timing_fn(
         &log_proj,
@@ -57,10 +59,13 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_string(xes_str: &str) -> String
 }
 
 #[wasm_bindgen]
-pub fn wasm_discover_alphappp_petri_net_from_xes_vec(xes_data: Vec<u8>) -> String {
+pub fn wasm_discover_alphappp_petri_net_from_xes_vec(
+    xes_data: &[u8],
+    is_compressed_gz: bool,
+) -> String {
     console_error_panic_hook::set_once();
     console_log!("Got data: {}", xes_data.len());
-    let log = import_xes_vec(&xes_data, None);
+    let log = import_xes_slice(&xes_data, is_compressed_gz, None);
     console_log!("Got Log: {}", log.traces.len());
     let log_proj: EventLogActivityProjection = (&log).into();
     console_log!("Got Log Activity Projection: {}", log_proj.traces.len());
@@ -80,4 +85,13 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_vec(xes_data: Vec<u8>) -> Strin
         },
     );
     pn.to_json()
+}
+
+#[wasm_bindgen]
+pub fn wasm_parse_ocel2_json(json_data: &str) -> String {
+    console_error_panic_hook::set_once();
+    console_log!("Got data: {}", json_data.len());
+    let ocel: OCEL = serde_json::from_str(json_data).unwrap();
+    console_log!("Got Log: {}", ocel.events.len());
+    serde_json::to_string(&ocel).unwrap()
 }

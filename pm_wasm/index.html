@@ -9,10 +9,15 @@
 <body>
   <p>
     Select a .xes event log below and click the button to discover a Petri net in WASM.
-    <br/>
-    Note: Open developer tools drastically decrease performance.</p>
-  <input type="file" id="log-input" />
-  <label><input id="checkbox-multithread" type="checkbox" accept=".xes"/> Multiple Threads</label>
+    <br />
+    Note: Open developer tools drastically decrease performance.
+  </p>
+  <select id="name-select">
+    <option value="xes-alpha+++">XES -> Alpha+++</option>
+    <option value="ocel2-json">OCEL2 JSON</option>
+  </select>
+  <input type="file" id="log-input" accept=".xes,.xes.gz,.json,.jsonocel" />
+  <label><input id="checkbox-multithread" type="checkbox" /> Multiple Threads</label>
   <button id="go-button">Go!</button>
   <pre id="pre-content"></pre>
   <script type="module" src="./index.ts"></script>
