@@ -16,7 +16,12 @@ function hookIntoGoButton() {
     pre_content.textContent = "Computing...\n";
     go_button.disabled = true;
     const select = document.getElementById("name-select") as HTMLSelectElement;
-    let selected_name = select.value === "ocel2-json" ? ("ocel2-json" as const) : ("xes-alpha+++" as const);
+    let selected_name =
+      select.value === "ocel2-json"
+        ? ("ocel2-json" as const)
+        : select.value === "ocel2-xml"
+        ? ("ocel2-xml" as const)
+        : ("xes-alpha+++" as const);
     let data =
       selected_name === "ocel2-json" ? await input.files[0].text() : new Uint8Array(await input.files[0].arrayBuffer());
     console.log("Got data");
@@ -41,7 +46,9 @@ function hookIntoGoButton() {
       input.files[0].name.endsWith(".gz"),
       checkbox_multithreading.checked ? 4 : 1
     );
-    pre_content.textContent += `Full call took ${(Date.now() - start) / 1000.0}s\nBeginning of Result (see console for full result):\n ${JSON.stringify(resJSON).substring(0,100)}...`;
+    pre_content.textContent += `Full call took ${
+      (Date.now() - start) / 1000.0
+    }s\nBeginning of Result (see console for full result):\n ${JSON.stringify(resJSON).substring(0, 100)}...`;
 
     go_button.textContent = "Go";
     go_button.disabled = false;

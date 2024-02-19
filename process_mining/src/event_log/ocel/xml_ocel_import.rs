@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
-    io::{BufRead, Read},
+    io::{BufRead, BufReader, Read},
+    time::Instant,
 };
 
 use chrono::{DateTime, FixedOffset};
@@ -41,16 +42,18 @@ pub enum OCELAttributeType {
     Null,
 }
 
-fn print_to_string(x: &mut &[u8], mode: Mode, s: &str) {
-    let mut str = String::new();
-    x.read_to_string(&mut str).unwrap();
-    println!("[{:?}] {}: {:?}", mode, s, str);
-}
+// fn print_to_string(x: &mut &[u8], mode: Mode, s: &str) {
+//     // let mut str = String::new();
+//     // x.read_to_string(&mut str).unwrap();
+//     // println!("[{:?}] {}: {:?}", mode, s, str);
+// }
 
 fn read_to_string(x: &mut &[u8]) -> String {
-    let mut str = String::new();
-    x.read_to_string(&mut str).unwrap();
-    str
+    String::from_utf8_lossy(&x).to_string()
+    // x.
+    // let mut str = String::new();
+    // x.read_to_string(&mut str).unwrap();
+    // str
 }
 
 fn type_string_to_attribute_type(s: &str) -> OCELAttributeType {
@@ -92,11 +95,11 @@ fn parse_date(time: &str) -> DateTime<FixedOffset> {
                     let s = replaced_time.split_once(" (").unwrap().0;
                     match DateTime::parse_from_str(s, "%b %d %Y %T%z") {
                         Ok(dt) => dt,
-                        Err(_) => todo!("{}",time),
+                        Err(_) => todo!("{}", time),
                     }
-                },
+                }
             }
-        },
+        }
     }
 }
 
@@ -127,14 +130,14 @@ where
                         Mode::None => match t.name().as_ref() {
                             // Start log parsing
                             b"log" => current_mode = Mode::Log,
-                            mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            _ => {} // mut x => print_to_string(&mut x, current_mode, "EventStart"),
                         },
                         Mode::Log => match t.name().as_ref() {
                             b"object-types" => current_mode = Mode::ObjectTypes,
                             b"event-types" => current_mode = Mode::EventTypes,
                             b"objects" => current_mode = Mode::Objects,
                             b"events" => current_mode = Mode::Events,
-                            mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            _ => {} // mut x => print_to_string(&mut x, current_mode, "EventStart"),
                         },
                         Mode::ObjectTypes => match t.name().as_ref() {
                             b"object-type" => {
@@ -146,11 +149,11 @@ where
                                 });
                                 current_mode = Mode::ObjectType
                             }
-                            mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            _ => {} // mut x => print_to_string(&mut x, current_mode, "EventStart"),
                         },
                         Mode::ObjectType => match t.name().as_ref() {
                             b"attributes" => current_mode = Mode::ObjectTypeAttributes,
-                            mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            _ => {} // mut x => print_to_string(&mut x, current_mode, "EventStart"),
                         },
                         Mode::EventTypes => match t.name().as_ref() {
                             b"event-type" => {
@@ -161,11 +164,13 @@ where
                                 });
                                 current_mode = Mode::EventType
                             }
-                            mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            _ => {}
                         },
                         Mode::EventType => match t.name().as_ref() {
                             b"attributes" => current_mode = Mode::EventTypeAttributes,
-                            mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            _ => {}
                         },
                         Mode::Objects => match t.name().as_ref() {
                             b"object" => {
@@ -175,11 +180,12 @@ where
                                     id,
                                     object_type,
                                     attributes: Vec::new(),
-                                    relationships: Some(Vec::new()),
+                                    relationships: None,
                                 });
                                 current_mode = Mode::Object
                             }
-                            mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            _ => {}
                         },
                         Mode::Object => match t.name().as_ref() {
                             b"attributes" => {
@@ -199,7 +205,8 @@ where
                                     },
                                 )
                             }
-                            mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            _ => {}
                         },
                         Mode::Events => match t.name().as_ref() {
                             b"event" => {
@@ -211,12 +218,13 @@ where
                                     id,
                                     event_type,
                                     attributes: Vec::new(),
-                                    relationships: Some(Vec::new()),
+                                    relationships: None,
                                     time: DateTime::parse_from_rfc3339(&time).unwrap().into(),
                                 });
                                 current_mode = Mode::Event
                             }
-                            mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            _ => {}
                         },
                         Mode::Event => match t.name().as_ref() {
                             b"attributes" => {
@@ -234,55 +242,64 @@ where
                             b"objects" => {
                                 // Event-to-Object relations start now
                             }
-                            mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            _ => {}
                         },
                         _ => todo!("TODO: Implement EventStart for {:?}", current_mode),
                     },
                     quick_xml::events::Event::End(t) => match current_mode {
                         Mode::ObjectTypeAttributes => match t.name().as_ref() {
                             b"attributes" => current_mode = Mode::ObjectType,
-                            mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            _ => {} // mut x => print_to_string(&mut x, current_mode, "EventEnd"),
                         },
                         Mode::ObjectType => match t.name().as_ref() {
                             b"object-type" => current_mode = Mode::ObjectTypes,
-                            mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            _ => {}
                         },
                         Mode::ObjectTypes => match t.name().as_ref() {
                             b"object-types" => {
                                 // Finished parsing Object Types
                                 current_mode = Mode::Log
                             }
-                            mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            _ => {}
                         },
                         Mode::EventTypes => match t.name().as_ref() {
                             b"event-types" => {
                                 // Finished parsing Object Types
                                 current_mode = Mode::Log
                             }
-                            mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            _ => {}
                         },
                         Mode::EventType => match t.name().as_ref() {
                             b"event-type" => current_mode = Mode::EventTypes,
-                            mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            _ => {}
                         },
                         Mode::EventTypeAttributes => match t.name().as_ref() {
                             b"attributes" => current_mode = Mode::EventType,
-                            mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            _ => {}
                         },
                         Mode::Log => match t.name().as_ref() {
                             b"log" => {
                                 // Finished parsing Object Types
                                 current_mode = Mode::None
                             }
-                            mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            _ => {}
                         },
                         Mode::Objects => match t.name().as_ref() {
                             b"objects" => current_mode = Mode::Log,
-                            mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            _ => {}
                         },
                         Mode::Events => match t.name().as_ref() {
                             b"events" => current_mode = Mode::Log,
-                            mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            _ => {}
                         },
                         Mode::Object => match t.name().as_ref() {
                             b"object" => current_mode = Mode::Objects,
@@ -291,7 +308,8 @@ where
                             b"objects" => {
                                 // End O2O
                             }
-                            mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            _ => {}
                         },
                         Mode::Event => match t.name().as_ref() {
                             b"event" => current_mode = Mode::Events,
@@ -301,7 +319,8 @@ where
                             }
                             b"attribute" => {}
                             b"attributes" => {}
-                            mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventEnd"),
+                            _ => {}
                         },
                         Mode::Attribute => todo!(),
                         _ => todo!("TODO: Implement EventEnd for {:?}", current_mode),
@@ -322,22 +341,28 @@ where
                                     .attributes
                                     .push(OCELTypeAttribute { name, value_type })
                             }
-                            mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
+                            _ => {}
                         },
                         Mode::Object => match t.name().as_ref() {
                             b"relationship" => {
                                 let object_id = get_attribute_value(&t, "object-id");
                                 let qualifier = get_attribute_value(&t, "qualifier");
-                                ocel.objects
+                                let new_rel : OCELRelationship = OCELRelationship {
+                                    object_id,
+                                    qualifier,
+                                };
+                                match ocel.objects
                                     .last_mut()
                                     .unwrap()
                                     .relationships
-                                    .as_mut()
-                                    .unwrap()
-                                    .push(OCELRelationship {
-                                        object_id,
-                                        qualifier,
-                                    })
+                                    .as_mut() {
+                                        Some(rels) => rels.push(new_rel),
+                                        None => ocel.objects
+                                        .last_mut()
+                                        .unwrap()
+                                        .relationships = Some(vec![new_rel]),
+                                    }
                             }
                             b"objects" => {
                                 // No O2O, that's fine!
@@ -345,40 +370,79 @@ where
                             b"attributes" => {
                                 // No attributes, that's fine!
                             }
-                            mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
+                            _ => {}
                         },
                         Mode::Event => match t.name().as_ref() {
                             b"attributes" => {
                                 // Noop
                             }
+                            b"objects" => {
+                                // Angular OCEL uses <objects> tag for relationships
+                                // If they are empty => Noop
+                            }
                             b"relationship" => {
                                 let object_id = get_attribute_value(&t, "object-id");
                                 let qualifier = get_attribute_value(&t, "qualifier");
-                                ocel.events
+                                let new_rel : OCELRelationship = OCELRelationship {
+                                    object_id,
+                                    qualifier,
+                                };
+                                match ocel.events
                                     .last_mut()
                                     .unwrap()
                                     .relationships
-                                    .as_mut()
-                                    .unwrap()
-                                    .push(OCELRelationship {
-                                        object_id,
-                                        qualifier,
-                                    })
+                                    .as_mut() {
+                                        Some(rels) => rels.push(new_rel),
+                                        None => ocel.events
+                                        .last_mut()
+                                        .unwrap()
+                                        .relationships = Some(vec![new_rel]),
+                                    }
                             }
-                            mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
+                            // Angular log uses object instead?
+                            b"object" => {
+                                let object_id = get_attribute_value(&t, "object-id");
+                                let qualifier = get_attribute_value(&t, "qualifier");
+                                let new_rel : OCELRelationship = OCELRelationship {
+                                    object_id,
+                                    qualifier,
+                                };
+                                match ocel.events
+                                    .last_mut()
+                                    .unwrap()
+                                    .relationships
+                                    .as_mut() {
+                                        Some(rels) => rels.push(new_rel),
+                                        None => ocel.events
+                                        .last_mut()
+                                        .unwrap()
+                                        .relationships = Some(vec![new_rel]),
+                                    }
+                            }
+                            // mut x => print_to_string(&mut x, current_mode, "EventEmpty"),  
+                                                      _ => {}
+
                         },
                         // Mode::ObjectTypes => todo!(),
                         Mode::ObjectType => match t.name().as_ref() {
                             b"attributes" => {
                                 // No attributes, that's fine!
                             }
-                            mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventEmpty"),      
+                                                  _ => {}
+
                         },
                         // Mode::EventTypes => todo!(),
                         Mode::EventType => match t.name().as_ref() {
                             b"attributes" => {
                                 // No attributes, that's fine!
                             }
+                            // mut x => print_to_string(&mut x, current_mode, "EventEmpty"),   
+                                                     _ => {}
+
+                        },
+                        Mode::EventTypeAttributes => match t.name().as_ref() {
                             b"attribute" => {
                                 let name = get_attribute_value(&t, "name");
                                 let value_type = get_attribute_value(&t, "type");
@@ -393,15 +457,17 @@ where
                                     .attributes
                                     .push(OCELTypeAttribute { name, value_type })
                             }
-                            mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
+                            // mut x => print_to_string(&mut x, current_mode, "EventEmpty"),             
+                                           _ => {}
+
                         },
-                        // Mode::EventTypeAttributes => todo!(),
                         // Mode::Attribute => todo!(),
                         // Mode::Log => todo!(),
                         // Mode::None => todo!(),
-                        _ => match t.name().as_ref() {
-                            mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
-                        },
+                        _ => {}
+                        // match t.name().as_ref() {
+                        //     mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
+                        // },
                     },
                     quick_xml::events::Event::Text(t) => match current_mode {
                         Mode::Object => {
@@ -432,9 +498,9 @@ where
                         }
                     },
                     quick_xml::events::Event::Eof => break,
-                    x => {
-                        println!("Unhandled: {:?}", x);
-                    }
+                    _ => {} // x => {
+                            //     println!("Unhandled: {:?}", x);
+                            // }
                 }
             }
             Err(err) => eprintln!("Error: {:?}", err),
@@ -443,10 +509,32 @@ where
 
     ocel
 }
+
+/// Import a XML [OCEL] from a byte slice (&\[u8\])
+///
+///
+pub fn import_ocel_xml_slice(xes_data: &[u8]) -> OCEL {
+    import_ocel_xml(&mut Reader::from_reader(BufReader::new(xes_data)))
+}
+
+/// Import a XML [OCEL] from a filepath (&\[u8\])
+///
+///
+pub fn import_ocel_xml_file(path: &str) -> OCEL {
+    let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();
+    import_ocel_xml(&mut reader)
+}
+
 #[test]
 fn test_ocel_xml() {
     let mut reader: Reader<BufReader<std::fs::File>> =
-        Reader::from_file("/home/aarkue/dow/order-management(1).xml").unwrap();
+        Reader::from_file("/home/aarkue/dow/angular_github_commits_ocel.xml").unwrap();
+    let now = Instant::now();
     let ocel = import_ocel_xml(&mut reader);
-    println!("{:#?}", ocel);
+    println!(
+        "Imported OCEL with {} objects and {} events in {:#?}",
+        ocel.objects.len(),
+        ocel.events.len(),
+        now.elapsed()
+    );
 }

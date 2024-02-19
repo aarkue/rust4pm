@@ -4,10 +4,11 @@ import init, {
   initThreadPool,
   wasm_discover_alphappp_petri_net_from_xes_string,
   wasm_discover_alphappp_petri_net_from_xes_vec,
+  wasm_parse_ocel2_xml,
   wasm_parse_ocel2_json
 } from "./pkg/pm_wasm.js";
 
-const fun: WorkerAPI['fun'] = (name: "xes-alpha+++"|"ocel2-json", data, isGz: boolean, numThreads) =>
+const fun: WorkerAPI['fun'] = (name: "xes-alpha+++"|"ocel2-json"|"ocel2-xml", data, isGz: boolean, numThreads) =>
   init().then(async () => {
     console.log("Hello from worker");
     await initThreadPool(numThreads);
@@ -30,10 +31,16 @@ const fun: WorkerAPI['fun'] = (name: "xes-alpha+++"|"ocel2-json", data, isGz: bo
       res = wasm_parse_ocel2_json(data);
       console.log({res});
     
+    }else if(name === "ocel2-xml"){
+      if(typeof data !== "object"){
+        throw new Error("Invalid format: expeceted data as string");
+      }
+      res = JSON.parse(wasm_parse_ocel2_xml(data));
+      console.log({res}); 
     }
     console.log(`Call took ${(Date.now() - start) / 1000.0}`);
 
-    return JSON.parse(res);
+    return res;
   });
 
 Comlink.expose(fun);

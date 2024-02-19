@@ -2,7 +2,7 @@ use process_mining::{
     alphappp::full::{alphappp_discover_petri_net_with_timing_fn, AlphaPPPConfig},
     event_log::{
         activity_projection::EventLogActivityProjection,
-        import_xes::{import_xes_str, import_xes_slice},
+        import_xes::{import_xes_slice, import_xes_str}, ocel::xml_ocel_import::import_ocel_xml_slice,
     },
     OCEL,
 };
@@ -36,7 +36,7 @@ macro_rules! console_log {
 }
 
 #[wasm_bindgen]
-pub fn wasm_discover_alphappp_petri_net_from_xes_string(xes_str: &str) -> String {
+pub fn wasm_discover_alphappp_petri_net_from_xes_string(xes_str: &str) -> JsValue {
     console_error_panic_hook::set_once();
     let log = import_xes_str(xes_str, None);
     console_log!("Got log: {}", log.traces.len());
@@ -56,14 +56,14 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_string(xes_str: &str) -> String
             return 0;
         },
     );
-    pn.to_json()
+    serde_wasm_bindgen::to_value(&pn).unwrap()
 }
 
 #[wasm_bindgen]
 pub fn wasm_discover_alphappp_petri_net_from_xes_vec(
     xes_data: &[u8],
     is_compressed_gz: bool,
-) -> String {
+) -> JsValue {
     console_error_panic_hook::set_once();
     console_log!("Got data: {}", xes_data.len());
     web_sys::console::time_with_label("xes-import");
@@ -87,14 +87,23 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_vec(
             return 0;
         },
     );
-    pn.to_json()
+    serde_wasm_bindgen::to_value(&pn).unwrap()
 }
 
 #[wasm_bindgen]
-pub fn wasm_parse_ocel2_json(json_data: &str) -> String {
+pub fn wasm_parse_ocel2_json(json_data: &str) -> JsValue {
     console_error_panic_hook::set_once();
     console_log!("Got data: {}", json_data.len());
     let ocel: OCEL = serde_json::from_str(json_data).unwrap();
     console_log!("Got Log: {}", ocel.events.len());
+    serde_wasm_bindgen::to_value(&ocel).unwrap()
+}
+
+
+#[wasm_bindgen]
+pub fn wasm_parse_ocel2_xml(ocel_data: &[u8]) -> String {
+    let ocel = import_ocel_xml_slice(ocel_data);
+    // serde_wasm_bindgen::to_value(&ocel).unwrap()
     serde_json::to_string(&ocel).unwrap()
+    
 }
