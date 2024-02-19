@@ -9,7 +9,7 @@ use super::constants::{ACTIVITY_NAME, TRACE_ID_NAME};
 ///
 /// Possible attribute values according to the XES Standard
 ///
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "content")]
 pub enum AttributeValue {
     String(String),
@@ -29,7 +29,7 @@ pub enum AttributeValue {
 ///
 /// Depending on usage, the key field might be redundant but useful for some implementations
 ///
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Attribute {
     pub key: String,
     pub value: AttributeValue,
@@ -72,7 +72,7 @@ pub type Attributes = HashMap<String, Attribute>;
 /// Trait to easily add a new attribute
 pub trait AttributeAddable {
     fn add_to_attributes(
-        self: &mut Self,
+        &mut self,
         key: String,
         value: AttributeValue,
     ) -> Option<&mut Attribute>;
@@ -82,7 +82,7 @@ impl AttributeAddable for Attributes {
     /// Add a new attribute (with key and value)
     ///
     fn add_to_attributes(
-        self: &mut Self,
+        &mut self,
         key: String,
         value: AttributeValue,
     ) -> Option<&mut Attribute> {

@@ -4,7 +4,7 @@ use crate::{
 };
 
 use super::full::{alphappp_discover_petri_net, AlphaPPPConfig};
-const AUTO_CONFIGS: &'static [AlphaPPPConfig] = &[
+const AUTO_CONFIGS: &[AlphaPPPConfig] = &[
     AlphaPPPConfig {
         balance_thresh: 0.6,
         fitness_thresh: 0.4,
@@ -135,7 +135,7 @@ pub fn alphappp_discover_with_auto_parameters(
         best_pn.transitions.len(),
         best_pn.places.len()
     );
-    return (best_config, best_pn);
+    (best_config, best_pn)
 }
 
 fn score_discovered_pn(pn: &PetriNet, config: &AlphaPPPConfig) -> f32 {
@@ -185,16 +185,16 @@ fn score_discovered_pn(pn: &PetriNet, config: &AlphaPPPConfig) -> f32 {
                 .count()
                 >= 1;
 
-            return preset_connected && postset_connected;
+            preset_connected && postset_connected
         } else {
-            return false;
+            false
         }
     }
     let num_disconnected_trans = pn
         .transitions
         .clone()
         .into_iter()
-        .filter(|(_, t)| return !is_transition_well_connected(pn, t))
+        .filter(|(_, t)| !is_transition_well_connected(pn, t))
         .count();
 
     return config.fitness_thresh

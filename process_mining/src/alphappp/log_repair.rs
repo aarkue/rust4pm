@@ -45,7 +45,7 @@ pub fn filter_dfg(
         })
         .collect();
 
-    return ret;
+    ret
 }
 
 pub fn add_artificial_acts_for_skips(
@@ -53,7 +53,7 @@ pub fn add_artificial_acts_for_skips(
     df_threshold: u64,
 ) -> (EventLogActivityProjection, Vec<String>) {
     let mut ret = log.clone();
-    let dfg = ActivityProjectionDFG::from_event_log_projection(&log);
+    let dfg = ActivityProjectionDFG::from_event_log_projection(log);
     let start_act = log.act_to_index.get(START_ACTIVITY).unwrap();
     let end_act = log.act_to_index.get(END_ACTIVITY).unwrap();
     let out_from_act: HashMap<usize, HashSet<&usize>> = dfg
@@ -88,18 +88,18 @@ pub fn add_artificial_acts_for_skips(
                                 && dfg.df_between(**b, *a) < df_threshold
                             {
                                 let out_from_b: &HashSet<&usize> = out_from_act.get(b).unwrap();
-                                return out_from_a.is_superset(&out_from_b);
+                                out_from_a.is_superset(out_from_b)
                             } else {
-                                return false;
+                                false
                             }
                         })
                         .collect();
-                    if can_skip.len() > 0 {
+                    if !can_skip.is_empty() {
                         return Some((a, can_skip));
                     }
                 }
             }
-            return None;
+            None
         })
         .collect();
     // Map (skippable) activity a to the new artificial activity for this skip
@@ -143,20 +143,19 @@ pub fn add_artificial_acts_for_skips(
                 trace
                     .iter()
                     .enumerate()
-                    .map(|(i, e)| {
+                    .flat_map(|(i, e)| {
                         if insert_at_pos.contains_key(&i) {
-                            return vec![*(insert_at_pos.get(&i).unwrap()), *e];
+                            vec![*(insert_at_pos.get(&i).unwrap()), *e]
                         } else {
-                            return vec![*e];
+                            vec![*e]
                         }
                     })
-                    .flatten()
                     .collect(),
                 *weight,
             )
         })
         .collect();
-    return (ret, new_acts);
+    (ret, new_acts)
 }
 
 pub fn get_reachable_bf(
@@ -201,7 +200,7 @@ pub fn get_reachable_bf(
             })
             .collect();
     }
-    return finished_paths;
+    finished_paths
 }
 
 pub fn add_artificial_acts_for_loops(
@@ -209,7 +208,7 @@ pub fn add_artificial_acts_for_loops(
     df_threshold: u64,
 ) -> (EventLogActivityProjection, Vec<String>) {
     let mut ret = log.clone();
-    let dfg = ActivityProjectionDFG::from_event_log_projection(&log);
+    let dfg = ActivityProjectionDFG::from_event_log_projection(log);
     if !log.activities.contains(&START_ACTIVITY.to_string())
         || !log.activities.contains(&END_ACTIVITY.to_string())
     {
@@ -228,7 +227,7 @@ pub fn add_artificial_acts_for_loops(
             if path.len() >= 2 {
                 let pair = (
                     *path.get(path.len() - 2).unwrap(),
-                    *path.get(path.len() - 1).unwrap(),
+                    *path.last().unwrap(),
                 );
                 if pair.0 != pair.1 {
                     Some(pair)
@@ -275,12 +274,12 @@ pub fn add_artificial_acts_for_loops(
                                 return vec![*(insert_taus_between.get(pair).unwrap()), *e];
                             }
                         }
-                        return vec![*e];
+                        vec![*e]
                     })
                     .collect(),
                 *weight,
             )
         })
         .collect();
-    return (ret, new_acts);
+    (ret, new_acts)
 }

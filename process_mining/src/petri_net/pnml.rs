@@ -32,8 +32,7 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                             "type",
                             "http://www.pnml.org/version-2009/grammar/pnmlcoremodel",
                         ),
-                    ]
-                    .into_iter(),
+                    ],
                 )
                 .write_inner_content(|writer| {
                     writer
@@ -117,8 +116,7 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                                                             "localNodeID",
                                                             Uuid::new_v4().to_string().as_str(),
                                                         ),
-                                                    ]
-                                                    .into_iter(),
+                                                    ],
                                                 )
                                                 .write_empty()
                                                 .unwrap();

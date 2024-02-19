@@ -32,7 +32,7 @@ pub struct AlgoDuration {
     pub total: f32,
 }
 impl AlgoDuration {
-    pub fn to_json(self: &Self) -> String {
+    pub fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap()
     }
     pub fn from_json(json: &str) -> Self {
@@ -41,10 +41,10 @@ impl AlgoDuration {
 }
 
 pub fn get_current_time_millis() -> u128 {
-    return SystemTime::now()
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("Time went backwards ;)")
-        .as_millis();
+        .as_millis()
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
@@ -58,11 +58,11 @@ pub struct AlphaPPPConfig {
     pub relative_df_clean_thresh: f32,
 }
 impl AlphaPPPConfig {
-    pub fn to_json(self: &Self) -> String {
+    pub fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap()
     }
     pub fn from_json(json: &str) -> Self {
-        serde_json::from_str(&json).unwrap()
+        serde_json::from_str(json).unwrap()
     }
 }
 
@@ -75,7 +75,7 @@ pub fn alphappp_discover_petri_net(
     log_proj: &EventLogActivityProjection,
     config: AlphaPPPConfig,
 ) -> (PetriNet, AlgoDuration) {
-    return alphappp_discover_petri_net_with_timing_fn(log_proj, config, &get_current_time_millis);
+    alphappp_discover_petri_net_with_timing_fn(log_proj, config, &get_current_time_millis)
 }
 
 pub fn alphappp_discover_petri_net_with_timing_fn(
@@ -134,7 +134,7 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
     println!("Log Skip/Loop Repair took: {:.4}s", algo_dur.skip_repair);
     start = get_time_millis_fn();
 
-    let mut act_count = vec![0 as i128; log_proj.activities.len()];
+    let mut act_count = vec![0_i128; log_proj.activities.len()];
     log_proj.traces.iter().for_each(|(trace, w)| {
         trace.iter().for_each(|act| {
             act_count[*act] += *w as i128;
@@ -252,7 +252,7 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
 
     algo_dur.total = (get_time_millis_fn() - total_start) as f32 / 1000.0;
     println!("\n====\nWhole Discovery took: {:.4}s", algo_dur.total);
-    return (pn, algo_dur);
+    (pn, algo_dur)
 }
 
 pub fn cnds_to_names(

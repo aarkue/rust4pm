@@ -28,10 +28,10 @@ pub enum ArcType {
 
 impl ArcType {
     pub fn place_to_transition(from: PlaceID, to: TransitionID) -> ArcType {
-        return ArcType::PlaceTransition(from.0, to.0);
+        ArcType::PlaceTransition(from.0, to.0)
     }
     pub fn transition_to_place(from: TransitionID, to: PlaceID) -> ArcType {
-        return ArcType::TransitionPlace(from.0, to.0);
+        ArcType::TransitionPlace(from.0, to.0)
     }
 }
 
@@ -96,7 +96,7 @@ impl PetriNet {
         let place_id = place_id.unwrap_or(Uuid::new_v4());
         let place = Place { id: place_id };
         self.places.insert(place_id, place);
-        return PlaceID(place_id);
+        PlaceID(place_id)
     }
 
     pub fn add_transition(
@@ -110,11 +110,11 @@ impl PetriNet {
             label,
         };
         self.transitions.insert(transition_id, transition);
-        return TransitionID(transition_id);
+        TransitionID(transition_id)
     }
     pub fn add_arc(&mut self, from_to: ArcType, weight: Option<u32>) {
         self.arcs.push(Arc {
-            from_to: from_to,
+            from_to,
             weight: weight.unwrap_or(1),
         });
     }

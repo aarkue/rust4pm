@@ -23,32 +23,32 @@ pub struct ActivityProjectionDFG {
 }
 
 impl ActivityProjectionDFG {
-    pub fn df_between(self: &Self, a: usize, b: usize) -> u64 {
+    pub fn df_between(&self, a: usize, b: usize) -> u64 {
         *self.edges.get(&(a, b)).unwrap_or(&0)
     }
 
-    pub fn df_preset_of<T: FromIterator<usize>>(self: &Self, act: usize, df_threshold: u64) -> T {
+    pub fn df_preset_of<T: FromIterator<usize>>(&self, act: usize, df_threshold: u64) -> T {
         self.edges
             .iter()
             .filter_map(|((a, b), w)| {
                 if *b == act && *w >= df_threshold {
-                    return Some(*a);
+                    Some(*a)
                 } else {
-                    return None;
+                    None
                 }
             })
             .collect()
     }
     pub fn df_postset_of<'a>(
-        self: &Self,
+        &self,
         act: usize,
         df_threshold: u64,
     ) -> impl Iterator<Item = usize> + '_ {
         self.edges.iter().filter_map(move |((a, b), w)| {
             if *a == act && *w >= df_threshold {
-                return Some(*b);
+                Some(*b)
             } else {
-                return None;
+                None
             }
         })
     }
@@ -95,13 +95,13 @@ impl ActivityProjectionDFG {
                 }
             })
             .unwrap();
-        return dfg;
+        dfg
     }
 }
 
-impl Into<EventLogActivityProjection> for &EventLog {
-    fn into(self) -> EventLogActivityProjection {
-        let acts_per_trace: Vec<Vec<String>> = self
+impl From<&EventLog> for EventLogActivityProjection {
+    fn from(val: &EventLog) -> Self {
+        let acts_per_trace: Vec<Vec<String>> = val
             .traces
             .par_iter()
             .map(|t| -> Vec<String> {
@@ -127,7 +127,7 @@ impl Into<EventLogActivityProjection> for &EventLog {
             })
             .collect();
         let activity_set: HashSet<&String> = acts_per_trace.iter().flatten().collect();
-        let activities: Vec<String> = activity_set.into_iter().map(|s| s.clone()).collect();
+        let activities: Vec<String> = activity_set.into_iter().cloned().collect();
         let act_to_index: HashMap<String, usize> = activities
             .clone()
             .into_iter()
@@ -152,12 +152,12 @@ impl Into<EventLogActivityProjection> for &EventLog {
 }
 
 impl EventLogActivityProjection {
-    pub fn acts_to_names(self: &Self, acts: &Vec<usize>) -> Vec<String> {
+    pub fn acts_to_names(&self, acts: &Vec<usize>) -> Vec<String> {
         let mut ret: Vec<String> = acts
             .iter()
             .map(|act| self.activities[*act].clone())
             .collect();
         ret.sort();
-        return ret;
+        ret
     }
 }

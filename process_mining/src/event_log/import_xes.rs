@@ -73,7 +73,7 @@ fn parse_attribute_from_tag(
                     Ok(dt) => dt.into(),
                     Err(_e) => {
                         match NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M:%S%.f") {
-                            Ok(dt) => dt.and_local_timezone(Utc).unwrap().into(),
+                            Ok(dt) => dt.and_local_timezone(Utc).unwrap(),
                             Err(e) => {
                                 eprintln!("Could not parse datetime '{}'. Will use datetime epoch 0 instead.\nError {:?}",value,e);
                                 DateTime::default()
@@ -139,7 +139,7 @@ fn parse_attribute_from_tag(
             }
         },
     };
-    return (key, attribute_val.unwrap_or(AttributeValue::None()));
+    (key, attribute_val.unwrap_or(AttributeValue::None()))
 }
 
 ///
@@ -280,7 +280,7 @@ where
                                     // Nested attribute!
                                     let (key, value) =
                                         parse_attribute_from_tag(&t, current_mode, date_format);
-                                    if !(key == "" && matches!(value, AttributeValue::None())) {
+                                    if !(key.is_empty() && matches!(value, AttributeValue::None())) {
                                         current_nested_attributes.push(Attribute {
                                             key,
                                             value,
@@ -342,7 +342,7 @@ where
                             });
                             log.classifiers.as_mut().unwrap().push(EventLogClassifier {
                                 name,
-                                keys: keys.split(" ").map(|s| s.to_string()).collect(),
+                                keys: keys.split(' ').map(|s| s.to_string()).collect(),
                             })
                         }
                         _ => add_attribute_from_tag(
@@ -363,9 +363,9 @@ where
                             "global" => current_mode = last_mode_before_attr,
                             _ => match current_mode {
                                 Mode::Attribute => {
-                                    if current_nested_attributes.len() >= 1 {
+                                    if !current_nested_attributes.is_empty() {
                                         let attr = current_nested_attributes.pop().unwrap();
-                                        if current_nested_attributes.len() >= 1 {
+                                        if !current_nested_attributes.is_empty() {
                                             current_nested_attributes
                                                 .last_mut()
                                                 .unwrap()
@@ -422,7 +422,7 @@ where
         }
     }
     buf.clear();
-    return log;
+    log
 }
 
 ///
@@ -431,15 +431,12 @@ where
 pub fn import_xes_file(path: &str, date_format: Option<&str>) -> EventLog {
     if path.ends_with(".gz") {
         let file = File::open(path).unwrap();
-        let reader = BufReader::new(&file);
-        let mut dec = GzDecoder::new(reader);
-        let mut s = String::new();
-        dec.read_to_string(&mut s).unwrap();
-        let mut reader: Reader<&[u8]> = Reader::from_str(&s);
-        return import_xes(&mut reader, date_format);
+        let dec: GzDecoder<BufReader<&File>> = GzDecoder::new(BufReader::new(&file));
+        let reader = BufReader::new(dec);
+        import_xes(&mut Reader::from_reader(reader), date_format)
     } else {
         let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();
-        return import_xes(&mut reader, date_format);
+        import_xes(&mut reader, date_format)
     }
 }
 
@@ -447,14 +444,110 @@ pub fn import_xes_file(path: &str, date_format: Option<&str>) -> EventLog {
 /// Import a XES [EventLog] directly from a string
 ///
 pub fn import_xes_str(xes_str: &str, date_format: Option<&str>) -> EventLog {
-    let mut reader: Reader<&[u8]> = Reader::from_str(&xes_str);
-    return import_xes(&mut reader, date_format);
+    let mut reader: Reader<&[u8]> = Reader::from_str(xes_str);
+    import_xes(&mut reader, date_format)
 }
 
 ///
 /// Import a XES [EventLog] from a u8 Vec
 ///
-pub fn import_xes_vec(xes_data: &Vec<u8>, date_format: Option<&str>) -> EventLog {
-    let mut reader: Reader<&[u8]> = Reader::from_reader(xes_data);
-    return import_xes(&mut reader, date_format);
+pub fn import_xes_vec(
+    xes_data: &[u8],
+    is_compressed_gz: bool,
+    date_format: Option<&str>,
+) -> EventLog {
+    // let buf_reader = BufReader::new(reader);
+    if is_compressed_gz {
+        let gz: GzDecoder<&[u8]> = GzDecoder::new(xes_data);
+        let reader = BufReader::new(gz);
+        return import_xes(&mut Reader::from_reader(reader), date_format);
+    }
+    import_xes(
+        &mut Reader::from_reader(BufReader::new(xes_data)),
+        date_format,
+    )
+}
+
+
+
+
+#[test]
+fn test_xes_gz_import() {
+    let x = include_bytes!("test_data/Sepsis Cases - Event Log.xes.gz");
+    let log = import_xes_vec(x, true, None);
+
+    // Log has 1050 cases total
+    assert_eq!(log.traces.len(), 1050);
+
+    // Case with concept:name "A" has 22 events
+    let case_a = log.traces.iter().find(|t| {
+        t.attributes
+            .get("concept:name")
+            .is_some_and(|c| c.value == AttributeValue::String("A".to_string()))
+    });
+    assert!(case_a.is_some());
+    assert_eq!(case_a.unwrap().events.len(), 22);
+
+    // Test if activity trace of case "A" is correct
+    let case_a_act_trace: Vec<AttributeValue> = case_a
+        .unwrap()
+        .events
+        .iter()
+        .map(|ev| {
+            ev.attributes
+                .get(&"concept:name".to_string())
+                .unwrap()
+                .value
+                .clone()
+        })
+        .collect();
+    let case_a_correct_act_trace: Vec<AttributeValue> = vec![
+        "ER Registration",
+        "Leucocytes",
+        "CRP",
+        "LacticAcid",
+        "ER Triage",
+        "ER Sepsis Triage",
+        "IV Liquid",
+        "IV Antibiotics",
+        "Admission NC",
+        "CRP",
+        "Leucocytes",
+        "Leucocytes",
+        "CRP",
+        "Leucocytes",
+        "CRP",
+        "CRP",
+        "Leucocytes",
+        "Leucocytes",
+        "CRP",
+        "CRP",
+        "Leucocytes",
+        "Release A",
+    ]
+    .into_iter()
+    .map(|act| AttributeValue::String(act.into()))
+    .collect();
+    assert_eq!(case_a_act_trace, case_a_correct_act_trace);
+
+    // Test if first event of case "A" has correct timestamp
+    assert_eq!(
+        case_a.unwrap().events[0]
+            .attributes
+            .get("time:timestamp")
+            .unwrap()
+            .value,
+        AttributeValue::Date(
+            DateTime::parse_from_rfc3339("2014-10-22 09:15:41+00:00")
+                .unwrap()
+                .into()
+        )
+    );
+
+    // Test if log name is correct
+    let log_name = match &log.attributes.get("concept:name").unwrap().value {
+        AttributeValue::String(s) => Some(s.as_str()),
+        _ => None,
+    };
+    assert_eq!(log_name, Some("Sepsis Cases - Event Log"));
 }

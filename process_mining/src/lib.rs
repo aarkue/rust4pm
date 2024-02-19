@@ -129,7 +129,7 @@ pub fn petrinet_to_json(net: &PetriNet) -> String {
 /// Deserialize a [PetriNet] from a JSON-encoded [String]
 ///
 pub fn json_to_petrinet(net_json: &str) -> PetriNet {
-    serde_json::from_str(&net_json).unwrap()
+    serde_json::from_str(net_json).unwrap()
 }
 
 // pub fn export_log<P: AsRef<Path>>(path: P, log: &EventLog) {

@@ -12,7 +12,7 @@ fn no_df_between(df_rel: &HashSet<(usize, usize)>, a: &HashSet<usize>, b: &HashS
             }
         }
     }
-    return true;
+    true
 }
 
 fn all_dfs_between(
@@ -27,7 +27,7 @@ fn all_dfs_between(
             }
         }
     }
-    return true;
+    true
 }
 
 fn all_dfs_between_vec(df_rel: &HashSet<(usize, usize)>, a: &Vec<usize>, b: &Vec<usize>) -> bool {
@@ -38,7 +38,7 @@ fn all_dfs_between_vec(df_rel: &HashSet<(usize, usize)>, a: &Vec<usize>, b: &Vec
             }
         }
     }
-    return true;
+    true
 }
 fn not_all_dfs_between(
     df_rel: &HashSet<(usize, usize)>,
@@ -52,7 +52,7 @@ fn not_all_dfs_between(
             }
         }
     }
-    return false;
+    false
 }
 
 pub fn satisfies_cnd_condition(
@@ -60,15 +60,15 @@ pub fn satisfies_cnd_condition(
     a: &Vec<usize>,
     b: &Vec<usize>,
 ) -> bool {
-    let a_set: HashSet<usize> = a.iter().map(|act| *act).collect();
-    let b_set: HashSet<usize> = b.iter().map(|act| *act).collect();
-    let a_without_b: HashSet<usize> = a_set.difference(&b_set).map(|act| *act).collect();
-    let b_without_a: HashSet<usize> = b_set.difference(&a_set).map(|act| *act).collect();
+    let a_set: HashSet<usize> = a.iter().copied().collect();
+    let b_set: HashSet<usize> = b.iter().copied().collect();
+    let a_without_b: HashSet<usize> = a_set.difference(&b_set).copied().collect();
+    let b_without_a: HashSet<usize> = b_set.difference(&a_set).copied().collect();
 
-    return no_df_between(df_rel, &a_set, &a_without_b)
+    no_df_between(df_rel, &a_set, &a_without_b)
         && no_df_between(df_rel, &b_without_a, &b_set)
         && all_dfs_between(df_rel, &a_set, &b_set)
-        && not_all_dfs_between(df_rel, &b_without_a, &a_without_b);
+        && not_all_dfs_between(df_rel, &b_without_a, &a_without_b)
 }
 
 pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec<usize>)> {
@@ -104,8 +104,8 @@ pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec
             .flat_map(|(a1, b1)| {
                 cnds.par_iter()
                     .filter_map(|(a2, b2)| {
-                        if !all_dfs_between_vec(&df_relations, &a1, &b2)
-                            || !all_dfs_between_vec(&df_relations, &a2, &b1)
+                        if !all_dfs_between_vec(&df_relations, a1, b2)
+                            || !all_dfs_between_vec(&df_relations, a2, b1)
                         {
                             return None;
                         }
@@ -124,12 +124,12 @@ pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec
                         {
                             return Some((a, b));
                         }
-                        return None;
+                        None
                     })
                     .collect::<HashSet<(Vec<usize>, Vec<usize>)>>()
             })
             .collect();
-        if added_cnds.len() > 0 {
+        if !added_cnds.is_empty() {
             changed = true;
             for cnd in &added_cnds {
                 final_cnds.insert(cnd.clone());
@@ -138,5 +138,5 @@ pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec
             new_cnds = added_cnds;
         }
     }
-    return final_cnds;
+    final_cnds
 }

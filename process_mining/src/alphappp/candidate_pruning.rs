@@ -20,7 +20,7 @@ fn compute_balance(a: &Vec<usize>, b: &Vec<usize>, act_count: &Vec<i128>) -> f32
     }
     let diff: f32 = (ai - bi).abs() as f32;
     let max_freq = max(ai, bi) as f32;
-    return diff / max_freq;
+    diff / max_freq
 }
 
 fn compute_local_fitness(
@@ -39,9 +39,9 @@ fn compute_local_fitness(
                 .filter(|v| a.contains(v) || b.contains(v))
                 .collect();
             if filtered_var.is_empty() {
-                return None;
+                None
             } else {
-                return Some((filtered_var, weight));
+                Some((filtered_var, weight))
             }
         })
         .collect();
@@ -99,7 +99,7 @@ fn compute_local_fitness(
                 }
             }
             if num_tokens > 0 {
-                return 0;
+                0
             } else if num_tokens < 0 {
                 return 0;
             } else {
@@ -123,18 +123,16 @@ fn compute_local_fitness(
             .into_iter()
             .map(|(trace, f)| {
                 // START END a
-                if (trace.len() == 1 && vec![start_act, end_act].contains(&trace[0]))
+                if (trace.len() == 1 && [start_act, end_act].contains(&trace[0]))
                     || (trace.len() == 2 && vec![start_act, end_act] == trace)
                 {
-                    return f;
+                    f
                 } else {
-                    return f;
+                    f
                 }
             })
             .sum(),
-        false => relevant_variants_with_freq
-            .into_iter()
-            .map(|(_, f)| f)
+        false => relevant_variants_with_freq.into_values()
             .sum(),
     };
     if num_relevant_traces == 0 {
@@ -142,15 +140,15 @@ fn compute_local_fitness(
     }
     let min_fitness_per_act = num_traces_containg_act
         .into_iter()
-        .zip(num_fitting_traces_containg_act.into_iter())
+        .zip(num_fitting_traces_containg_act)
         .filter(|(num, _)| *num > 0)
         .map(|(num, num_fit)| num_fit as f32 / num as f32)
         .min_by(|a, b| a.partial_cmp(b).expect("Per activity fitness contains NaN"))
         .unwrap_or(0.0);
-    return (
+    (
         (num_fitting_traces as f32) / (num_relevant_traces as f32),
         min_fitness_per_act,
-    );
+    )
 }
 
 pub fn prune_candidates(
@@ -173,8 +171,8 @@ pub fn prune_candidates(
     let filtered_cnds: Vec<&(Vec<usize>, Vec<usize>)> = filtered_cnds
         .into_par_iter()
         .filter(|(a, b)| {
-            let (fitness, min_per_act_fitness) = compute_local_fitness(a, b, &log, false);
-            return fitness >= fitness_threshold && min_per_act_fitness >= fitness_threshold;
+            let (fitness, min_per_act_fitness) = compute_local_fitness(a, b, log, false);
+            fitness >= fitness_threshold && min_per_act_fitness >= fitness_threshold
         })
         .collect();
     println!("After fitness: {}", filtered_cnds.len());
@@ -184,28 +182,24 @@ pub fn prune_candidates(
         .filter(|(a, b)| {
             let is_dominated = filtered_cnds.iter().any(|(a2, b2)| {
                 if a2.len() >= a.len() && b2.len() >= b.len() && (a != a2 || b != b2) {
-                    let a_contained = a.into_iter().all(|e| a2.contains(e));
+                    let a_contained = a.iter().all(|e| a2.contains(e));
                     if a_contained {
-                        let b_contained = b.into_iter().all(|e| b2.contains(e));
-                        if b_contained {
-                            return true;
-                        } else {
-                            return false;
-                        }
+                        let b_contained = b.iter().all(|e| b2.contains(e));
+                        return b_contained
                     }
                 }
-                return false;
+                false
             });
-            return !is_dominated;
+            !is_dominated
         })
         .map(|(a, b)| (a.clone(), b.clone()))
         .collect();
 
     println!("After maximal (sel): {}", sel.len());
-    return sel
+    sel
         .into_iter()
         .filter(|(a, b)| {
-            let strict_fit = compute_local_fitness(&a, &b, log, true);
+            let strict_fit = compute_local_fitness(a, b, log, true);
             // let mut a = log.acts_to_names(a);
             // let mut b = log.acts_to_names(b);
             // a.sort();
@@ -213,5 +207,5 @@ pub fn prune_candidates(
             // println!("{:?} => {:?}: {:?}", a, b, strict_fit);
             strict_fit > (replay_threshold, -1.0)
         })
-        .collect();
+        .collect()
 }
