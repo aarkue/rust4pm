@@ -9,6 +9,7 @@ use process_mining::{
 use wasm_bindgen::prelude::*;
 pub use wasm_bindgen_rayon::init_thread_pool;
 extern crate console_error_panic_hook;
+use web_sys;
 
 #[wasm_bindgen]
 extern "C" {
@@ -65,7 +66,9 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_vec(
 ) -> String {
     console_error_panic_hook::set_once();
     console_log!("Got data: {}", xes_data.len());
+    web_sys::console::time_with_label("xes-import");
     let log = import_xes_slice(&xes_data, is_compressed_gz, None);
+    web_sys::console::time_end_with_label("xes-import");
     console_log!("Got Log: {}", log.traces.len());
     let log_proj: EventLogActivityProjection = (&log).into();
     console_log!("Got Log Activity Projection: {}", log_proj.traces.len());
