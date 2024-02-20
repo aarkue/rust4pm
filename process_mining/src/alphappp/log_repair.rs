@@ -127,15 +127,12 @@ pub fn add_artificial_acts_for_skips(
             let mut insert_at_pos: HashMap<usize, usize> = HashMap::new();
             let mut prev: Option<&usize> = None;
             trace.iter().enumerate().for_each(|(i, e)| {
-                match prev {
-                    Some(prev_e) => {
-                        if skips.contains_key(prev_e) && !skips.get(prev_e).unwrap().contains(e) {
-                            // Note that insert_at_pos can only be set one time for a position i
-                            // As new_artificial_acts.get(prev_e) is unique for an previous event prev_e (and thus i)
-                            insert_at_pos.insert(i, *new_artificial_acts.get(prev_e).unwrap());
-                        }
+                if let Some(prev_e) = prev {
+                    if skips.contains_key(prev_e) && !skips.get(prev_e).unwrap().contains(e) {
+                        // Note that insert_at_pos can only be set one time for a position i
+                        // As new_artificial_acts.get(prev_e) is unique for an previous event prev_e (and thus i)
+                        insert_at_pos.insert(i, *new_artificial_acts.get(prev_e).unwrap());
                     }
-                    None => {}
                 }
                 prev = Some(e);
             });
@@ -225,10 +222,7 @@ pub fn add_artificial_acts_for_loops(
         .filter(|path| path.last().unwrap() != end_act)
         .filter_map(|path| {
             if path.len() >= 2 {
-                let pair = (
-                    *path.get(path.len() - 2).unwrap(),
-                    *path.last().unwrap(),
-                );
+                let pair = (*path.get(path.len() - 2).unwrap(), *path.last().unwrap());
                 if pair.0 != pair.1 {
                     Some(pair)
                 } else {

@@ -9,7 +9,7 @@ use crate::event_log::activity_projection::{
     EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY,
 };
 
-fn compute_balance(a: &Vec<usize>, b: &Vec<usize>, act_count: &Vec<i128>) -> f32 {
+fn compute_balance(a: &[usize], b: &[usize], act_count: &[i128]) -> f32 {
     let mut ai: i128 = 0;
     let mut bi: i128 = 0;
     for inc in a {
@@ -24,8 +24,8 @@ fn compute_balance(a: &Vec<usize>, b: &Vec<usize>, act_count: &Vec<i128>) -> f32
 }
 
 fn compute_local_fitness(
-    a: &Vec<usize>,
-    b: &Vec<usize>,
+    a: &[usize],
+    b: &[usize],
     log: &EventLogActivityProjection,
     strict: bool,
 ) -> (f32, f32) {
@@ -54,8 +54,8 @@ fn compute_local_fitness(
     let mut num_traces_containg_act = vec![0; log.activities.len()];
     let mut num_fitting_traces_containg_act = vec![0; log.activities.len()];
 
-    let start_act = log.act_to_index.get(&START_ACTIVITY.to_string()).unwrap();
-    let end_act = log.act_to_index.get(&END_ACTIVITY.to_string()).unwrap();
+    let _start_act = log.act_to_index.get(&START_ACTIVITY.to_string()).unwrap();
+    let _end_act = log.act_to_index.get(&END_ACTIVITY.to_string()).unwrap();
 
     let num_fitting_traces: i128 = relevant_variants_with_freq
         .iter()
@@ -100,40 +100,21 @@ fn compute_local_fitness(
             }
             if num_tokens > 0 {
                 0
-            } else if num_tokens < 0 {
-                return 0;
             } else {
+                if num_tokens < 0 {
+                    return 0;
+                }
                 for act in &var_copy {
                     num_fitting_traces_containg_act[**act] += *freq;
                 }
-                // if strict
-                //     && ((var.len() == 1 && vec![start_act, end_act].contains(&var[0]))
-                //         || (var.len() == 2 && vec![start_act, end_act] == *var))
-                // {
-                //     return *freq as i128;
-                // } else {
-                // }
-                return *freq as i128;
+                *freq as i128
             }
         })
         .sum();
 
     let num_relevant_traces: u64 = match false {
-        true => relevant_variants_with_freq
-            .into_iter()
-            .map(|(trace, f)| {
-                // START END a
-                if (trace.len() == 1 && [start_act, end_act].contains(&trace[0]))
-                    || (trace.len() == 2 && vec![start_act, end_act] == trace)
-                {
-                    f
-                } else {
-                    f
-                }
-            })
-            .sum(),
-        false => relevant_variants_with_freq.into_values()
-            .sum(),
+        true => relevant_variants_with_freq.into_values().sum(),
+        false => relevant_variants_with_freq.into_values().sum(),
     };
     if num_relevant_traces == 0 {
         return (0.0, 0.0);
@@ -185,7 +166,7 @@ pub fn prune_candidates(
                     let a_contained = a.iter().all(|e| a2.contains(e));
                     if a_contained {
                         let b_contained = b.iter().all(|e| b2.contains(e));
-                        return b_contained
+                        return b_contained;
                     }
                 }
                 false
@@ -196,8 +177,7 @@ pub fn prune_candidates(
         .collect();
 
     println!("After maximal (sel): {}", sel.len());
-    sel
-        .into_iter()
+    sel.into_iter()
         .filter(|(a, b)| {
             let strict_fit = compute_local_fitness(a, b, log, true);
             // let mut a = log.acts_to_names(a);

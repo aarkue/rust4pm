@@ -257,7 +257,7 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
 
 pub fn cnds_to_names(
     log_proj: &EventLogActivityProjection,
-    cnd: &Vec<(Vec<usize>, Vec<usize>)>,
+    cnd: &[(Vec<usize>, Vec<usize>)],
 ) -> Vec<(Vec<String>, Vec<String>)> {
     cnd.iter()
         .map(|(a, b)| (log_proj.acts_to_names(a), log_proj.acts_to_names(b)))

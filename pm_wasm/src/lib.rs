@@ -2,7 +2,7 @@ use process_mining::{
     alphappp::full::{alphappp_discover_petri_net_with_timing_fn, AlphaPPPConfig},
     event_log::{
         activity_projection::EventLogActivityProjection,
-        import_xes::{import_xes_str, import_xes_slice},
+        import_xes::{import_xes_slice, import_xes_str},
     },
     OCEL,
 };

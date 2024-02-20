@@ -39,11 +39,7 @@ impl ActivityProjectionDFG {
             })
             .collect()
     }
-    pub fn df_postset_of<'a>(
-        &self,
-        act: usize,
-        df_threshold: u64,
-    ) -> impl Iterator<Item = usize> + '_ {
+    pub fn df_postset_of(&self, act: usize, df_threshold: u64) -> impl Iterator<Item = usize> + '_ {
         self.edges.iter().filter_map(move |((a, b), w)| {
             if *a == act && *w >= df_threshold {
                 Some(*b)
@@ -54,47 +50,45 @@ impl ActivityProjectionDFG {
     }
 
     pub fn from_event_log_projection(log: &EventLogActivityProjection) -> Self {
-        let mut dfg = ActivityProjectionDFG::default();
-        dfg.nodes = (0..log.activities.len()).collect();
-        dfg.edges = log
-            .traces
-            .par_iter()
-            .map(|(t, w)| {
-                let mut trace_dfs: Vec<((usize, usize), u64)> = Vec::new();
-                let mut prev_event: Option<usize> = None;
-                for e in t {
-                    match prev_event {
-                        Some(prev_e) => {
+        let dfg = ActivityProjectionDFG {
+            nodes: (0..log.activities.len()).collect(),
+            edges: log
+                .traces
+                .par_iter()
+                .map(|(t, w)| {
+                    let mut trace_dfs: Vec<((usize, usize), u64)> = Vec::new();
+                    let mut prev_event: Option<usize> = None;
+                    for e in t {
+                        if let Some(prev_e) = prev_event {
                             trace_dfs.push(((prev_e, *e), *w));
                         }
-                        None => {}
+                        prev_event = Some(*e);
                     }
-                    prev_event = Some(*e);
-                }
-                trace_dfs
-            })
-            .flatten()
-            .fold(
-                HashMap::<(usize, usize), u64>::new,
-                |mut map, (df_pair, w)| {
-                    *map.entry(df_pair).or_insert(0) += w;
-                    map
-                },
-            )
-            .reduce_with(|mut m1, mut m2| {
-                if m1.len() < m2.len() {
-                    for (k, v) in m2 {
-                        *m1.entry(k).or_default() += v;
+                    trace_dfs
+                })
+                .flatten()
+                .fold(
+                    HashMap::<(usize, usize), u64>::new,
+                    |mut map, (df_pair, w)| {
+                        *map.entry(df_pair).or_insert(0) += w;
+                        map
+                    },
+                )
+                .reduce_with(|mut m1, mut m2| {
+                    if m1.len() < m2.len() {
+                        for (k, v) in m2 {
+                            *m1.entry(k).or_default() += v;
+                        }
+                        m1
+                    } else {
+                        for (k, v) in m1 {
+                            *m2.entry(k).or_default() += v;
+                        }
+                        m2
                     }
-                    m1
-                } else {
-                    for (k, v) in m1 {
-                        *m2.entry(k).or_default() += v;
-                    }
-                    m2
-                }
-            })
-            .unwrap();
+                })
+                .unwrap(),
+        };
         dfg
     }
 }
@@ -152,7 +146,7 @@ impl From<&EventLog> for EventLogActivityProjection {
 }
 
 impl EventLogActivityProjection {
-    pub fn acts_to_names(&self, acts: &Vec<usize>) -> Vec<String> {
+    pub fn acts_to_names(&self, acts: &[usize]) -> Vec<String> {
         let mut ret: Vec<String> = acts
             .iter()
             .map(|act| self.activities[*act].clone())
