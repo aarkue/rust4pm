@@ -53,10 +53,18 @@ For more details, please take a look at the source code or the full written repo
 
 ### WASM Proof of Concept
 - `pm_wasm/` contains a proof of concept of WASM bindings for the main library, e.g., exposed to JavaScript and executed in the browser.
-- After building with `wasm-pack build --target web --release` the `index.html` file can be served (at root): The resulting webpage contains a file input allowing an XES event log to be selected.
-After selecting a file, clicking the 'Go' button will execute the generated WASM and discover a Petri net, which will be logged in the console as JSON once the call finishes. Note that the in-browser WASM execution performance is limited, so some patience might be required.  
+- First building with `wasm-pack build --target web --release` 
+- The PoC frontend uses React with vite. The dev server can be started with `npm run dev`.
+- Multithreading (using `wasm-bindgen-rayon`) is currently not used, but might be enabled again in the future.
 
-- For easy usage of `wasm-bindgen-rayon` we use `vite`. The dev server can be started with `npm run dev`.
+__A live demo is available at [https://wasm.siter.eu/](https://wasm.siter.eu/).__
+
+XES -> Alpha+++ Discovery   |  Example OCEL2.0 XML Import
+:-------------------------:|:-------------------------:
+![image](https://github.com/aarkue/rust-bridge-process-mining/assets/20766652/80f92439-10ea-43b7-ad84-6dbecbdc7aeb)  |  ![image](https://github.com/aarkue/rust-bridge-process-mining/assets/20766652/0c6f12b1-fc04-44ba-8dfb-b7d6b7a69037)
+
+
+
 
 
 ## LICENSE
