@@ -22,6 +22,8 @@ pub mod event_log {
     pub use event_log_struct::{
         Attribute, AttributeAddable, AttributeValue, Attributes, Event, EventLog, Trace,
     };
+    #[cfg(test)]
+    mod tests;
 }
 
 ///
@@ -92,7 +94,7 @@ pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
         }
     };
 
-    if should_add_start || should_add_start {
+    if should_add_start || should_add_end {
         log.traces.iter_mut().for_each(|(t, _)| {
             if should_add_start {
                 t.insert(0, start_act);
