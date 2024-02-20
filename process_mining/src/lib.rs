@@ -18,6 +18,7 @@ pub mod event_log {
     pub mod import_xes;
     pub mod ocel {
         pub mod ocel_struct;
+        pub mod xml_ocel_import;
     }
     pub use event_log_struct::{
         Attribute, AttributeAddable, AttributeValue, Attributes, Event, EventLog, Trace,

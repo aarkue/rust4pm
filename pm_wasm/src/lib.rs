@@ -3,12 +3,14 @@ use process_mining::{
     event_log::{
         activity_projection::EventLogActivityProjection,
         import_xes::{import_xes_slice, import_xes_str},
+        ocel::xml_ocel_import::import_ocel_xml_slice,
     },
     OCEL,
 };
 use wasm_bindgen::prelude::*;
 pub use wasm_bindgen_rayon::init_thread_pool;
 extern crate console_error_panic_hook;
+use web_sys;
 
 #[wasm_bindgen]
 extern "C" {
@@ -35,7 +37,7 @@ macro_rules! console_log {
 }
 
 #[wasm_bindgen]
-pub fn wasm_discover_alphappp_petri_net_from_xes_string(xes_str: &str) -> String {
+pub fn wasm_discover_alphappp_petri_net_from_xes_string(xes_str: &str) -> JsValue {
     console_error_panic_hook::set_once();
     let log = import_xes_str(xes_str, None);
     console_log!("Got log: {}", log.traces.len());
@@ -55,17 +57,19 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_string(xes_str: &str) -> String
             return 0;
         },
     );
-    pn.to_json()
+    serde_wasm_bindgen::to_value(&pn).unwrap()
 }
 
 #[wasm_bindgen]
 pub fn wasm_discover_alphappp_petri_net_from_xes_vec(
     xes_data: &[u8],
     is_compressed_gz: bool,
-) -> String {
+) -> JsValue {
     console_error_panic_hook::set_once();
     console_log!("Got data: {}", xes_data.len());
+    web_sys::console::time_with_label("xes-import");
     let log = import_xes_slice(&xes_data, is_compressed_gz, None);
+    web_sys::console::time_end_with_label("xes-import");
     console_log!("Got Log: {}", log.traces.len());
     let log_proj: EventLogActivityProjection = (&log).into();
     console_log!("Got Log Activity Projection: {}", log_proj.traces.len());
@@ -84,14 +88,45 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_vec(
             return 0;
         },
     );
-    pn.to_json()
+    serde_wasm_bindgen::to_value(&pn).unwrap()
 }
 
 #[wasm_bindgen]
-pub fn wasm_parse_ocel2_json(json_data: &str) -> String {
+pub fn wasm_parse_ocel2_json(json_data: &str) -> JsValue {
     console_error_panic_hook::set_once();
     console_log!("Got data: {}", json_data.len());
     let ocel: OCEL = serde_json::from_str(json_data).unwrap();
     console_log!("Got Log: {}", ocel.events.len());
+    serde_wasm_bindgen::to_value(&ocel).unwrap()
+}
+
+//  6.187s
+//  6.451s
+//  6.472s
+// Chromium: 15.627s
+#[wasm_bindgen]
+pub fn wasm_parse_ocel2_xml(ocel_data: &[u8]) -> JsValue {
+    let ocel = import_ocel_xml_slice(ocel_data);
+    serde_wasm_bindgen::to_value(&ocel).unwrap()
+}
+
+//  5.064s
+//  5.358s
+//  5.636s
+// Chromium: 10.519s
+#[wasm_bindgen]
+pub fn wasm_parse_ocel2_xml_to_json_str(ocel_data: &[u8]) -> String {
+    let ocel = import_ocel_xml_slice(ocel_data);
     serde_json::to_string(&ocel).unwrap()
 }
+// 5.101s
+// 4.96s
+// 5.854s
+
+// Chromium: 9.934s // Second test in Chromium: 11.334
+#[wasm_bindgen]
+pub fn wasm_parse_ocel2_xml_to_json_vec(ocel_data: &[u8]) -> Vec<u8> {
+    let ocel = import_ocel_xml_slice(ocel_data);
+    serde_json::to_vec(&ocel).unwrap()
+}
+
