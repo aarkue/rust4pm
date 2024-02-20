@@ -1,13 +1,18 @@
 use std::{
     collections::HashMap,
+    error::Error,
     io::{BufRead, BufReader, Read},
+    str::FromStr,
     time::Instant,
 };
 
-use chrono::{DateTime, FixedOffset};
+use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use quick_xml::{events::BytesStart, Reader};
 
-use crate::{event_log::ocel::ocel_struct::OCELType, OCEL};
+use crate::{
+    event_log::{ocel::ocel_struct::OCELType, AttributeValue},
+    OCEL,
+};
 
 use super::ocel_struct::{
     OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute,
@@ -33,6 +38,7 @@ enum Mode {
     None,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub enum OCELAttributeType {
     String,
     Time,
@@ -72,35 +78,63 @@ fn get_attribute_value(t: &BytesStart<'_>, key: &str) -> String {
 }
 
 fn parse_attribute_value(attribute_type: &OCELAttributeType, value: String) -> OCELAttributeValue {
-    match attribute_type {
-        OCELAttributeType::String => OCELAttributeValue::String(value),
-        OCELAttributeType::Integer => OCELAttributeValue::Integer(value.parse::<i64>().unwrap()),
-        OCELAttributeType::Float => OCELAttributeValue::Float(value.parse::<f64>().unwrap()),
-        OCELAttributeType::Boolean => OCELAttributeValue::Boolean(value.parse::<bool>().unwrap()),
-        OCELAttributeType::Null => OCELAttributeValue::Null,
-        OCELAttributeType::Time => todo!(),
+    let res = match attribute_type {
+        OCELAttributeType::String => Ok(OCELAttributeValue::String(value.clone())),
+        OCELAttributeType::Integer => (&value)
+            .parse::<i64>()
+            .or_else(|e| Err(format!("{}", e)))
+            .and_then(|v| Ok(OCELAttributeValue::Integer(v))),
+        OCELAttributeType::Float => (&value)
+            .parse::<f64>()
+            .or_else(|e| Err(format!("{}", e)))
+            .and_then(|v| Ok(OCELAttributeValue::Float(v))),
+        OCELAttributeType::Boolean => (&value)
+            .parse::<bool>()
+            .or_else(|e| Err(format!("{}", e)))
+            .and_then(|v| Ok(OCELAttributeValue::Boolean(v))),
+        OCELAttributeType::Null => Ok(OCELAttributeValue::Null),
+        OCELAttributeType::Time => parse_date(&value)
+            .or_else(|e| Err(format!("{}", e)))
+            .and_then(|v| Ok(OCELAttributeValue::Time(v.into()))),
+    };
+    match res {
+        Ok(attribute_val) => return attribute_val,
+        Err(e) => {
+            eprintln!(
+                "Failed to parse attribute value {:?} with supposed type {:?}\n{}",
+                value,
+                attribute_type,
+                e
+            );
+            return OCELAttributeValue::Null;
+        }
     }
 }
 
-fn parse_date(time: &str) -> DateTime<FixedOffset> {
-    match DateTime::parse_from_rfc3339(time) {
-        Ok(dt) => dt,
-        Err(_) => {
-            match DateTime::parse_from_rfc2822(time) {
-                Ok(dt) => dt,
-                Err(_) => {
-                    // Who made me do this? 🫣
-                    // Some logs have this date: "Mon Apr 03 2023 12:08:18 GMT+0200 (Mitteleuropäische Sommerzeit)"
-                    let replaced_time = &time[4..].replace(" GMT", "");
-                    let s = replaced_time.split_once(" (").unwrap().0;
-                    match DateTime::parse_from_str(s, "%b %d %Y %T%z") {
-                        Ok(dt) => dt,
-                        Err(_) => todo!("{}", time),
-                    }
-                }
-            }
+fn parse_date(time: &str) -> Result<DateTime<FixedOffset>, &str> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(time) {
+        return Ok(dt);
+    }
+    if let Ok(dt) = DateTime::parse_from_rfc2822(time) {
+        return Ok(dt);
+    }
+    // eprintln!("Encountered weird datetime format: {:?}", time);
+
+    // Some logs have this date: "2023-10-06 09:30:21.890421"
+    // Assuming that this is UTC
+    if let Ok(dt) = NaiveDateTime::parse_from_str(time, "%F %T%.f") {
+        return Ok(dt.and_utc().into());
+    }
+
+    // Who made me do this? 🫣
+    // Some logs have this date: "Mon Apr 03 2023 12:08:18 GMT+0200 (Mitteleuropäische Sommerzeit)"
+    let replaced_time = &time[4..].replace(" GMT", "");
+    if let Some((s, _)) = replaced_time.split_once(" (") {
+        if let Ok(dt) = DateTime::parse_from_str(s, "%b %d %Y %T%z") {
+            return Ok(dt);
         }
     }
+    Err("Unexpected Date Format")
 }
 
 pub fn import_ocel_xml<T>(reader: &mut Reader<T>) -> OCEL
@@ -196,14 +230,22 @@ where
                             }
                             b"attribute" => {
                                 let name = get_attribute_value(&t, "name");
-                                let time = get_attribute_value(&t, "time");
-                                ocel.objects.last_mut().unwrap().attributes.push(
-                                    OCELObjectAttribute {
-                                        name,
-                                        value: super::ocel_struct::OCELAttributeValue::Null,
-                                        time: parse_date(&time).into(),
-                                    },
-                                )
+                                let time_str = get_attribute_value(&t, "time");
+                                let time = parse_date(&time_str);
+                                match time {
+                                    Ok(time_val) => {
+                                        ocel.objects.last_mut().unwrap().attributes.push(
+                                            OCELObjectAttribute {
+                                                name,
+                                                value: super::ocel_struct::OCELAttributeValue::Null,
+                                                time: time_val.into(),
+                                            },
+                                        )
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to parse time value of attribute: {}. Will skip this attribute completely for now.",e);
+                                    }
+                                }
                             }
                             // mut x => print_to_string(&mut x, current_mode, "EventStart"),
                             _ => {}
