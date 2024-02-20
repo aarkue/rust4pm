@@ -92,14 +92,15 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_vec(
 }
 
 #[wasm_bindgen]
-pub fn wasm_parse_ocel2_json(json_data: &str) -> JsValue {
+pub fn wasm_parse_ocel2_json(json_data: &[u8]) -> JsValue {
     console_error_panic_hook::set_once();
     console_log!("Got data: {}", json_data.len());
-    let ocel: OCEL = serde_json::from_str(json_data).unwrap();
+    let ocel: OCEL = serde_json::from_slice(json_data).unwrap();
     console_log!("Got Log: {}", ocel.events.len());
     serde_wasm_bindgen::to_value(&ocel).unwrap()
 }
 
+// Some first measurements for Angular OCEL2 log:
 //  6.187s
 //  6.451s
 //  6.472s
