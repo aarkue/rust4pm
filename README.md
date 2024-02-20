@@ -59,7 +59,7 @@ For more details, please take a look at the source code or the full written repo
 
 __A live demo is available at [https://wasm.siter.eu/](https://wasm.siter.eu/).__
 
-XES -> Alpha+++ Discovery   |  Example OCEL2.0 XML Import
+Example XES -> Alpha+++ Discovery   |  Example OCEL2.0 XML Import
 :-------------------------:|:-------------------------:
 ![image](https://github.com/aarkue/rust-bridge-process-mining/assets/20766652/80f92439-10ea-43b7-ad84-6dbecbdc7aeb)  |  ![image](https://github.com/aarkue/rust-bridge-process-mining/assets/20766652/0c6f12b1-fc04-44ba-8dfb-b7d6b7a69037)
 
