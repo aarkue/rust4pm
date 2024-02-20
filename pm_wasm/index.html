@@ -1,27 +1,13 @@
 <!doctype html>
-<html lang="en-US">
-
-<head>
-  <meta charset="utf-8" />
-  <title>POC pm_wasm</title>
-</head>
-
-<body>
-  <p>
-    Select a .xes event log below and click the button to discover a Petri net in WASM.
-    <br />
-    Note: Open developer tools drastically decrease performance.
-  </p>
-  <select id="name-select">
-    <option value="xes-alpha+++">XES -> Alpha+++</option>
-    <option value="ocel2-json">OCEL2 JSON</option>
-    <option value="ocel2-xml">OCEL2 XML</option>
-  </select>
-  <input type="file" id="log-input" accept=".xes,.xes.gz,.json,.jsonocel" />
-  <label><input id="checkbox-multithread" type="checkbox" /> Multiple Threads</label>
-  <button id="go-button">Go!</button>
-  <pre id="pre-content"></pre>
-  <script type="module" src="./index.ts"></script>
-</body>
-
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WASM PoC</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/frontend/main.tsx"></script>
+  </body>
 </html>
