@@ -78,6 +78,11 @@ pub struct PetriNet {
     pub final_markings: Option<Vec<Marking>>,
 }
 
+impl Default for PetriNet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl PetriNet {
     pub fn new() -> Self {
         Self {

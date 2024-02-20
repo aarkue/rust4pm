@@ -71,21 +71,13 @@ pub type Attributes = HashMap<String, Attribute>;
 ///
 /// Trait to easily add a new attribute
 pub trait AttributeAddable {
-    fn add_to_attributes(
-        &mut self,
-        key: String,
-        value: AttributeValue,
-    ) -> Option<&mut Attribute>;
+    fn add_to_attributes(&mut self, key: String, value: AttributeValue) -> Option<&mut Attribute>;
 }
 impl AttributeAddable for Attributes {
     ///
     /// Add a new attribute (with key and value)
     ///
-    fn add_to_attributes(
-        &mut self,
-        key: String,
-        value: AttributeValue,
-    ) -> Option<&mut Attribute> {
+    fn add_to_attributes(&mut self, key: String, value: AttributeValue) -> Option<&mut Attribute> {
         let (k, v) = Attribute::new_with_key(key, value);
         self.insert(k.clone(), v);
         return self.get_mut(&k);
@@ -158,6 +150,20 @@ pub struct EventLog {
     pub classifiers: Option<Vec<EventLogClassifier>>,
 }
 
+impl EventLog {
+    ///
+    /// Try to get the [EventLogClassifier] with the associated name
+    ///
+    pub fn get_classifier_by_name<S>(&self, name: S) -> Option<EventLogClassifier>
+    where
+        std::string::String: PartialEq<S>,
+    {
+        self.classifiers
+            .as_ref()
+            .and_then(|classifiers| classifiers.iter().find(|c| c.name == name).cloned())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventLogExtension {
     pub name: String,
@@ -169,4 +175,29 @@ pub struct EventLogExtension {
 pub struct EventLogClassifier {
     pub name: String,
     pub keys: Vec<String>,
+}
+impl EventLogClassifier {
+    const DELIMITER: &str = "+";
+    ///
+    /// Get the class identity (joined with [EventLogClassifier::DELIMITER])
+    /// 
+    /// Missing attributes and attributes with a type different than [AttributeValue::String] are represented by an empty String.
+    ///
+    pub fn get_class_identity(&self, ev: &Event) -> String {
+        let mut ret: String = String::new();
+        let mut first = true;
+        for k in &self.keys {
+            let s = match ev.attributes.get(k).map(|at| at.value.clone()) {
+                Some(AttributeValue::String(s)) => s,
+                _ => String::new(),
+            };
+            if !first {
+                ret.push_str(EventLogClassifier::DELIMITER)
+            } else {
+                first = false;
+            }
+            ret.push_str(&s);
+        }
+        ret
+    }
 }

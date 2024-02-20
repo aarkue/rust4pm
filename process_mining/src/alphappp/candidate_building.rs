@@ -55,11 +55,7 @@ fn not_all_dfs_between(
     false
 }
 
-pub fn satisfies_cnd_condition(
-    df_rel: &HashSet<(usize, usize)>,
-    a: &Vec<usize>,
-    b: &Vec<usize>,
-) -> bool {
+pub fn satisfies_cnd_condition(df_rel: &HashSet<(usize, usize)>, a: &[usize], b: &[usize]) -> bool {
     let a_set: HashSet<usize> = a.iter().copied().collect();
     let b_set: HashSet<usize> = b.iter().copied().collect();
     let a_without_b: HashSet<usize> = a_set.difference(&b_set).copied().collect();

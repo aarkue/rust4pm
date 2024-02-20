@@ -25,15 +25,13 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
         .write_inner_content(|writer| {
             writer
                 .create_element("net")
-                .with_attributes(
-                    vec![
-                        ("id", "Rust PetriNet Export"),
-                        (
-                            "type",
-                            "http://www.pnml.org/version-2009/grammar/pnmlcoremodel",
-                        ),
-                    ],
-                )
+                .with_attributes(vec![
+                    ("id", "Rust PetriNet Export"),
+                    (
+                        "type",
+                        "http://www.pnml.org/version-2009/grammar/pnmlcoremodel",
+                    ),
+                ])
                 .write_inner_content(|writer| {
                     writer
                         .create_element("page")
@@ -56,26 +54,23 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                                                 OK
                                             })
                                             .unwrap();
-                                        match pn.initial_marking.clone() {
-                                            Some(initial_marking) => {
-                                                if initial_marking.contains_key(&place.into()) {
-                                                    let tokens =
-                                                        initial_marking.get(&place.into()).unwrap();
-                                                    writer
-                                                        .create_element("initialMarking")
-                                                        .write_inner_content(|writer| {
-                                                            writer
-                                                                .create_element("text")
-                                                                .write_text_content(BytesText::new(
-                                                                    tokens.to_string().as_str(),
-                                                                ))
-                                                                .unwrap();
-                                                            OK
-                                                        })
-                                                        .unwrap();
-                                                }
+                                        if let Some(initial_marking) = pn.initial_marking.clone() {
+                                            if initial_marking.contains_key(&place.into()) {
+                                                let tokens =
+                                                    initial_marking.get(&place.into()).unwrap();
+                                                writer
+                                                    .create_element("initialMarking")
+                                                    .write_inner_content(|writer| {
+                                                        writer
+                                                            .create_element("text")
+                                                            .write_text_content(BytesText::new(
+                                                                tokens.to_string().as_str(),
+                                                            ))
+                                                            .unwrap();
+                                                        OK
+                                                    })
+                                                    .unwrap();
                                             }
-                                            None => {}
                                         }
 
                                         OK
@@ -107,17 +102,15 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                                             // TODO: Add  something like <toolspecific tool="ProM" version="6.4" activity="$invisible$" localNodeID="..."/>
                                             writer
                                                 .create_element("toolspecific")
-                                                .with_attributes(
-                                                    vec![
-                                                        ("tool", "ProM"),
-                                                        ("version", "6.4"),
-                                                        ("activity", "$invisible$"),
-                                                        (
-                                                            "localNodeID",
-                                                            Uuid::new_v4().to_string().as_str(),
-                                                        ),
-                                                    ],
-                                                )
+                                                .with_attributes(vec![
+                                                    ("tool", "ProM"),
+                                                    ("version", "6.4"),
+                                                    ("activity", "$invisible$"),
+                                                    (
+                                                        "localNodeID",
+                                                        Uuid::new_v4().to_string().as_str(),
+                                                    ),
+                                                ])
                                                 .write_empty()
                                                 .unwrap();
                                         }
@@ -150,45 +143,39 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                         })
                         .unwrap();
 
-                    match pn.final_markings.clone() {
-                        Some(final_markings) => {
-                            writer
-                                .create_element("finalmarkings")
-                                .write_inner_content(|writer| {
-                                    final_markings.iter().for_each(|marking| {
-                                        writer
-                                            .create_element("marking")
-                                            .write_inner_content(|writer| {
-                                                marking.iter().for_each(|(place_id, tokens)| {
-                                                    writer
-                                                        .create_element("place")
-                                                        .with_attribute((
-                                                            "idref",
-                                                            place_id
-                                                                .get_uuid()
-                                                                .to_string()
-                                                                .as_str(),
-                                                        ))
-                                                        .write_inner_content(|writer| {
-                                                            writer
-                                                                .create_element("text")
-                                                                .write_text_content(BytesText::new(
-                                                                    tokens.to_string().as_str(),
-                                                                ))
-                                                                .unwrap();
-                                                            OK
-                                                        })
-                                                        .unwrap();
-                                                });
-                                                OK
-                                            })
-                                            .unwrap();
-                                    });
-                                    OK
-                                })
-                                .unwrap();
-                        }
-                        None => {}
+                    if let Some(final_markings) = pn.final_markings.clone() {
+                        writer
+                            .create_element("finalmarkings")
+                            .write_inner_content(|writer| {
+                                final_markings.iter().for_each(|marking| {
+                                    writer
+                                        .create_element("marking")
+                                        .write_inner_content(|writer| {
+                                            marking.iter().for_each(|(place_id, tokens)| {
+                                                writer
+                                                    .create_element("place")
+                                                    .with_attribute((
+                                                        "idref",
+                                                        place_id.get_uuid().to_string().as_str(),
+                                                    ))
+                                                    .write_inner_content(|writer| {
+                                                        writer
+                                                            .create_element("text")
+                                                            .write_text_content(BytesText::new(
+                                                                tokens.to_string().as_str(),
+                                                            ))
+                                                            .unwrap();
+                                                        OK
+                                                    })
+                                                    .unwrap();
+                                            });
+                                            OK
+                                        })
+                                        .unwrap();
+                                });
+                                OK
+                            })
+                            .unwrap();
                     }
 
                     // </net>
