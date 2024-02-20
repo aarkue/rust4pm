@@ -2,7 +2,8 @@ use process_mining::{
     alphappp::full::{alphappp_discover_petri_net_with_timing_fn, AlphaPPPConfig},
     event_log::{
         activity_projection::EventLogActivityProjection,
-        import_xes::{import_xes_slice, import_xes_str}, ocel::xml_ocel_import::import_ocel_xml_slice,
+        import_xes::{import_xes_slice, import_xes_str},
+        ocel::xml_ocel_import::import_ocel_xml_slice,
     },
     OCEL,
 };
@@ -99,11 +100,33 @@ pub fn wasm_parse_ocel2_json(json_data: &str) -> JsValue {
     serde_wasm_bindgen::to_value(&ocel).unwrap()
 }
 
-
+//  6.187s
+//  6.451s
+//  6.472s
+// Chromium: 15.627s
 #[wasm_bindgen]
-pub fn wasm_parse_ocel2_xml(ocel_data: &[u8]) -> String {
+pub fn wasm_parse_ocel2_xml(ocel_data: &[u8]) -> JsValue {
     let ocel = import_ocel_xml_slice(ocel_data);
-    // serde_wasm_bindgen::to_value(&ocel).unwrap()
-    serde_json::to_string(&ocel).unwrap()
-    
+    serde_wasm_bindgen::to_value(&ocel).unwrap()
 }
+
+//  5.064s
+//  5.358s
+//  5.636s
+// Chromium: 10.519s
+#[wasm_bindgen]
+pub fn wasm_parse_ocel2_xml_to_json_str(ocel_data: &[u8]) -> String {
+    let ocel = import_ocel_xml_slice(ocel_data);
+    serde_json::to_string(&ocel).unwrap()
+}
+// 5.101s
+// 4.96s
+// 5.854s
+
+// Chromium: 9.934s // Second test in Chromium: 11.334
+#[wasm_bindgen]
+pub fn wasm_parse_ocel2_xml_to_json_vec(ocel_data: &[u8]) -> Vec<u8> {
+    let ocel = import_ocel_xml_slice(ocel_data);
+    serde_json::to_vec(&ocel).unwrap()
+}
+
