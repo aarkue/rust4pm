@@ -128,12 +128,11 @@ fn parse_date(time: &str) -> Result<DateTime<FixedOffset>, &str> {
 
     // Who made me do this? 🫣
     // Some logs have this date: "Mon Apr 03 2023 12:08:18 GMT+0200 (Mitteleuropäische Sommerzeit)"
-    let replaced_time = &time[4..].replace(" GMT", "");
-    if let Some((s, _)) = replaced_time.split_once(" (") {
-        if let Ok(dt) = DateTime::parse_from_str(s, "%b %d %Y %T%z") {
+    // Below ignores the first "Mon " part (%Z) parses the rest (only if "GMT") and then parses the timezone (+0200)
+    // The rest of the input is ignored
+        if let Ok((dt,_)) = DateTime::parse_and_remainder(time, "%Z %b %d %Y %T GMT%z") {
             return Ok(dt);
         }
-    }
     Err("Unexpected Date Format")
 }
 
