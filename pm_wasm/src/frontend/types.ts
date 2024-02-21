@@ -11,8 +11,8 @@ type OCELShim = {
 };
 export type MODE_OPTION_RES = [
   {
-    places: Map<string, { id: string }>;
-    transitions: Map<string, { id: string; label: string }>;
+    places: Record<string, { id: string }>;
+    transitions: Record<string, { id: string; label: string }>;
     arcs: unknown[];
   },
   OCELShim,
@@ -39,6 +39,7 @@ export interface WorkerAPI {
   fun: (
     mode: Mode,
     data: Uint8Array,
+    transferBack: boolean,
     isGz: boolean,
     numThreads: number,
   ) => Promise<unknown>;

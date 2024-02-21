@@ -37,7 +37,7 @@ macro_rules! console_log {
 }
 
 #[wasm_bindgen]
-pub fn wasm_discover_alphappp_petri_net_from_xes_string(xes_str: &str) -> JsValue {
+pub fn wasm_discover_alphappp_petri_net_from_xes_string(xes_str: &str) -> Vec<u8> {
     console_error_panic_hook::set_once();
     let log = import_xes_str(xes_str, None);
     console_log!("Got log: {}", log.traces.len());
@@ -57,14 +57,14 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_string(xes_str: &str) -> JsValu
             return 0;
         },
     );
-    serde_wasm_bindgen::to_value(&pn).unwrap()
+    serde_json::to_vec(&pn).unwrap()
 }
 
 #[wasm_bindgen]
 pub fn wasm_discover_alphappp_petri_net_from_xes_vec(
     xes_data: &[u8],
     is_compressed_gz: bool,
-) -> JsValue {
+) -> Vec<u8> {
     console_error_panic_hook::set_once();
     console_log!("Got data: {}", xes_data.len());
     web_sys::console::time_with_label("xes-import");
@@ -88,16 +88,16 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_vec(
             return 0;
         },
     );
-    serde_wasm_bindgen::to_value(&pn).unwrap()
+    serde_json::to_vec(&pn).unwrap()
 }
 
 #[wasm_bindgen]
-pub fn wasm_parse_ocel2_json(json_data: &[u8]) -> JsValue {
+pub fn wasm_parse_ocel2_json(json_data: &[u8]) -> Vec<u8> {
     console_error_panic_hook::set_once();
     console_log!("Got data: {}", json_data.len());
     let ocel: OCEL = serde_json::from_slice(json_data).unwrap();
     console_log!("Got Log: {}", ocel.events.len());
-    serde_wasm_bindgen::to_value(&ocel).unwrap()
+    serde_json::to_vec(&ocel).unwrap()
 }
 
 // Some first measurements for Angular OCEL2 log:

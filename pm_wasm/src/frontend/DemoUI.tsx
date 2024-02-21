@@ -12,7 +12,7 @@ import {
   Select,
 } from "@mui/material";
 import * as Comlink from "comlink";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MODE_OPTIONS, Mode, type WorkerAPI } from "./types";
 // @ts-ignore: Vite worker URL import
 import workerImport from "./worker?worker&url";
@@ -27,10 +27,11 @@ export default function DemoUI() {
   const [loading, setLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File>();
   const [result, setResult] = useState<{
-    json: unknown;
+    // json: unknown;
     durationSeconds: number;
     mode: Mode;
   }>();
+  const resultDataRef = useRef<unknown>();
 
   useEffect(() => {
     console.log({ workerImport });
@@ -148,18 +149,27 @@ export default function DemoUI() {
             }
             setLoading(true);
             setWorkerStatus("ready");
+            const transferBack = true;
             const start = Date.now();
+            console.log(start);
+            const array = new Uint8Array(await selectedFile.arrayBuffer());
             workerAPI
               .fun(
                 mode,
-                new Uint8Array(await selectedFile.arrayBuffer()),
+                Comlink.transfer(array, [array.buffer]),
+                transferBack,
                 selectedFile.name.endsWith(".gz"),
                 1,
               )
               .then((json) => {
+                if (transferBack && json instanceof Uint8Array) {
+                  console.log("Got Uint8Array from Worker!");
+                  json = JSON.parse(new TextDecoder().decode(json));
+                }
                 const duration = (Date.now() - start) / 1000.0;
                 console.log({ json });
-                setResult({ json, durationSeconds: duration, mode });
+                resultDataRef.current = json;
+                setResult({ durationSeconds: duration, mode });
               })
               .catch((e) => {
                 console.error(e);
@@ -181,7 +191,7 @@ export default function DemoUI() {
           />
         )}
       </div>
-      {result !== undefined && (
+      {result !== undefined && resultDataRef.current !== undefined && (
         <Alert
           icon={<CheckCircleIcon fontSize="inherit" />}
           severity="success"
@@ -196,7 +206,10 @@ export default function DemoUI() {
           The result was logged to console and can be downloaded as a .json file
           using the button below.
           <div className="mt-2 font-medium">
-            <ResultInfo mode={result.mode} data={result.json as any} />
+            <ResultInfo
+              mode={result.mode}
+              data={resultDataRef.current as any}
+            />
           </div>
           <div className="absolute right-0 bottom-0">
             <IconButton
@@ -205,7 +218,7 @@ export default function DemoUI() {
                 const a = document.createElement("a");
                 a.download = "result.json";
                 const url = URL.createObjectURL(
-                  new Blob([JSON.stringify(result.json)], {
+                  new Blob([JSON.stringify(resultDataRef.current)], {
                     type: "application/json",
                   }),
                 );

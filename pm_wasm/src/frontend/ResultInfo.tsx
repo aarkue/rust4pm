@@ -6,8 +6,8 @@ export default function ResultInfo({ mode, data }: ResultInfoProps) {
       <div>
         Discovered Petri Net with
         <ul className="[&>li]:list-disc pl-6">
-          <li>{data.places.size} Places</li>
-          <li>{data.transitions.size} Transitions</li>
+          <li>{Object.keys(data.places).length} Places</li>
+          <li>{Object.keys(data.transitions).length} Transitions</li>
           <li>{data.arcs.length} Arcs</li>
         </ul>
       </div>
