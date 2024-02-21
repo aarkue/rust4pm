@@ -18,6 +18,7 @@ pub mod event_log {
     pub mod import_xes;
     pub mod ocel {
         pub mod ocel_struct;
+        #[allow(clippy::single_match)]
         pub mod xml_ocel_import;
     }
     pub use event_log_struct::{
@@ -39,13 +40,31 @@ pub mod petri_net {
 pub use alphappp::full::alphappp_discover_petri_net;
 
 #[doc(inline)]
+pub use event_log::import_xes::import_xes;
+
+#[doc(inline)]
 pub use event_log::import_xes::import_xes_file;
+
+#[doc(inline)]
+pub use event_log::import_xes::import_xes_slice;
+
+#[doc(inline)]
+pub use event_log::import_xes::XESImportOptions;
 
 #[doc(inline)]
 pub use event_log::event_log_struct::EventLog;
 
 #[doc(inline)]
 pub use event_log::ocel::ocel_struct::OCEL;
+
+#[doc(inline)]
+pub use event_log::ocel::xml_ocel_import::import_ocel_xml;
+
+#[doc(inline)]
+pub use event_log::ocel::xml_ocel_import::import_ocel_xml_file;
+
+#[doc(inline)]
+pub use event_log::ocel::xml_ocel_import::import_ocel_xml_slice;
 
 ///
 /// Module for the Alpha+++ Process Discovery algorithm

@@ -1,23 +1,19 @@
 use std::{
     collections::HashMap,
-    error::Error,
-    io::{BufRead, BufReader, Read},
-    str::FromStr,
-    time::Instant,
+    io::{BufRead, BufReader},
 };
 
 use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use quick_xml::{events::BytesStart, Reader};
 
-use crate::{
-    event_log::{ocel::ocel_struct::OCELType, AttributeValue},
-    OCEL,
-};
+use crate::{event_log::ocel::ocel_struct::OCELType, OCEL};
 
 use super::ocel_struct::{
     OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute,
     OCELRelationship, OCELTypeAttribute,
 };
+
+
 ///
 /// Current Parsing Mode (i.e., which tag is currently open / being parsed)
 ///
@@ -33,7 +29,6 @@ enum Mode {
     EventTypes,
     EventType,
     EventTypeAttributes,
-    Attribute,
     Log,
     None,
 }
@@ -55,7 +50,7 @@ pub enum OCELAttributeType {
 // }
 
 fn read_to_string(x: &mut &[u8]) -> String {
-    String::from_utf8_lossy(&x).to_string()
+    String::from_utf8_lossy(x).to_string()
     // x.
     // let mut str = String::new();
     // x.read_to_string(&mut str).unwrap();
@@ -80,33 +75,31 @@ fn get_attribute_value(t: &BytesStart<'_>, key: &str) -> String {
 fn parse_attribute_value(attribute_type: &OCELAttributeType, value: String) -> OCELAttributeValue {
     let res = match attribute_type {
         OCELAttributeType::String => Ok(OCELAttributeValue::String(value.clone())),
-        OCELAttributeType::Integer => (&value)
+        OCELAttributeType::Integer => value
             .parse::<i64>()
-            .or_else(|e| Err(format!("{}", e)))
-            .and_then(|v| Ok(OCELAttributeValue::Integer(v))),
-        OCELAttributeType::Float => (&value)
+            .map_err(|e| format!("{}", e))
+            .map(OCELAttributeValue::Integer),
+        OCELAttributeType::Float => value
             .parse::<f64>()
-            .or_else(|e| Err(format!("{}", e)))
-            .and_then(|v| Ok(OCELAttributeValue::Float(v))),
-        OCELAttributeType::Boolean => (&value)
+            .map_err(|e| format!("{}", e))
+            .map(OCELAttributeValue::Float),
+        OCELAttributeType::Boolean => value
             .parse::<bool>()
-            .or_else(|e| Err(format!("{}", e)))
-            .and_then(|v| Ok(OCELAttributeValue::Boolean(v))),
+            .map_err(|e| format!("{}", e))
+            .map(OCELAttributeValue::Boolean),
         OCELAttributeType::Null => Ok(OCELAttributeValue::Null),
         OCELAttributeType::Time => parse_date(&value)
-            .or_else(|e| Err(format!("{}", e)))
-            .and_then(|v| Ok(OCELAttributeValue::Time(v.into()))),
+            .map_err(|e| e.to_string())
+            .map(|v| OCELAttributeValue::Time(v.into())),
     };
     match res {
-        Ok(attribute_val) => return attribute_val,
+        Ok(attribute_val) => attribute_val,
         Err(e) => {
             eprintln!(
                 "Failed to parse attribute value {:?} with supposed type {:?}\n{}",
-                value,
-                attribute_type,
-                e
+                value, attribute_type, e
             );
-            return OCELAttributeValue::Null;
+            OCELAttributeValue::Null
         }
     }
 }
@@ -130,12 +123,15 @@ fn parse_date(time: &str) -> Result<DateTime<FixedOffset>, &str> {
     // Some logs have this date: "Mon Apr 03 2023 12:08:18 GMT+0200 (Mitteleuropäische Sommerzeit)"
     // Below ignores the first "Mon " part (%Z) parses the rest (only if "GMT") and then parses the timezone (+0200)
     // The rest of the input is ignored
-        if let Ok((dt,_)) = DateTime::parse_and_remainder(time, "%Z %b %d %Y %T GMT%z") {
-            return Ok(dt);
-        }
+    if let Ok((dt, _)) = DateTime::parse_and_remainder(time, "%Z %b %d %Y %T GMT%z") {
+        return Ok(dt);
+    }
     Err("Unexpected Date Format")
 }
 
+///
+/// Import an OCEL2 XML file from the given reader 
+///
 pub fn import_ocel_xml<T>(reader: &mut Reader<T>) -> OCEL
 where
     T: BufRead,
@@ -363,7 +359,6 @@ where
                             // mut x => print_to_string(&mut x, current_mode, "EventEnd"),
                             _ => {}
                         },
-                        Mode::Attribute => todo!(),
                         _ => todo!("TODO: Implement EventEnd for {:?}", current_mode),
                     },
                     quick_xml::events::Event::Empty(t) => match current_mode {
@@ -551,31 +546,17 @@ where
     ocel
 }
 
-/// Import a XML [OCEL] from a byte slice (&\[u8\])
 ///
+/// Import an [OCEL]2 XML from a byte slice
 ///
 pub fn import_ocel_xml_slice(xes_data: &[u8]) -> OCEL {
     import_ocel_xml(&mut Reader::from_reader(BufReader::new(xes_data)))
 }
 
-/// Import a XML [OCEL] from a filepath (&\[u8\])
 ///
+/// Import an [OCEL]2 XML from a filepath
 ///
 pub fn import_ocel_xml_file(path: &str) -> OCEL {
     let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();
     import_ocel_xml(&mut reader)
-}
-
-#[test]
-fn test_ocel_xml() {
-    let mut reader: Reader<BufReader<std::fs::File>> =
-        Reader::from_file("/home/aarkue/dow/angular_github_commits_ocel.xml").unwrap();
-    let now = Instant::now();
-    let ocel = import_ocel_xml(&mut reader);
-    println!(
-        "Imported OCEL with {} objects and {} events in {:#?}",
-        ocel.objects.len(),
-        ocel.events.len(),
-        now.elapsed()
-    );
 }

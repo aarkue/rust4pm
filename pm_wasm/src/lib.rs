@@ -2,7 +2,7 @@ use process_mining::{
     alphappp::full::{alphappp_discover_petri_net_with_timing_fn, AlphaPPPConfig},
     event_log::{
         activity_projection::EventLogActivityProjection,
-        import_xes::{import_xes_slice, import_xes_str},
+        import_xes::{import_xes_slice, import_xes_str, XESImportOptions},
         ocel::xml_ocel_import::import_ocel_xml_slice,
     },
     OCEL,
@@ -68,7 +68,7 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_vec(
     console_error_panic_hook::set_once();
     console_log!("Got data: {}", xes_data.len());
     web_sys::console::time_with_label("xes-import");
-    let log = import_xes_slice(&xes_data, is_compressed_gz, None);
+    let log = import_xes_slice(&xes_data, is_compressed_gz, XESImportOptions::default());
     web_sys::console::time_end_with_label("xes-import");
     console_log!("Got Log: {}", log.traces.len());
     let log_proj: EventLogActivityProjection = (&log).into();
@@ -130,4 +130,3 @@ pub fn wasm_parse_ocel2_xml_to_json_vec(ocel_data: &[u8]) -> Vec<u8> {
     let ocel = import_ocel_xml_slice(ocel_data);
     serde_json::to_vec(&ocel).unwrap()
 }
-
