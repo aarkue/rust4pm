@@ -20,7 +20,7 @@ use uuid::Uuid;
 /// Current Parsing Mode (i.e., which tag is currently open / being parsed)
 ///
 #[derive(Clone, Copy, Debug)]
-enum Mode {
+pub enum Mode {
     Trace,
     Event,
     Attribute,
@@ -93,8 +93,8 @@ where
     reader.trim_text(true);
     let mut buf: Vec<u8> = Vec::new();
 
-    let mut current_mode: Mode = Mode::Log;
-    let mut last_mode_before_attr: Mode = Mode::Log;
+    let mut current_mode: Mode = Mode::None;
+    let mut last_mode_before_attr: Mode = Mode::None;
 
     let mut log = EventLog {
         attributes: Attributes::new(),
@@ -370,7 +370,7 @@ pub fn import_xes_slice(
     import_xes(&mut Reader::from_reader(BufReader::new(xes_data)), options)
 }
 
-fn parse_attribute_from_tag(
+pub fn parse_attribute_from_tag(
     t: &BytesStart,
     mode: Mode,
     options: &XESImportOptions,
