@@ -14,11 +14,9 @@ use super::{
     Attribute, AttributeAddable, AttributeValue, Attributes, Event, Trace,
 };
 
-pub struct XESTraceStream<T>
-where
-    T: BufRead,
+pub struct XESTraceStream<'a>
 {
-    reader: Reader<T>,
+    reader: Box<Reader<Box<dyn BufRead + 'a>>>,
     buf: Vec<u8>,
     current_mode: Mode,
     current_trace: Option<Trace>,
@@ -31,9 +29,7 @@ where
     log_attributes: Attributes,
 }
 
-impl<T> Iterator for XESTraceStream<T>
-where
-    T: BufRead,
+impl<'a> Iterator for XESTraceStream<'a>
 {
     type Item = Trace;
 
@@ -274,9 +270,7 @@ where
     }
 }
 
-impl<T> XESTraceStream<T>
-where
-    T: BufRead,
+impl<'a> XESTraceStream<'a>
 {
     fn add_attribute_from_tag(self: &mut Self, t: &BytesStart) -> bool {
         if self.options.ignore_event_attributes_except.is_some()
@@ -385,10 +379,10 @@ where
 pub fn stream_xes_slice(
     xes_data: &[u8],
     options: XESImportOptions,
-) -> XESTraceStream<BufReader<&[u8]>> {
-    let reader = Reader::from_reader(BufReader::new(xes_data));
+) -> XESTraceStream {
+    // let reader = Reader::from_reader(BufReader::new(xes_data));
     XESTraceStream {
-        reader: reader,
+        reader: Box::new(Reader::from_reader(Box::new(BufReader::new(xes_data)))),
         current_mode: Mode::Log,
         current_trace: None,
         last_mode_before_attr: Mode::Log,
@@ -405,11 +399,11 @@ pub fn stream_xes_slice(
 pub fn stream_xes_slice_gz<'a>(
     xes_data: &'a [u8],
     options: XESImportOptions,
-) -> XESTraceStream<BufReader<flate2::bufread::GzDecoder<&'a [u8]>>> {
+) -> XESTraceStream {
     let gz: GzDecoder<&[u8]> = GzDecoder::new(xes_data);
     let reader = BufReader::new(gz);
     XESTraceStream {
-        reader: Reader::from_reader(reader),
+        reader: Box::new(Reader::from_reader(Box::new(reader))),
         current_mode: Mode::Log,
         current_trace: None,
         last_mode_before_attr: Mode::Log,
@@ -423,10 +417,10 @@ pub fn stream_xes_slice_gz<'a>(
     }
 }
 
-pub fn stream_xes_file(path: &str, options: XESImportOptions) -> XESTraceStream<BufReader<File>> {
-    let reader: Reader<BufReader<File>> = Reader::from_file(path).unwrap();
+pub fn stream_xes_file<'a>(file: &'a File, options: XESImportOptions) -> XESTraceStream {
+    // let reader = Reader::from_reader(BufReader::new(file));
     XESTraceStream {
-        reader: reader,
+        reader: Box::new(Reader::from_reader(Box::new(BufReader::new(file)))),
         current_mode: Mode::Log,
         current_trace: None,
         last_mode_before_attr: Mode::Log,
@@ -443,11 +437,11 @@ pub fn stream_xes_file(path: &str, options: XESImportOptions) -> XESTraceStream<
 pub fn stream_xes_file_gz<'a>(
     file: &File,
     options: XESImportOptions,
-) -> XESTraceStream<BufReader<flate2::bufread::GzDecoder<BufReader<&File>>>> {
+) -> XESTraceStream {
     let dec: GzDecoder<BufReader<&File>> = GzDecoder::new(BufReader::new(file));
-    let reader = Reader::from_reader(BufReader::new(dec));
+    // let reader = Reader::from_reader(BufReader::new(dec));
     XESTraceStream {
-        reader: reader,
+        reader: Box::new(Reader::from_reader(Box::new(BufReader::new(dec)))),
         current_mode: Mode::Log,
         current_trace: None,
         last_mode_before_attr: Mode::Log,

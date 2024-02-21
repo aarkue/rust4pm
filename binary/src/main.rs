@@ -1,34 +1,42 @@
-use std::time::Instant;
+use std::{fs::File, time::Instant};
 
-use chrono::DateTime;
+
 use process_mining::{
     event_log::{
-        import_xes::{build_ignore_attributes, XESImportOptions},
-        ocel::xml_ocel_import::import_ocel_xml_file,
-        xes_streaming::{stream_xes_slice, stream_xes_slice_gz},
+        import_xes::XESImportOptions,
+        xes_streaming::{stream_xes_file, stream_xes_file_gz},
     },
-    import_xes_file, import_xes_slice,
+    import_xes_file,
 };
 
 fn main() {
     
-    // let x = include_bytes!("../../process_mining/src/event_log/tests/test_data/BPI Challenge 2018.xes.gz");
-    // let now = Instant::now();
-    // let s = stream_xes_slice_gz(x, XESImportOptions::default());
-    // let count= s.count();
-    // println!(
-    //     "Streamed XES with {} cases in {:#?}",
-    //     count,
-    //     now.elapsed()
-    // );
+    let path = "/home/aarkue/doc/sciebo/alpha-revisit/BPI_Challenge_2018.xes";
+    let now = Instant::now();
+    let file = File::open(path).unwrap();
+    let s = if path.ends_with(".gz"){
+        stream_xes_file_gz(&file, XESImportOptions::default())
+    }else {
+        stream_xes_file(&file, XESImportOptions::default())
+    };
+    // let s = stream_xes_file_gz(&file, XESImportOptions::default());
+    // let s = stream_xes_file(path, XESImportOptions::default());
+    let count= s.count();
+    println!(
+        "Streamed XES with {} cases in {:#?}",
+        count,
+        now.elapsed()
+    );
+
+    let now = Instant::now();
     // // XES
-    // let res = import_xes_slice(x, true, XESImportOptions::default()).unwrap();
+    let res = import_xes_file(path, XESImportOptions::default()).unwrap();
+    println!(
+        "Parsed XES with {} cases in {:#?}",
+        res.traces.len(),
+        now.elapsed()
+    );
     
-    // println!(
-    //     "Parsed XES with {} cases in {:#?}",
-    //     res.traces.len(),
-    //     now.elapsed()
-    // );
     // let log = import_xes_file(
     //     "log.xes",
     //     XESImportOptions {
