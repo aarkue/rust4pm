@@ -3,18 +3,18 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::str::FromStr;
 
-use chrono::{DateTime, NaiveDateTime, Utc};
-use flate2::bufread::GzDecoder;
-use quick_xml::escape::unescape;
-use quick_xml::events::BytesStart;
-use quick_xml::Reader;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-use quick_xml::Error as QuickXMLError;
 use crate::event_log::event_log_struct::{
     Attribute, AttributeAddable, AttributeValue, Attributes, Event, EventLog, EventLogClassifier,
     EventLogExtension, Trace,
 };
+use chrono::{DateTime, NaiveDateTime, Utc};
+use flate2::bufread::GzDecoder;
+use quick_xml::escape::unescape;
+use quick_xml::events::BytesStart;
+use quick_xml::Error as QuickXMLError;
+use quick_xml::Reader;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 ///
 /// Current Parsing Mode (i.e., which tag is currently open / being parsed)
@@ -38,14 +38,27 @@ pub enum XESParseError {
     NoTopLevelLog(),
     MissingLastEvent(),
     MissingLastTrace(),
+    IOError(std::io::Error),
     XMLParsingError(QuickXMLError),
+}
+
+impl From<std::io::Error> for XESParseError {
+    fn from(e: std::io::Error) -> Self {
+        Self::IOError(e)
+    }
+}
+
+impl From<QuickXMLError> for XESParseError {
+    fn from(e: QuickXMLError) -> Self {
+        Self::XMLParsingError(e)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 ///
 ///
 /// Options for XES Import
-/// 
+///
 /// See also [build_ignore_attributes] for easy construction of attributes set to not ignore
 pub struct XESImportOptions {
     pub ignore_log_attributes_except: Option<HashSet<Vec<u8>>>,
@@ -320,12 +333,12 @@ where
 ///
 pub fn import_xes_file(path: &str, options: XESImportOptions) -> Result<EventLog, XESParseError> {
     if path.ends_with(".gz") {
-        let file = File::open(path).unwrap();
+        let file = File::open(path)?;
         let dec: GzDecoder<BufReader<&File>> = GzDecoder::new(BufReader::new(&file));
         let reader = BufReader::new(dec);
         import_xes(&mut Reader::from_reader(reader), options)
     } else {
-        let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();
+        let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path)?;
         import_xes(&mut reader, options)
     }
 }

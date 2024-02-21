@@ -130,7 +130,7 @@ fn parse_date(time: &str) -> Result<DateTime<FixedOffset>, &str> {
 }
 
 ///
-/// Import an OCEL2 XML file from the given reader 
+/// Import an OCEL2 XML file from the given reader
 ///
 pub fn import_ocel_xml<T>(reader: &mut Reader<T>) -> OCEL
 where
