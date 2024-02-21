@@ -67,7 +67,7 @@ impl AlphaPPPConfig {
 }
 
 ///
-/// __Discover__ a [PetriNet] using the Alpha+++ Process Discovery algorithm
+/// Discover a [PetriNet] using the Alpha+++ Process Discovery algorithm
 ///
 /// Additionally returns the durations for performance measurements
 ///
