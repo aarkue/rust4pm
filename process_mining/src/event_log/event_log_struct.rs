@@ -180,7 +180,7 @@ impl EventLogClassifier {
     const DELIMITER: &str = "+";
     ///
     /// Get the class identity (joined with [EventLogClassifier::DELIMITER])
-    /// 
+    ///
     /// Missing attributes and attributes with a type different than [AttributeValue::String] are represented by an empty String.
     ///
     pub fn get_class_identity(&self, ev: &Event) -> String {

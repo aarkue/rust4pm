@@ -22,8 +22,9 @@ use process_mining::{
         full::{alphappp_discover_petri_net, AlphaPPPConfig},
     },
     event_log::{
-        activity_projection::EventLogActivityProjection, import_xes::import_xes_file, Attribute,
-        AttributeValue, EventLog,
+        activity_projection::EventLogActivityProjection,
+        import_xes::{import_xes_file, XESImportOptions},
+        Attribute, AttributeValue, EventLog,
     },
     petri_net::petri_net_struct::PetriNet,
     petrinet_to_json,
@@ -224,7 +225,11 @@ pub unsafe fn discoverPetriNetAlphaPPPFromActProj<'local>(
 
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn importXESLog<'local>(mut env: JNIEnv<'local>, _: JClass, path: JString) -> jlong {
-    let log: EventLog = import_xes_file(&env.get_string(&path).unwrap().to_str().unwrap(), None);
+    let log: EventLog = import_xes_file(
+        &env.get_string(&path).unwrap().to_str().unwrap(),
+        XESImportOptions::default(),
+    )
+    .unwrap();
     let log_box = Box::new(log);
     let pointer = Box::into_raw(log_box) as jlong;
     pointer

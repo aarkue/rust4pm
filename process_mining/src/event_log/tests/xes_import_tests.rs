@@ -1,11 +1,14 @@
 use chrono::DateTime;
 
-use crate::event_log::{import_xes::import_xes_slice, AttributeValue};
+use crate::event_log::{
+    import_xes::{import_xes_slice, XESImportOptions, XESParseError},
+    AttributeValue,
+};
 
 #[test]
 fn test_xes_gz_import() {
     let x = include_bytes!("test_data/Sepsis Cases - Event Log.xes.gz");
-    let log = import_xes_slice(x, true, None);
+    let log = import_xes_slice(x, true, XESImportOptions::default()).unwrap();
 
     // Log has 1050 cases total
     assert_eq!(log.traces.len(), 1050);
@@ -82,3 +85,64 @@ fn test_xes_gz_import() {
     };
     assert_eq!(log_name, Some("Sepsis Cases - Event Log"));
 }
+
+
+
+
+#[test]
+pub fn test_invalid_xes_file_gz_expected() {
+    // Example XML (non-XES) file; Error should only involve missing .gz headers, so the other  content does not matter
+    let x = include_bytes!("test_data/BPI_Challenge_2019_sampled_3000cases_model_alphappp.pnml");
+    let res_gz = import_xes_slice(x, true, XESImportOptions::default());
+    assert!(matches!(res_gz,Err(XESParseError::XMLParsingError(_))));
+}
+
+#[test]
+pub fn test_invalid_xes_file_gz_unexpected() {
+    let x = include_bytes!("test_data/Sepsis Cases - Event Log.xes.gz");
+    let res = import_xes_slice(x, false, XESImportOptions::default());
+    assert!(matches!(res,Err(XESParseError::NoTopLevelLog())));
+}
+
+
+
+#[test]
+pub fn test_invalid_xes_file_zero() {
+    // File with ~100MB of zeros (dd if=/dev/zero of=zero.file bs=1024 count=102400) 
+    let x = include_bytes!("test_data/zero.file");
+    let res = import_xes_slice(x, false, XESImportOptions::default());
+    assert!(matches!(res,Err(XESParseError::NoTopLevelLog())));
+}
+
+#[test]
+pub fn test_invalid_xes_file_zero_gz() {
+    // File with ~100MB of zeros (dd if=/dev/zero of=zero.file bs=1024 count=102400) 
+    let x = include_bytes!("test_data/zero.file");
+    let res = import_xes_slice(x, true, XESImportOptions::default());
+    assert!(matches!(res,Err(XESParseError::XMLParsingError(_))));
+}
+
+
+
+#[test]
+pub fn test_invalid_xes_file_pnml() {
+    let x = include_bytes!("test_data/BPI_Challenge_2019_sampled_3000cases_model_alphappp.pnml");
+    let res = import_xes_slice(x, false, XESImportOptions::default());
+    assert!(matches!(res,Err(XESParseError::NoTopLevelLog())));
+}
+
+#[test]
+pub fn test_invalid_xes_file_json() {
+    let x = include_bytes!("test_data/order-management.json");
+    let res = import_xes_slice(x, false, XESImportOptions::default());
+    assert!(matches!(res,Err(XESParseError::NoTopLevelLog())));
+}
+
+
+#[test]
+pub fn test_invalid_xes_file_empty() {
+    let x: &'static [u8] = &[];
+    let res = import_xes_slice(x, false, XESImportOptions::default());
+    assert!(matches!(res,Err(XESParseError::NoTopLevelLog())));
+}
+

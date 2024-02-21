@@ -1,12 +1,12 @@
 #[cfg(test)]
 use std::{collections::HashSet, time::Instant};
 
-use crate::event_log::import_xes::import_xes_slice;
+use crate::event_log::import_xes::{import_xes_slice, XESImportOptions};
 
 #[test]
 pub fn test_get_class_identity() {
     let log_bytes = include_bytes!("test_data/Road_Traffic_Fine_Management_Process.xes.gz");
-    let log = import_xes_slice(log_bytes, true, None);
+    let log = import_xes_slice(log_bytes, true, XESImportOptions::default()).unwrap();
     let now = Instant::now();
     let event_name_classifier = log.get_classifier_by_name("Event Name");
     assert!(event_name_classifier.is_some());

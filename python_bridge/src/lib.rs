@@ -17,6 +17,7 @@ use process_mining::event_log::constants::TRACE_PREFIX;
 use process_mining::event_log::event_log_struct::EventLogClassifier;
 use process_mining::event_log::event_log_struct::EventLogExtension;
 use process_mining::event_log::import_xes::import_xes_file;
+use process_mining::event_log::import_xes::XESImportOptions;
 use process_mining::event_log::{
     Attribute, AttributeAddable, AttributeValue, Attributes, Event, EventLog, Trace,
 };
@@ -281,11 +282,16 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
 /// Returns a tuple of a Polars [DataFrame] for the event data and a json-encoding of  all log attributes/extensions/classifiers
 ///
 #[pyfunction]
-fn import_xes_rs(path: String, date_format: Option<&str>) -> PyResult<(PyDataFrame, String)> {
+fn import_xes_rs(path: String, options: Option<&str>) -> PyResult<(PyDataFrame, String)> {
     println!("Starting XES Import");
     let start_now = Instant::now();
     let mut now = Instant::now();
-    let log = import_xes_file(&path, date_format);
+    let options = options
+        .and_then(|options_json| {
+            Some(serde_json::from_str::<XESImportOptions>(options_json).unwrap())
+        })
+        .unwrap_or_default();
+    let log = import_xes_file(&path, options).unwrap();
     println!("Importing XES Log took {:.2?}", now.elapsed());
     now = Instant::now();
     // add_start_end_acts(&mut log);
