@@ -1,4 +1,7 @@
-use std::io::{BufRead, BufReader, Read};
+use std::{
+    fs::File,
+    io::{BufRead, BufReader, Read},
+};
 
 use flate2::bufread::GzDecoder;
 use quick_xml::{events::BytesStart, Reader};
@@ -167,16 +170,14 @@ where
                             }
                         },
                         quick_xml::events::Event::End(t) => {
-                            let mut t_string = String::new();
-                            t.as_ref().read_to_string(&mut t_string).unwrap();
-                            match t_string.as_str() {
-                                "event" => self.current_mode = Mode::Trace,
-                                "trace" => {
+                            match t.as_ref() {
+                                b"event" => self.current_mode = Mode::Trace,
+                                b"trace" => {
                                     self.current_mode = Mode::Log;
                                     return Some(self.current_trace.clone().unwrap());
                                 }
-                                "log" => self.current_mode = Mode::None,
-                                "global" => self.current_mode = self.last_mode_before_attr,
+                                b"log" => self.current_mode = Mode::None,
+                                b"global" => self.current_mode = self.last_mode_before_attr,
                                 _ => {
                                     match self.current_mode {
                                         Mode::Attribute => {
@@ -422,10 +423,48 @@ pub fn stream_xes_slice_gz<'a>(
     }
 }
 
+pub fn stream_xes_file(path: &str, options: XESImportOptions) -> XESTraceStream<BufReader<File>> {
+    let reader: Reader<BufReader<File>> = Reader::from_file(path).unwrap();
+    XESTraceStream {
+        reader: reader,
+        current_mode: Mode::Log,
+        current_trace: None,
+        last_mode_before_attr: Mode::Log,
+        encountered_log: false,
+        current_nested_attributes: Vec::new(),
+        options,
+        extensions: Vec::new(),
+        classifiers: Vec::new(),
+        log_attributes: Attributes::new(),
+        buf: Vec::new(),
+    }
+}
+
+pub fn stream_xes_file_gz<'a>(
+    file: &File,
+    options: XESImportOptions,
+) -> XESTraceStream<BufReader<flate2::bufread::GzDecoder<BufReader<&File>>>> {
+    let dec: GzDecoder<BufReader<&File>> = GzDecoder::new(BufReader::new(file));
+    let reader = Reader::from_reader(BufReader::new(dec));
+    XESTraceStream {
+        reader: reader,
+        current_mode: Mode::Log,
+        current_trace: None,
+        last_mode_before_attr: Mode::Log,
+        encountered_log: false,
+        current_nested_attributes: Vec::new(),
+        options,
+        extensions: Vec::new(),
+        classifiers: Vec::new(),
+        log_attributes: Attributes::new(),
+        buf: Vec::new(),
+    }
+}
+
 #[test]
 fn test_xes_stream() {
     let x = include_bytes!("tests/test_data/RepairExample.xes");
     let num_traces = stream_xes_slice(x, XESImportOptions::default()).count();
     println!("Num. traces: {}", num_traces);
-    assert_eq!(num_traces,1104);
+    assert_eq!(num_traces, 1104);
 }
