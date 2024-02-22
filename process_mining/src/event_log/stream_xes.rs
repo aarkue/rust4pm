@@ -63,7 +63,7 @@ impl<'a> FusedIterator for XESTraceStreamIterResult<'a> {}
 ///
 /// Also includes `terminated_on_error` for convenient error detection
 ///
-/// According to the state machine flow in XES standard (https://xes-standard.org/_media/xes/xesstandarddefinition-2.0.pdf#page=11) those must occur before the first trace.
+/// According to the state machine flow in XES standard (<https://xes-standard.org/_media/xes/xesstandarddefinition-2.0.pdf#page=11>) those must occur before the first trace.
 /// The current streaming parser will however also allow them afterwards.
 ///
 /// Thus, __for XES-compliant logs it is guaranteed that this data is already complete once the first trace is emitted from the iterator__.
@@ -75,12 +75,12 @@ pub struct XESTraceStreamLogData {
     pub terminated_on_error: Option<XESParseError>,
 }
 
-/// A RefCell over [XESTraceStreamLogData] to pass inside a [XESTraceStream]
+/// A RefCell over [XESTraceStreamLogData] to pass inside a [XESTraceStreamParser]
 pub type XESTraceStreamLogDataRefCell = RefCell<XESTraceStreamLogData>;
 
 /// Construct a new [XESTraceStreamLogDataRefCell]
 ///
-/// Convenient function for constructing a [XESTraceStream]
+/// Convenient function for constructing a [XESTraceStreamParser]
 pub fn construct_log_data_cell() -> XESTraceStreamLogDataRefCell {
     RefCell::new(XESTraceStreamLogData::default())
 }
@@ -638,11 +638,9 @@ impl<'a> XESTraceStreamParser<'a> {
 }
 
 ///
-/// Stream XES Traces from byte slice
+/// Stream XES [Trace]s from byte slice
 ///
-/// __Warning:__ XES streams are currently still unstable and incomplete
-///
-/// Note, that currently events outside of a trace and log attributes, classifiers and extensions are not exposed
+/// The returned [XESTraceStreamParser] can be used to iterate over [Trace]s
 ///
 pub fn stream_xes_slice<'a>(
     xes_data: &'a [u8],
@@ -657,11 +655,9 @@ pub fn stream_xes_slice<'a>(
 }
 
 ///
-/// Stream XES Traces from gzipped byte slice
+/// Stream XES [Trace]s from gzipped byte slice
 ///
-/// __Warning:__ XES streams are currently still unstable and incomplete
-///
-/// Note, that currently events outside of a trace and log attributes, classifiers and extensions are not exposed
+/// The returned [XESTraceStreamParser] can be used to iterate over [Trace]s
 ///
 pub fn stream_xes_slice_gz<'a>(
     xes_data: &'a [u8],
@@ -678,11 +674,9 @@ pub fn stream_xes_slice_gz<'a>(
 }
 
 ///
-/// Stream XES Traces from a file
+/// Stream XES [Trace]s from a file
 ///
-/// __Warning:__ XES streams are currently still unstable and incomplete
-///
-/// Note, that currently events outside of a trace and log attributes, classifiers and extensions are not exposed
+/// The returned [XESTraceStreamParser] can be used to iterate over [Trace]s
 ///
 pub fn stream_xes_file(
     file: File,
@@ -697,11 +691,9 @@ pub fn stream_xes_file(
 }
 
 ///
-/// Stream XES Traces from a gzipped file
+/// Stream XES [Trace]s from a gzipped file
 ///
-/// __Warning:__ XES streams are currently still unstable and incomplete
-///
-/// Note, that currently events outside of a trace and log attributes, classifiers and extensions are not exposed
+/// The returned [XESTraceStreamParser] can be used to iterate over [Trace]s
 ///
 pub fn stream_xes_file_gz(
     file: File,
@@ -717,11 +709,9 @@ pub fn stream_xes_file_gz(
 }
 
 ///
-/// Stream XES Traces from path (auto-detecting gz compression)
+/// Stream XES [Trace]s from path (auto-detecting gz compression from file extension)
 ///
-/// __Warning:__ XES streams are currently still unstable and incomplete
-///
-/// Note, that currently events outside of a trace and log attributes, classifiers and extensions are not exposed
+/// The returned [XESTraceStreamParser] can be used to iterate over [Trace]s
 ///
 pub fn stream_xes_from_path<'a>(
     path: &str,

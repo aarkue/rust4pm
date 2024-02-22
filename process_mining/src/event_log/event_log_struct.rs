@@ -185,7 +185,7 @@ pub struct EventLogClassifier {
     pub keys: Vec<String>,
 }
 impl EventLogClassifier {
-    const DELIMITER: &'static str = "+";
+    pub const DELIMITER: &'static str = "+";
     ///
     /// Get the class identity (joined with [EventLogClassifier::DELIMITER])
     ///

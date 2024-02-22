@@ -11,6 +11,9 @@ pub const START_ACTIVITY: &str = "__START";
 pub const END_ACTIVITY: &str = "__END";
 
 #[derive(Debug, Clone)]
+/// Projection of an event log on just activity labels
+///
+/// Currently assumes a default activity name ([ACTIVITY_NAME])
 pub struct EventLogActivityProjection {
     pub activities: Vec<String>,
     pub act_to_index: HashMap<String, usize>,

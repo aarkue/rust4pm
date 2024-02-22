@@ -3,13 +3,12 @@
 //! `process_mining` is a collection of functions, structs and utilitities related to Process Mining
 //!
 
-use event_log::activity_projection::{EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY};
+use event_log::activity_projection::{END_ACTIVITY, START_ACTIVITY};
 use event_log::event_log_struct::Event;
-use petri_net::petri_net_struct::PetriNet;
 use rayon::prelude::*;
 
 ///
-/// Module for Event Logs (traditional and OCEL)
+/// Event Logs (traditional [EventLog] and Object-Centric [OCEL])
 ///
 pub mod event_log {
     pub mod activity_projection;
@@ -17,6 +16,9 @@ pub mod event_log {
     pub mod event_log_struct;
     pub mod import_xes;
     pub mod stream_xes;
+    ///
+    /// OCEL2.0 (Object-Centric Event Logs) 
+    ///
     pub mod ocel {
         pub mod ocel_struct;
         #[allow(clippy::single_match)]
@@ -30,7 +32,7 @@ pub mod event_log {
 }
 
 ///
-/// Module for Petri nets
+/// Petri nets
 ///
 pub mod petri_net {
     pub mod petri_net_struct;
@@ -38,16 +40,34 @@ pub mod petri_net {
 }
 
 #[doc(inline)]
-pub use alphappp::full::alphappp_discover_petri_net;
+pub use event_log::ocel;
 
 #[doc(inline)]
-pub use event_log::import_xes::import_xes;
+pub use alphappp::full::alphappp_discover_petri_net;
 
 #[doc(inline)]
 pub use event_log::import_xes::import_xes_file;
 
 #[doc(inline)]
 pub use event_log::import_xes::import_xes_slice;
+
+#[doc(inline)]
+pub use event_log::stream_xes::stream_xes_from_path;
+
+#[doc(inline)]
+pub use event_log::stream_xes::stream_xes_slice;
+
+#[doc(inline)]
+pub use event_log::stream_xes::stream_xes_slice_gz;
+
+#[doc(inline)]
+pub use event_log::stream_xes::stream_xes_file;
+
+#[doc(inline)]
+pub use event_log::stream_xes::stream_xes_file_gz;
+
+#[doc(inline)]
+pub use event_log::stream_xes::XESTraceStreamParser;
 
 #[doc(inline)]
 pub use event_log::import_xes::XESImportOptions;
@@ -66,6 +86,13 @@ pub use event_log::ocel::xml_ocel_import::import_ocel_xml_file;
 
 #[doc(inline)]
 pub use event_log::ocel::xml_ocel_import::import_ocel_xml_slice;
+
+
+#[doc(inline)]
+pub use petri_net::petri_net_struct::PetriNet;
+
+#[doc(inline)]
+pub use event_log::activity_projection::EventLogActivityProjection;
 
 ///
 /// Module for the Alpha+++ Process Discovery algorithm
@@ -143,17 +170,38 @@ pub fn add_start_end_acts(log: &mut EventLog) {
 }
 
 ///
-/// Serialize a [PetriNet] as a JSON-encoded [String]
+/// Serialize a [PetriNet] as a JSON [String]
 ///
 pub fn petrinet_to_json(net: &PetriNet) -> String {
     serde_json::to_string(net).unwrap()
 }
 ///
-/// Deserialize a [PetriNet] from a JSON-encoded [String]
+/// Deserialize a [PetriNet] from a JSON [String]
 ///
 pub fn json_to_petrinet(net_json: &str) -> PetriNet {
     serde_json::from_str(net_json).unwrap()
 }
+
+
+///
+/// Serialize [OCEL] as a JSON [String]
+///
+/// [serde_json] can also be used to convert [OCEL] to other targets (e.g., `serde_json::to_writer`)
+/// 
+pub fn ocel_to_json(ocel: &OCEL) -> String {
+    serde_json::to_string(ocel).unwrap()
+}
+
+///
+/// Import [OCEL] from a JSON [String]
+///
+/// [serde_json] can also be used to import [OCEL] from other targets (e.g., `serde_json::from_reader`)
+/// 
+pub fn json_to_ocel(ocel_json: &str) -> OCEL {
+    serde_json::from_str(ocel_json).unwrap()
+}
+
+
 
 // pub fn export_log<P: AsRef<Path>>(path: P, log: &EventLog) {
 //     let file = File::create(path).unwrap();

@@ -70,6 +70,10 @@ impl TransitionID {
 pub type Marking = HashMap<PlaceID, u64>;
 
 #[derive(Debug, Deserialize, Serialize)]
+///
+/// A Petri net of [Place]s and [Transition]s
+///
+/// Bipartite graph of [Place]s and [Transition]s with [Arc]s connecting them, as well as initial and final [Marking]s
 pub struct PetriNet {
     pub places: HashMap<Uuid, Place>,
     pub transitions: HashMap<Uuid, Transition>,
