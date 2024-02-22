@@ -3,7 +3,7 @@ use chrono::DateTime;
 use crate::{
     event_log::{
         import_xes::{import_xes_slice, XESImportOptions, XESParseError},
-        AttributeValue,
+        AttributeAddable, AttributeValue,
     },
     import_xes_file,
 };
@@ -19,7 +19,7 @@ fn test_xes_gz_import() {
     // Case with concept:name "A" has 22 events
     let case_a = log.traces.iter().find(|t| {
         t.attributes
-            .get("concept:name")
+            .get_by_key("concept:name")
             .is_some_and(|c| c.value == AttributeValue::String("A".to_string()))
     });
     assert!(case_a.is_some());
@@ -32,7 +32,7 @@ fn test_xes_gz_import() {
         .iter()
         .map(|ev| {
             ev.attributes
-                .get(&"concept:name".to_string())
+                .get_by_key("concept:name")
                 .unwrap()
                 .value
                 .clone()
@@ -71,7 +71,7 @@ fn test_xes_gz_import() {
     assert_eq!(
         case_a.unwrap().events[0]
             .attributes
-            .get("time:timestamp")
+            .get_by_key("time:timestamp")
             .unwrap()
             .value,
         AttributeValue::Date(
@@ -82,7 +82,7 @@ fn test_xes_gz_import() {
     );
 
     // Test if log name is correct
-    let log_name = match &log.attributes.get("concept:name").unwrap().value {
+    let log_name = match &log.attributes.get_by_key("concept:name").unwrap().value {
         AttributeValue::String(s) => Some(s.as_str()),
         _ => None,
     };
@@ -99,7 +99,7 @@ pub fn test_invalid_xes_non_existing_file_gz() {
 #[test]
 pub fn test_invalid_xes_non_existing_file() {
     let res_gz = import_xes_file("this-file-does-not-exist.xes", XESImportOptions::default());
-    assert!(matches!(res_gz, Err(XESParseError::XMLParsingError(_))));
+    assert!(matches!(res_gz, Err(XESParseError::IOError(_))));
 }
 
 #[test]

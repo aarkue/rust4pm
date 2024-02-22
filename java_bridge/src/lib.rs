@@ -24,7 +24,7 @@ use process_mining::{
     event_log::{
         activity_projection::EventLogActivityProjection,
         import_xes::{import_xes_file, XESImportOptions},
-        Attribute, AttributeValue, EventLog,
+        AttributeAddable, AttributeValue, EventLog,
     },
     petri_net::petri_net_struct::PetriNet,
     petrinet_to_json,
@@ -32,7 +32,7 @@ use process_mining::{
 use serde::{Deserialize, Serialize};
 
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
-pub unsafe fn addStartEndToRustLog<'local>(mut _env: JNIEnv<'local>, _: JClass, pointer: jlong) {
+pub unsafe fn addStartEndToRustLog(mut _env: JNIEnv<'_>, _: JClass, pointer: jlong) {
     let mut log_pointer = Box::from_raw(pointer as *mut EventLog);
     add_start_end_acts(&mut log_pointer);
     let _proj: EventLogActivityProjection = log_pointer.as_ref().into();
@@ -49,11 +49,14 @@ pub unsafe fn getRustLogAttributes<'local>(
     pointer: jlong,
 ) -> JString<'local> {
     let mut log_pointer = Box::from_raw(pointer as *mut EventLog);
-    let (k, a) = Attribute::new_with_key(
+    // let (k, a) = Attribute::new_with_key(
+    //     "__NUM_TRACES__".to_string(),
+    //     AttributeValue::Int(log_pointer.traces.len() as i64),
+    // );
+    log_pointer.attributes.add_to_attributes(
         "__NUM_TRACES__".to_string(),
         AttributeValue::Int(log_pointer.traces.len() as i64),
     );
-    log_pointer.attributes.insert(k, a);
     let attributes_json = serde_json::to_string(&log_pointer.attributes).unwrap();
     // memory of log_pointer should _not_ be destroyed!
     let _log_pointer = Box::into_raw(log_pointer);
@@ -92,7 +95,7 @@ pub unsafe fn discoverPetriNetAlphaPPP<'local>(
     algo_config: JString,
 ) -> JString<'local> {
     let algo_config =
-        AlphaPPPConfig::from_json(&env.get_string(&algo_config).unwrap().to_str().unwrap());
+        AlphaPPPConfig::from_json(env.get_string(&algo_config).unwrap().to_str().unwrap());
     println!("[Rust] Got config {:?}", algo_config);
     let log_boxed = Box::from_raw(log_pointer as *mut EventLog);
     let (net, _duration) = alphappp_discover_petri_net(&(log_boxed.as_ref()).into(), algo_config);
@@ -107,9 +110,9 @@ pub unsafe fn discoverPetriNetAlphaPPPFromActProjAuto<'local>(
     activities_json: JString,
 ) -> JString<'local> {
     let acts: Vec<String> =
-        serde_json::from_str(&env.get_string(&activities_json).unwrap().to_str().unwrap()).unwrap();
+        serde_json::from_str(env.get_string(&activities_json).unwrap().to_str().unwrap()).unwrap();
     let variants: HashMap<String, u64> =
-        serde_json::from_str(&env.get_string(&variants_json).unwrap().to_str().unwrap()).unwrap();
+        serde_json::from_str(env.get_string(&variants_json).unwrap().to_str().unwrap()).unwrap();
     let mut log_proj = EventLogActivityProjection {
         activities: acts.clone(),
         act_to_index: acts
@@ -123,8 +126,7 @@ pub unsafe fn discoverPetriNetAlphaPPPFromActProjAuto<'local>(
         .iter()
         .map(|(var, count)| {
             (
-                var.split(",")
-                    .into_iter()
+                var.split(',')
                     .map(|a| *log_proj.act_to_index.get(a).unwrap())
                     .collect(),
                 *count,
@@ -139,7 +141,7 @@ pub unsafe fn discoverPetriNetAlphaPPPFromActProjAuto<'local>(
     }
     let res = AutoDiscoveryResult {
         petri_net: net,
-        config: config,
+        config,
     };
     env.new_string(serde_json::to_string(&res).unwrap())
         .unwrap()
@@ -153,9 +155,9 @@ pub unsafe fn testActProjPassPerformance<'local>(
     activities_json: JString,
 ) -> JString<'local> {
     let acts: Vec<String> =
-        serde_json::from_str(&env.get_string(&activities_json).unwrap().to_str().unwrap()).unwrap();
+        serde_json::from_str(env.get_string(&activities_json).unwrap().to_str().unwrap()).unwrap();
     let variants: HashMap<String, u64> =
-        serde_json::from_str(&env.get_string(&variants_json).unwrap().to_str().unwrap()).unwrap();
+        serde_json::from_str(env.get_string(&variants_json).unwrap().to_str().unwrap()).unwrap();
     let mut log_proj = EventLogActivityProjection {
         activities: acts.clone(),
         act_to_index: acts
@@ -170,8 +172,7 @@ pub unsafe fn testActProjPassPerformance<'local>(
         .iter()
         .map(|(var, count)| {
             (
-                var.split(",")
-                    .into_iter()
+                var.split(',')
                     .map(|a| *log_proj.act_to_index.get(a).unwrap())
                     .collect(),
                 *count,
@@ -191,12 +192,12 @@ pub unsafe fn discoverPetriNetAlphaPPPFromActProj<'local>(
     algo_config_json: JString,
 ) -> JString<'local> {
     let algo_config =
-        AlphaPPPConfig::from_json(&env.get_string(&algo_config_json).unwrap().to_str().unwrap());
+        AlphaPPPConfig::from_json(env.get_string(&algo_config_json).unwrap().to_str().unwrap());
     println!("[Rust] Got config {:?}", algo_config);
     let acts: Vec<String> =
-        serde_json::from_str(&env.get_string(&activities_json).unwrap().to_str().unwrap()).unwrap();
+        serde_json::from_str(env.get_string(&activities_json).unwrap().to_str().unwrap()).unwrap();
     let variants: HashMap<String, u64> =
-        serde_json::from_str(&env.get_string(&variants_json).unwrap().to_str().unwrap()).unwrap();
+        serde_json::from_str(env.get_string(&variants_json).unwrap().to_str().unwrap()).unwrap();
     let mut log_proj = EventLogActivityProjection {
         activities: acts.clone(),
         act_to_index: acts
@@ -211,8 +212,7 @@ pub unsafe fn discoverPetriNetAlphaPPPFromActProj<'local>(
         .iter()
         .map(|(var, count)| {
             (
-                var.split(",")
-                    .into_iter()
+                var.split(',')
                     .map(|a| *log_proj.act_to_index.get(a).unwrap())
                     .collect(),
                 *count,
@@ -224,13 +224,13 @@ pub unsafe fn discoverPetriNetAlphaPPPFromActProj<'local>(
 }
 
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
-pub unsafe fn importXESLog<'local>(mut env: JNIEnv<'local>, _: JClass, path: JString) -> jlong {
+pub unsafe fn importXESLog(mut env: JNIEnv<'_>, _: JClass, path: JString) -> jlong {
     let log: EventLog = import_xes_file(
-        &env.get_string(&path).unwrap().to_str().unwrap(),
+        env.get_string(&path).unwrap().to_str().unwrap(),
         XESImportOptions::default(),
     )
     .unwrap();
     let log_box = Box::new(log);
-    let pointer = Box::into_raw(log_box) as jlong;
-    pointer
+
+    Box::into_raw(log_box) as jlong
 }

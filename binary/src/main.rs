@@ -1,53 +1,79 @@
-use std::time::Instant;
+use std::{
+    fs::File,
+    io::BufReader,
+    time::Instant,
+};
 
 use process_mining::{
-    event_log::{import_xes::XESImportOptions, xes_streaming::stream_xes_from_path},
-    import_xes_file,
+    event_log::{
+        activity_projection::EventLogActivityProjection,
+        constants::ACTIVITY_NAME,
+        import_xes::{build_ignore_attributes, XESImportOptions},
+        stream_xes::{
+            construct_log_data_cell, stream_xes_from_path,
+        },
+    },
+    import_ocel_xml_file, import_xes_file, OCEL,
 };
 
 fn main() {
-    let path = "/home/aarkue/doc/sciebo/alpha-revisit/BPI_Challenge_2018.xes";
-    let now = Instant::now();
-    let s = stream_xes_from_path(path, XESImportOptions::default()).unwrap();
-    let count = s.stream().count();
-    println!("Streamed XES with {} cases in {:#?}", count, now.elapsed());
+    let xes_path = "../../../dow/event_data/BPI Challenge 2018.xes.gz";
 
+    // Default XES parsing
     let now = Instant::now();
-    // // XES
-    let res = import_xes_file(path, XESImportOptions::default()).unwrap();
+    let log = import_xes_file(xes_path, XESImportOptions::default()).unwrap();
     println!(
         "Parsed XES with {} cases in {:#?}",
-        res.traces.len(),
+        log.traces.len(),
         now.elapsed()
     );
 
-    // let log = import_xes_file(
-    //     "log.xes",
-    //     XESImportOptions {
-    //             ignore_event_attributes_except: Some(build_ignore_attributes(vec![
-    //                 "concept:name",
-    //                 "time:timestamp",
-    //             ])),
-    //             ignore_trace_attributes_except: Some(build_ignore_attributes(vec!["concept:name"])),
-    //         ..Default::default()
-    //     },
-    // )
-    // .unwrap();
+    // Streaming XES Parsing (constructing a primitive [EventLogActivityProjection])
+    // This demonstrates how streaming can be enable very low memory consumption and faster processing
+    let log_data = construct_log_data_cell();
+    let now = Instant::now();
+    let st_res = stream_xes_from_path(
+        xes_path,
+        XESImportOptions {
+            ignore_event_attributes_except: Some(build_ignore_attributes(vec![ACTIVITY_NAME])),
+            ignore_trace_attributes_except: Some(build_ignore_attributes(Vec::<&str>::new())),
+            ignore_log_attributes_except: Some(build_ignore_attributes(Vec::<&str>::new())),
+            ..XESImportOptions::default()
+        },
+        &log_data,
+    );
+    match st_res {
+        Ok(st) => {
+            let projection: EventLogActivityProjection = st.into();
+            println!(
+                "Streamed XES into Activity Projection with {} variants in {:#?}",
+                projection.traces.len(),
+                now.elapsed()
+            );
+        }
+        Err(e) => {
+            eprintln!("Error while streaming parsing: {}", e);
+        }
+    }
 
-    // println!(
-    //     "Imported XES with {} traces in {:#?}",
-    //     log.traces.len(),
-    //     now.elapsed()
-    // );
+    // Parsing XML OCEL files:
+    let ocel = import_ocel_xml_file("../../../dow/event_data/order-management.xml");
+    println!(
+        "Imported OCEL2 XML with {} objects and {} events in {:#?}",
+        ocel.objects.len(),
+        ocel.events.len(),
+        now.elapsed()
+    );
 
-    // OCEL:
-
-    // println!("{:?}",log.traces.first().unwrap());
-    // let ocel = import_ocel_xml_file("/home/aarkue/dow/order-management(2).xml");
-    // println!(
-    //     "Imported OCEL with {} objects and {} events in {:#?}",
-    //     ocel.objects.len(),
-    //     ocel.events.len(),
-    //     now.elapsed()
-    // );
+    // Parsing JSON OCEL files
+    let ocel: OCEL = serde_json::from_reader(BufReader::new(
+        File::open("../../../dow/event_data/order-management.json").unwrap(),
+    ))
+    .unwrap();
+    println!(
+        "Imported OCEL2 JSON with {} objects and {} events in {:#?}",
+        ocel.objects.len(),
+        ocel.events.len(),
+        now.elapsed()
+    );
 }

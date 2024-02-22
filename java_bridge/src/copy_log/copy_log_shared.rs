@@ -35,7 +35,7 @@ pub struct JEventLog {
 /// Currently required for converting an [EventLog] to an [JEventLog] (+ all subtypes)
 fn stringMapToAttributeMap(map: &Attributes) -> HashMap<String, Attribute> {
     map.iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
+        .map(|attr| (attr.key.clone(), attr.clone()))
         .collect()
 }
 
@@ -45,9 +45,7 @@ fn stringMapToAttributeMap(map: &Attributes) -> HashMap<String, Attribute> {
 ///
 /// Required for converting a [JEventLog] to an [EventLog] (+ all subtypes)
 fn AttributeMapToStringMap(map: &HashMap<String, Attribute>) -> Attributes {
-    map.iter()
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect()
+    map.iter().map(|(_, value)| value.clone()).collect()
 }
 
 impl From<&Event> for JEvent {
@@ -78,19 +76,19 @@ impl From<&EventLog> for JEventLog {
     }
 }
 
-impl Into<Event> for &JEvent {
-    fn into(self) -> Event {
+impl From<&JEvent> for Event {
+    fn from(val: &JEvent) -> Self {
         Event {
-            attributes: AttributeMapToStringMap(&self.attributes),
+            attributes: AttributeMapToStringMap(&val.attributes),
         }
     }
 }
 
-impl Into<Trace> for JTrace {
-    fn into(self) -> Trace {
+impl From<JTrace> for Trace {
+    fn from(val: JTrace) -> Self {
         Trace {
-            attributes: AttributeMapToStringMap(&self.attributes),
-            events: self.events.iter().map(|e| e.into()).collect(),
+            attributes: AttributeMapToStringMap(&val.attributes),
+            events: val.events.iter().map(|e| e.into()).collect(),
         }
     }
 }

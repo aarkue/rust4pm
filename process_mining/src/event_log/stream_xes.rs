@@ -1,6 +1,8 @@
 use std::{
+    cell::RefCell,
     fs::File,
     io::{BufRead, BufReader, Read},
+    iter::FusedIterator,
 };
 
 use flate2::read::GzDecoder;
@@ -14,7 +16,11 @@ use super::{
     Attribute, AttributeAddable, AttributeValue, Attributes, Event, Trace,
 };
 
-pub struct XESTraceStreamIter<'a>(XESTraceStream<'a>);
+///
+/// Iterator directly yielding items of type [Trace]
+///
+/// Does no error checking by itself. Consumers should use [XESTraceStreamLogData::terminated_on_error] after iterator ends (i.e., first [None] is returned from `next()`)
+pub struct XESTraceStreamIter<'a>(XESTraceStreamParser<'a>);
 
 impl<'a> Iterator for XESTraceStreamIter<'a> {
     type Item = Trace;
@@ -24,7 +30,18 @@ impl<'a> Iterator for XESTraceStreamIter<'a> {
     }
 }
 
-pub struct XESTraceStreamIterResult<'a>(XESTraceStream<'a>);
+/// Fused iterator (once None, always None)
+/// Holds when file ends but also when an [XESParseError] is encountered
+impl<'a> FusedIterator for XESTraceStreamIter<'a> {}
+
+///
+/// Iterator yielding items of type [Result<Trace, XESParseError>]
+///
+/// Incoporates error checking: When an error is encountered while streaming, one last `Some(Result<...>)` will be emitted (containing an [XESParseError])
+///
+/// In most cases, [XESTraceStreamIter] should be preferred and used instead, because of better performance and ergonomics.
+///
+pub struct XESTraceStreamIterResult<'a>(XESTraceStreamParser<'a>);
 
 impl<'a> Iterator for XESTraceStreamIterResult<'a> {
     type Item = Result<Trace, XESParseError>;
@@ -37,61 +54,116 @@ impl<'a> Iterator for XESTraceStreamIterResult<'a> {
     }
 }
 
+/// Fused iterator (once None, always None)
+/// Holds when file ends but also when an [XESParseError] is encountered
+impl<'a> FusedIterator for XESTraceStreamIterResult<'a> {}
+
+#[derive(Default, Debug)]
+/// (Global) log data parsed during streaming
 ///
-/// Streaming Parser for [Trace]s
+/// Also includes `terminated_on_error` for convenient error detection
 ///
-/// Experimental implementation
+/// According to the state machine flow in XES standard (https://xes-standard.org/_media/xes/xesstandarddefinition-2.0.pdf#page=11) those must occur before the first trace.
+/// The current streaming parser will however also allow them afterwards.
 ///
-pub struct XESTraceStream<'a> {
-    reader: Box<Reader<Box<dyn BufRead + 'a>>>,
-    buf: Vec<u8>,
-    current_mode: Mode,
-    current_trace: Option<Trace>,
-    last_mode_before_attr: Mode,
-    current_nested_attributes: Vec<Attribute>,
-    extensions: Vec<EventLogExtension>,
-    classifiers: Vec<EventLogClassifier>,
-    log_attributes: Attributes,
-    options: XESImportOptions,
-    encountered_log: bool,
-    terminated_on_error: Option<XESParseError>,
-    trace_cached: Option<Trace>,
+/// Thus, __for XES-compliant logs it is guaranteed that this data is already complete once the first trace is emitted from the iterator__.
+pub struct XESTraceStreamLogData {
+    pub extensions: Vec<EventLogExtension>,
+    pub classifiers: Vec<EventLogClassifier>,
+    pub log_attributes: Attributes,
+    /// Whether an error (wrapped in [Some]) was encountered or not ([None])
+    pub terminated_on_error: Option<XESParseError>,
 }
 
-impl<'a> XESTraceStream<'a> {
+/// A RefCell over [XESTraceStreamLogData] to pass inside a [XESTraceStream]
+pub type XESTraceStreamLogDataRefCell = RefCell<XESTraceStreamLogData>;
+
+/// Construct a new [XESTraceStreamLogDataRefCell]
+///
+/// Convenient function for constructing a [XESTraceStream]
+pub fn construct_log_data_cell() -> XESTraceStreamLogDataRefCell {
+    RefCell::new(XESTraceStreamLogData::default())
+}
+
+///
+/// Streaming XES Parser over [Trace]s
+///
+/// Can be initiated using any of the streaming functions (e.g. [stream_xes_from_path], [stream_xes_slice], ...)
+pub struct XESTraceStreamParser<'a> {
+    ///
+    /// Boxed [quick_xml::reader::Reader] to read XML from
+    ///
+    /// (2x Boxed to prevent making [XESTraceStream] generic, which for example is inconvenient for both gz- and non-gz-readers)
+    reader: Box<Reader<Box<dyn BufRead + 'a>>>,
+    /// Buffer to read xml into
+    buf: Vec<u8>,
+    /// Current parsing mode
+    current_mode: Mode,
+    /// Currently active (=open) trace in current XML parsing position
+    current_trace: Option<Trace>,
+    // Last mode before nested attribute parsing
+    last_mode_before_attr: Mode,
+    /// Current nested attributes (used for nested attribute parsing)
+    current_nested_attributes: Vec<Attribute>,
+    /// XES Import options (see [XESImportOptions])
+    options: XESImportOptions,
+    /// Whether a (top-level) log tag was encountered yet (top-level log tag is required for XES files, see [XESParseError::NoTopLevelLog])
+    encountered_log: bool,
+    /// Whether the parsing was terminated by encountering an error: If yes, parsing will stop
+    terminated_on_error: Option<XESParseError>,
+    /// Cached [Trace] (already parsed but not yet emitted) used for initially checking if any valid trace is contained, see also [XESTraceStream::try_new]
+    trace_cached: Option<Trace>,
+    log_data: &'a XESTraceStreamLogDataRefCell,
+}
+
+impl<'a> XESTraceStreamParser<'a> {
     ///
     /// Iterate over the parsed [Trace]s as a `Result<Trace,XESParseError`
     ///
-    /// The resulting iterator will return a single `Err(...)` item and no items after that if an [XESParseError] is encountered.
+    /// The resulting iterator will return a single `Err(...)` item (and no items after that) if an [XESParseError] is encountered.
     /// For a Iterator over the [Trace] type directly see the `stream`` function instead
-    ///
-    /// Experimental implementation!
-    ///
     ///
     pub fn stream_results(self) -> XESTraceStreamIterResult<'a> {
         XESTraceStreamIterResult(self)
     }
+
     ///
     /// Iterate over the parsed [Trace]s
     ///
     /// The resulting iterator will simply report None when error are encountered.
     /// For a Iterator over Result types see the `stream_results`` function instead
     ///
-    /// Experimental implementation!
-    ///
-    ///
     pub fn stream(self) -> XESTraceStreamIter<'a> {
         XESTraceStreamIter(self)
     }
 
+    /// Try to parse a next [Trace] from the current position
+    ///
+    /// Returns [None] if there are no more traces or an error was encountered (errors are detectable using [XESTraceStreamParser::log_data] and [XESTraceStreamLogData::terminated_on_error])
+    ///
+    /// Otherwise returns [Some] wrapping a [Trace] with next trace in the data
     fn next_trace(&mut self) -> Option<Trace> {
+        // Helper function to terminate parsing and set the error fields
+        fn terminate_with_error(
+            myself: &mut XESTraceStreamParser,
+            error: XESParseError,
+        ) -> Option<Trace> {
+            myself.log_data.borrow_mut().terminated_on_error = Some(error.clone());
+            myself.terminated_on_error = Some(error);
+            None
+        }
+        // After an error is encountered do not continue parsing
         if self.terminated_on_error.is_some() {
             return None;
         }
+        // If there is a cached trace available, return that (and unset trace_cached)
         if let Some(t) = self.trace_cached.take() {
             self.trace_cached = None;
             return Some(t);
         }
+
+        self.reader.trim_text(true);
+
         loop {
             match self.reader.read_event_into(&mut self.buf) {
                 Ok(r) => {
@@ -106,8 +178,8 @@ impl<'a> XESTraceStream<'a> {
                                     }
                                     None => {
                                         self.current_trace = Some(Trace {
-                                            attributes: Attributes::new(),
-                                            events: Vec::new(),
+                                            attributes: Attributes::with_capacity(10),
+                                            events: Vec::with_capacity(10),
                                         });
                                     }
                                 }
@@ -117,7 +189,7 @@ impl<'a> XESTraceStream<'a> {
                                 match &mut self.current_trace {
                                     Some(t) => {
                                         t.events.push(Event {
-                                            attributes: Attributes::new(),
+                                            attributes: Attributes::with_capacity(10),
                                         });
                                     }
                                     None => {
@@ -141,8 +213,10 @@ impl<'a> XESTraceStream<'a> {
                             }
                             _x => {
                                 if !self.encountered_log {
-                                    self.terminated_on_error = Some(XESParseError::NoTopLevelLog);
-                                    return None;
+                                    return terminate_with_error(
+                                        self,
+                                        XESParseError::NoTopLevelLog,
+                                    );
                                 }
                                 {
                                     // Nested attribute!
@@ -190,8 +264,12 @@ impl<'a> XESTraceStream<'a> {
                                         _ => {}
                                     }
                                 });
-                                self.extensions
-                                    .push(EventLogExtension { name, prefix, uri })
+                                self.log_data
+                                    .borrow_mut()
+                                    .extensions
+                                    .push(EventLogExtension { name, prefix, uri });
+                                // self.extensions
+                                //     .push(EventLogExtension { name, prefix, uri })
                             }
                             b"classifier" => {
                                 let mut name = String::new();
@@ -208,10 +286,13 @@ impl<'a> XESTraceStream<'a> {
                                         _ => {}
                                     }
                                 });
-                                self.classifiers.push(EventLogClassifier {
-                                    name,
-                                    keys: keys.split(' ').map(|s| s.to_string()).collect(),
-                                })
+                                self.log_data
+                                    .borrow_mut()
+                                    .classifiers
+                                    .push(EventLogClassifier {
+                                        name,
+                                        keys: keys.split(' ').map(|s| s.to_string()).collect(),
+                                    })
                             }
                             b"log" => {
                                 // Empty log, but still a log
@@ -220,20 +301,23 @@ impl<'a> XESTraceStream<'a> {
                             }
                             _ => {
                                 if !self.encountered_log {
-                                    self.terminated_on_error = Some(XESParseError::NoTopLevelLog);
-                                    return None;
+                                    return terminate_with_error(
+                                        self,
+                                        XESParseError::NoTopLevelLog,
+                                    );
                                 }
-                                if !XESTraceStream::add_attribute_from_tag(
+                                if !XESTraceStreamParser::add_attribute_from_tag(
                                     &self.current_mode,
                                     &mut self.current_trace,
-                                    &mut self.log_attributes,
+                                    &mut self.log_data.borrow_mut().log_attributes,
                                     &mut self.current_nested_attributes,
                                     &self.options,
                                     &t,
                                 ) {
-                                    self.terminated_on_error =
-                                        Some(XESParseError::AttributeOutsideLog);
-                                    return None;
+                                    return terminate_with_error(
+                                        self,
+                                        XESParseError::AttributeOutsideLog,
+                                    );
                                 }
                             }
                         },
@@ -242,7 +326,13 @@ impl<'a> XESTraceStream<'a> {
                                 b"event" => self.current_mode = Mode::Trace,
                                 b"trace" => {
                                     self.current_mode = Mode::Log;
-                                    let trace = self.current_trace.take().unwrap();
+                                    let mut trace = self.current_trace.take().unwrap();
+                                    trace
+                                        .events
+                                        .iter_mut()
+                                        .for_each(|e| e.attributes.shrink_to_fit());
+                                    trace.events.shrink_to_fit();
+                                    trace.attributes.shrink_to_fit();
                                     self.current_trace = None;
                                     return Some(trace);
                                 }
@@ -262,14 +352,12 @@ impl<'a> XESTraceStream<'a> {
                                                         .own_attributes
                                                         .as_mut()
                                                     {
-                                                        own_attrs.insert(attr.key.clone(), attr);
+                                                        own_attrs.push(attr);
                                                     } else {
-                                                        let mut own_attrs = Attributes::new();
-                                                        own_attrs.insert(attr.key.clone(), attr);
                                                         self.current_nested_attributes
                                                             .last_mut()
                                                             .unwrap()
-                                                            .own_attributes = Some(own_attrs)
+                                                            .own_attributes = Some(vec![attr])
                                                     }
                                                 } else {
                                                     match self.last_mode_before_attr {
@@ -279,12 +367,12 @@ impl<'a> XESTraceStream<'a> {
                                                             {
                                                                 last_trace
                                                                     .attributes
-                                                                    .insert(attr.key.clone(), attr);
+                                                                    .add_attribute(attr);
                                                             } else {
-                                                                self.terminated_on_error = Some(
+                                                                return terminate_with_error(
+                                                                    self,
                                                                     XESParseError::MissingLastTrace,
                                                                 );
-                                                                return None;
                                                             }
                                                         }
                                                         Mode::Event => {
@@ -294,29 +382,30 @@ impl<'a> XESTraceStream<'a> {
                                                                 if let Some(last_event) =
                                                                     last_trace.events.last_mut()
                                                                 {
-                                                                    last_event.attributes.insert(
-                                                                        attr.key.clone(),
-                                                                        attr,
-                                                                    );
+                                                                    last_event
+                                                                        .attributes
+                                                                        .add_attribute(attr);
                                                                 } else {
-                                                                    self.terminated_on_error = Some(XESParseError::MissingLastEvent);
-                                                                    return None;
+                                                                    return terminate_with_error(self,XESParseError::MissingLastEvent);
                                                                 }
                                                             } else {
-                                                                self.terminated_on_error = Some(
+                                                                return terminate_with_error(
+                                                                    self,
                                                                     XESParseError::MissingLastTrace,
                                                                 );
-                                                                return None;
                                                             }
                                                         }
                                                         Mode::Log => {
-                                                            self.log_attributes
-                                                                .insert(attr.key.clone(), attr);
+                                                            self.log_data
+                                                                .borrow_mut()
+                                                                .log_attributes
+                                                                .add_attribute(attr);
                                                         }
                                                         _x => {
-                                                            self.terminated_on_error =
-                                                                Some(XESParseError::InvalidMode);
-                                                            return None;
+                                                            return terminate_with_error(
+                                                                self,
+                                                                XESParseError::InvalidMode,
+                                                            );
                                                         }
                                                     }
                                                     self.current_mode = self.last_mode_before_attr;
@@ -334,18 +423,19 @@ impl<'a> XESTraceStream<'a> {
                             }
                         }
                         quick_xml::events::Event::Eof => {
+                            // Finished!
                             if !self.encountered_log {
-                                self.terminated_on_error = Some(XESParseError::NoTopLevelLog);
-                                return None;
+                                // If there was no (top-level) log tag, this was not a valid XES file!
+                                return terminate_with_error(self, XESParseError::NoTopLevelLog);
                             }
+                            //
                             return None;
                         }
                         _ => {}
                     }
                 }
                 Err(e) => {
-                    self.terminated_on_error = Some(XESParseError::XMLParsingError(e));
-                    return None;
+                    return terminate_with_error(self, XESParseError::XMLParsingError(e));
                 }
             }
             self.buf.clear();
@@ -353,9 +443,31 @@ impl<'a> XESTraceStream<'a> {
     }
 }
 
-impl<'a> XESTraceStream<'a> {
-    pub fn new(reader: Box<Reader<Box<dyn BufRead + 'a>>>, options: XESImportOptions) -> Self {
-        XESTraceStream {
+/// Iterate over traces in streamed log
+///
+/// Note: Errors are not handled by the iterator itself. See [XESTraceStreamIter].
+impl<'a> IntoIterator for XESTraceStreamParser<'a> {
+    type Item = Trace;
+
+    type IntoIter = XESTraceStreamIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.stream()
+    }
+}
+
+impl<'a> XESTraceStreamParser<'a> {
+    ///
+    /// Construct a new [XESTraceStreamParser] (without parsing anything)
+    ///
+    /// To directly parse the first trace (and thus quickly checking if the content _could_ be valid XES) use [XESTraceStreamParser::try_new] instead.
+    ///
+    pub fn new(
+        reader: Box<Reader<Box<dyn BufRead + 'a>>>,
+        options: XESImportOptions,
+        log_data: &'a XESTraceStreamLogDataRefCell,
+    ) -> Self {
+        XESTraceStreamParser {
             reader,
             current_mode: Mode::Log,
             current_trace: None,
@@ -363,20 +475,24 @@ impl<'a> XESTraceStream<'a> {
             encountered_log: false,
             current_nested_attributes: Vec::new(),
             options,
-            extensions: Vec::new(),
-            classifiers: Vec::new(),
-            log_attributes: Attributes::new(),
+            log_data,
             buf: Vec::new(),
             terminated_on_error: None,
             trace_cached: None,
         }
     }
 
+    ///
+    /// Try to construct a new [XESTraceStreamParser] and directly try to parse the first trace
+    ///
+    /// This allows quickly checking if the content _could_ be valid XES (See [XESTraceStreamParser::new] for a version which does no initial parsing)
+    ///
     pub fn try_new(
         reader: Box<Reader<Box<dyn BufRead + 'a>>>,
         options: XESImportOptions,
+        log_data: &'a XESTraceStreamLogDataRefCell,
     ) -> Result<Self, XESParseError> {
-        let mut s = XESTraceStream {
+        let mut s = XESTraceStreamParser {
             reader,
             current_mode: Mode::Log,
             current_trace: None,
@@ -384,9 +500,7 @@ impl<'a> XESTraceStream<'a> {
             encountered_log: false,
             current_nested_attributes: Vec::new(),
             options,
-            extensions: Vec::new(),
-            classifiers: Vec::new(),
-            log_attributes: Attributes::new(),
+            log_data,
             buf: Vec::new(),
             terminated_on_error: None,
             trace_cached: None,
@@ -394,10 +508,13 @@ impl<'a> XESTraceStream<'a> {
         let t = s.next_trace();
         match t {
             Some(trace) => {
+                // If a trace was parsed, the XML looks to be valid XES for now
+                // -> Cache the parsed trace and return the XESTraceStreamParser
                 s.trace_cached = Some(trace);
                 Ok(s)
             }
             None => {
+                // No trace returned, this could either be an error or just an empty log
                 if let Some(e) = s.terminated_on_error {
                     Err(e)
                 } else {
@@ -407,6 +524,9 @@ impl<'a> XESTraceStream<'a> {
         }
     }
 
+    ///
+    /// Add XES attribute from tag to the currently active element (indicated by `current_mode`)
+    ///
     fn add_attribute_from_tag(
         current_mode: &Mode,
         current_trace: &mut Option<Trace>,
@@ -524,13 +644,15 @@ impl<'a> XESTraceStream<'a> {
 ///
 /// Note, that currently events outside of a trace and log attributes, classifiers and extensions are not exposed
 ///
-pub fn stream_xes_slice(
-    xes_data: &[u8],
+pub fn stream_xes_slice<'a>(
+    xes_data: &'a [u8],
     options: XESImportOptions,
-) -> Result<XESTraceStream, XESParseError> {
-    XESTraceStream::try_new(
+    log_data: &'a XESTraceStreamLogDataRefCell,
+) -> Result<XESTraceStreamParser<'a>, XESParseError> {
+    XESTraceStreamParser::try_new(
         Box::new(Reader::from_reader(Box::new(BufReader::new(xes_data)))),
         options,
+        log_data,
     )
 }
 
@@ -541,13 +663,18 @@ pub fn stream_xes_slice(
 ///
 /// Note, that currently events outside of a trace and log attributes, classifiers and extensions are not exposed
 ///
-pub fn stream_xes_slice_gz(
-    xes_data: &[u8],
+pub fn stream_xes_slice_gz<'a>(
+    xes_data: &'a [u8],
     options: XESImportOptions,
-) -> Result<XESTraceStream, XESParseError> {
+    log_data: &'a XESTraceStreamLogDataRefCell,
+) -> Result<XESTraceStreamParser<'a>, XESParseError> {
     let gz: GzDecoder<&[u8]> = GzDecoder::new(xes_data);
     let reader = BufReader::new(gz);
-    XESTraceStream::try_new(Box::new(Reader::from_reader(Box::new(reader))), options)
+    XESTraceStreamParser::try_new(
+        Box::new(Reader::from_reader(Box::new(reader))),
+        options,
+        log_data,
+    )
 }
 
 ///
@@ -557,13 +684,15 @@ pub fn stream_xes_slice_gz(
 ///
 /// Note, that currently events outside of a trace and log attributes, classifiers and extensions are not exposed
 ///
-fn stream_xes_file<'a>(
+pub fn stream_xes_file(
     file: File,
     options: XESImportOptions,
-) -> Result<XESTraceStream<'a>, XESParseError> {
-    XESTraceStream::try_new(
+    log_data: &XESTraceStreamLogDataRefCell,
+) -> Result<XESTraceStreamParser<'_>, XESParseError> {
+    XESTraceStreamParser::try_new(
         Box::new(Reader::from_reader(Box::new(BufReader::new(file)))),
         options,
+        log_data,
     )
 }
 
@@ -574,14 +703,16 @@ fn stream_xes_file<'a>(
 ///
 /// Note, that currently events outside of a trace and log attributes, classifiers and extensions are not exposed
 ///
-fn stream_xes_file_gz<'a>(
+pub fn stream_xes_file_gz(
     file: File,
     options: XESImportOptions,
-) -> Result<XESTraceStream<'a>, XESParseError> {
+    log_data: &XESTraceStreamLogDataRefCell,
+) -> Result<XESTraceStreamParser<'_>, XESParseError> {
     let dec = GzDecoder::new(file);
-    XESTraceStream::try_new(
+    XESTraceStreamParser::try_new(
         Box::new(Reader::from_reader(Box::new(BufReader::new(dec)))),
         options,
+        log_data,
     )
 }
 
@@ -592,27 +723,28 @@ fn stream_xes_file_gz<'a>(
 ///
 /// Note, that currently events outside of a trace and log attributes, classifiers and extensions are not exposed
 ///
-pub fn stream_xes_from_path(
+pub fn stream_xes_from_path<'a>(
     path: &str,
     options: XESImportOptions,
-) -> Result<XESTraceStream<'_>, XESParseError> {
+    log_data: &'a XESTraceStreamLogDataRefCell,
+) -> Result<XESTraceStreamParser<'a>, XESParseError> {
     let file = File::open(path)?;
     if path.ends_with(".gz") {
-        stream_xes_file_gz(file, options)
+        stream_xes_file_gz(file, options, log_data)
     } else {
-        stream_xes_file(file, options)
+        stream_xes_file(file, options, log_data)
     }
 }
 
 #[cfg(test)]
-mod tests {
+mod stream_test {
     use std::{collections::HashSet, time::Instant};
 
     use crate::{
         event_log::{
             event_log_struct::EventLogClassifier,
             import_xes::build_ignore_attributes,
-            xes_streaming::{stream_xes_slice, stream_xes_slice_gz},
+            stream_xes::{construct_log_data_cell, stream_xes_slice, stream_xes_slice_gz},
         },
         XESImportOptions,
     };
@@ -620,7 +752,8 @@ mod tests {
     #[test]
     fn test_xes_stream() {
         let x = include_bytes!("tests/test_data/RepairExample.xes");
-        let num_traces = stream_xes_slice(x, XESImportOptions::default())
+        let log_data = construct_log_data_cell();
+        let num_traces = stream_xes_slice(x, XESImportOptions::default(), &log_data)
             .unwrap()
             .stream()
             .count();
@@ -638,6 +771,7 @@ mod tests {
             keys: vec!["concept:name".to_string()],
         };
         let now = Instant::now();
+        let log_data = construct_log_data_cell();
         let log_stream = stream_xes_slice_gz(
             log_bytes,
             XESImportOptions {
@@ -646,6 +780,7 @@ mod tests {
                 ignore_log_attributes_except: Some(build_ignore_attributes(Vec::<&str>::new())),
                 ..XESImportOptions::default()
             },
+            &log_data,
         )
         .unwrap();
 

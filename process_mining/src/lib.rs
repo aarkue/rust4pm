@@ -16,7 +16,7 @@ pub mod event_log {
     pub mod constants;
     pub mod event_log_struct;
     pub mod import_xes;
-    pub mod xes_streaming;
+    pub mod stream_xes;
     pub mod ocel {
         pub mod ocel_struct;
         #[allow(clippy::single_match)]

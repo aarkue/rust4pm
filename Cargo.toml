@@ -8,3 +8,6 @@ members = [
 	"java_bridge",
 	"pm_wasm"
 ]
+
+[profile.release.package.pm_wasm]
+debug = true

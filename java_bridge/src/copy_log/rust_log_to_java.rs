@@ -7,7 +7,7 @@ use jni::{
 use uuid::Uuid;
 
 use jni_fn::jni_fn;
-use process_mining::event_log::{Attribute, AttributeValue, Attributes, EventLog, Trace};
+use process_mining::event_log::{AttributeAddable, AttributeValue, Attributes, EventLog, Trace};
 
 use super::copy_log_shared::{JEventLog, JTrace};
 
@@ -31,8 +31,8 @@ pub unsafe fn getCompleteRustTraceAsString<'local>(
     events_json.push(trace.attributes.clone());
     trace.events.iter().for_each(|e| {
         let mut attrs: Attributes = e.attributes.clone();
-        let (k, a) = Attribute::new_with_key("__UUID__".into(), AttributeValue::ID(Uuid::new_v4()));
-        attrs.insert(k, a);
+        attrs.add_to_attributes("__UUID__".into(), AttributeValue::ID(Uuid::new_v4()));
+        // let (k, a) = Attribute::new_with_key("__UUID__".into(), AttributeValue::ID(Uuid::new_v4()));
         events_json.push(attrs)
     });
     let all_json: String = serde_json::to_string(&events_json).unwrap();

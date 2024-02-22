@@ -5,6 +5,7 @@ use rayon::prelude::*;
 use super::event_log_struct::{Attribute, AttributeValue, EventLog};
 
 use super::constants::ACTIVITY_NAME;
+use super::AttributeAddable;
 
 pub const START_ACTIVITY: &str = "__START";
 pub const END_ACTIVITY: &str = "__END";
@@ -92,7 +93,40 @@ impl ActivityProjectionDFG {
         dfg
     }
 }
+impl<'a> From<super::stream_xes::XESTraceStreamParser<'a>> for EventLogActivityProjection {
+    fn from(value: super::stream_xes::XESTraceStreamParser) -> Self {
+        let mut act_to_index: HashMap<String, usize> = HashMap::new();
+        let mut activities: Vec<String> = Vec::new();
+        let mut traces: HashMap<Vec<usize>, u64> = HashMap::new();
+        for t in value.stream() {
+            let mut trace_acts: Vec<usize> = Vec::with_capacity(t.events.len());
+            for e in t.events {
+                let act = match e.attributes.get_by_key(ACTIVITY_NAME) {
+                    Some(act_attr) => match &act_attr.value {
+                        AttributeValue::String(s) => s.as_str(),
+                        _ => "No Activity",
+                    },
+                    None => "No Activity",
+                };
+                if let Some(index) = act_to_index.get(act) {
+                    trace_acts.push(*index);
+                } else {
+                    let new_act_index = activities.len();
+                    activities.push(act.to_string());
+                    act_to_index.insert(act.to_string(), new_act_index);
+                    trace_acts.push(new_act_index)
+                }
+            }
 
+            *traces.entry(trace_acts).or_insert(0) += 1;
+        }
+        Self {
+            activities,
+            act_to_index,
+            traces: traces.into_iter().collect(),
+        }
+    }
+}
 impl From<&EventLog> for EventLogActivityProjection {
     fn from(val: &EventLog) -> Self {
         let acts_per_trace: Vec<Vec<String>> = val
@@ -104,7 +138,7 @@ impl From<&EventLog> for EventLogActivityProjection {
                     .map(|e| {
                         match e
                             .attributes
-                            .get(ACTIVITY_NAME)
+                            .get_by_key(ACTIVITY_NAME)
                             .cloned()
                             .unwrap_or(Attribute {
                                 key: ACTIVITY_NAME.into(),

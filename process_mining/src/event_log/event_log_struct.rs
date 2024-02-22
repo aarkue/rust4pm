@@ -66,35 +66,43 @@ impl Attribute {
 ///
 /// Attributes are [HashMap] mapping a key ([String]) to an [Attribute]
 ///
-pub type Attributes = HashMap<String, Attribute>;
+pub type Attributes = Vec<Attribute>;
 
 ///
 /// Trait to easily add a new attribute
 pub trait AttributeAddable {
-    fn add_to_attributes(&mut self, key: String, value: AttributeValue) -> Option<&mut Attribute>;
+    fn add_to_attributes(&mut self, key: String, value: AttributeValue);
+    fn get_by_key(&self, key: &str) -> Option<&Attribute>;
+    fn add_attribute(&mut self, attr: Attribute);
 }
 impl AttributeAddable for Attributes {
     ///
     /// Add a new attribute (with key and value)
     ///
-    fn add_to_attributes(&mut self, key: String, value: AttributeValue) -> Option<&mut Attribute> {
-        let (k, v) = Attribute::new_with_key(key, value);
-        self.insert(k.clone(), v);
-        return self.get_mut(&k);
+    fn add_to_attributes(&mut self, key: String, value: AttributeValue) {
+        let a = Attribute::new(key, value);
+        self.push(a);
+        self.sort_by(|a, b| a.key.cmp(&b.key));
+        // return self.get_mut(&k);
+    }
+    fn add_attribute(&mut self, a: Attribute) {
+        self.push(a);
+    }
+    fn get_by_key(&self, key: &str) -> Option<&Attribute> {
+        match self.binary_search_by_key(&key, |a| &a.key) {
+            Ok(a) => Some(&self[a]),
+            Err(_) => None,
+        }
+        // self.iter().find(|attr| attr.key == key)
     }
 }
 
 pub fn to_attributes(from: HashMap<String, AttributeValue>) -> Attributes {
     from.into_iter()
-        .map(|(key, value)| {
-            (
-                key.clone(),
-                Attribute {
-                    key: key.clone(),
-                    value,
-                    own_attributes: None,
-                },
-            )
+        .map(|(key, value)| Attribute {
+            key: key.clone(),
+            value,
+            own_attributes: None,
         })
         .collect()
 }
@@ -177,7 +185,7 @@ pub struct EventLogClassifier {
     pub keys: Vec<String>,
 }
 impl EventLogClassifier {
-    const DELIMITER: &str = "+";
+    const DELIMITER: &'static str = "+";
     ///
     /// Get the class identity (joined with [EventLogClassifier::DELIMITER])
     ///
@@ -187,7 +195,7 @@ impl EventLogClassifier {
         let mut ret: String = String::new();
         let mut first = true;
         for k in &self.keys {
-            let s = match ev.attributes.get(k).map(|at| at.value.clone()) {
+            let s = match ev.attributes.get_by_key(k).map(|at| at.value.clone()) {
                 Some(AttributeValue::String(s)) => s,
                 _ => String::new(),
             };

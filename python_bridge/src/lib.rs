@@ -185,13 +185,18 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
         .flat_map(|t| {
             let trace_attrs: HashSet<String> = t
                 .attributes
-                .keys()
-                .map(|k| TRACE_PREFIX.to_string() + k.as_str())
+                .iter()
+                .map(|k| TRACE_PREFIX.to_string() + k.key.as_str())
                 .collect();
             let m: HashSet<String> = t
                 .events
                 .iter()
-                .flat_map(|e| e.attributes.keys().cloned().collect::<Vec<String>>())
+                .flat_map(|e| {
+                    e.attributes
+                        .iter()
+                        .map(|a| a.key.clone())
+                        .collect::<Vec<String>>()
+                })
                 .collect();
             [trace_attrs, m]
         })
@@ -210,13 +215,13 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
                     if k.starts_with(TRACE_PREFIX) {
                         let trace_k: String = k.chars().skip(TRACE_PREFIX.len()).collect();
                         vec![
-                            attribute_to_any_value(t.attributes.get(&trace_k), &utc_tz);
+                            attribute_to_any_value(t.attributes.get_by_key(&trace_k), &utc_tz);
                             t.events.len()
                         ]
                     } else {
                         t.events
                             .iter()
-                            .map(|e| attribute_to_any_value(e.attributes.get(k), &utc_tz))
+                            .map(|e| attribute_to_any_value(e.attributes.get_by_key(k), &utc_tz))
                             .collect()
                     }
                 })

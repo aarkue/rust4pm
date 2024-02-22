@@ -383,21 +383,17 @@ where
                             b"relationship" => {
                                 let object_id = get_attribute_value(&t, "object-id");
                                 let qualifier = get_attribute_value(&t, "qualifier");
-                                let new_rel : OCELRelationship = OCELRelationship {
+                                let new_rel: OCELRelationship = OCELRelationship {
                                     object_id,
                                     qualifier,
                                 };
-                                match ocel.objects
-                                    .last_mut()
-                                    .unwrap()
-                                    .relationships
-                                    .as_mut() {
-                                        Some(rels) => rels.push(new_rel),
-                                        None => ocel.objects
-                                        .last_mut()
-                                        .unwrap()
-                                        .relationships = Some(vec![new_rel]),
+                                match ocel.objects.last_mut().unwrap().relationships.as_mut() {
+                                    Some(rels) => rels.push(new_rel),
+                                    None => {
+                                        ocel.objects.last_mut().unwrap().relationships =
+                                            Some(vec![new_rel])
                                     }
+                                }
                             }
                             b"objects" => {
                                 // No O2O, that's fine!
@@ -419,63 +415,52 @@ where
                             b"relationship" => {
                                 let object_id = get_attribute_value(&t, "object-id");
                                 let qualifier = get_attribute_value(&t, "qualifier");
-                                let new_rel : OCELRelationship = OCELRelationship {
+                                let new_rel: OCELRelationship = OCELRelationship {
                                     object_id,
                                     qualifier,
                                 };
-                                match ocel.events
-                                    .last_mut()
-                                    .unwrap()
-                                    .relationships
-                                    .as_mut() {
-                                        Some(rels) => rels.push(new_rel),
-                                        None => ocel.events
-                                        .last_mut()
-                                        .unwrap()
-                                        .relationships = Some(vec![new_rel]),
+                                match ocel.events.last_mut().unwrap().relationships.as_mut() {
+                                    Some(rels) => rels.push(new_rel),
+                                    None => {
+                                        ocel.events.last_mut().unwrap().relationships =
+                                            Some(vec![new_rel])
                                     }
+                                }
                             }
                             // Angular log uses object instead?
                             b"object" => {
                                 let object_id = get_attribute_value(&t, "object-id");
                                 let qualifier = get_attribute_value(&t, "qualifier");
-                                let new_rel : OCELRelationship = OCELRelationship {
+                                let new_rel: OCELRelationship = OCELRelationship {
                                     object_id,
                                     qualifier,
                                 };
-                                match ocel.events
-                                    .last_mut()
-                                    .unwrap()
-                                    .relationships
-                                    .as_mut() {
-                                        Some(rels) => rels.push(new_rel),
-                                        None => ocel.events
-                                        .last_mut()
-                                        .unwrap()
-                                        .relationships = Some(vec![new_rel]),
+                                match ocel.events.last_mut().unwrap().relationships.as_mut() {
+                                    Some(rels) => rels.push(new_rel),
+                                    None => {
+                                        ocel.events.last_mut().unwrap().relationships =
+                                            Some(vec![new_rel])
                                     }
+                                }
                             }
-                            // mut x => print_to_string(&mut x, current_mode, "EventEmpty"),  
-                                                      _ => {}
-
+                            // mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
+                            _ => {}
                         },
                         // Mode::ObjectTypes => todo!(),
                         Mode::ObjectType => match t.name().as_ref() {
                             b"attributes" => {
                                 // No attributes, that's fine!
                             }
-                            // mut x => print_to_string(&mut x, current_mode, "EventEmpty"),      
-                                                  _ => {}
-
+                            // mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
+                            _ => {}
                         },
                         // Mode::EventTypes => todo!(),
                         Mode::EventType => match t.name().as_ref() {
                             b"attributes" => {
                                 // No attributes, that's fine!
                             }
-                            // mut x => print_to_string(&mut x, current_mode, "EventEmpty"),   
-                                                     _ => {}
-
+                            // mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
+                            _ => {}
                         },
                         Mode::EventTypeAttributes => match t.name().as_ref() {
                             b"attribute" => {
@@ -492,17 +477,15 @@ where
                                     .attributes
                                     .push(OCELTypeAttribute { name, value_type })
                             }
-                            // mut x => print_to_string(&mut x, current_mode, "EventEmpty"),             
-                                           _ => {}
-
+                            // mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
+                            _ => {}
                         },
                         // Mode::Attribute => todo!(),
                         // Mode::Log => todo!(),
                         // Mode::None => todo!(),
-                        _ => {}
-                        // match t.name().as_ref() {
-                        //     mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
-                        // },
+                        _ => {} // match t.name().as_ref() {
+                                //     mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
+                                // },
                     },
                     quick_xml::events::Event::Text(t) => match current_mode {
                         Mode::Object => {

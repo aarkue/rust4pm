@@ -1,13 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::str::FromStr;
 
-use crate::event_log::event_log_struct::{
-    Attribute, AttributeAddable, AttributeValue, Attributes, Event, EventLog, EventLogClassifier,
-    EventLogExtension, Trace,
-};
+use crate::event_log::event_log_struct::{AttributeValue, Attributes, EventLog, Trace};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use flate2::bufread::GzDecoder;
 use quick_xml::escape::unescape;
@@ -17,10 +14,12 @@ use quick_xml::Reader;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::stream_xes::{construct_log_data_cell, XESTraceStreamLogDataRefCell};
+
+#[derive(Clone, Copy, Debug)]
 ///
 /// Current Parsing Mode (i.e., which tag is currently open / being parsed)
 ///
-#[derive(Clone, Copy, Debug)]
 pub enum Mode {
     Trace,
     Event,
@@ -30,17 +29,17 @@ pub enum Mode {
     None,
 }
 
-#[derive(Debug)]
 ///
 /// Error encountered while parsing XES
 ///
+#[derive(Debug, Clone)]
 pub enum XESParseError {
     AttributeOutsideLog,
     NoTopLevelLog,
     MissingLastEvent,
     MissingLastTrace,
     InvalidMode,
-    IOError(std::io::Error),
+    IOError(std::rc::Rc<std::io::Error>),
     XMLParsingError(QuickXMLError),
 }
 
@@ -53,7 +52,7 @@ impl std::fmt::Display for XESParseError {
 impl std::error::Error for XESParseError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            XESParseError::IOError(e) => Some(e),
+            XESParseError::IOError(e) => Some(e.as_ref()),
             XESParseError::XMLParsingError(e) => Some(e),
             _ => None,
         }
@@ -70,7 +69,7 @@ impl std::error::Error for XESParseError {
 
 impl From<std::io::Error> for XESParseError {
     fn from(e: std::io::Error) -> Self {
-        Self::IOError(e)
+        Self::IOError(std::rc::Rc::new(e))
     }
 }
 
@@ -102,254 +101,33 @@ where
     I: IntoIterator<Item = S>,
 {
     keys.into_iter()
-        .map(|s| s.as_ref().as_bytes().clone().to_vec())
+        .map(|s| s.as_ref().as_bytes().to_vec())
         .collect()
 }
 
-///
-/// Import a XES [EventLog] from a [Reader]
-///
-pub fn import_xes<T>(
-    reader: &mut Reader<T>,
-    options: XESImportOptions,
-) -> Result<EventLog, XESParseError>
+pub fn import_xes<T>(reader: T, options: XESImportOptions) -> Result<EventLog, XESParseError>
 where
     T: BufRead,
 {
-    reader.trim_text(true);
-    let mut buf: Vec<u8> = Vec::new();
+    let log_data: XESTraceStreamLogDataRefCell = construct_log_data_cell();
+    let trace_stream = super::stream_xes::XESTraceStreamParser::try_new(
+        Box::new(Reader::from_reader(Box::new(reader))),
+        options,
+        &log_data,
+    )?;
+    let traces: Vec<Trace> = trace_stream.stream().collect();
+    let log_data_owned = log_data.take();
 
-    let mut current_mode: Mode = Mode::None;
-    let mut last_mode_before_attr: Mode = Mode::None;
-
-    let mut log = EventLog {
-        attributes: Attributes::new(),
-        traces: Vec::new(),
-        extensions: Some(Vec::new()),
-        classifiers: Some(Vec::new()),
-    };
-    let mut encountered_log = false;
-    let mut current_nested_attributes: Vec<Attribute> = Vec::new();
-
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(r) => {
-                match r {
-                    quick_xml::events::Event::Start(t) => match t.name().as_ref() {
-                        b"trace" => {
-                            current_mode = Mode::Trace;
-                            log.traces.push(Trace {
-                                attributes: Attributes::new(),
-                                events: Vec::new(),
-                            });
-                        }
-                        b"event" => {
-                            current_mode = Mode::Event;
-                            match log.traces.last_mut() {
-                                Some(t) => {
-                                    t.events.push(Event {
-                                        attributes: Attributes::new(),
-                                    });
-                                }
-                                None => {
-                                    eprintln!("Invalid XES format: Event without trace")
-                                }
-                            }
-                        }
-                        b"global" => {
-                            match current_mode {
-                                Mode::Global => {}
-                                Mode::Attribute => {}
-                                m => {
-                                    last_mode_before_attr = m;
-                                }
-                            }
-                            current_mode = Mode::Global;
-                        }
-                        b"log" => {
-                            encountered_log = true;
-                            current_mode = Mode::Log
-                        }
-                        _x => {
-                            if !encountered_log {
-                                return Err(XESParseError::NoTopLevelLog);
-                            }
-                            {
-                                // Nested attribute!
-                                let (key, value) =
-                                    parse_attribute_from_tag(&t, &current_mode, &options);
-                                if !(key.is_empty() && matches!(value, AttributeValue::None())) {
-                                    current_nested_attributes.push(Attribute {
-                                        key,
-                                        value,
-                                        own_attributes: Some(Attributes::new()),
-                                    });
-                                    match current_mode {
-                                        Mode::Attribute => {}
-                                        Mode::Global => {}
-                                        m => {
-                                            last_mode_before_attr = m;
-                                        }
-                                    }
-                                    current_mode = Mode::Attribute;
-                                }
-                            }
-                        }
-                    },
-                    quick_xml::events::Event::Empty(t) => match t.name().as_ref() {
-                        b"extension" => {
-                            let mut name = String::new();
-                            let mut prefix = String::new();
-                            let mut uri = String::new();
-                            t.attributes().for_each(|a| {
-                                let x = a.unwrap();
-                                match x.key.as_ref() {
-                                    b"name" => {
-                                        x.value.as_ref().read_to_string(&mut name).unwrap();
-                                    }
-                                    b"prefix" => {
-                                        x.value.as_ref().read_to_string(&mut prefix).unwrap();
-                                    }
-                                    b"uri" => {
-                                        x.value.as_ref().read_to_string(&mut uri).unwrap();
-                                    }
-                                    _ => {}
-                                }
-                            });
-                            log.extensions.as_mut().unwrap().push(EventLogExtension {
-                                name,
-                                prefix,
-                                uri,
-                            })
-                        }
-                        b"classifier" => {
-                            let mut name = String::new();
-                            let mut keys = String::new();
-                            t.attributes().for_each(|a| {
-                                let x = a.unwrap();
-                                match x.key.as_ref() {
-                                    b"name" => {
-                                        x.value.as_ref().read_to_string(&mut name).unwrap();
-                                    }
-                                    b"keys" => {
-                                        x.value.as_ref().read_to_string(&mut keys).unwrap();
-                                    }
-                                    _ => {}
-                                }
-                            });
-                            log.classifiers.as_mut().unwrap().push(EventLogClassifier {
-                                name,
-                                keys: keys.split(' ').map(|s| s.to_string()).collect(),
-                            })
-                        }
-                        b"log" => {
-                            // Empty log, but still a log
-                            encountered_log = true;
-                            current_mode = Mode::None
-                        }
-                        _ => {
-                            if !encountered_log {
-                                return Err(XESParseError::NoTopLevelLog);
-                            }
-                            if !add_attribute_from_tag(
-                                &t,
-                                current_mode,
-                                &mut log,
-                                &mut current_nested_attributes,
-                                &options,
-                            ) {
-                                return Err(XESParseError::AttributeOutsideLog);
-                            }
-                        }
-                    },
-                    quick_xml::events::Event::End(t) => {
-                        match t.as_ref() {
-                            b"event" => current_mode = Mode::Trace,
-                            b"trace" => current_mode = Mode::Log,
-                            b"log" => current_mode = Mode::None,
-                            b"global" => current_mode = last_mode_before_attr,
-                            _ => match current_mode {
-                                Mode::Attribute => {
-                                    if !current_nested_attributes.is_empty() {
-                                        let attr = current_nested_attributes.pop().unwrap();
-                                        if !current_nested_attributes.is_empty() {
-                                            current_nested_attributes
-                                                .last_mut()
-                                                .unwrap()
-                                                .own_attributes
-                                                .as_mut()
-                                                .unwrap()
-                                                .insert(attr.key.clone(), attr);
-                                        } else {
-                                            match last_mode_before_attr {
-                                                Mode::Trace => {
-                                                    if let Some(last_trace) = log.traces.last_mut()
-                                                    {
-                                                        last_trace
-                                                            .attributes
-                                                            .insert(attr.key.clone(), attr);
-                                                    } else {
-                                                        return Err(
-                                                            XESParseError::MissingLastTrace,
-                                                        );
-                                                    }
-                                                }
-                                                Mode::Event => {
-                                                    if let Some(last_trace) = log.traces.last_mut()
-                                                    {
-                                                        if let Some(last_event) =
-                                                            last_trace.events.last_mut()
-                                                        {
-                                                            last_event
-                                                                .attributes
-                                                                .insert(attr.key.clone(), attr);
-                                                        } else {
-                                                            return Err(
-                                                                XESParseError::MissingLastEvent,
-                                                            );
-                                                        }
-                                                    } else {
-                                                        return Err(
-                                                            XESParseError::MissingLastTrace,
-                                                        );
-                                                    }
-                                                }
-                                                Mode::Log => {
-                                                    log.attributes.insert(attr.key.clone(), attr);
-                                                }
-                                                x => {
-                                                    panic!("Invalid Mode! {:?}; This should not happen!",x);
-                                                }
-                                            }
-                                            current_mode = last_mode_before_attr;
-                                        }
-                                    } else {
-                                        // This means there was no current nested attribute but the mode indicated otherwise
-                                        // Should thus not happen, but execution can continue.
-                                        eprintln!("[Rust] Warning: Attribute mode but no open nested attributes!");
-                                        current_mode = last_mode_before_attr;
-                                    }
-                                }
-                                _ => current_mode = Mode::Log,
-                            },
-                        }
-                    }
-                    quick_xml::events::Event::Eof => break,
-                    _ => {}
-                }
-            }
-            Err(e) => {
-                eprintln!("[Rust] Error occured when parsing XES: {:?}", e);
-                return Err(XESParseError::XMLParsingError(e));
-            }
-        }
-        buf.clear();
+    if let Some(e) = log_data_owned.terminated_on_error {
+        return Err(e);
     }
-    if encountered_log {
-        Ok(log)
-    } else {
-        Err(XESParseError::NoTopLevelLog)
-    }
+
+    Ok(EventLog {
+        attributes: log_data_owned.log_attributes,
+        traces,
+        extensions: Some(log_data_owned.extensions),
+        classifiers: Some(log_data_owned.classifiers),
+    })
 }
 
 ///
@@ -360,10 +138,11 @@ pub fn import_xes_file(path: &str, options: XESImportOptions) -> Result<EventLog
         let file = File::open(path)?;
         let dec: GzDecoder<BufReader<&File>> = GzDecoder::new(BufReader::new(&file));
         let reader = BufReader::new(dec);
-        import_xes(&mut Reader::from_reader(reader), options)
+        import_xes(reader, options)
     } else {
-        let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path)?;
-        import_xes(&mut reader, options)
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        import_xes(reader, options)
     }
 }
 
@@ -371,8 +150,8 @@ pub fn import_xes_file(path: &str, options: XESImportOptions) -> Result<EventLog
 /// Import a XES [EventLog] directly from a string
 ///
 pub fn import_xes_str(xes_str: &str, options: XESImportOptions) -> Result<EventLog, XESParseError> {
-    let mut reader: Reader<&[u8]> = Reader::from_str(xes_str);
-    import_xes(&mut reader, options)
+    let reader = BufReader::new(xes_str.as_bytes());
+    import_xes(reader, options)
 }
 
 ///
@@ -389,9 +168,9 @@ pub fn import_xes_slice(
     if is_compressed_gz {
         let gz: GzDecoder<&[u8]> = GzDecoder::new(xes_data);
         let reader = BufReader::new(gz);
-        return import_xes(&mut Reader::from_reader(reader), options);
+        return import_xes(reader, options);
     }
-    import_xes(&mut Reader::from_reader(BufReader::new(xes_data)), options)
+    import_xes(BufReader::new(xes_data), options)
 }
 
 pub fn parse_attribute_from_tag(
@@ -416,7 +195,7 @@ pub fn parse_attribute_from_tag(
     let attribute_val: Option<AttributeValue> = match t.name().as_ref() {
         b"string" => Some(AttributeValue::String(
             unescape(value.as_str())
-                .unwrap_or(value.clone().into())
+                .unwrap_or(value.as_str().into())
                 .into(),
         )),
         b"date" => match &options.date_format {
@@ -491,7 +270,7 @@ pub fn parse_attribute_from_tag(
 
             Some(AttributeValue::ID(parsed_val))
         }
-        b"container" => Some(AttributeValue::Container(HashMap::new())),
+        b"container" => Some(AttributeValue::Container(Attributes::new())),
         b"list" => Some(AttributeValue::List(Vec::new())),
         _ => match mode {
             Mode::Log => None,
@@ -509,111 +288,111 @@ pub fn parse_attribute_from_tag(
     (key, attribute_val.unwrap_or(AttributeValue::None()))
 }
 
-///
-/// Parse an attribute from a tag (reading the "key" and "value" fields) and parsing the inner value
-///
-fn add_attribute_from_tag(
-    t: &BytesStart,
-    mode: Mode,
-    log: &mut EventLog,
-    current_nested_attributes: &mut [Attribute],
-    options: &XESImportOptions,
-) -> bool {
-    if options.ignore_event_attributes_except.is_some()
-        || options.ignore_trace_attributes_except.is_some()
-        || options.ignore_log_attributes_except.is_some()
-    {
-        let key = t.try_get_attribute("key").unwrap().unwrap().value;
-        if matches!(mode, Mode::Event)
-            && options
-                .ignore_event_attributes_except
-                .as_ref()
-                .is_some_and(|not_ignored| !not_ignored.contains(key.as_ref()))
-        {
-            return true;
-        }
-        if matches!(mode, Mode::Trace)
-            && options
-                .ignore_trace_attributes_except
-                .as_ref()
-                .is_some_and(|not_ignored| !not_ignored.contains(key.as_ref()))
-        {
-            return true;
-        }
+// ///
+// /// Parse an attribute from a tag (reading the "key" and "value" fields) and parsing the inner value
+// ///
+// fn add_attribute_from_tag(
+//     t: &BytesStart,
+//     mode: Mode,
+//     log: &mut EventLog,
+//     current_nested_attributes: &mut [Attribute],
+//     options: &XESImportOptions,
+// ) -> bool {
+//     if options.ignore_event_attributes_except.is_some()
+//         || options.ignore_trace_attributes_except.is_some()
+//         || options.ignore_log_attributes_except.is_some()
+//     {
+//         let key = t.try_get_attribute("key").unwrap().unwrap().value;
+//         if matches!(mode, Mode::Event)
+//             && options
+//                 .ignore_event_attributes_except
+//                 .as_ref()
+//                 .is_some_and(|not_ignored| !not_ignored.contains(key.as_ref()))
+//         {
+//             return true;
+//         }
+//         if matches!(mode, Mode::Trace)
+//             && options
+//                 .ignore_trace_attributes_except
+//                 .as_ref()
+//                 .is_some_and(|not_ignored| !not_ignored.contains(key.as_ref()))
+//         {
+//             return true;
+//         }
 
-        if matches!(mode, Mode::Log)
-            && options
-                .ignore_log_attributes_except
-                .as_ref()
-                .is_some_and(|ignored| !ignored.contains(key.as_ref()))
-        {
-            return true;
-        }
-    }
+//         if matches!(mode, Mode::Log)
+//             && options
+//                 .ignore_log_attributes_except
+//                 .as_ref()
+//                 .is_some_and(|ignored| !ignored.contains(key.as_ref()))
+//         {
+//             return true;
+//         }
+//     }
 
-    let (key, val) = parse_attribute_from_tag(t, &mode, options);
-    match mode {
-        Mode::Trace => match log.traces.last_mut() {
-            Some(t) => {
-                t.attributes.add_to_attributes(key, val);
-            }
-            None => {
-                eprintln!(
-                    "No current trace when parsing trace attribute: Key {:?}, Value {:?}",
-                    key, val
-                );
-            }
-        },
-        Mode::Event => match log.traces.last_mut() {
-            Some(t) => match t.events.last_mut() {
-                Some(e) => {
-                    e.attributes.add_to_attributes(key, val);
-                }
-                None => {
-                    eprintln!(
-                        "No current event when parsing event attribute: Key {:?}, Value {:?}",
-                        key, val
-                    )
-                }
-            },
-            None => {
-                eprintln!(
-                    "No current trace when parsing event attribute: Key {:?}, Value {:?}",
-                    key, val
-                );
-            }
-        },
+//     let (key, val) = parse_attribute_from_tag(t, &mode, options);
+//     match mode {
+//         Mode::Trace => match log.traces.last_mut() {
+//             Some(t) => {
+//                 t.attributes.add_to_attributes(key, val);
+//             }
+//             None => {
+//                 eprintln!(
+//                     "No current trace when parsing trace attribute: Key {:?}, Value {:?}",
+//                     key, val
+//                 );
+//             }
+//         },
+//         Mode::Event => match log.traces.last_mut() {
+//             Some(t) => match t.events.last_mut() {
+//                 Some(e) => {
+//                     e.attributes.add_to_attributes(key, val);
+//                 }
+//                 None => {
+//                     eprintln!(
+//                         "No current event when parsing event attribute: Key {:?}, Value {:?}",
+//                         key, val
+//                     )
+//                 }
+//             },
+//             None => {
+//                 eprintln!(
+//                     "No current trace when parsing event attribute: Key {:?}, Value {:?}",
+//                     key, val
+//                 );
+//             }
+//         },
 
-        Mode::Log => {
-            log.attributes.add_to_attributes(key, val);
-        }
-        Mode::None => return false,
-        Mode::Attribute => {
-            let last_attr = current_nested_attributes.last_mut().unwrap();
-            last_attr.value = match last_attr.value.clone() {
-                AttributeValue::List(mut l) => {
-                    l.push(Attribute {
-                        key,
-                        value: val,
-                        own_attributes: None,
-                    });
-                    AttributeValue::List(l)
-                }
-                AttributeValue::Container(mut c) => {
-                    c.add_to_attributes(key, val);
-                    AttributeValue::Container(c)
-                }
-                x => {
-                    if let Some(own_attributes) = &mut last_attr.own_attributes {
-                        own_attributes.add_to_attributes(key, val);
-                    } else {
-                        return false;
-                    }
-                    x
-                }
-            };
-        }
-        Mode::Global => {}
-    }
-    true
-}
+//         Mode::Log => {
+//             log.attributes.add_to_attributes(key, val);
+//         }
+//         Mode::None => return false,
+//         Mode::Attribute => {
+//             let last_attr = current_nested_attributes.last_mut().unwrap();
+//             last_attr.value = match last_attr.value.clone() {
+//                 AttributeValue::List(mut l) => {
+//                     l.push(Attribute {
+//                         key,
+//                         value: val,
+//                         own_attributes: None,
+//                     });
+//                     AttributeValue::List(l)
+//                 }
+//                 AttributeValue::Container(mut c) => {
+//                     c.add_to_attributes(key, val);
+//                     AttributeValue::Container(c)
+//                 }
+//                 x => {
+//                     if let Some(own_attributes) = &mut last_attr.own_attributes {
+//                         own_attributes.add_to_attributes(key, val);
+//                     } else {
+//                         return false;
+//                     }
+//                     x
+//                 }
+//             };
+//         }
+//         Mode::Global => {}
+//     }
+//     true
+// }
