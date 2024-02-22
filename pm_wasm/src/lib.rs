@@ -2,15 +2,14 @@ use process_mining::{
     alphappp::full::{alphappp_discover_petri_net_with_timing_fn, AlphaPPPConfig},
     event_log::{
         activity_projection::EventLogActivityProjection,
-        import_xes::{import_xes_slice, import_xes_str, XESImportOptions},
+        import_xes::{build_ignore_attributes, import_xes_slice, import_xes_str, XESImportOptions},
         ocel::xml_ocel_import::import_ocel_xml_slice,
     },
     OCEL,
 };
 use wasm_bindgen::prelude::*;
-pub use wasm_bindgen_rayon::init_thread_pool;
+// pub use wasm_bindgen_rayon::init_thread_pool;
 extern crate console_error_panic_hook;
-use web_sys;
 
 #[wasm_bindgen]
 extern "C" {
@@ -39,7 +38,16 @@ macro_rules! console_log {
 #[wasm_bindgen]
 pub fn wasm_discover_alphappp_petri_net_from_xes_string(xes_str: &str) -> Vec<u8> {
     console_error_panic_hook::set_once();
-    let log = import_xes_str(xes_str, None);
+    let log = import_xes_str(
+        xes_str,
+        XESImportOptions {
+            ignore_trace_attributes_except: Some(build_ignore_attributes(vec!["concept:name"])),
+            ignore_event_attributes_except: Some(build_ignore_attributes(vec!["concept:name"])),
+            ignore_log_attributes_except: Some(build_ignore_attributes(Vec::<&str>::new())),
+            ..XESImportOptions::default()
+        },
+    )
+    .unwrap();
     console_log!("Got log: {}", log.traces.len());
     let log_proj: EventLogActivityProjection = (&log).into();
     let (pn, _) = alphappp_discover_petri_net_with_timing_fn(
@@ -53,9 +61,7 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_string(xes_str: &str) -> Vec<u8
             absolute_df_clean_thresh: 5,
             relative_df_clean_thresh: 0.05,
         },
-        &|| {
-            return 0;
-        },
+        &|| 0,
     );
     serde_json::to_vec(&pn).unwrap()
 }
@@ -68,7 +74,17 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_vec(
     console_error_panic_hook::set_once();
     console_log!("Got data: {}", xes_data.len());
     web_sys::console::time_with_label("xes-import");
-    let log = import_xes_slice(&xes_data, is_compressed_gz, XESImportOptions::default());
+    let log = import_xes_slice(
+        xes_data,
+        is_compressed_gz,
+        XESImportOptions {
+            ignore_trace_attributes_except: Some(build_ignore_attributes(vec!["concept:name"])),
+            ignore_event_attributes_except: Some(build_ignore_attributes(vec!["concept:name"])),
+            ignore_log_attributes_except: Some(build_ignore_attributes(Vec::<&str>::new())),
+            ..XESImportOptions::default()
+        },
+    )
+    .unwrap();
     web_sys::console::time_end_with_label("xes-import");
     console_log!("Got Log: {}", log.traces.len());
     let log_proj: EventLogActivityProjection = (&log).into();
@@ -84,9 +100,7 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_vec(
             absolute_df_clean_thresh: 5,
             relative_df_clean_thresh: 0.05,
         },
-        &|| {
-            return 0;
-        },
+        &|| 0,
     );
     serde_json::to_vec(&pn).unwrap()
 }

@@ -48,9 +48,9 @@ fn any_value_to_attribute_value(from: &AnyValue) -> AttributeValue {
         AnyValue::Int8(v) => AttributeValue::Int((*v).into()),
         AnyValue::Int16(v) => AttributeValue::Int((*v).into()),
         AnyValue::Int32(v) => AttributeValue::Int((*v).into()),
-        AnyValue::Int64(v) => AttributeValue::Int((*v).into()),
+        AnyValue::Int64(v) => AttributeValue::Int(*v),
         AnyValue::Float32(v) => AttributeValue::Float((*v).into()),
-        AnyValue::Float64(v) => AttributeValue::Float((*v).into()),
+        AnyValue::Float64(v) => AttributeValue::Float(*v),
         AnyValue::Datetime(ns, _, _) => {
             // Convert nanos to micros; tz is not used!
             let d: DateTime<Utc> = NaiveDateTime::from_timestamp_micros(ns / 1000)
@@ -82,7 +82,6 @@ fn convert_df_to_log(df: &DataFrame) -> Result<EventLog, PolarsError> {
         .map(|g| {
             let mut trace_attributes: Attributes = Attributes::new();
             let events: Vec<Event> = (0..g.height())
-                .into_iter()
                 .map(|i| {
                     let mut event_attributes: Attributes = Attributes::new();
                     columns
@@ -109,14 +108,14 @@ fn convert_df_to_log(df: &DataFrame) -> Result<EventLog, PolarsError> {
                     }
                 })
                 .collect();
-            return Trace {
+            Trace {
                 attributes: trace_attributes,
                 events,
-            };
+            }
         })
         .collect();
     log.traces = traces;
-    return Ok(log);
+    Ok(log)
 }
 
 ///
@@ -192,14 +191,9 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
             let m: HashSet<String> = t
                 .events
                 .iter()
-                .flat_map(|e| {
-                    e.attributes
-                        .keys()
-                        .map(|k| k.clone())
-                        .collect::<Vec<String>>()
-                })
+                .flat_map(|e| e.attributes.keys().cloned().collect::<Vec<String>>())
                 .collect();
-            return [trace_attrs, m];
+            [trace_attrs, m]
         })
         .flatten()
         .collect();
@@ -212,7 +206,7 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
             let mut entries: Vec<AnyValue> = log
                 .traces
                 .iter()
-                .map(|t| -> Vec<AnyValue> {
+                .flat_map(|t| -> Vec<AnyValue> {
                     if k.starts_with(TRACE_PREFIX) {
                         let trace_k: String = k.chars().skip(TRACE_PREFIX.len()).collect();
                         vec![
@@ -226,7 +220,6 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
                             .collect()
                     }
                 })
-                .flatten()
                 .collect();
 
             let mut unique_dtypes: HashSet<DataType> = entries.iter().map(|v| v.dtype()).collect();
@@ -273,7 +266,7 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
         "Constructing DF from Attribute Series took {:.2?}",
         now.elapsed()
     );
-    return Ok(df);
+    Ok(df)
 }
 
 ///
@@ -287,9 +280,7 @@ fn import_xes_rs(path: String, options: Option<&str>) -> PyResult<(PyDataFrame, 
     let start_now = Instant::now();
     let mut now = Instant::now();
     let options = options
-        .and_then(|options_json| {
-            Some(serde_json::from_str::<XESImportOptions>(options_json).unwrap())
-        })
+        .map(|options_json| serde_json::from_str::<XESImportOptions>(options_json).unwrap())
         .unwrap_or_default();
     let log = import_xes_file(&path, options).unwrap();
     println!("Importing XES Log took {:.2?}", now.elapsed());
@@ -339,7 +330,7 @@ fn test_df_pandas(df_serialized: String, format: String) -> PyResult<PyDataFrame
         }
         Err(e) => Err(PyErr::new::<PyTypeError, _>(format!(
             "Could not convert to EventLog: {}",
-            e.to_string()
+            e
         ))),
     }
 }
@@ -374,7 +365,7 @@ fn polars_df_to_log(pydf: PyDataFrame) -> PyResult<PyDataFrame> {
         }
         Err(e) => Err(PyErr::new::<PyTypeError, _>(format!(
             "Could not convert to EventLog: {}",
-            e.to_string()
+            e
         ))),
     }
 }

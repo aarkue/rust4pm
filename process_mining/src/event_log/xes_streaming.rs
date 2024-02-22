@@ -1,14 +1,12 @@
 use std::{
-    collections::HashSet,
     fs::File,
     io::{BufRead, BufReader, Read},
-    time::Instant,
 };
 
 use flate2::read::GzDecoder;
 use quick_xml::{events::BytesStart, Reader};
 
-use crate::{event_log::import_xes::build_ignore_attributes, XESImportOptions};
+use crate::XESImportOptions;
 
 use super::{
     event_log_struct::{EventLogClassifier, EventLogExtension},
@@ -34,13 +32,16 @@ impl<'a> Iterator for XESTraceStreamIterResult<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self.0.next_trace() {
             Some(t) => Some(Ok(t)),
-            None => {
-                self.0.terminated_on_error.take().map(Err)
-            }
+            None => self.0.terminated_on_error.take().map(Err),
         }
     }
 }
 
+///
+/// Streaming Parser for [Trace]s
+///
+/// Experimental implementation
+///
 pub struct XESTraceStream<'a> {
     reader: Box<Reader<Box<dyn BufRead + 'a>>>,
     buf: Vec<u8>,
@@ -58,10 +59,27 @@ pub struct XESTraceStream<'a> {
 }
 
 impl<'a> XESTraceStream<'a> {
+    ///
+    /// Iterate over the parsed [Trace]s as a `Result<Trace,XESParseError`
+    ///
+    /// The resulting iterator will return a single `Err(...)` item and no items after that if an [XESParseError] is encountered.
+    /// For a Iterator over the [Trace] type directly see the `stream`` function instead
+    ///
+    /// Experimental implementation!
+    ///
+    ///
     pub fn stream_results(self) -> XESTraceStreamIterResult<'a> {
         XESTraceStreamIterResult(self)
     }
-
+    ///
+    /// Iterate over the parsed [Trace]s
+    ///
+    /// The resulting iterator will simply report None when error are encountered.
+    /// For a Iterator over Result types see the `stream_results`` function instead
+    ///
+    /// Experimental implementation!
+    ///
+    ///
     pub fn stream(self) -> XESTraceStreamIter<'a> {
         XESTraceStreamIter(self)
     }
@@ -499,6 +517,13 @@ impl<'a> XESTraceStream<'a> {
     }
 }
 
+///
+/// Stream XES Traces from byte slice
+///
+/// __Warning:__ XES streams are currently still unstable and incomplete
+///
+/// Note, that currently events outside of a trace and log attributes, classifiers and extensions are not exposed
+///
 pub fn stream_xes_slice(
     xes_data: &[u8],
     options: XESImportOptions,
@@ -509,6 +534,13 @@ pub fn stream_xes_slice(
     )
 }
 
+///
+/// Stream XES Traces from gzipped byte slice
+///
+/// __Warning:__ XES streams are currently still unstable and incomplete
+///
+/// Note, that currently events outside of a trace and log attributes, classifiers and extensions are not exposed
+///
 pub fn stream_xes_slice_gz(
     xes_data: &[u8],
     options: XESImportOptions,
@@ -518,7 +550,14 @@ pub fn stream_xes_slice_gz(
     XESTraceStream::try_new(Box::new(Reader::from_reader(Box::new(reader))), options)
 }
 
-pub fn stream_xes_file<'a>(
+///
+/// Stream XES Traces from a file
+///
+/// __Warning:__ XES streams are currently still unstable and incomplete
+///
+/// Note, that currently events outside of a trace and log attributes, classifiers and extensions are not exposed
+///
+fn stream_xes_file<'a>(
     file: File,
     options: XESImportOptions,
 ) -> Result<XESTraceStream<'a>, XESParseError> {
@@ -528,7 +567,14 @@ pub fn stream_xes_file<'a>(
     )
 }
 
-pub fn stream_xes_file_gz<'a>(
+///
+/// Stream XES Traces from a gzipped file
+///
+/// __Warning:__ XES streams are currently still unstable and incomplete
+///
+/// Note, that currently events outside of a trace and log attributes, classifiers and extensions are not exposed
+///
+fn stream_xes_file_gz<'a>(
     file: File,
     options: XESImportOptions,
 ) -> Result<XESTraceStream<'a>, XESParseError> {
@@ -539,77 +585,102 @@ pub fn stream_xes_file_gz<'a>(
     )
 }
 
-pub fn stream_xes_from_path(path: &str) -> Result<XESTraceStream<'_>, XESParseError> {
+///
+/// Stream XES Traces from path (auto-detecting gz compression)
+///
+/// __Warning:__ XES streams are currently still unstable and incomplete
+///
+/// Note, that currently events outside of a trace and log attributes, classifiers and extensions are not exposed
+///
+pub fn stream_xes_from_path(
+    path: &str,
+    options: XESImportOptions,
+) -> Result<XESTraceStream<'_>, XESParseError> {
     let file = File::open(path)?;
     if path.ends_with(".gz") {
-        stream_xes_file_gz(file, XESImportOptions::default())
+        stream_xes_file_gz(file, options)
     } else {
-        stream_xes_file(file, XESImportOptions::default())
+        stream_xes_file(file, options)
     }
 }
 
-#[test]
-fn test_xes_stream() {
-    let x = include_bytes!("tests/test_data/RepairExample.xes");
-    let num_traces = stream_xes_slice(x, XESImportOptions::default())
-        .unwrap()
-        .stream()
-        .count();
-    println!("Num. traces: {}", num_traces);
-    assert_eq!(num_traces, 1104);
-}
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashSet, time::Instant};
 
-#[test]
-pub fn test_streaming_variants() {
-    let log_bytes = include_bytes!("tests/test_data/Road_Traffic_Fine_Management_Process.xes.gz");
-    // Hardcoded event log classifier as log attributes are not available in streaming (at least for now)
-    let classifier = EventLogClassifier {
-        name: "Name".to_string(),
-        keys: vec!["concept:name".to_string()],
-    };
-    let now = Instant::now();
-    let log_stream = stream_xes_slice_gz(
-        log_bytes,
-        XESImportOptions {
-            ignore_event_attributes_except: Some(build_ignore_attributes(&classifier.keys)),
-            ignore_trace_attributes_except: Some(build_ignore_attributes(vec!["concept:name"])),
-            ignore_log_attributes_except: Some(build_ignore_attributes(Vec::<&str>::new())),
-            ..XESImportOptions::default()
+    use crate::{
+        event_log::{
+            event_log_struct::EventLogClassifier,
+            import_xes::build_ignore_attributes,
+            xes_streaming::{stream_xes_slice, stream_xes_slice_gz},
         },
-    )
-    .unwrap();
+        XESImportOptions,
+    };
 
-    // Gather unique variants of traces (wrt. the hardcoded )
-    let trace_variants: HashSet<Vec<String>> = log_stream
-        .stream()
-        .map(|t| {
-            t.events
-                .iter()
-                .map(|ev| classifier.get_class_identity(ev))
-                .collect()
-        })
+    #[test]
+    fn test_xes_stream() {
+        let x = include_bytes!("tests/test_data/RepairExample.xes");
+        let num_traces = stream_xes_slice(x, XESImportOptions::default())
+            .unwrap()
+            .stream()
+            .count();
+        println!("Num. traces: {}", num_traces);
+        assert_eq!(num_traces, 1104);
+    }
+
+    #[test]
+    pub fn test_streaming_variants() {
+        let log_bytes =
+            include_bytes!("tests/test_data/Road_Traffic_Fine_Management_Process.xes.gz");
+        // Hardcoded event log classifier as log attributes are not available in streaming (at least for now)
+        let classifier = EventLogClassifier {
+            name: "Name".to_string(),
+            keys: vec!["concept:name".to_string()],
+        };
+        let now = Instant::now();
+        let log_stream = stream_xes_slice_gz(
+            log_bytes,
+            XESImportOptions {
+                ignore_event_attributes_except: Some(build_ignore_attributes(&classifier.keys)),
+                ignore_trace_attributes_except: Some(build_ignore_attributes(vec!["concept:name"])),
+                ignore_log_attributes_except: Some(build_ignore_attributes(Vec::<&str>::new())),
+                ..XESImportOptions::default()
+            },
+        )
+        .unwrap();
+
+        // Gather unique variants of traces (wrt. the hardcoded )
+        let trace_variants: HashSet<Vec<String>> = log_stream
+            .stream()
+            .map(|t| {
+                t.events
+                    .iter()
+                    .map(|ev| classifier.get_class_identity(ev))
+                    .collect()
+            })
+            .collect();
+
+        println!(
+            "Took: {:?}; got {} unique variants",
+            now.elapsed(),
+            trace_variants.len()
+        );
+        assert_eq!(trace_variants.len(), 231);
+
+        // Variants should contain example variant
+        let example_variant: Vec<String> = vec![
+            "Create Fine",
+            "Send Fine",
+            "Insert Fine Notification",
+            "Add penalty",
+            "Insert Date Appeal to Prefecture",
+            "Send Appeal to Prefecture",
+            "Receive Result Appeal from Prefecture",
+            "Notify Result Appeal to Offender",
+        ]
+        .into_iter()
+        .map(|s| s.to_string())
         .collect();
-
-    println!(
-        "Took: {:?}; got {} unique variants",
-        now.elapsed(),
-        trace_variants.len()
-    );
-    assert_eq!(trace_variants.len(), 231);
-
-    // Variants should contain example variant
-    let example_variant: Vec<String> = vec![
-        "Create Fine",
-        "Send Fine",
-        "Insert Fine Notification",
-        "Add penalty",
-        "Insert Date Appeal to Prefecture",
-        "Send Appeal to Prefecture",
-        "Receive Result Appeal from Prefecture",
-        "Notify Result Appeal to Offender",
-    ]
-    .into_iter()
-    .map(|s| s.to_string())
-    .collect();
-    assert!(trace_variants.contains(&example_variant))
+        assert!(trace_variants.contains(&example_variant))
+    }
 }
