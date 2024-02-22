@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::str::FromStr;
@@ -34,12 +35,37 @@ pub enum Mode {
 /// Error encountered while parsing XES
 ///
 pub enum XESParseError {
-    AttributeOutsideLog(),
-    NoTopLevelLog(),
-    MissingLastEvent(),
-    MissingLastTrace(),
+    AttributeOutsideLog,
+    NoTopLevelLog,
+    MissingLastEvent,
+    MissingLastTrace,
+    InvalidMode,
     IOError(std::io::Error),
     XMLParsingError(QuickXMLError),
+}
+
+impl std::fmt::Display for XESParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Failed to parse XES: {:?}", self)
+    }
+}
+
+impl std::error::Error for XESParseError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            XESParseError::IOError(e) => Some(e),
+            XESParseError::XMLParsingError(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    fn description(&self) -> &str {
+        "description() is deprecated; use Display"
+    }
+
+    fn cause(&self) -> Option<&dyn std::error::Error> {
+        self.source()
+    }
 }
 
 impl From<std::io::Error> for XESParseError {
@@ -146,12 +172,12 @@ where
                         }
                         _x => {
                             if !encountered_log {
-                                return Err(XESParseError::NoTopLevelLog());
+                                return Err(XESParseError::NoTopLevelLog);
                             }
                             {
                                 // Nested attribute!
                                 let (key, value) =
-                                    parse_attribute_from_tag(&t, current_mode, &options);
+                                    parse_attribute_from_tag(&t, &current_mode, &options);
                                 if !(key.is_empty() && matches!(value, AttributeValue::None())) {
                                     current_nested_attributes.push(Attribute {
                                         key,
@@ -223,7 +249,7 @@ where
                         }
                         _ => {
                             if !encountered_log {
-                                return Err(XESParseError::NoTopLevelLog());
+                                return Err(XESParseError::NoTopLevelLog);
                             }
                             if !add_attribute_from_tag(
                                 &t,
@@ -232,18 +258,16 @@ where
                                 &mut current_nested_attributes,
                                 &options,
                             ) {
-                                return Err(XESParseError::AttributeOutsideLog());
+                                return Err(XESParseError::AttributeOutsideLog);
                             }
                         }
                     },
                     quick_xml::events::Event::End(t) => {
-                        let mut t_string = String::new();
-                        t.as_ref().read_to_string(&mut t_string).unwrap();
-                        match t_string.as_str() {
-                            "event" => current_mode = Mode::Trace,
-                            "trace" => current_mode = Mode::Log,
-                            "log" => current_mode = Mode::None,
-                            "global" => current_mode = last_mode_before_attr,
+                        match t.as_ref() {
+                            b"event" => current_mode = Mode::Trace,
+                            b"trace" => current_mode = Mode::Log,
+                            b"log" => current_mode = Mode::None,
+                            b"global" => current_mode = last_mode_before_attr,
                             _ => match current_mode {
                                 Mode::Attribute => {
                                     if !current_nested_attributes.is_empty() {
@@ -266,7 +290,7 @@ where
                                                             .insert(attr.key.clone(), attr);
                                                     } else {
                                                         return Err(
-                                                            XESParseError::MissingLastTrace(),
+                                                            XESParseError::MissingLastTrace,
                                                         );
                                                     }
                                                 }
@@ -281,12 +305,12 @@ where
                                                                 .insert(attr.key.clone(), attr);
                                                         } else {
                                                             return Err(
-                                                                XESParseError::MissingLastEvent(),
+                                                                XESParseError::MissingLastEvent,
                                                             );
                                                         }
                                                     } else {
                                                         return Err(
-                                                            XESParseError::MissingLastTrace(),
+                                                            XESParseError::MissingLastTrace,
                                                         );
                                                     }
                                                 }
@@ -319,12 +343,12 @@ where
                 return Err(XESParseError::XMLParsingError(e));
             }
         }
+        buf.clear();
     }
-    buf.clear();
     if encountered_log {
         Ok(log)
     } else {
-        Err(XESParseError::NoTopLevelLog())
+        Err(XESParseError::NoTopLevelLog)
     }
 }
 
@@ -372,7 +396,7 @@ pub fn import_xes_slice(
 
 pub fn parse_attribute_from_tag(
     t: &BytesStart,
-    mode: Mode,
+    mode: &Mode,
     options: &XESImportOptions,
 ) -> (String, AttributeValue) {
     let mut value = String::new();
@@ -527,7 +551,7 @@ fn add_attribute_from_tag(
         }
     }
 
-    let (key, val) = parse_attribute_from_tag(t, mode, options);
+    let (key, val) = parse_attribute_from_tag(t, &mode, options);
     match mode {
         Mode::Trace => match log.traces.last_mut() {
             Some(t) => {
