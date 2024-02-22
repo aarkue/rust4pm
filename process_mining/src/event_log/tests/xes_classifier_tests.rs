@@ -1,6 +1,8 @@
 #[cfg(test)]
 use std::{collections::HashSet, time::Instant};
 
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+
 use crate::event_log::import_xes::{import_xes_slice, XESImportOptions};
 
 #[test]
@@ -18,7 +20,7 @@ pub fn test_get_class_identity() {
             .iter()
             .map(|t| {
                 t.events
-                    .iter()
+                    .par_iter()
                     .map(|e| classifier.get_class_identity(e))
                     .collect()
             })

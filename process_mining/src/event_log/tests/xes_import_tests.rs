@@ -98,10 +98,7 @@ pub fn test_invalid_xes_non_existing_file_gz() {
 }
 #[test]
 pub fn test_invalid_xes_non_existing_file() {
-    let res_gz = import_xes_file(
-        "this-file-does-not-exist.xes",
-        XESImportOptions::default(),
-    );
+    let res_gz = import_xes_file("this-file-does-not-exist.xes", XESImportOptions::default());
     assert!(matches!(res_gz, Err(XESParseError::XMLParsingError(_))));
 }
 
@@ -117,20 +114,20 @@ pub fn test_invalid_xes_file_gz_expected() {
 pub fn test_invalid_xes_file_gz_unexpected() {
     let x = include_bytes!("test_data/Sepsis Cases - Event Log.xes.gz");
     let res = import_xes_slice(x, false, XESImportOptions::default());
-    assert!(matches!(res, Err(XESParseError::NoTopLevelLog())));
+    assert!(matches!(res, Err(XESParseError::NoTopLevelLog)));
 }
 
 #[test]
 pub fn test_invalid_xes_file_zero() {
-    // File with ~100MB of zeros (dd if=/dev/zero of=zero.file bs=1024 count=102400)
+    // File with ~1MB of zeros (dd if=/dev/zero of=zero.file bs=1024 count=1024)
     let x = include_bytes!("test_data/zero.file");
     let res = import_xes_slice(x, false, XESImportOptions::default());
-    assert!(matches!(res, Err(XESParseError::NoTopLevelLog())));
+    assert!(matches!(res, Err(XESParseError::NoTopLevelLog)));
 }
 
 #[test]
 pub fn test_invalid_xes_file_zero_gz() {
-    // File with ~100MB of zeros (dd if=/dev/zero of=zero.file bs=1024 count=102400)
+    // File with ~1MB of zeros (dd if=/dev/zero of=zero.file bs=1024 count=1024)
     let x = include_bytes!("test_data/zero.file");
     let res = import_xes_slice(x, true, XESImportOptions::default());
     assert!(matches!(res, Err(XESParseError::XMLParsingError(_))));
@@ -140,19 +137,19 @@ pub fn test_invalid_xes_file_zero_gz() {
 pub fn test_invalid_xes_file_pnml() {
     let x = include_bytes!("test_data/BPI_Challenge_2019_sampled_3000cases_model_alphappp.pnml");
     let res = import_xes_slice(x, false, XESImportOptions::default());
-    assert!(matches!(res, Err(XESParseError::NoTopLevelLog())));
+    assert!(matches!(res, Err(XESParseError::NoTopLevelLog)));
 }
 
 #[test]
 pub fn test_invalid_xes_file_json() {
     let x = include_bytes!("test_data/order-management.json");
     let res = import_xes_slice(x, false, XESImportOptions::default());
-    assert!(matches!(res, Err(XESParseError::NoTopLevelLog())));
+    assert!(matches!(res, Err(XESParseError::NoTopLevelLog)));
 }
 
 #[test]
 pub fn test_invalid_xes_file_empty() {
     let x: &'static [u8] = &[];
     let res = import_xes_slice(x, false, XESImportOptions::default());
-    assert!(matches!(res, Err(XESParseError::NoTopLevelLog())));
+    assert!(matches!(res, Err(XESParseError::NoTopLevelLog)));
 }

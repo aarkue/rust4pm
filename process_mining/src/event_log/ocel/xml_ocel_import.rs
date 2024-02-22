@@ -13,7 +13,6 @@ use super::ocel_struct::{
     OCELRelationship, OCELTypeAttribute,
 };
 
-
 ///
 /// Current Parsing Mode (i.e., which tag is currently open / being parsed)
 ///
