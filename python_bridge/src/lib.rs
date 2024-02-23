@@ -76,6 +76,8 @@ fn convert_df_to_log(df: &DataFrame) -> Result<EventLog, PolarsError> {
         traces: vec![],
         classifiers: None,
         extensions: None,
+        global_trace_attrs: None,
+        global_event_attrs: None,
     };
     let traces: Vec<Trace> = groups
         .par_iter()

@@ -3,16 +3,19 @@ use std::{
     fs::File,
     io::{BufRead, BufReader, Read},
     iter::FusedIterator,
+    str::FromStr,
 };
 
+use chrono::{DateTime, NaiveDateTime, Utc};
 use flate2::read::GzDecoder;
-use quick_xml::{events::BytesStart, Reader};
+use quick_xml::{escape::unescape, events::BytesStart, Reader};
+use uuid::Uuid;
 
 use crate::XESImportOptions;
 
 use super::{
     event_log_struct::{EventLogClassifier, EventLogExtension},
-    import_xes::{parse_attribute_from_tag, Mode, XESParseError},
+    import_xes::XESParseError,
     Attribute, AttributeAddable, AttributeValue, Attributes, Event, Trace,
 };
 
@@ -71,6 +74,8 @@ pub struct XESTraceStreamLogData {
     pub extensions: Vec<EventLogExtension>,
     pub classifiers: Vec<EventLogClassifier>,
     pub log_attributes: Attributes,
+    pub global_trace_attrs: Attributes,
+    pub global_event_attrs: Attributes,
     /// Whether an error (wrapped in [Some]) was encountered or not ([None])
     pub terminated_on_error: Option<XESParseError>,
 }
@@ -83,6 +88,20 @@ pub type XESTraceStreamLogDataRefCell = RefCell<XESTraceStreamLogData>;
 /// Convenient function for constructing a [XESTraceStreamParser]
 pub fn construct_log_data_cell() -> XESTraceStreamLogDataRefCell {
     RefCell::new(XESTraceStreamLogData::default())
+}
+
+#[derive(Clone, Copy, Debug)]
+///
+/// Current Parsing Mode (i.e., which tag is currently open / being parsed)
+///
+pub enum Mode {
+    Trace,
+    Event,
+    Attribute,
+    GlobalTraceAttributes,
+    GlobalEventAttributes,
+    Log,
+    None,
 }
 
 ///
@@ -117,6 +136,27 @@ pub struct XESTraceStreamParser<'a> {
 }
 
 impl<'a> XESTraceStreamParser<'a> {
+    ///
+    /// Move [XESTraceStreamLogData] log data out of self
+    ///
+    pub fn take_log_data(self) -> XESTraceStreamLogData {
+        self.log_data.take()
+    }
+
+    ///
+    ///  Borrow the [XESTraceStreamLogData] log data
+    ///
+    pub fn get_log_data(&self) -> std::cell::Ref<'a, XESTraceStreamLogData> {
+        self.log_data.borrow()
+    }
+
+    ///
+    ///  Borrow the [XESTraceStreamLogData] log data as mut
+    ///
+    pub fn get_log_data_mut(&self) -> std::cell::RefMut<'a, XESTraceStreamLogData> {
+        self.log_data.borrow_mut()
+    }
+
     ///
     /// Iterate over the parsed [Trace]s as a `Result<Trace,XESParseError`
     ///
@@ -197,16 +237,30 @@ impl<'a> XESTraceStreamParser<'a> {
                                     }
                                 }
                             }
-                            b"global" => {
-                                match self.current_mode {
-                                    Mode::Global => {}
-                                    Mode::Attribute => {}
-                                    m => {
-                                        self.last_mode_before_attr = m;
+                            b"global" => match t.try_get_attribute("scope") {
+                                Ok(Some(a)) => match a.value.as_ref() {
+                                    b"trace" => self.current_mode = Mode::GlobalTraceAttributes,
+                                    b"event" => self.current_mode = Mode::GlobalEventAttributes,
+                                    _ => {
+                                        return terminate_with_error(
+                                            self,
+                                            XESParseError::InvalidKeyValue("scope"),
+                                        )
                                     }
+                                },
+                                Ok(None) => {
+                                    return terminate_with_error(
+                                        self,
+                                        XESParseError::MissingKey("scope"),
+                                    );
                                 }
-                                self.current_mode = Mode::Global;
-                            }
+                                Err(e) => {
+                                    return terminate_with_error(
+                                        self,
+                                        XESParseError::XMLParsingError(e),
+                                    );
+                                }
+                            },
                             b"log" => {
                                 self.encountered_log = true;
                                 self.current_mode = Mode::Log
@@ -234,7 +288,6 @@ impl<'a> XESTraceStreamParser<'a> {
                                         });
                                         match self.current_mode {
                                             Mode::Attribute => {}
-                                            Mode::Global => {}
                                             m => {
                                                 self.last_mode_before_attr = m;
                                             }
@@ -291,6 +344,8 @@ impl<'a> XESTraceStreamParser<'a> {
                                     .classifiers
                                     .push(EventLogClassifier {
                                         name,
+                                        // TODO: This is not strictly correct according to XES standard, as also strings _inside_ a classifier key are allowed
+                                        // See https://xes-standard.org/_media/xes/xesstandarddefinition-2.0.pdf#page=8
                                         keys: keys.split(' ').map(|s| s.to_string()).collect(),
                                     })
                             }
@@ -309,7 +364,7 @@ impl<'a> XESTraceStreamParser<'a> {
                                 if !XESTraceStreamParser::add_attribute_from_tag(
                                     &self.current_mode,
                                     &mut self.current_trace,
-                                    &mut self.log_data.borrow_mut().log_attributes,
+                                    &mut self.log_data.borrow_mut(),
                                     &mut self.current_nested_attributes,
                                     &self.options,
                                     &t,
@@ -337,7 +392,7 @@ impl<'a> XESTraceStreamParser<'a> {
                                     return Some(trace);
                                 }
                                 b"log" => self.current_mode = Mode::None,
-                                b"global" => self.current_mode = self.last_mode_before_attr,
+                                b"global" => self.current_mode = Mode::Log,
                                 _ => {
                                     match self.current_mode {
                                         Mode::Attribute => {
@@ -530,7 +585,7 @@ impl<'a> XESTraceStreamParser<'a> {
     fn add_attribute_from_tag(
         current_mode: &Mode,
         current_trace: &mut Option<Trace>,
-        log_attributes: &mut Attributes,
+        log_data: &mut XESTraceStreamLogData,
         current_nested_attributes: &mut [Attribute],
         options: &XESImportOptions,
         t: &BytesStart,
@@ -601,7 +656,7 @@ impl<'a> XESTraceStreamParser<'a> {
             },
 
             Mode::Log => {
-                log_attributes.add_to_attributes(key, val);
+                log_data.log_attributes.add_to_attributes(key, val);
             }
             Mode::None => return false,
             Mode::Attribute => {
@@ -631,7 +686,12 @@ impl<'a> XESTraceStreamParser<'a> {
                     }
                 };
             }
-            Mode::Global => {}
+            Mode::GlobalTraceAttributes => {
+                log_data.global_trace_attrs.add_to_attributes(key, val);
+            }
+            Mode::GlobalEventAttributes => {
+                log_data.global_event_attrs.add_to_attributes(key, val);
+            }
         }
         true
     }
@@ -724,6 +784,121 @@ pub fn stream_xes_from_path<'a>(
     } else {
         stream_xes_file(file, options, log_data)
     }
+}
+
+pub fn parse_attribute_from_tag(
+    t: &BytesStart,
+    mode: &Mode,
+    options: &XESImportOptions,
+) -> (String, AttributeValue) {
+    let mut value = String::new();
+    let mut key = String::new();
+    t.attributes().for_each(|a| {
+        let x = a.unwrap();
+        match x.key.as_ref() {
+            b"key" => {
+                x.value.as_ref().read_to_string(&mut key).unwrap();
+            }
+            b"value" => {
+                x.value.as_ref().read_to_string(&mut value).unwrap();
+            }
+            _ => {}
+        }
+    });
+    let attribute_val: Option<AttributeValue> = match t.name().as_ref() {
+        b"string" => Some(AttributeValue::String(
+            unescape(value.as_str())
+                .unwrap_or(value.as_str().into())
+                .into(),
+        )),
+        b"date" => match &options.date_format {
+            // If a format is specified, try parsing with this format: First as DateTime (has to include a time zone)
+            //   If this fails, retry parsing as NaiveDateTime (without time zone, assuming UTC)
+            Some(dt_format) => match DateTime::parse_from_str(&value, dt_format) {
+                Ok(dt) => Some(AttributeValue::Date(dt.into())),
+                Err(dt_error) => Some(AttributeValue::Date(
+                    match NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M:%S%.f") {
+                        Ok(dt) => dt.and_local_timezone(Utc).unwrap(),
+                        Err(ndt_error) => {
+                            eprintln!("Could not parse datetime '{}' with provided format '{}'. Will use datetime epoch 0 instead.\nError (when parsing as DateTime): {:?}\nError (when parsing as NaiveDateTime, without TZ): {:?}", value, dt_format, dt_error, ndt_error);
+                            DateTime::default()
+                        }
+                    },
+                )),
+            },
+            // If no format is specified try two very common formats (rfc3339 standardized and one without timezone)
+            None => Some(AttributeValue::Date(
+                match DateTime::parse_from_rfc3339(&value) {
+                    Ok(dt) => dt.into(),
+                    Err(_e) => {
+                        match NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M:%S%.f") {
+                            Ok(dt) => dt.and_local_timezone(Utc).unwrap(),
+                            Err(e) => {
+                                eprintln!("Could not parse datetime '{}'. Will use datetime epoch 0 instead.\nError {:?}",value,e);
+                                DateTime::default()
+                            }
+                        }
+                    }
+                },
+            )),
+        },
+        b"int" => {
+            let parsed_val = match value.parse::<i64>() {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Could not parse integer {:?}: Error {}", value, e);
+                    i64::default()
+                }
+            };
+            Some(AttributeValue::Int(parsed_val))
+        }
+        b"float" => {
+            let parsed_val = match value.parse::<f64>() {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Could not parse float {:?}: Error {}", value, e);
+                    f64::default()
+                }
+            };
+            Some(AttributeValue::Float(parsed_val))
+        }
+        b"boolean" => {
+            let parsed_val = match value.parse::<bool>() {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Could not parse boolean {:?}: Error {}", value, e);
+                    bool::default()
+                }
+            };
+            Some(AttributeValue::Boolean(parsed_val))
+        }
+        b"id" => {
+            let parsed_val = match Uuid::from_str(&value) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("Could not parse UUID {:?}: Error {}", value, e);
+                    Uuid::default()
+                }
+            };
+
+            Some(AttributeValue::ID(parsed_val))
+        }
+        b"container" => Some(AttributeValue::Container(Attributes::new())),
+        b"list" => Some(AttributeValue::List(Vec::new())),
+        _ => match mode {
+            Mode::Log => None,
+            m => {
+                let mut name_str = String::new();
+                t.name().as_ref().read_to_string(&mut name_str).unwrap();
+                eprintln!(
+                    "Attribute type not implemented '{}' in mode {:?}",
+                    name_str, m
+                );
+                None
+            }
+        },
+    };
+    (key, attribute_val.unwrap_or(AttributeValue::None()))
 }
 
 #[cfg(test)]

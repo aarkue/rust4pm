@@ -144,6 +144,8 @@ pub unsafe fn finishLogConstructionPar(mut _env: JNIEnv<'_>, _: JClass, pointer:
             .collect(),
         classifiers: None,
         extensions: None,
+        global_trace_attrs: None,
+        global_event_attrs: None,
     };
     let log_box = Box::new(log);
 

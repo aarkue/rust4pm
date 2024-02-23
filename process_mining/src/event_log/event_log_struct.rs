@@ -51,7 +51,10 @@ impl Attribute {
     ///
     /// This is useful for directly inserting the attribute in a [HashMap] afterwards
     ///
-    #[deprecated(since="0.2.0", note="This function will be removed soon as Attributes are now backed by Vec instead of HashMap")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "This function will be removed soon as Attributes are now backed by Vec instead of HashMap"
+    )]
     pub fn new_with_key(key: String, attribute_val: AttributeValue) -> (String, Self) {
         (
             key.clone(),
@@ -105,7 +108,7 @@ impl AttributeAddable for Attributes {
         self.iter().find(|attr| attr.key == key)
     }
 
-    /// 
+    ///
     /// Get an attribute as mutable by key
     ///
     /// _Complexity_: Does linear lookup (i.e., in O(n)). If you need faster lookup, consider manually sorting the attributes by key and utilizing binary search.
@@ -114,17 +117,17 @@ impl AttributeAddable for Attributes {
     }
 
     ///
-    /// Remove attribute with given key 
+    /// Remove attribute with given key
     ///
     /// Returns `true` if the attribute was present and `false` otherwise
     ///
     /// _Complexity_: Does linear lookup (i.e., in O(n)). If you need faster lookup, consider manually sorting the attributes by key and utilizing binary search.
     fn remove_with_key(&mut self, key: &str) -> bool {
-        let index_opt = self.iter().position(|a| a.key  == key);
+        let index_opt = self.iter().position(|a| a.key == key);
         if let Some(index) = index_opt {
             self.remove(index);
             return true;
-        } 
+        }
         false
     }
 }
@@ -142,7 +145,7 @@ pub fn to_attributes(from: HashMap<String, AttributeValue>) -> Attributes {
 ///
 /// An event consists of multiple (event) attributes ([Attributes])
 ///
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Event {
     pub attributes: Attributes,
 }
@@ -161,7 +164,7 @@ impl Event {
 ///
 /// A trace consists of a list of events and trace attributes (See also [Event] and [Attributes])
 ///
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Trace {
     pub attributes: Attributes,
     pub events: Vec<Event>,
@@ -182,12 +185,14 @@ impl Trace {
 ///
 /// Event log consisting of a list of [Trace]s and log [Attributes]
 ///
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EventLog {
     pub attributes: Attributes,
     pub traces: Vec<Trace>,
     pub extensions: Option<Vec<EventLogExtension>>,
     pub classifiers: Option<Vec<EventLogClassifier>>,
+    pub global_event_attrs: Option<Attributes>,
+    pub global_trace_attrs: Option<Attributes>,
 }
 
 impl EventLog {
@@ -204,14 +209,14 @@ impl EventLog {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct EventLogExtension {
     pub name: String,
     pub prefix: String,
     pub uri: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EventLogClassifier {
     pub name: String,
     pub keys: Vec<String>,

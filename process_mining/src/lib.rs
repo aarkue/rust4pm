@@ -1,4 +1,3 @@
-//!  # Process Mining
 #![doc = include_str!("../README.md")]
 
 use event_log::activity_projection::{END_ACTIVITY, START_ACTIVITY};
