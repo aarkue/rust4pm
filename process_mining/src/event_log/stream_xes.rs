@@ -374,6 +374,13 @@ impl<'a> StreamingXESParser<'a> {
                                                                 .expect("LogData after trace")
                                                                 .log_attributes
                                                                 .add_attribute(attr);
+                                                        },
+                                                        // TODO: Also test if nested global trace/event attributes are parsed correctly
+                                                        Mode::GlobalTraceAttributes => {
+                                                            self.log_data.as_mut().expect("LogData after trace").global_trace_attrs.add_attribute(attr);
+                                                        },
+                                                        Mode::GlobalEventAttributes => {
+                                                            self.log_data.as_mut().expect("LogData after trace").global_event_attrs.add_attribute(attr);
                                                         }
                                                         _x => {
                                                             return terminate_with_error(
