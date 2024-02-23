@@ -35,9 +35,7 @@ match log_res {
 ## Examples
 ```rust
 use std::{
-    fs::File,
-    io::BufReader,
-    time::Instant,
+    fs::File, io::BufReader, time::Instant
 };
 
 use process_mining::{
@@ -45,17 +43,14 @@ use process_mining::{
         activity_projection::EventLogActivityProjection,
         constants::ACTIVITY_NAME,
         import_xes::{build_ignore_attributes, XESImportOptions},
-        stream_xes::{
-            construct_log_data_cell, stream_xes_from_path,
-        },
+        stream_xes::stream_xes_from_path,
     },
     import_ocel_xml_file, import_xes_file, OCEL,
 };
-
 fn main() {
-    let xes_path = "../../../dow/event_data/BPI Challenge 2018.xes.gz";
+    let xes_path = "./src/event_log/tests/test_data/AN1-example.xes";
 
-    // Default XES parsing
+    // // Default XES parsing
     let now = Instant::now();
     let log = import_xes_file(xes_path, XESImportOptions::default()).unwrap();
     println!(
@@ -66,7 +61,6 @@ fn main() {
 
     // Streaming XES Parsing (constructing a primitive [EventLogActivityProjection])
     // This demonstrates how streaming can enable very low memory consumption and faster processing
-    let log_data = construct_log_data_cell();
     let now = Instant::now();
     let st_res = stream_xes_from_path(
         xes_path,
@@ -76,11 +70,13 @@ fn main() {
             ignore_log_attributes_except: Some(build_ignore_attributes(Vec::<&str>::new())),
             ..XESImportOptions::default()
         },
-        &log_data,
     );
     match st_res {
-        Ok(st) => {
-            let projection: EventLogActivityProjection = st.into();
+        Ok((mut st,_log_data)) => {
+            let projection: EventLogActivityProjection = (&mut st).into();
+            if let Some(e) = st.check_for_errors() {
+                eprintln!("Error: {}",e);
+            }
             println!(
                 "Streamed XES into Activity Projection with {} variants in {:#?}",
                 projection.traces.len(),
@@ -94,7 +90,7 @@ fn main() {
 
     // Parsing XML OCEL files:
     let now = Instant::now();
-    let ocel = import_ocel_xml_file("../../../dow/event_data/order-management.xml");
+    let ocel = import_ocel_xml_file("./src/event_log/tests/test_data/order-management.xml");
     println!(
         "Imported OCEL2 XML with {} objects and {} events in {:#?}",
         ocel.objects.len(),
@@ -105,7 +101,7 @@ fn main() {
     // Parsing JSON OCEL files
     let now = Instant::now();
     let ocel: OCEL = serde_json::from_reader(BufReader::new(
-        File::open("../../../dow/event_data/order-management.json").unwrap(),
+        File::open("./src/event_log/tests/test_data/order-management.json").unwrap(),
     ))
     .unwrap();
     println!(
@@ -115,14 +111,13 @@ fn main() {
         now.elapsed()
     );
 }
-
 ```
 
 Example output:
 
 ```
-Parsed XES with 43809 cases in 12.334751875s
-Streamed XES into Activity Projection with 28457 variants in 6.078319582s
-Imported OCEL2 XML with 10840 objects and 21008 events in 85.719414ms
-Imported OCEL2 JSON with 10840 objects and 21008 events in 102.26467ms
+# Parsed XES with 43809 cases in 12.334751875s
+# Streamed XES into Activity Projection with 28457 variants in 6.078319582s
+# Imported OCEL2 XML with 10840 objects and 21008 events in 85.719414ms
+# Imported OCEL2 JSON with 10840 objects and 21008 events in 102.26467ms
 ```

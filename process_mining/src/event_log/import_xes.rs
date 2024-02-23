@@ -11,7 +11,7 @@ use quick_xml::Error as QuickXMLError;
 use quick_xml::Reader;
 use serde::{Deserialize, Serialize};
 
-use super::stream_xes::{construct_log_data_cell, XESTraceStreamLogDataRefCell};
+
 
 ///
 /// Error encountered while parsing XES
@@ -27,6 +27,8 @@ pub enum XESParseError {
     XMLParsingError(QuickXMLError),
     MissingKey(&'static str),
     InvalidKeyValue(&'static str),
+    ExpectedLogData,
+    ExpectedTraceData,
 }
 
 impl std::fmt::Display for XESParseError {
@@ -95,26 +97,24 @@ pub fn import_xes<T>(reader: T, options: XESImportOptions) -> Result<EventLog, X
 where
     T: BufRead,
 {
-    let log_data: XESTraceStreamLogDataRefCell = construct_log_data_cell();
-    let trace_stream = super::stream_xes::XESTraceStreamParser::try_new(
+    let (mut trace_stream, log_data) = super::stream_xes::XESParsingTraceStream::try_new(
         Box::new(Reader::from_reader(Box::new(reader))),
-        options,
-        &log_data,
+        options
     )?;
-    let traces: Vec<Trace> = trace_stream.stream().collect();
-    let log_data_owned = log_data.take();
 
-    if let Some(e) = log_data_owned.terminated_on_error {
+    let traces: Vec<Trace> = trace_stream.collect();
+
+    if let Some(e) = trace_stream.error {
         return Err(e);
     }
 
     Ok(EventLog {
-        attributes: log_data_owned.log_attributes,
+        attributes: log_data.log_attributes,
         traces,
-        extensions: Some(log_data_owned.extensions),
-        classifiers: Some(log_data_owned.classifiers),
-        global_trace_attrs: Some(log_data_owned.global_trace_attrs),
-        global_event_attrs: Some(log_data_owned.global_event_attrs),
+        extensions: Some(log_data.extensions),
+        classifiers: Some(log_data.classifiers),
+        global_trace_attrs: Some(log_data.global_trace_attrs),
+        global_event_attrs: Some(log_data.global_event_attrs),
     })
 }
 

@@ -65,7 +65,7 @@ pub use event_log::stream_xes::stream_xes_file;
 pub use event_log::stream_xes::stream_xes_file_gz;
 
 #[doc(inline)]
-pub use event_log::stream_xes::XESTraceStreamParser;
+pub use event_log::stream_xes::StreamingXESParser;
 
 #[doc(inline)]
 pub use event_log::import_xes::XESImportOptions;

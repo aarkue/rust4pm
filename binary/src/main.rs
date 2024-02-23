@@ -1,7 +1,5 @@
 use std::{
-    fs::File,
-    io::BufReader,
-    time::Instant,
+    fs::File, io::BufReader, time::Instant
 };
 
 use process_mining::{
@@ -9,9 +7,7 @@ use process_mining::{
         activity_projection::EventLogActivityProjection,
         constants::ACTIVITY_NAME,
         import_xes::{build_ignore_attributes, XESImportOptions},
-        stream_xes::{
-            construct_log_data_cell, stream_xes_from_path,
-        },
+        stream_xes::stream_xes_from_path,
     },
     import_ocel_xml_file, import_xes_file, OCEL,
 };
@@ -30,7 +26,6 @@ fn main() {
 
     // Streaming XES Parsing (constructing a primitive [EventLogActivityProjection])
     // This demonstrates how streaming can enable very low memory consumption and faster processing
-    let log_data = construct_log_data_cell();
     let now = Instant::now();
     let st_res = stream_xes_from_path(
         xes_path,
@@ -40,11 +35,13 @@ fn main() {
             ignore_log_attributes_except: Some(build_ignore_attributes(Vec::<&str>::new())),
             ..XESImportOptions::default()
         },
-        &log_data,
     );
     match st_res {
-        Ok(st) => {
-            let projection: EventLogActivityProjection = st.into();
+        Ok((mut st,_log_data)) => {
+            let projection: EventLogActivityProjection = (&mut st).into();
+            if let Some(e) = st.check_for_errors() {
+                eprintln!("Error: {}",e);
+            }
             println!(
                 "Streamed XES into Activity Projection with {} variants in {:#?}",
                 projection.traces.len(),

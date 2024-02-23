@@ -323,7 +323,6 @@ mod tests {
         let t2 = net.add_transition(Some("Sleep".into()), None);
         net.add_arc(ArcType::place_to_transition(p1, t1), None);
         net.add_arc(ArcType::transition_to_place(t2, p1), None);
-        println!("{}", serde_json::to_string(&net).unwrap());
 
         assert!(net.postset_of_transition(t1).is_empty());
         assert!(net.preset_of_transition(t1) == vec![p1]);

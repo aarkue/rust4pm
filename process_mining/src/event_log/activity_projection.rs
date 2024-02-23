@@ -96,12 +96,18 @@ impl ActivityProjectionDFG {
         dfg
     }
 }
-impl<'a> From<super::stream_xes::XESTraceStreamParser<'a>> for EventLogActivityProjection {
-    fn from(value: super::stream_xes::XESTraceStreamParser) -> Self {
+
+impl<'a, 'b> From<super::stream_xes::XESParsingTraceStream<'a>> for EventLogActivityProjection {
+    fn from(mut value: super::stream_xes::XESParsingTraceStream<'a>) -> Self {
+        (&mut value).into()
+    }
+}
+impl<'a, 'b> From<&'b mut super::stream_xes::XESParsingTraceStream<'a>> for EventLogActivityProjection {
+    fn from(value: &mut super::stream_xes::XESParsingTraceStream) -> Self {
         let mut act_to_index: HashMap<String, usize> = HashMap::new();
         let mut activities: Vec<String> = Vec::new();
         let mut traces: HashMap<Vec<usize>, u64> = HashMap::new();
-        for t in value.stream() {
+        for t in value.into_iter() {
             let mut trace_acts: Vec<usize> = Vec::with_capacity(t.events.len());
             for e in t.events {
                 let act = match e.attributes.get_by_key(ACTIVITY_NAME) {

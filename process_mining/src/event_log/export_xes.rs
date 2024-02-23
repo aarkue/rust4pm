@@ -1,11 +1,13 @@
-use std::{borrow::Borrow, io::Write};
+use std::{borrow::Borrow, fs::File, io::Write};
 
+use flate2::{write::GzEncoder, Compression};
 use quick_xml::{events::BytesDecl, Writer};
 
-use crate::{EventLog, XESTraceStreamParser};
+use crate::EventLog;
 
 use super::{
     event_log_struct::{EventLogClassifier, EventLogExtension},
+    stream_xes::{XESOuterLogData, XESParsingTraceStream},
     Attribute, Attributes, Trace,
 };
 const OK: Result<(), quick_xml::Error> = Ok::<(), quick_xml::Error>(());
@@ -165,14 +167,34 @@ where
     )
 }
 
+pub fn export_xes_event_log_to_file(
+    log: &EventLog,
+    file: File,
+    compress_gz: bool,
+) -> Result<(), quick_xml::Error> {
+    if compress_gz {
+        let encoder = GzEncoder::new(file, Compression::default());
+        return export_xes_event_log(&mut Writer::new(encoder), &log);
+    }
+    export_xes_event_log(&mut Writer::new(file), &log)
+}
+
+pub fn export_xes_event_log_to_file_path(
+    log: &EventLog,
+    path: &str,
+) -> Result<(), quick_xml::Error> {
+    let file = File::create(path)?;
+    export_xes_event_log_to_file(log, file, path.ends_with(".gz"))
+}
+
 pub fn export_xes_trace_stream<T>(
     writer: &mut Writer<T>,
-    trace_stream: XESTraceStreamParser,
+    mut trace_stream: XESParsingTraceStream,
+    log_data: XESOuterLogData,
 ) -> Result<(), quick_xml::Error>
 where
     T: Write,
 {
-    let log_data = trace_stream.get_log_data();
     export_xes(
         writer,
         &Some(log_data.extensions.as_ref()),
@@ -180,17 +202,34 @@ where
         &Some(log_data.global_event_attrs.as_ref()),
         &Some(log_data.classifiers.as_ref()),
         &log_data.log_attributes,
-        trace_stream.stream(),
+        trace_stream.into_iter(),
     )
+}
+
+pub fn export_xes_trace_stream_to_file(
+    trace_stream: XESParsingTraceStream,
+    log_data: XESOuterLogData,
+    file: File,
+    compress_gz: bool,
+) -> Result<(), quick_xml::Error> {
+    if compress_gz {
+        let encoder = GzEncoder::new(file, Compression::default());
+        return export_xes_trace_stream(&mut Writer::new(encoder), trace_stream, log_data);
+    }
+    export_xes_trace_stream(&mut Writer::new(file), trace_stream, log_data)
 }
 
 #[cfg(test)]
 mod export_xes_tests {
-    use std::collections::HashSet;
+    use std::{collections::HashSet, fs::File, time::Instant};
 
     use quick_xml::Writer;
 
-    use crate::event_log::{event_log_struct::EventLogExtension, export_xes::export_xes_event_log};
+    use crate::{event_log::{
+            event_log_struct::EventLogExtension, export_xes::{export_xes_event_log, export_xes_event_log_to_file_path},
+        }, import_xes_file, stream_xes_from_path, XESImportOptions};
+
+    use super::export_xes_trace_stream_to_file;
 
     #[test]
     fn test_xes_export() {
@@ -230,5 +269,22 @@ mod export_xes_tests {
         // The below assumes that also all orders of events, traces, log attributes, extensions etc. must be the same
         // In reality, we would also accept a weaker equality relation (e.g., ignoring the order of attributes)
         assert!(log2 == log);
+    }
+
+    #[test]
+    fn test_stream_from_gz_to_plain() {
+        let now = Instant::now();
+        let path = "/home/aarkue/doc/projects/rust-bridge-process-mining/process_mining/src/event_log/tests/test_data/Road_Traffic_Fine_Management_Process.xes.gz";
+        let (stream,log_data) = stream_xes_from_path(path, XESImportOptions::default()).unwrap();
+        let file = File::create("./streaming-export.xes").unwrap();
+        export_xes_trace_stream_to_file(stream, log_data, file, false).unwrap();
+        println!("Streamed from .xes.gz to .xes in {:?}",now.elapsed());
+
+
+        let now = Instant::now();
+        let log = import_xes_file(path,XESImportOptions::default()).unwrap();
+        export_xes_event_log_to_file_path(&log, "./normal-export.xes").unwrap();
+        println!("Read and saved: .xes.gz to .xes in {:?}",now.elapsed());
+
     }
 }

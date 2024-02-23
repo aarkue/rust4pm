@@ -1,13 +1,11 @@
 use process_mining::{
-    alphappp::full::{alphappp_discover_petri_net_with_timing_fn, AlphaPPPConfig},
-    event_log::{
+    alphappp::full::{alphappp_discover_petri_net_with_timing_fn, AlphaPPPConfig}, event_log::{
         activity_projection::EventLogActivityProjection,
         constants::ACTIVITY_NAME,
         import_xes::{build_ignore_attributes, import_xes_str, XESImportOptions},
         ocel::xml_ocel_import::import_ocel_xml_slice,
-        stream_xes::{stream_xes_slice, stream_xes_slice_gz, XESTraceStreamLogData},
-    },
-    OCEL,
+        stream_xes::{stream_xes_slice, stream_xes_slice_gz},
+    }, OCEL
 };
 use wasm_bindgen::prelude::*;
 // pub use wasm_bindgen_rayon::init_thread_pool;
@@ -75,24 +73,21 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_vec(
 ) -> Vec<u8> {
     console_error_panic_hook::set_once();
     console_log!("Got data: {}", xes_data.len());
-    let log_data: std::cell::RefCell<XESTraceStreamLogData> =
-        std::cell::RefCell::new(XESTraceStreamLogData::default());
     let options = XESImportOptions {
         ignore_event_attributes_except: Some(build_ignore_attributes(vec![ACTIVITY_NAME])),
         ignore_trace_attributes_except: Some(build_ignore_attributes(Vec::<&str>::new())),
         ignore_log_attributes_except: Some(build_ignore_attributes(Vec::<&str>::new())),
         ..XESImportOptions::default()
     };
-    let s = if is_compressed_gz {
-        stream_xes_slice_gz(xes_data, options, &log_data)
+    let (mut stream,_log_data) = if is_compressed_gz {
+        stream_xes_slice_gz(xes_data, options)
     } else {
-        stream_xes_slice(xes_data, options, &log_data)
+        stream_xes_slice(xes_data, options)
     }
     .unwrap();
     // let now = Instant::now();
-    // let st_res = stream_xes_file_gz(file, X, &log_data);
 
-    // web_sys::console::time_with_label("xes-import");
+    web_sys::console::time_with_label("xes-import");
     // let log = import_xes_slice(
     //     xes_data,
     //     is_compressed_gz,
@@ -106,7 +101,7 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_vec(
     // .unwrap();
     // web_sys::console::time_end_with_label("xes-import");
     // console_log!("Got Log: {}", log.traces.len());
-    let log_proj: EventLogActivityProjection = s.into();
+    let log_proj: EventLogActivityProjection = (&mut stream).into();
     console_log!("Got Log Activity Projection: {}", log_proj.traces.len());
     let (pn, _) = alphappp_discover_petri_net_with_timing_fn(
         &log_proj,
