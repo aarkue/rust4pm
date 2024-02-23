@@ -11,10 +11,11 @@ pub mod event_log {
     pub mod activity_projection;
     pub mod constants;
     pub mod event_log_struct;
+    pub mod export_xes;
     pub mod import_xes;
     pub mod stream_xes;
     ///
-    /// OCEL2.0 (Object-Centric Event Logs) 
+    /// OCEL2.0 (Object-Centric Event Logs)
     ///
     pub mod ocel {
         pub mod ocel_struct;
@@ -83,7 +84,6 @@ pub use event_log::ocel::xml_ocel_import::import_ocel_xml_file;
 
 #[doc(inline)]
 pub use event_log::ocel::xml_ocel_import::import_ocel_xml_slice;
-
 
 #[doc(inline)]
 pub use petri_net::petri_net_struct::PetriNet;
@@ -179,12 +179,11 @@ pub fn json_to_petrinet(net_json: &str) -> PetriNet {
     serde_json::from_str(net_json).unwrap()
 }
 
-
 ///
 /// Serialize [OCEL] as a JSON [String]
 ///
 /// [serde_json] can also be used to convert [OCEL] to other targets (e.g., `serde_json::to_writer`)
-/// 
+///
 pub fn ocel_to_json(ocel: &OCEL) -> String {
     serde_json::to_string(ocel).unwrap()
 }
@@ -193,12 +192,10 @@ pub fn ocel_to_json(ocel: &OCEL) -> String {
 /// Import [OCEL] from a JSON [String]
 ///
 /// [serde_json] can also be used to import [OCEL] from other targets (e.g., `serde_json::from_reader`)
-/// 
+///
 pub fn json_to_ocel(ocel_json: &str) -> OCEL {
     serde_json::from_str(ocel_json).unwrap()
 }
-
-
 
 // pub fn export_log<P: AsRef<Path>>(path: P, log: &EventLog) {
 //     let file = File::create(path).unwrap();
