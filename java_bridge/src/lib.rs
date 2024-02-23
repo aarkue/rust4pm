@@ -49,10 +49,6 @@ pub unsafe fn getRustLogAttributes<'local>(
     pointer: jlong,
 ) -> JString<'local> {
     let mut log_pointer = Box::from_raw(pointer as *mut EventLog);
-    // let (k, a) = Attribute::new_with_key(
-    //     "__NUM_TRACES__".to_string(),
-    //     AttributeValue::Int(log_pointer.traces.len() as i64),
-    // );
     log_pointer.attributes.add_to_attributes(
         "__NUM_TRACES__".to_string(),
         AttributeValue::Int(log_pointer.traces.len() as i64),

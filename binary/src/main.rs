@@ -29,7 +29,7 @@ fn main() {
     );
 
     // Streaming XES Parsing (constructing a primitive [EventLogActivityProjection])
-    // This demonstrates how streaming can be enable very low memory consumption and faster processing
+    // This demonstrates how streaming can enable very low memory consumption and faster processing
     let log_data = construct_log_data_cell();
     let now = Instant::now();
     let st_res = stream_xes_from_path(
@@ -57,6 +57,7 @@ fn main() {
     }
 
     // Parsing XML OCEL files:
+    let now = Instant::now();
     let ocel = import_ocel_xml_file("../../../dow/event_data/order-management.xml");
     println!(
         "Imported OCEL2 XML with {} objects and {} events in {:#?}",
@@ -66,6 +67,7 @@ fn main() {
     );
 
     // Parsing JSON OCEL files
+    let now = Instant::now();
     let ocel: OCEL = serde_json::from_reader(BufReader::new(
         File::open("../../../dow/event_data/order-management.json").unwrap(),
     ))

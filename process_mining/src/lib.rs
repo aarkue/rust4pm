@@ -1,7 +1,5 @@
 //!  # Process Mining
-//!
-//! `process_mining` is a collection of functions, structs and utilitities related to Process Mining
-//!
+#![doc = include_str!("../README.md")]
 
 use event_log::activity_projection::{END_ACTIVITY, START_ACTIVITY};
 use event_log::event_log_struct::Event;

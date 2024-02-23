@@ -2,7 +2,7 @@
 
 This crate contains basic data structures, functions and utilities for Process Mining.
 
-Visit **[docs.rs/process_mining/](https://docs.rs/process_mining/)** to view the full documentation of this crate.
+Full documentation of the modules, structs and functions of this crate is available at **[docs.rs/process_mining/](https://docs.rs/process_mining/)**.
 
 ## Modules
 
@@ -34,7 +34,6 @@ match log_res {
 
 ## Examples
 ```rust
-
 use std::{
     fs::File,
     io::BufReader,
@@ -66,7 +65,7 @@ fn main() {
     );
 
     // Streaming XES Parsing (constructing a primitive [EventLogActivityProjection])
-    // This demonstrates how streaming can be enable very low memory consumption and faster processing
+    // This demonstrates how streaming can enable very low memory consumption and faster processing
     let log_data = construct_log_data_cell();
     let now = Instant::now();
     let st_res = stream_xes_from_path(
@@ -94,6 +93,7 @@ fn main() {
     }
 
     // Parsing XML OCEL files:
+    let now = Instant::now();
     let ocel = import_ocel_xml_file("../../../dow/event_data/order-management.xml");
     println!(
         "Imported OCEL2 XML with {} objects and {} events in {:#?}",
@@ -103,6 +103,7 @@ fn main() {
     );
 
     // Parsing JSON OCEL files
+    let now = Instant::now();
     let ocel: OCEL = serde_json::from_reader(BufReader::new(
         File::open("../../../dow/event_data/order-management.json").unwrap(),
     ))
@@ -120,8 +121,8 @@ fn main() {
 Example output:
 
 ```
-Parsed XES with 43809 cases in 14.67024004s
-Streamed XES into Activity Projection with 28457 variants in 6.136536956s
-Imported OCEL2 XML with 10840 objects and 21008 events in 6.227374964s
-Imported OCEL2 JSON with 10840 objects and 21008 events in 6.330307052s
+Parsed XES with 43809 cases in 12.334751875s
+Streamed XES into Activity Projection with 28457 variants in 6.078319582s
+Imported OCEL2 XML with 10840 objects and 21008 events in 85.719414ms
+Imported OCEL2 JSON with 10840 objects and 21008 events in 102.26467ms
 ```

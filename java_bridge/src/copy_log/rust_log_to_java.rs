@@ -32,7 +32,6 @@ pub unsafe fn getCompleteRustTraceAsString<'local>(
     trace.events.iter().for_each(|e| {
         let mut attrs: Attributes = e.attributes.clone();
         attrs.add_to_attributes("__UUID__".into(), AttributeValue::ID(Uuid::new_v4()));
-        // let (k, a) = Attribute::new_with_key("__UUID__".into(), AttributeValue::ID(Uuid::new_v4()));
         events_json.push(attrs)
     });
     let all_json: String = serde_json::to_string(&events_json).unwrap();

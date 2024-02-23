@@ -51,6 +51,7 @@ impl Attribute {
     ///
     /// This is useful for directly inserting the attribute in a [HashMap] afterwards
     ///
+    #[deprecated(since="0.2.0", note="This function will be removed soon as Attributes are now backed by Vec instead of HashMap")]
     pub fn new_with_key(key: String, attribute_val: AttributeValue) -> (String, Self) {
         (
             key.clone(),
@@ -69,31 +70,62 @@ impl Attribute {
 pub type Attributes = Vec<Attribute>;
 
 ///
-/// Trait to easily add a new attribute
+/// Trait to easily add and update attributes
+///
 pub trait AttributeAddable {
     fn add_to_attributes(&mut self, key: String, value: AttributeValue);
     fn get_by_key(&self, key: &str) -> Option<&Attribute>;
+    fn get_by_key_mut(&mut self, key: &str) -> Option<&mut Attribute>;
     fn add_attribute(&mut self, attr: Attribute);
+    fn remove_with_key(&mut self, key: &str) -> bool;
 }
 impl AttributeAddable for Attributes {
     ///
     /// Add a new attribute (with key and value)
     ///
+    /// Note: Does _not_ check if attribute was already present and does _not_ sort attributes wrt. key.
+    ///
     fn add_to_attributes(&mut self, key: String, value: AttributeValue) {
         let a = Attribute::new(key, value);
         self.push(a);
-        self.sort_by(|a, b| a.key.cmp(&b.key));
-        // return self.get_mut(&k);
     }
+
+    ///
+    /// Add a new attribute
+    ///
     fn add_attribute(&mut self, a: Attribute) {
         self.push(a);
     }
+
+    ///
+    /// Get an attribute by key
+    ///
+    /// _Complexity_: Does linear lookup (i.e., in O(n)). If you need faster lookup, consider manually sorting the attributes by key and utilizing binary search.
     fn get_by_key(&self, key: &str) -> Option<&Attribute> {
-        match self.binary_search_by_key(&key, |a| &a.key) {
-            Ok(a) => Some(&self[a]),
-            Err(_) => None,
-        }
-        // self.iter().find(|attr| attr.key == key)
+        self.iter().find(|attr| attr.key == key)
+    }
+
+    /// 
+    /// Get an attribute as mutable by key
+    ///
+    /// _Complexity_: Does linear lookup (i.e., in O(n)). If you need faster lookup, consider manually sorting the attributes by key and utilizing binary search.
+    fn get_by_key_mut(&mut self, key: &str) -> Option<&mut Attribute> {
+        self.iter_mut().find(|attr| attr.key == key)
+    }
+
+    ///
+    /// Remove attribute with given key 
+    ///
+    /// Returns `true` if the attribute was present and `false` otherwise
+    ///
+    /// _Complexity_: Does linear lookup (i.e., in O(n)). If you need faster lookup, consider manually sorting the attributes by key and utilizing binary search.
+    fn remove_with_key(&mut self, key: &str) -> bool {
+        let index_opt = self.iter().position(|a| a.key  == key);
+        if let Some(index) = index_opt {
+            self.remove(index);
+            return true;
+        } 
+        false
     }
 }
 
