@@ -1,11 +1,13 @@
 use process_mining::{
-    alphappp::full::{alphappp_discover_petri_net_with_timing_fn, AlphaPPPConfig}, event_log::{
+    alphappp::full::{alphappp_discover_petri_net_with_timing_fn, AlphaPPPConfig},
+    event_log::{
         activity_projection::EventLogActivityProjection,
         constants::ACTIVITY_NAME,
         import_xes::{build_ignore_attributes, import_xes_str, XESImportOptions},
         ocel::xml_ocel_import::import_ocel_xml_slice,
         stream_xes::{stream_xes_slice, stream_xes_slice_gz},
-    }, OCEL
+    },
+    OCEL,
 };
 use wasm_bindgen::prelude::*;
 // pub use wasm_bindgen_rayon::init_thread_pool;
@@ -79,7 +81,7 @@ pub fn wasm_discover_alphappp_petri_net_from_xes_vec(
         ignore_log_attributes_except: Some(build_ignore_attributes(Vec::<&str>::new())),
         ..XESImportOptions::default()
     };
-    let (mut stream,_log_data) = if is_compressed_gz {
+    let (mut stream, _log_data) = if is_compressed_gz {
         stream_xes_slice_gz(xes_data, options)
     } else {
         stream_xes_slice(xes_data, options)

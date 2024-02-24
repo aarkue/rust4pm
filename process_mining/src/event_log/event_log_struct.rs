@@ -24,6 +24,22 @@ pub enum AttributeValue {
     None(),
 }
 
+impl AttributeValue {
+    ///
+    /// Try to get attribute value as String
+    ///
+    /// Returns inner value if self is of variant [AttributeValue::String]
+    ///
+    /// Otherwise, returns None
+
+    pub fn try_get_string(&self) -> Option<&String> {
+        match self {
+            AttributeValue::String(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
 ///
 /// Attribute made up of the key and value
 ///
@@ -79,6 +95,11 @@ pub trait AttributeAddable {
     fn add_to_attributes(&mut self, key: String, value: AttributeValue);
     fn get_by_key(&self, key: &str) -> Option<&Attribute>;
     fn get_by_key_mut(&mut self, key: &str) -> Option<&mut Attribute>;
+    fn get_by_key_or_global<'a>(
+        &'a self,
+        key: &str,
+        global_attrs: &'a Option<&'a Attributes>,
+    ) -> Option<&'a Attribute>;
     fn add_attribute(&mut self, attr: Attribute);
     fn remove_with_key(&mut self, key: &str) -> bool;
 }
@@ -106,6 +127,27 @@ impl AttributeAddable for Attributes {
     /// _Complexity_: Does linear lookup (i.e., in O(n)). If you need faster lookup, consider manually sorting the attributes by key and utilizing binary search.
     fn get_by_key(&self, key: &str) -> Option<&Attribute> {
         self.iter().find(|attr| attr.key == key)
+    }
+
+    ///
+    /// Get an attribute by key or the default value (e.g., provided by global event or trace attributes)
+    ///
+    /// _Complexity_: Does linear lookup (i.e., in O(n)). If you need faster lookup, consider manually sorting the attributes by key and utilizing binary search.
+    fn get_by_key_or_global<'a>(
+        &'a self,
+        key: &str,
+        global_attrs: &'a Option<&'a Attributes>,
+    ) -> Option<&'a Attribute> {
+        // TODO
+        if let Some(attr) = self.iter().find(|attr| attr.key == key) {
+            return Some(attr);
+        }
+        if let Some(global_attrs) = global_attrs {
+            if let Some(attr) = global_attrs.get_by_key(key) {
+                return Some(attr);
+            }
+        }
+        None
     }
 
     ///

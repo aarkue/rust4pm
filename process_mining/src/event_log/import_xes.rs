@@ -11,8 +11,6 @@ use quick_xml::Error as QuickXMLError;
 use quick_xml::Reader;
 use serde::{Deserialize, Serialize};
 
-
-
 ///
 /// Error encountered while parsing XES
 ///
@@ -74,10 +72,29 @@ impl From<QuickXMLError> for XESParseError {
 ///
 /// See also [build_ignore_attributes] for easy construction of attributes set to not ignore
 pub struct XESImportOptions {
+    /// If Some: Ignore all top-level log attributes, except attributes with keys in the provided allowlist
     pub ignore_log_attributes_except: Option<HashSet<Vec<u8>>>,
+    /// If Some: Ignore all trace attributes, except attributes with keys in the provided allowlist
+    ///
+    /// Does not effect global trace attributes
     pub ignore_trace_attributes_except: Option<HashSet<Vec<u8>>>,
+    /// If Some: Ignore all event attributes except, attributes with keys in the provided allowlist
+    ///
+    /// Does not effect global event attributes
     pub ignore_event_attributes_except: Option<HashSet<Vec<u8>>>,
+    /// Optional date format to use when parsing DateTimes (first trying [chrono::DateTime] then falling back to [chrono::NaiveDateTime] with UTC timezone).
+    ///
+    /// See <https://docs.rs/chrono/latest/chrono/format/strftime/index.html> for all available Specifiers.
+    ///
+    /// Will fall back to default formats (e.g., rfc3339) if parsing fails using passed date_format
     pub date_format: Option<String>,
+    /// Sort events via timestamp key directly when parsing:
+    /// * If None: No sorting (i.e., events of traces are included in order of occurence in event log)
+    /// * If Some(key):
+    ///   * Sort events via the timestamp provided by key before emitting the trace
+    ///   * If no value is present or it is invalid, the global default event attribute value with the provided key will be used (if it exists)
+    ///   * if no valid timestamp is available from the event or the global default, it will be sorted before all other events (in stable ordering)
+    pub sort_events_with_timestamp_key: Option<String>,
 }
 ///
 /// Construct a `HashSet<Vec<u8>>` from a _collection_ of String, &str, ...
@@ -99,7 +116,7 @@ where
 {
     let (mut trace_stream, log_data) = super::stream_xes::XESParsingTraceStream::try_new(
         Box::new(Reader::from_reader(Box::new(reader))),
-        options
+        options,
     )?;
 
     let traces: Vec<Trace> = trace_stream.collect();

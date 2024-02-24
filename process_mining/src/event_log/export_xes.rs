@@ -11,7 +11,7 @@ use crate::EventLog;
 
 use super::{
     event_log_struct::{EventLogClassifier, EventLogExtension},
-    stream_xes::{XESOuterLogData, XESParsingTraceStream},
+    stream_xes::XESOuterLogData,
     Attribute, Attributes, Trace,
 };
 const OK: Result<(), quick_xml::Error> = Ok::<(), quick_xml::Error>(());
@@ -178,9 +178,9 @@ pub fn export_xes_event_log_to_file(
 ) -> Result<(), quick_xml::Error> {
     if compress_gz {
         let encoder = GzEncoder::new(BufWriter::new(file), Compression::fast());
-        return export_xes_event_log(&mut Writer::new(BufWriter::new(encoder)), &log);
+        return export_xes_event_log(&mut Writer::new(BufWriter::new(encoder)), log);
     }
-    export_xes_event_log(&mut Writer::new(BufWriter::new(file)), &log)
+    export_xes_event_log(&mut Writer::new(BufWriter::new(file)), log)
 }
 
 pub fn export_xes_event_log_to_file_path(
@@ -191,13 +191,14 @@ pub fn export_xes_event_log_to_file_path(
     export_xes_event_log_to_file(log, file, path.ends_with(".gz"))
 }
 
-pub fn export_xes_trace_stream<T>(
-    writer: &mut Writer<T>,
-    mut trace_stream: XESParsingTraceStream,
+pub fn export_xes_trace_stream<W, T: Borrow<Trace>, I>(
+    writer: &mut Writer<W>,
+    trace_stream: I,
     log_data: XESOuterLogData,
 ) -> Result<(), quick_xml::Error>
 where
-    T: Write,
+    W: Write,
+    I: Iterator<Item = T>,
 {
     export_xes(
         writer,
@@ -206,18 +207,21 @@ where
         &Some(log_data.global_event_attrs.as_ref()),
         &Some(log_data.classifiers.as_ref()),
         &log_data.log_attributes,
-        trace_stream.into_iter(),
+        trace_stream,
     )
 }
 
-pub fn export_xes_trace_stream_to_file(
-    trace_stream: XESParsingTraceStream,
+pub fn export_xes_trace_stream_to_file<T: Borrow<Trace>, I>(
+    trace_stream: I,
     log_data: XESOuterLogData,
     file: File,
     compress_gz: bool,
-) -> Result<(), quick_xml::Error> {
+) -> Result<(), quick_xml::Error>
+where
+    I: Iterator<Item = T>,
+{
     if compress_gz {
-        let encoder = GzEncoder::new(BufWriter::new(file), Compression::default());
+        let encoder = GzEncoder::new(BufWriter::new(file), Compression::fast());
         return export_xes_trace_stream(
             &mut Writer::new(BufWriter::new(encoder)),
             trace_stream,
@@ -235,15 +239,11 @@ pub fn export_xes_trace_stream_to_file(
 mod export_xes_tests {
     use std::{collections::HashSet, fs::File, time::Instant};
 
-    
     use quick_xml::Writer;
 
     use crate::{
-        event_log::{
-            event_log_struct::EventLogExtension,
-            export_xes::export_xes_event_log,
-        }, stream_xes_slice_gz,
-        XESImportOptions,
+        event_log::{event_log_struct::EventLogExtension, export_xes::export_xes_event_log},
+        stream_xes_slice_gz, XESImportOptions,
     };
 
     use super::export_xes_trace_stream_to_file;
@@ -293,9 +293,39 @@ mod export_xes_tests {
         let now = Instant::now();
         let data = include_bytes!("./tests/test_data/Road_Traffic_Fine_Management_Process.xes.gz");
 
-        let (stream, log_data) = stream_xes_slice_gz(data, XESImportOptions::default()).unwrap();
-        let file = File::create("./streaming-export.xes").unwrap();
-        export_xes_trace_stream_to_file(stream, log_data, file, false).unwrap();
-        println!("Streamed from .xes.gz to .xes in {:?}", now.elapsed());
+        let (mut stream, mut log_data) =
+            stream_xes_slice_gz(data, XESImportOptions::default()).unwrap();
+        let file = File::create("/tmp/streaming-export.xes.gz").unwrap();
+
+        let traces = stream.map(|mut t| {
+            for a in t.attributes.iter_mut() {
+                a.key = a.key.to_uppercase().to_string().to_string();
+            }
+            for e in t.events.iter_mut() {
+                for a in e.attributes.iter_mut() {
+                    a.key = a.key.to_uppercase().to_string().to_string();
+                }
+            }
+            t
+        });
+        for a in log_data.global_trace_attrs.iter_mut() {
+            a.key = a.key.to_uppercase().to_string().to_string();
+        }
+
+        for a in log_data.global_event_attrs.iter_mut() {
+            a.key = a.key.to_uppercase().to_string().to_string();
+        }
+        for a in log_data.log_attributes.iter_mut() {
+            a.key = a.key.to_uppercase().to_string().to_string();
+        }
+        for c in log_data.classifiers.iter_mut() {
+            for k in c.keys.iter_mut() {
+                *k = k.to_uppercase().to_string().to_string();
+            }
+        }
+
+        export_xes_trace_stream_to_file(traces, log_data, file, true).unwrap();
+        std::fs::remove_file("/tmp/streaming-export.xes.gz").unwrap();
+        println!("Streamed from .xes.gz to .xes.gz in {:?}", now.elapsed());
     }
 }

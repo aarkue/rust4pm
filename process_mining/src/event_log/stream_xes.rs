@@ -1,5 +1,8 @@
 use std::{
-    fs::File, io::{BufRead, BufReader, Read}, iter::FusedIterator, str::FromStr
+    fs::File,
+    io::{BufRead, BufReader, Read},
+    iter::FusedIterator,
+    str::FromStr,
 };
 
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -17,13 +20,13 @@ use super::{
 
 #[derive(Default, Debug)]
 
-
 /// (Global) log data parsed during streaming
 ///
 ///
 /// According to the state machine flow in XES standard (<https://xes-standard.org/_media/xes/xesstandarddefinition-2.0.pdf#page=11>) those must occur before the first trace
 ///
-/// Thus, __for XES-compliant logs it is guaranteed that this data is already complete once the first trace is pa__.
+/// Thus, __for XES-compliant logs it is guaranteed that this data is already complete once the first trace is parsed__.
+#[derive(Clone)]
 pub struct XESOuterLogData {
     pub extensions: Vec<EventLogExtension>,
     pub classifiers: Vec<EventLogClassifier>,
@@ -72,8 +75,10 @@ pub struct StreamingXESParser<'a> {
     encountered_log: bool,
     // [XESOuterLogData] parsed from the log (this will be emitted once the first trace is encountered or the file ends)
     log_data: Option<XESOuterLogData>,
+    // Whether or not log data was already emitted (i.e., true after the start of the first trace is encountered)
+    log_data_emitted: bool,
     /// Whether the parsing was terminated (either by encountering an error or reaching the Eof)
-    finished: bool
+    finished: bool,
 }
 
 #[derive(Debug)]
@@ -86,12 +91,11 @@ pub enum XESNextStreamElement {
 }
 
 impl<'a> StreamingXESParser<'a> {
-
     /// Try to parse a next [XESNextStreamElement] from the current position
     ///
     /// Returns [None] if it encountered an error previously or there are no more traces left
     ///
-    /// Otherwise returns [Some] wrapping a [XESNextStreamElement] 
+    /// Otherwise returns [Some] wrapping a [XESNextStreamElement]
     ///
     /// * `XESNextStreamElement:LogData` will be at most emitted once at the beginning (it is emitted before parsing the first trace)
     /// * `XESNextStreamElement:Trace` will be emitted for every trace found in the underlying XES
@@ -132,8 +136,17 @@ impl<'a> StreamingXESParser<'a> {
                                         });
                                     }
                                 }
-                                if let Some(log_data) = self.log_data.take() {
-                                    return Some(XESNextStreamElement::LogData(log_data));
+                                if !self.log_data_emitted {
+                                    if let Some(log_data) = self.log_data.as_ref() {
+                                        self.log_data_emitted = true;
+                                        return Some(XESNextStreamElement::LogData(
+                                            log_data.clone(),
+                                        ));
+                                    }
+                                    return terminate_with_error(
+                                        self,
+                                        XESParseError::ExpectedLogData,
+                                    );
                                 }
                             }
                             b"event" => {
@@ -268,8 +281,17 @@ impl<'a> StreamingXESParser<'a> {
                                 self.encountered_log = true;
                                 self.current_mode = Mode::None;
                                 // Send (empty) log_data anyways
-                                if let Some(log_data) = self.log_data.take() {
-                                    return Some(XESNextStreamElement::LogData(log_data));
+                                if !self.log_data_emitted {
+                                    if let Some(log_data) = self.log_data.as_ref() {
+                                        self.log_data_emitted = true;
+                                        return Some(XESNextStreamElement::LogData(
+                                            log_data.clone(),
+                                        ));
+                                    }
+                                    return terminate_with_error(
+                                        self,
+                                        XESParseError::ExpectedLogData,
+                                    );
                                 }
                             }
                             _ => {
@@ -299,15 +321,45 @@ impl<'a> StreamingXESParser<'a> {
                                 b"event" => self.current_mode = Mode::Trace,
                                 b"trace" => {
                                     self.current_mode = Mode::Log;
-                                    let mut trace = self.current_trace.take().unwrap();
-                                    trace
-                                        .events
-                                        .iter_mut()
-                                        .for_each(|e| e.attributes.shrink_to_fit());
-                                    trace.events.shrink_to_fit();
-                                    trace.attributes.shrink_to_fit();
-                                    self.current_trace = None;
-                                    return Some(XESNextStreamElement::Trace(trace));
+                                    if let Some(mut trace) = self.current_trace.take() {
+                                        if let Some(event_timestamp_key) =
+                                            &self.options.sort_events_with_timestamp_key
+                                        {
+                                            trace.events.sort_by_key(|e| {
+                                                // TODO: do not hard code (add as option, which also allows specifying the key to sort by)
+                                                if let Some(dt_attr) =
+                                                    e.attributes.get_by_key(event_timestamp_key)
+                                                {
+                                                    if let AttributeValue::Date(d) = dt_attr.value {
+                                                        return Some(d);
+                                                    }
+                                                }
+                                                if let Some(log_data) = &self.log_data {
+                                                    if let Some(x) = log_data
+                                                        .global_event_attrs
+                                                        .get_by_key(event_timestamp_key)
+                                                    {
+                                                        if let AttributeValue::Date(d) = x.value {
+                                                            return Some(d);
+                                                        }
+                                                    }
+                                                }
+
+                                                None
+                                            });
+                                        }
+                                        trace
+                                            .events
+                                            .iter_mut()
+                                            .for_each(|e| e.attributes.shrink_to_fit());
+                                        trace.events.shrink_to_fit();
+                                        trace.attributes.shrink_to_fit();
+                                        return Some(XESNextStreamElement::Trace(trace));
+                                    }
+                                    return terminate_with_error(
+                                        self,
+                                        XESParseError::MissingLastTrace,
+                                    );
                                 }
                                 b"log" => self.current_mode = Mode::None,
                                 b"global" => self.current_mode = Mode::Log,
@@ -374,13 +426,20 @@ impl<'a> StreamingXESParser<'a> {
                                                                 .expect("LogData after trace")
                                                                 .log_attributes
                                                                 .add_attribute(attr);
-                                                        },
-                                                        // TODO: Also test if nested global trace/event attributes are parsed correctly
+                                                        }
                                                         Mode::GlobalTraceAttributes => {
-                                                            self.log_data.as_mut().expect("LogData after trace").global_trace_attrs.add_attribute(attr);
-                                                        },
+                                                            self.log_data
+                                                                .as_mut()
+                                                                .expect("LogData after trace")
+                                                                .global_trace_attrs
+                                                                .add_attribute(attr);
+                                                        }
                                                         Mode::GlobalEventAttributes => {
-                                                            self.log_data.as_mut().expect("LogData after trace").global_event_attrs.add_attribute(attr);
+                                                            self.log_data
+                                                                .as_mut()
+                                                                .expect("LogData after trace")
+                                                                .global_event_attrs
+                                                                .add_attribute(attr);
                                                         }
                                                         _x => {
                                                             return terminate_with_error(
@@ -409,9 +468,16 @@ impl<'a> StreamingXESParser<'a> {
                                 // If there was no (top-level) log tag, this was not a valid XES file!
                                 return terminate_with_error(self, XESParseError::NoTopLevelLog);
                             }
-
-                            if let Some(log_data) = self.log_data.take() {
-                                return Some(XESNextStreamElement::LogData(log_data));
+                            if !self.log_data_emitted {
+                                if let Some(log_data) = self.log_data.as_ref() {
+                                    self.log_data_emitted = true;
+                                    return Some(XESNextStreamElement::LogData(log_data.clone()));
+                                } else {
+                                    return terminate_with_error(
+                                        self,
+                                        XESParseError::ExpectedLogData,
+                                    );
+                                }
                             }
                             self.finished = true;
                             //
@@ -589,7 +655,6 @@ impl<'a> Iterator for &mut XESParsingTraceStream<'a> {
     }
 }
 
-
 impl<'a> FusedIterator for &mut XESParsingTraceStream<'a> {}
 
 impl<'a> XESParsingTraceStream<'a> {
@@ -617,29 +682,26 @@ impl<'a> XESParsingTraceStream<'a> {
             current_nested_attributes: Vec::new(),
             options,
             log_data,
+            log_data_emitted: false,
             buf: Vec::new(),
             finished: false,
         };
         let next = s.next_trace();
         match next {
-            Some(el) => {
-                return match el {
-                    XESNextStreamElement::Error(e) => Err(e),
-                    XESNextStreamElement::Trace(_) => {
-                        eprintln!("Encountered trace before LogData; This should not happen!");
-                        return Err(XESParseError::ExpectedLogData);
-                    }
-                    XESNextStreamElement::LogData(d) => {
-                        return Ok((
-                            (Self {
-                                inner: s,
-                                error: None,
-                            }),
-                            d,
-                        ))
-                    }
-                };
-            }
+            Some(el) => match el {
+                XESNextStreamElement::Error(e) => Err(e),
+                XESNextStreamElement::Trace(_) => {
+                    eprintln!("Encountered trace before LogData; This should not happen!");
+                    Err(XESParseError::ExpectedLogData)
+                }
+                XESNextStreamElement::LogData(d) => Ok((
+                    (Self {
+                        inner: s,
+                        error: None,
+                    }),
+                    d,
+                )),
+            },
             None => {
                 // No log data and no error returned: This should not happen!
                 eprintln!(
@@ -656,10 +718,10 @@ impl<'a> XESParsingTraceStream<'a> {
 ///
 /// The returned [XESParsingStreamAndLogData] contains the [XESOuterLogData] and can be used to iterate over [Trace]s
 ///
-pub fn stream_xes_slice<'a>(
-    xes_data: &'a [u8],
+pub fn stream_xes_slice(
+    xes_data: &[u8],
     options: XESImportOptions,
-) -> Result<XESParsingStreamAndLogData<'a>, XESParseError> {
+) -> Result<XESParsingStreamAndLogData<'_>, XESParseError> {
     XESParsingTraceStream::try_new(
         Box::new(Reader::from_reader(Box::new(BufReader::new(xes_data)))),
         options,
@@ -671,10 +733,10 @@ pub fn stream_xes_slice<'a>(
 ///
 /// The returned [XESParsingStreamAndLogData] contains the [XESOuterLogData] and can be used to iterate over [Trace]s
 ///
-pub fn stream_xes_slice_gz<'a>(
-    xes_data: &'a [u8],
+pub fn stream_xes_slice_gz(
+    xes_data: &[u8],
     options: XESImportOptions,
-) -> Result<XESParsingStreamAndLogData<'a>, XESParseError> {
+) -> Result<XESParsingStreamAndLogData<'_>, XESParseError> {
     let gz: GzDecoder<&[u8]> = GzDecoder::new(xes_data);
     let reader = BufReader::new(gz);
     XESParsingTraceStream::try_new(Box::new(Reader::from_reader(Box::new(reader))), options)
@@ -753,36 +815,12 @@ pub fn parse_attribute_from_tag(
                 .unwrap_or(value.as_str().into())
                 .into(),
         )),
-        b"date" => match &options.date_format {
-            // If a format is specified, try parsing with this format: First as DateTime (has to include a time zone)
-            //   If this fails, retry parsing as NaiveDateTime (without time zone, assuming UTC)
-            Some(dt_format) => match DateTime::parse_from_str(&value, dt_format) {
-                Ok(dt) => Some(AttributeValue::Date(dt.into())),
-                Err(dt_error) => Some(AttributeValue::Date(
-                    match NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M:%S%.f") {
-                        Ok(dt) => dt.and_local_timezone(Utc).unwrap(),
-                        Err(ndt_error) => {
-                            eprintln!("Could not parse datetime '{}' with provided format '{}'. Will use datetime epoch 0 instead.\nError (when parsing as DateTime): {:?}\nError (when parsing as NaiveDateTime, without TZ): {:?}", value, dt_format, dt_error, ndt_error);
-                            DateTime::default()
-                        }
-                    },
-                )),
-            },
-            // If no format is specified try two very common formats (rfc3339 standardized and one without timezone)
-            None => Some(AttributeValue::Date(
-                match DateTime::parse_from_rfc3339(&value) {
-                    Ok(dt) => dt.into(),
-                    Err(_e) => {
-                        match NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M:%S%.f") {
-                            Ok(dt) => dt.and_local_timezone(Utc).unwrap(),
-                            Err(e) => {
-                                eprintln!("Could not parse datetime '{}'. Will use datetime epoch 0 instead.\nError {:?}",value,e);
-                                DateTime::default()
-                            }
-                        }
-                    }
-                },
-            )),
+        b"date" => match parse_date_from_str(value.as_str(), &options.date_format) {
+            Some(dt) => Some(AttributeValue::Date(dt)),
+            None => {
+                eprintln!("Failed to parse data from {:?}", value);
+                None
+            }
         },
         b"int" => {
             let parsed_val = match value.parse::<i64>() {
@@ -841,6 +879,35 @@ pub fn parse_attribute_from_tag(
         },
     };
     (key, attribute_val.unwrap_or(AttributeValue::None()))
+}
+
+fn parse_date_from_str(value: &str, date_format: &Option<String>) -> Option<DateTime<Utc>> {
+    // Is a date_format string provided?
+    if let Some(date_format) = &date_format {
+        if let Ok(dt) = DateTime::parse_from_str(value, date_format) {
+            return Some(dt.into());
+        }
+        // If parsing with DateTime with provided date format fail, try to parse NaiveDateTime using format (i.e., without time-zone, assuming UTC)
+        if let Ok(dt) = NaiveDateTime::parse_from_str(value, date_format) {
+            return Some(dt.and_utc());
+        }
+    }
+
+    // Default parsing options for commonly used formats
+
+    if let Ok(dt) = DateTime::parse_from_rfc3339(value) {
+        return Some(dt.into());
+    }
+
+    if let Ok(dt) = DateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S:%f%:z") {
+        return Some(dt.into());
+    }
+
+    if let Ok(dt) = NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f") {
+        return Some(dt.and_utc());
+    }
+
+    None
 }
 
 #[cfg(test)]
