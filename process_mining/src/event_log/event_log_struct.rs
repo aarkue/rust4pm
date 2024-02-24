@@ -28,8 +28,8 @@ impl AttributeValue {
     ///
     /// Try to get attribute value as String
     ///
-    /// Returns inner value if self is of variant [AttributeValue::String]
-    ///
+    /// Returns inner value if self is of variant [AttributeValue::String] 
+    /// 
     /// Otherwise, returns None
 
     pub fn try_get_string(&self) -> Option<&String> {

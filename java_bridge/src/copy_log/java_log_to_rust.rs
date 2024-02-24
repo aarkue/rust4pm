@@ -16,6 +16,7 @@ use super::copy_log_shared::JTrace;
 ///
 /// This struct is heavily used in unsafe code, to allow efficient copying of XLogs to [EventLog]s
 struct EventLogConstruction {
+    #[allow(clippy::vec_box)]
     traces: Vec<Box<Trace>>,
     attributes: Attributes,
 }

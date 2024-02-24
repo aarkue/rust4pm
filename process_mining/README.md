@@ -20,6 +20,26 @@ Full documentation of the modules, structs and functions of this crate is availa
 
 To get started, you can try importing an XES event log using the following code snippet:
 
+
+```rust
+use process_mining::{import_xes_file, XESImportOptions};
+
+let log_res = import_xes_file("log.xes", XESImportOptions::default());
+
+match log_res {
+    Ok(log) => {
+      println!("Imported event log with {} traces", log.traces.len())
+    },
+    Err(e) => {
+      eprintln!("XES Import failed: {:?}", e)
+    },
+}
+
+```
+
+
+## Example Usage
+
 ```rust
 use std::{fs::File, io::BufReader, time::Instant};
 

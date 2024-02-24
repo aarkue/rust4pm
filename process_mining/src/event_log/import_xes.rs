@@ -73,15 +73,15 @@ impl From<QuickXMLError> for XESParseError {
 /// See also [build_ignore_attributes] for easy construction of attributes set to not ignore
 pub struct XESImportOptions {
     /// If Some: Ignore all top-level log attributes, except attributes with keys in the provided allowlist
-    pub ignore_log_attributes_except: Option<HashSet<Vec<u8>>>,
+    pub ignore_log_attributes_except: Option<HashSet<String>>,
     /// If Some: Ignore all trace attributes, except attributes with keys in the provided allowlist
     ///
     /// Does not effect global trace attributes
-    pub ignore_trace_attributes_except: Option<HashSet<Vec<u8>>>,
+    pub ignore_trace_attributes_except: Option<HashSet<String>>,
     /// If Some: Ignore all event attributes except, attributes with keys in the provided allowlist
     ///
     /// Does not effect global event attributes
-    pub ignore_event_attributes_except: Option<HashSet<Vec<u8>>>,
+    pub ignore_event_attributes_except: Option<HashSet<String>>,
     /// Optional date format to use when parsing DateTimes (first trying [chrono::DateTime] then falling back to [chrono::NaiveDateTime] with UTC timezone).
     ///
     /// See <https://docs.rs/chrono/latest/chrono/format/strftime/index.html> for all available Specifiers.
@@ -101,12 +101,12 @@ pub struct XESImportOptions {
 ///
 /// Example usage: `XESImportOptions::build_ignore_attributes(vec!["concept:name"])`
 ///
-pub fn build_ignore_attributes<I, S: AsRef<str>>(keys: I) -> HashSet<Vec<u8>>
+pub fn build_ignore_attributes<I, S: AsRef<str>>(keys: I) -> HashSet<String>
 where
     I: IntoIterator<Item = S>,
 {
     keys.into_iter()
-        .map(|s| s.as_ref().as_bytes().to_vec())
+        .map(|s| s.as_ref().to_string())
         .collect()
 }
 
@@ -177,112 +177,3 @@ pub fn import_xes_slice(
     }
     import_xes(BufReader::new(xes_data), options)
 }
-
-// ///
-// /// Parse an attribute from a tag (reading the "key" and "value" fields) and parsing the inner value
-// ///
-// fn add_attribute_from_tag(
-//     t: &BytesStart,
-//     mode: Mode,
-//     log: &mut EventLog,
-//     current_nested_attributes: &mut [Attribute],
-//     options: &XESImportOptions,
-// ) -> bool {
-//     if options.ignore_event_attributes_except.is_some()
-//         || options.ignore_trace_attributes_except.is_some()
-//         || options.ignore_log_attributes_except.is_some()
-//     {
-//         let key = t.try_get_attribute("key").unwrap().unwrap().value;
-//         if matches!(mode, Mode::Event)
-//             && options
-//                 .ignore_event_attributes_except
-//                 .as_ref()
-//                 .is_some_and(|not_ignored| !not_ignored.contains(key.as_ref()))
-//         {
-//             return true;
-//         }
-//         if matches!(mode, Mode::Trace)
-//             && options
-//                 .ignore_trace_attributes_except
-//                 .as_ref()
-//                 .is_some_and(|not_ignored| !not_ignored.contains(key.as_ref()))
-//         {
-//             return true;
-//         }
-
-//         if matches!(mode, Mode::Log)
-//             && options
-//                 .ignore_log_attributes_except
-//                 .as_ref()
-//                 .is_some_and(|ignored| !ignored.contains(key.as_ref()))
-//         {
-//             return true;
-//         }
-//     }
-
-//     let (key, val) = parse_attribute_from_tag(t, &mode, options);
-//     match mode {
-//         Mode::Trace => match log.traces.last_mut() {
-//             Some(t) => {
-//                 t.attributes.add_to_attributes(key, val);
-//             }
-//             None => {
-//                 eprintln!(
-//                     "No current trace when parsing trace attribute: Key {:?}, Value {:?}",
-//                     key, val
-//                 );
-//             }
-//         },
-//         Mode::Event => match log.traces.last_mut() {
-//             Some(t) => match t.events.last_mut() {
-//                 Some(e) => {
-//                     e.attributes.add_to_attributes(key, val);
-//                 }
-//                 None => {
-//                     eprintln!(
-//                         "No current event when parsing event attribute: Key {:?}, Value {:?}",
-//                         key, val
-//                     )
-//                 }
-//             },
-//             None => {
-//                 eprintln!(
-//                     "No current trace when parsing event attribute: Key {:?}, Value {:?}",
-//                     key, val
-//                 );
-//             }
-//         },
-
-//         Mode::Log => {
-//             log.attributes.add_to_attributes(key, val);
-//         }
-//         Mode::None => return false,
-//         Mode::Attribute => {
-//             let last_attr = current_nested_attributes.last_mut().unwrap();
-//             last_attr.value = match last_attr.value.clone() {
-//                 AttributeValue::List(mut l) => {
-//                     l.push(Attribute {
-//                         key,
-//                         value: val,
-//                         own_attributes: None,
-//                     });
-//                     AttributeValue::List(l)
-//                 }
-//                 AttributeValue::Container(mut c) => {
-//                     c.add_to_attributes(key, val);
-//                     AttributeValue::Container(c)
-//                 }
-//                 x => {
-//                     if let Some(own_attributes) = &mut last_attr.own_attributes {
-//                         own_attributes.add_to_attributes(key, val);
-//                     } else {
-//                         return false;
-//                     }
-//                     x
-//                 }
-//             };
-//         }
-//         Mode::Global => {}
-//     }
-//     true
-// }

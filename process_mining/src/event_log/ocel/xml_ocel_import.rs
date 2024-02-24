@@ -42,18 +42,8 @@ pub enum OCELAttributeType {
     Null,
 }
 
-// fn print_to_string(x: &mut &[u8], mode: Mode, s: &str) {
-//     // let mut str = String::new();
-//     // x.read_to_string(&mut str).unwrap();
-//     // println!("[{:?}] {}: {:?}", mode, s, str);
-// }
-
 fn read_to_string(x: &mut &[u8]) -> String {
     String::from_utf8_lossy(x).to_string()
-    // x.
-    // let mut str = String::new();
-    // x.read_to_string(&mut str).unwrap();
-    // str
 }
 
 fn type_string_to_attribute_type(s: &str) -> OCELAttributeType {
