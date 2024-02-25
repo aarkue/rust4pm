@@ -1,4 +1,4 @@
-#![allow(non_snake_case,clippy::missing_safety_doc)]
+#![allow(non_snake_case, clippy::missing_safety_doc)]
 
 use std::collections::HashMap;
 
@@ -9,27 +9,28 @@ mod copy_log {
     mod rust_log_to_java;
 }
 use jni::{
-    objects::{JClass, JIntArray, JString},
+    objects::{JClass, JIntArray, JObject, JString},
     sys::jlong,
     JNIEnv,
 };
 
 use jni_fn::jni_fn;
 use process_mining::{
-    add_start_end_acts,
     alphappp::{
         auto_parameters::alphappp_discover_with_auto_parameters,
         full::{alphappp_discover_petri_net, AlphaPPPConfig},
     },
     event_log::{
-        activity_projection::EventLogActivityProjection,
+        activity_projection::{add_start_end_acts, EventLogActivityProjection},
+        event_log_struct::HashMapAttribute,
         import_xes::{import_xes_file, XESImportOptions},
-        AttributeAddable, AttributeValue, EventLog,
+        AttributeAddable, AttributeValue, Attributes, EventLog,
     },
     petri_net::petri_net_struct::PetriNet,
-    petrinet_to_json,
+    petrinet_to_json, stream_xes_from_path,
 };
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn addStartEndToRustLog(mut _env: JNIEnv<'_>, _: JClass, pointer: jlong) {
@@ -53,7 +54,7 @@ pub unsafe fn getRustLogAttributes<'local>(
         "__NUM_TRACES__".to_string(),
         AttributeValue::Int(log_pointer.traces.len() as i64),
     );
-    let attributes_json = serde_json::to_string(&log_pointer.attributes).unwrap();
+    let attributes_json = serde_json::to_string(&log_pointer.attributes.as_hash_map()).unwrap();
     // memory of log_pointer should _not_ be destroyed!
     let _log_pointer = Box::into_raw(log_pointer);
     _env.new_string(attributes_json).unwrap()
@@ -229,4 +230,44 @@ pub unsafe fn importXESLog(mut env: JNIEnv<'_>, _: JClass, path: JString) -> jlo
     let log_box = Box::new(log);
 
     Box::into_raw(log_box) as jlong
+}
+
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
+pub unsafe fn importXESLogStream(
+    mut env: JNIEnv<'_>,
+    _: JClass,
+    path: JString,
+    callback: JObject,
+) -> jlong {
+    let (mut stream, _log_data) = stream_xes_from_path(
+        env.get_string(&path).unwrap().to_str().unwrap(),
+        XESImportOptions::default(),
+    )
+    .unwrap();
+    // let ss = env.byte_array_from_slice(&[3]).unwrap();
+    for trace in &mut stream {
+        let mut events_json: Vec<HashMap<String, HashMapAttribute>> =
+            Vec::with_capacity(1 + trace.events.len());
+        events_json.push(trace.attributes.as_hash_map());
+        trace.events.iter().for_each(|e| {
+            let mut attrs: Attributes = e.attributes.clone();
+            attrs.add_to_attributes("__UUID__".into(), AttributeValue::ID(Uuid::new_v4()));
+            events_json.push(attrs.as_hash_map())
+        });
+        let all_json: String = serde_json::to_string(&events_json).unwrap();
+        let auto_dropped_all_json = env.auto_local(env.new_string(all_json).unwrap());
+        match env.call_method(
+            &callback,
+            "rustCallback",
+            "(Ljava/lang/String;)V",
+            &[(&auto_dropped_all_json).into()],
+        ) {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("!Java Error!: {}", e);
+            }
+        };
+    }
+    return jlong::from(42);
+    // let log_box = Box::new(log);
 }

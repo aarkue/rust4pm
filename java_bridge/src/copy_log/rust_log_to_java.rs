@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use jni::{
     objects::{JClass, JString},
     sys::{jint, jlong},
@@ -7,7 +9,7 @@ use jni::{
 use uuid::Uuid;
 
 use jni_fn::jni_fn;
-use process_mining::event_log::{AttributeAddable, AttributeValue, Attributes, EventLog, Trace};
+use process_mining::event_log::{event_log_struct::HashMapAttribute, AttributeAddable, AttributeValue, Attributes, EventLog, Trace};
 
 use super::copy_log_shared::{JEventLog, JTrace};
 
@@ -27,12 +29,12 @@ pub unsafe fn getCompleteRustTraceAsString<'local>(
 ) -> JString<'local> {
     let log_pointer = Box::from_raw(pointer as *mut EventLog);
     let trace = log_pointer.traces.get(index as usize).unwrap();
-    let mut events_json: Vec<Attributes> = Vec::with_capacity(1 + trace.events.len());
-    events_json.push(trace.attributes.clone());
+    let mut events_json: Vec<HashMap<String,HashMapAttribute>> = Vec::with_capacity(1 + trace.events.len());
+    events_json.push(trace.attributes.as_hash_map());
     trace.events.iter().for_each(|e| {
         let mut attrs: Attributes = e.attributes.clone();
         attrs.add_to_attributes("__UUID__".into(), AttributeValue::ID(Uuid::new_v4()));
-        events_json.push(attrs)
+        events_json.push(attrs.as_hash_map())
     });
     let all_json: String = serde_json::to_string(&events_json).unwrap();
     // memory of log_pointer should _not_ be destroyed!

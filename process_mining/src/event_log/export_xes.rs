@@ -16,6 +16,9 @@ use super::{
 };
 const OK: Result<(), quick_xml::Error> = Ok::<(), quick_xml::Error>(());
 
+///
+/// Export XES (from log data and an iterator over traces) to a XML writer
+///
 pub fn export_xes<'a, W, T: Borrow<Trace>, I>(
     writer: &mut Writer<W>,
     log_extensions: &'a Option<&'a Vec<EventLogExtension>>,
@@ -153,6 +156,9 @@ where
     OK
 }
 
+///
+/// Export an [`EventLog`] to a XML [`Writer`]
+//
 pub fn export_xes_event_log<T>(
     writer: &mut Writer<T>,
     log: &EventLog,
@@ -171,6 +177,7 @@ where
     )
 }
 
+/// Export an [EventLog] to a [File]
 pub fn export_xes_event_log_to_file(
     log: &EventLog,
     file: File,
@@ -183,6 +190,11 @@ pub fn export_xes_event_log_to_file(
     export_xes_event_log(&mut Writer::new(BufWriter::new(file)), log)
 }
 
+/// Export an [`EventLog`] to a filepath
+///
+/// Automatically selects gz-compression if filepath ends with `.gz`
+///
+/// See also [`export_xes_event_log_to_file`], which accepts a [`File`] and boolean flag for gz-compression. 
 pub fn export_xes_event_log_to_file_path(
     log: &EventLog,
     path: &str,
@@ -191,6 +203,7 @@ pub fn export_xes_event_log_to_file_path(
     export_xes_event_log_to_file(log, file, path.ends_with(".gz"))
 }
 
+/// Export a trace stream (i.e., [`Iterator`] over [`Trace`]) and [`XESOuterLogData`] to a XML [`Writer`]
 pub fn export_xes_trace_stream<W, T: Borrow<Trace>, I>(
     writer: &mut Writer<W>,
     trace_stream: I,
@@ -211,6 +224,9 @@ where
     )
 }
 
+/// Export a trace stream (i.e., [`Iterator`] over [`Trace`]) and [`XESOuterLogData`] to a [File]
+///
+/// If `compress_gz` is `true`, the XES will be compressed to a `.xes.gz` file before writing to file
 pub fn export_xes_trace_stream_to_file<T: Borrow<Trace>, I>(
     trace_stream: I,
     log_data: XESOuterLogData,

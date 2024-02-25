@@ -6,9 +6,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    add_start_end_acts_proj,
     event_log::activity_projection::{
-        ActivityProjectionDFG, EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY,
+        add_start_end_acts_proj, ActivityProjectionDFG, EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY
     },
     petri_net::petri_net_struct::{ArcType, Marking, PetriNet, TransitionID},
 };
@@ -22,24 +21,35 @@ use super::{
 };
 
 #[derive(Debug, Serialize, Deserialize)]
+/// Duration (in seconds) per parts of the Alpha+++ algorithm (+ total time)
 pub struct AlgoDuration {
+    /// Duration for loop repair (in seconds)
     pub loop_repair: f32,
+    /// Duration for skip repair (in seconds)
     pub skip_repair: f32,
+    /// Duration for filtering DFG (in seconds)
     pub filter_dfg: f32,
+    /// Duration for building place candidates (in seconds)
     pub cnd_building: f32,
+    /// Duration for pruning place candidates (in seconds)
     pub prune_cnd: f32,
+    /// Duration for constructing Petri net (in seconds)
     pub build_net: f32,
+    /// Total duration (in seconds)
     pub total: f32,
 }
 impl AlgoDuration {
+
+    /// Serialize to JSON string
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap()
     }
+    /// Deerialize from JSON string
     pub fn from_json(json: &str) -> Self {
         serde_json::from_str(json).unwrap()
     }
 }
-
+/// Get current system time milliseconds
 pub fn get_current_time_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -48,26 +58,36 @@ pub fn get_current_time_millis() -> u128 {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+/// Algorithm parameters for Alpha+++
 pub struct AlphaPPPConfig {
+    /// Balance threshold (for filtering place candidates)
     pub balance_thresh: f32,
+    /// Fitness threshold (for filtering place candidates)
     pub fitness_thresh: f32,
+    /// Replay threshold (for filtering place candidates)
     pub replay_thresh: f32,
+    /// Log repair threshold for skips (wrt. to weighted DFG)
     pub log_repair_skip_df_thresh_rel: f32,
+    /// Log repair threshold for loops (wrt. to weighted DFG)
     pub log_repair_loop_df_thresh_rel: f32,
+    /// Absolute threshold for weighted DFG cleaning
     pub absolute_df_clean_thresh: u64,
+    /// Relative threshold for weighted DFG cleaning
     pub relative_df_clean_thresh: f32,
 }
 impl AlphaPPPConfig {
+    /// Serialize Alpha+++ parameters to JSON string
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap()
     }
+    /// Deserialize Alpha+++ parameters from JSON string
     pub fn from_json(json: &str) -> Self {
         serde_json::from_str(json).unwrap()
     }
 }
 
 ///
-/// Discover a [PetriNet] using the Alpha+++ Process Discovery algorithm
+/// Discover a [`PetriNet`] using the Alpha+++ Process Discovery algorithm
 ///
 /// Additionally returns the durations for performance measurements
 ///
@@ -78,6 +98,9 @@ pub fn alphappp_discover_petri_net(
     alphappp_discover_petri_net_with_timing_fn(log_proj, config, &get_current_time_millis)
 }
 
+/// Run Alpha+++ discovery
+///
+/// Measures [AlgoDuration] using the passed `get_time_millis_fn` function
 pub fn alphappp_discover_petri_net_with_timing_fn(
     log_proj: &EventLogActivityProjection,
     config: AlphaPPPConfig,
@@ -255,6 +278,8 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
     (pn, algo_dur)
 }
 
+
+/// Helper function to transform a place candidate to a list of input and output transition names/label
 pub fn cnds_to_names(
     log_proj: &EventLogActivityProjection,
     cnd: &[(Vec<usize>, Vec<usize>)],

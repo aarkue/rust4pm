@@ -9,6 +9,7 @@ use uuid::Uuid;
 use super::petri_net_struct::PetriNet;
 const OK: Result<(), quick_xml::Error> = Ok::<(), quick_xml::Error>(());
 
+/// Export a [`PetriNet`] to a `.pnml` file (specified through path)
 pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
     let file = File::create(path).unwrap();
     // let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 4);

@@ -132,6 +132,7 @@ fn compute_local_fitness(
     )
 }
 
+/// Prune candidates based on balance, fitness and replay threshold
 pub fn prune_candidates(
     cnds: &HashSet<(Vec<usize>, Vec<usize>)>,
     balance_threshold: f32,

@@ -5,32 +5,50 @@ use rayon::prelude::*;
 use super::event_log_struct::{Attribute, AttributeValue, EventLog};
 
 use super::constants::ACTIVITY_NAME;
-use super::AttributeAddable;
+use super::{AttributeAddable, Event};
 
+/// Name of START_ACTIVITY (can be added to [EventLogActivityProjection]/[EventLog] to mark START of traces)
 pub const START_ACTIVITY: &str = "__START";
+/// Name of START_ACTIVITY (can be added to [EventLogActivityProjection]/[EventLog] to mark END of traces)
 pub const END_ACTIVITY: &str = "__END";
 
 #[derive(Debug, Clone)]
 /// Projection of an event log on just activity labels
 ///
-/// Currently assumes a default activity name ([ACTIVITY_NAME])
+/// Currently assumes a default activity name ([`ACTIVITY_NAME`])
 pub struct EventLogActivityProjection {
+    /// All activities 
+    ///
+    /// The index of an activity corresponds to `usize` representation of activity
+    ///
+    /// The reverse mapping is provided by the `act_to_index` [`HashMap`]
     pub activities: Vec<String>,
+    /// Mapping of activities to their `usize` representation
+    ///
+    /// The reverse mapping is provided by the vec `activities`
     pub act_to_index: HashMap<String, usize>,
+    /// Traces in the event log projection
+    ///
+    /// Each pair represents one activity projection and the number of occurences in the log
     pub traces: Vec<(Vec<usize>, u64)>,
 }
 
 #[derive(Debug, Default, Clone)]
+/// Weighted DFG of [`ActivityProjection`] 
 pub struct ActivityProjectionDFG {
+    /// Nodes of the DFG
     pub nodes: Vec<usize>,
+    /// Edges of the DFG (weighted)
     pub edges: HashMap<(usize, usize), u64>,
 }
 
 impl ActivityProjectionDFG {
+    /// Check if there is a df-relation between `a` and `b`
     pub fn df_between(&self, a: usize, b: usize) -> u64 {
         *self.edges.get(&(a, b)).unwrap_or(&0)
     }
 
+    /// Get the preset of activity `act` in the DFG 
     pub fn df_preset_of<T: FromIterator<usize>>(&self, act: usize, df_threshold: u64) -> T {
         self.edges
             .iter()
@@ -43,6 +61,8 @@ impl ActivityProjectionDFG {
             })
             .collect()
     }
+
+    /// Get the postset of activity `act` in the DFG 
     pub fn df_postset_of(&self, act: usize, df_threshold: u64) -> impl Iterator<Item = usize> + '_ {
         self.edges.iter().filter_map(move |((a, b), w)| {
             if *a == act && *w >= df_threshold {
@@ -53,6 +73,7 @@ impl ActivityProjectionDFG {
         })
     }
 
+    /// Construct an [`ActivityProjectionDFG`] from an [`EventLogActivityProjection`]
     pub fn from_event_log_projection(log: &EventLogActivityProjection) -> Self {
         let dfg = ActivityProjectionDFG {
             nodes: (0..log.activities.len()).collect(),
@@ -105,11 +126,11 @@ impl<'a> From<super::stream_xes::XESParsingTraceStream<'a>> for EventLogActivity
 impl<'a, 'b> From<&'b mut super::stream_xes::XESParsingTraceStream<'a>>
     for EventLogActivityProjection
 {
-    fn from(value: &mut super::stream_xes::XESParsingTraceStream) -> Self {
+    fn from(value: &mut super::stream_xes::XESParsingTraceStream<'a>) -> Self {
         let mut act_to_index: HashMap<String, usize> = HashMap::new();
         let mut activities: Vec<String> = Vec::new();
         let mut traces: HashMap<Vec<usize>, u64> = HashMap::new();
-        for t in value.into_iter() {
+        for t in value {
             let mut trace_acts: Vec<usize> = Vec::with_capacity(t.events.len());
             for e in t.events {
                 let act = match e.attributes.get_by_key(ACTIVITY_NAME) {
@@ -191,6 +212,7 @@ impl From<&EventLog> for EventLogActivityProjection {
 }
 
 impl EventLogActivityProjection {
+    /// Convenience function to get sorted activity name lists back from a list of [`acts`]
     pub fn acts_to_names(&self, acts: &[usize]) -> Vec<String> {
         let mut ret: Vec<String> = acts
             .iter()
@@ -199,4 +221,71 @@ impl EventLogActivityProjection {
         ret.sort();
         ret
     }
+}
+
+
+
+
+///
+/// Add artificial start and end activities to a given [`EventLogActivityProjection`]
+///
+/// Mutating the [`EventLogActivityProjection`] in place
+/// Additionally also checks if artificial [`START_ACTIVITY`] or [`END_ACTIVITY`] are already present in log
+///
+pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
+    let mut should_add_start = true;
+    let start_act = match log.act_to_index.get(&START_ACTIVITY.to_string()) {
+        Some(a) => {
+            eprintln!("Start activity ({}) already present in activity set! Will skip adding a start activity to every trace, which might not be the desired outcome.", START_ACTIVITY);
+            should_add_start = false;
+            *a
+        }
+        None => {
+            let a = log.activities.len();
+            log.activities.push(START_ACTIVITY.to_string());
+            log.act_to_index.insert(START_ACTIVITY.to_string(), a);
+            a
+        }
+    };
+
+    let mut should_add_end = true;
+    let end_act = match log.act_to_index.get(&END_ACTIVITY.to_string()) {
+        Some(a) => {
+            eprintln!("End activity ({}) already present in activity set! Still adding an end activity to every trace, which might not be the desired outcome.", END_ACTIVITY);
+            should_add_end = false;
+            *a
+        }
+        None => {
+            let a = log.activities.len();
+            log.activities.push(END_ACTIVITY.to_string());
+            log.act_to_index.insert(END_ACTIVITY.to_string(), a);
+            a
+        }
+    };
+
+    if should_add_start || should_add_end {
+        log.traces.iter_mut().for_each(|(t, _)| {
+            if should_add_start {
+                t.insert(0, start_act);
+            }
+            if should_add_end {
+                t.push(end_act);
+            }
+        });
+    }
+}
+
+///
+/// Add artificial start and end activities to a given [`EventLog`]
+///
+/// Mutating the [`EventLog`] in place
+/// Caution: Does not check if [`START_ACTIVITY`] or [`END_ACTIVITY`] are already present in the log
+///
+pub fn add_start_end_acts(log: &mut EventLog) {
+    log.traces.par_iter_mut().for_each(|t| {
+        let start_event = Event::new(START_ACTIVITY.to_string());
+        let end_event = Event::new(END_ACTIVITY.to_string());
+        t.events.insert(0, start_event);
+        t.events.push(end_event);
+    });
 }

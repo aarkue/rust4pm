@@ -2,48 +2,68 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+/// Place in a Petri net
 pub struct Place {
     id: Uuid,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+/// Transition in a Petri net
 pub struct Transition {
+    /// Transition label (None if this transition is _invisible_)
     pub label: Option<String>,
     id: Uuid,
 }
 
 #[derive(Debug)]
+
+/// Nodes (Places or Transitions) in a Petri net
 pub enum PetriNetNodes {
+    /// None
     None,
+    /// List of places
     Places(Vec<PlaceID>),
+    /// List of transitions
     Transitions(Vec<TransitionID>),
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", content = "nodes")]
+/// Arc type in a Petri net
 pub enum ArcType {
+    /// From Place to Transition
     PlaceTransition(Uuid, Uuid),
+    /// From Transition to Place
     TransitionPlace(Uuid, Uuid),
 }
 
 impl ArcType {
+    /// Create new from place to transition
     pub fn place_to_transition(from: PlaceID, to: TransitionID) -> ArcType {
         ArcType::PlaceTransition(from.0, to.0)
     }
+    /// Create new from transition to place
     pub fn transition_to_place(from: TransitionID, to: PlaceID) -> ArcType {
         ArcType::TransitionPlace(from.0, to.0)
     }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+/// Arc in a Petri net
+///
+/// Connecting a transition and a place (or the other way around)
 pub struct Arc {
+    /// Source and target of Arc
     pub from_to: ArcType,
+    /// Weight (i.e., how many tokens this arc moves)
     pub weight: u32,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Eq, Hash)]
+/// Place ID
 pub struct PlaceID(Uuid);
 impl PlaceID {
+    /// Get UUID
     pub fn get_uuid(self) -> Uuid {
         self.0
     }
@@ -55,6 +75,7 @@ impl From<&Place> for PlaceID {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
+/// Transition ID
 pub struct TransitionID(Uuid);
 impl From<&Transition> for TransitionID {
     fn from(value: &Transition) -> Self {
@@ -62,11 +83,13 @@ impl From<&Transition> for TransitionID {
     }
 }
 impl TransitionID {
+    /// Get  UUID
     pub fn get_uuid(self) -> Uuid {
         self.0
     }
 }
 
+/// Marking of a Petri net: Assigning [`PlaceID`]s to a number of tokens
 pub type Marking = HashMap<PlaceID, u64>;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -75,10 +98,15 @@ pub type Marking = HashMap<PlaceID, u64>;
 ///
 /// Bipartite graph of [Place]s and [Transition]s with [Arc]s connecting them, as well as initial and final [Marking]s
 pub struct PetriNet {
+    /// Places
     pub places: HashMap<Uuid, Place>,
+    /// Transitions
     pub transitions: HashMap<Uuid, Transition>,
+    /// Arcs
     pub arcs: Vec<Arc>,
+    /// Initial marking
     pub initial_marking: Option<Marking>,
+    /// Final markings (any of them are accepted as a final marking)
     pub final_markings: Option<Vec<Marking>>,
 }
 
@@ -88,6 +116,7 @@ impl Default for PetriNet {
     }
 }
 impl PetriNet {
+    /// Create new [`PetriNet`] with no places or transitions
     pub fn new() -> Self {
         Self {
             places: HashMap::new(),
@@ -97,10 +126,13 @@ impl PetriNet {
             final_markings: None,
         }
     }
-
+    /// Serialize to JSON string
     pub fn to_json(self) -> String {
         serde_json::to_string(&self).unwrap()
     }
+    /// Add a place (with an optional passed UUID)
+    ///
+    /// If no ID is passed, a new UUID will be generated
     pub fn add_place(&mut self, place_id: Option<Uuid>) -> PlaceID {
         let place_id = place_id.unwrap_or(Uuid::new_v4());
         let place = Place { id: place_id };
@@ -108,6 +140,9 @@ impl PetriNet {
         PlaceID(place_id)
     }
 
+    /// Add a transition with an label (and with an optional passed UUID)
+    ///
+    /// If no ID is passed, a new UUID will be generated
     pub fn add_transition(
         &mut self,
         label: Option<String>,
@@ -121,6 +156,7 @@ impl PetriNet {
         self.transitions.insert(transition_id, transition);
         TransitionID(transition_id)
     }
+    /// Add an arc
     pub fn add_arc(&mut self, from_to: ArcType, weight: Option<u32>) {
         self.arcs.push(Arc {
             from_to,
@@ -128,6 +164,7 @@ impl PetriNet {
         });
     }
 
+    /// Get the preset of a [`PetiNet`] node referred to by passed id
     pub fn preset_of(&self, id: Uuid) -> PetriNetNodes {
         if self.places.contains_key(&id) {
             let p = self.places.get(&id).unwrap();
@@ -140,6 +177,7 @@ impl PetriNet {
         }
     }
 
+    /// Get the preset of a [`PetiNet`] place
     pub fn preset_of_place(&self, p: PlaceID) -> Vec<TransitionID> {
         self.arcs
             .iter()
@@ -150,6 +188,7 @@ impl PetriNet {
             .collect()
     }
 
+    /// Get the preset of [`PetiNet`] transition referred to by passed id
     pub fn preset_of_transition(&self, t: TransitionID) -> Vec<PlaceID> {
         self.arcs
             .iter()
@@ -160,6 +199,7 @@ impl PetriNet {
             .collect()
     }
 
+    /// Get postset of [`PetiNet`] node referred to by passed id
     pub fn postset_of(&self, id: Uuid) -> PetriNetNodes {
         if self.places.contains_key(&id) {
             let p = self.places.get(&id).unwrap();
@@ -172,6 +212,7 @@ impl PetriNet {
         }
     }
 
+    /// Get postset of [`PetiNet`] place referred to by passed id
     pub fn postset_of_place(&self, p: PlaceID) -> Vec<TransitionID> {
         self.arcs
             .iter()
@@ -182,6 +223,7 @@ impl PetriNet {
             .collect()
     }
 
+    /// Get postset of [`PetiNet`] transition referred to by passed id
     pub fn postset_of_transition(&self, t: TransitionID) -> Vec<PlaceID> {
         self.arcs
             .iter()
@@ -192,10 +234,12 @@ impl PetriNet {
             .collect()
     }
 
+    /// Check if place is in initial marking
     pub fn is_in_initial_marking(&self, p: &PlaceID) -> bool {
         self.initial_marking.is_some() && self.initial_marking.as_ref().unwrap().contains_key(p)
     }
 
+    /// Check if place is in _any_ final marking
     pub fn is_in_a_final_marking(&self, p: &PlaceID) -> bool {
         self.final_markings.is_some()
             && self
@@ -207,7 +251,9 @@ impl PetriNet {
     }
 }
 
-pub const SAMPLE_JSON_NET: &str = r#"
+#[cfg(test)]
+mod tests {
+    pub const SAMPLE_JSON_NET: &str = r#"
 {
     "places": {
         "f20ded2a-d308-44d7-abb2-6d0acd30e43e": {
@@ -311,8 +357,6 @@ pub const SAMPLE_JSON_NET: &str = r#"
     ]
 }
 "#;
-#[cfg(test)]
-mod tests {
     use super::*;
 
     #[test]

@@ -6,8 +6,10 @@ use crate::event_log::activity_projection::{
     ActivityProjectionDFG, EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY,
 };
 
+/// Prefix for silent activities (used inside place candidates)
 pub const SILENT_ACT_PREFIX: &str = "__SILENT__";
 
+/// Filter weighted DFG based on absolute and relative thresholds
 pub fn filter_dfg(
     dfg: &ActivityProjectionDFG,
     absolute_df_thresh: u64,
@@ -48,6 +50,7 @@ pub fn filter_dfg(
     ret
 }
 
+/// Add artificial activities to event log projection for _skips_
 pub fn add_artificial_acts_for_skips(
     log: &EventLogActivityProjection,
     df_threshold: u64,
@@ -155,6 +158,9 @@ pub fn add_artificial_acts_for_skips(
     (ret, new_acts)
 }
 
+/// Breadth first search in DFG
+/// 
+/// Constructs visited sequences, stopping when encoutering a loop
 pub fn get_reachable_bf(
     act: usize,
     dfg: &ActivityProjectionDFG,
@@ -200,6 +206,7 @@ pub fn get_reachable_bf(
     finished_paths
 }
 
+/// Add artificial activities to event log projection for _loops_
 pub fn add_artificial_acts_for_loops(
     log: &EventLogActivityProjection,
     df_threshold: u64,

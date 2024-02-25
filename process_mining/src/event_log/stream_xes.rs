@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     fs::File,
     io::{BufRead, BufReader, Read},
     iter::FusedIterator,
@@ -28,10 +29,15 @@ use super::{
 /// Thus, __for XES-compliant logs it is guaranteed that this data is already complete once the first trace is parsed__.
 #[derive(Clone)]
 pub struct XESOuterLogData {
+    /// XES Extensions of event log
     pub extensions: Vec<EventLogExtension>,
+    /// Event Classifiers of event log
     pub classifiers: Vec<EventLogClassifier>,
+    /// Log-level attributes of event log
     pub log_attributes: Attributes,
+    /// Global trace attributes of event log
     pub global_trace_attrs: Attributes,
+    /// Global event attributes of event log
     pub global_event_attrs: Attributes,
 }
 
@@ -40,19 +46,26 @@ pub struct XESOuterLogData {
 /// Current Parsing Mode (i.e., which tag is currently open / being parsed)
 ///
 pub enum Mode {
+    /// Parsing trace
     Trace,
+    /// Parsing event
     Event,
+    /// Parsing nested attributes
     Attribute,
+    /// Parsing global trace attributes
     GlobalTraceAttributes,
+    /// Parsing global event attributes
     GlobalEventAttributes,
+    /// Parsing log
     Log,
+    /// No currently open tags
     None,
 }
 
 ///
 /// Streaming XES Parser over [Trace]s
 ///
-/// Can be initiated using any of the streaming functions (e.g. [stream_xes_from_path], [stream_xes_slice], ...)
+/// Can be initiated using any of the streaming functions (e.g. [`stream_xes_from_path`], [`stream_xes_slice`], ...)
 pub struct StreamingXESParser<'a> {
     ///
     /// Boxed [quick_xml::reader::Reader] to read XML from
@@ -81,21 +94,42 @@ pub struct StreamingXESParser<'a> {
     finished: bool,
 }
 
+impl<'a> Debug for StreamingXESParser<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamingXESParser")
+            .field("reader", &"[Boxed Reader]")
+            .field("buf", &self.buf)
+            .field("current_mode", &self.current_mode)
+            .field("current_trace", &self.current_trace)
+            .field("last_mode_before_attr", &self.last_mode_before_attr)
+            .field("current_nested_attributes", &self.current_nested_attributes)
+            .field("options", &self.options)
+            .field("encountered_log", &self.encountered_log)
+            .field("log_data", &self.log_data)
+            .field("log_data_emitted", &self.log_data_emitted)
+            .field("finished", &self.finished)
+            .finish()
+    }
+}
+
 #[derive(Debug)]
 ///
-/// Enum of possible data streamed by [StreamingXESParser]
+/// Enum of possible data streamed by [`StreamingXESParser`]
 pub enum XESNextStreamElement {
-    Trace(Trace),
-    Error(XESParseError),
+    /// Log data
     LogData(XESOuterLogData),
+    /// Trace data
+    Trace(Trace),
+    /// Encountered error
+    Error(XESParseError),
 }
 
 impl<'a> StreamingXESParser<'a> {
-    /// Try to parse a next [XESNextStreamElement] from the current position
+    /// Try to parse a next [`XESNextStreamElement`] from the current position
     ///
     /// Returns [None] if it encountered an error previously or there are no more traces left
     ///
-    /// Otherwise returns [Some] wrapping a [XESNextStreamElement]
+    /// Otherwise returns [Some] wrapping a [`XESNextStreamElement`]
     ///
     /// * `XESNextStreamElement:LogData` will be at most emitted once at the beginning (it is emitted before parsing the first trace)
     /// * `XESNextStreamElement:Trace` will be emitted for every trace found in the underlying XES
@@ -104,20 +138,20 @@ impl<'a> StreamingXESParser<'a> {
     pub fn next_trace(&mut self) -> Option<XESNextStreamElement> {
         // Helper function to terminate parsing and set the error fields
         fn terminate_with_error(
-            myself: &mut StreamingXESParser,
+            myself: &mut StreamingXESParser<'_>,
             error: XESParseError,
         ) -> Option<XESNextStreamElement> {
             myself.finished = true;
             Some(XESNextStreamElement::Error(error))
         }
 
-        fn emit_log_data(myself: &mut StreamingXESParser) -> Option<XESNextStreamElement> {
+        fn emit_log_data(myself: &mut StreamingXESParser<'_>) -> Option<XESNextStreamElement> {
             myself.log_data_emitted = true;
 
             Some(XESNextStreamElement::LogData(myself.log_data.clone()))
         }
 
-        fn emit_trace_data(myself: &mut StreamingXESParser) -> Option<XESNextStreamElement> {
+        fn emit_trace_data(myself: &mut StreamingXESParser<'_>) -> Option<XESNextStreamElement> {
             if let Some(mut trace) = myself.current_trace.take() {
                 if let Some(event_timestamp_key) = &myself.options.sort_events_with_timestamp_key {
                     trace.events.sort_by_key(|e| {
@@ -155,6 +189,26 @@ impl<'a> StreamingXESParser<'a> {
             return None;
         }
         self.reader.trim_text(true);
+
+        fn parse_classifier(t: &BytesStart<'_>, log_data: &mut XESOuterLogData) {
+            log_data.classifiers.push(EventLogClassifier {
+                name: get_attribute_string(t, "name"),
+                // TODO: This is not strictly correct according to XES standard, as also strings _inside_ a classifier key are allowed
+                // See https://xes-standard.org/_media/xes/xesstandarddefinition-2.0.pdf#page=8
+                keys: get_attribute_string(t, "keys")
+                    .split(' ')
+                    .map(|s| s.to_string())
+                    .collect(),
+            })
+        }
+
+        fn parse_extension(t: &BytesStart<'_>, log_data: &mut XESOuterLogData) {
+            log_data.extensions.push(EventLogExtension {
+                name: get_attribute_string(t, "name"),
+                prefix: get_attribute_string(t, "prefix"),
+                uri: get_attribute_string(t, "uri"),
+            });
+        }
 
         loop {
             match self.reader.read_event_into(&mut self.buf) {
@@ -209,8 +263,17 @@ impl<'a> StreamingXESParser<'a> {
                                 }
                             },
                             b"log" => {
+                                if self.encountered_log {
+                                    eprintln!("Encountered two log tags. This is not a valid XES file")
+                                }
                                 self.encountered_log = true;
                                 self.current_mode = Mode::Log
+                            }
+                            b"extension" => {
+                                parse_extension(&t, &mut self.log_data);
+                            }
+                            b"classifier" => {
+                                parse_classifier(&t, &mut self.log_data);
                             }
                             _x => {
                                 if !self.encountered_log {
@@ -220,6 +283,7 @@ impl<'a> StreamingXESParser<'a> {
                                     );
                                 }
                                 {
+                                    let x = String::from_utf8_lossy(_x);
                                     // Nested attribute!
                                     let key = get_attribute_string(&t, "key");
                                     let value = parse_attribute_value_from_tag(
@@ -247,22 +311,10 @@ impl<'a> StreamingXESParser<'a> {
                         },
                         quick_xml::events::Event::Empty(t) => match t.name().as_ref() {
                             b"extension" => {
-                                self.log_data.extensions.push(EventLogExtension {
-                                    name: get_attribute_string(&t, "name"),
-                                    prefix: get_attribute_string(&t, "prefix"),
-                                    uri: get_attribute_string(&t, "uri"),
-                                });
+                                parse_extension(&t, &mut self.log_data);
                             }
                             b"classifier" => {
-                                self.log_data.classifiers.push(EventLogClassifier {
-                                    name: get_attribute_string(&t, "name"),
-                                    // TODO: This is not strictly correct according to XES standard, as also strings _inside_ a classifier key are allowed
-                                    // See https://xes-standard.org/_media/xes/xesstandarddefinition-2.0.pdf#page=8
-                                    keys: get_attribute_string(&t, "keys")
-                                        .split(' ')
-                                        .map(|s| s.to_string())
-                                        .collect(),
-                                })
+                                parse_classifier(&t, &mut self.log_data);
                             }
                             b"log" => {
                                 // Empty log, but still a log
@@ -275,6 +327,9 @@ impl<'a> StreamingXESParser<'a> {
                             }
                             b"trace" => {
                                 return emit_trace_data(self);
+                            }
+                            b"event" => {
+                                todo!("Empty event not handled?!");
                             }
                             _ => {
                                 if !self.encountered_log {
@@ -430,7 +485,7 @@ impl<'a> StreamingXESParser<'a> {
         log_data: &mut XESOuterLogData,
         current_nested_attributes: &mut [Attribute],
         options: &XESImportOptions,
-        t: &BytesStart,
+        t: &BytesStart<'_>,
     ) -> bool {
         let key = get_attribute_string(t, "key");
         if options.ignore_event_attributes_except.is_some()
@@ -542,11 +597,20 @@ impl<'a> StreamingXESParser<'a> {
     }
 }
 
+#[derive(Debug)]
+/// XES Parsing Trace Stream
+///
+/// Allows iterating over [`Trace`]s
+///
+/// Parses traces laziliy (i.e., only when they are requested)
 pub struct XESParsingTraceStream<'a> {
     inner: StreamingXESParser<'a>,
+    /// Error encountered while parsing XES
     pub error: Option<XESParseError>,
 }
-
+/// [`XESParsingTraceStream`] and [`XESOuterLogData`]
+///
+/// First component is trace stream lazily parsed, second component provides top-level log information (eagerly parsed at the beginning)
 pub type XESParsingStreamAndLogData<'a> = (XESParsingTraceStream<'a>, XESOuterLogData);
 
 impl<'a> Iterator for &mut XESParsingTraceStream<'a> {
@@ -590,9 +654,9 @@ impl<'a> XESParsingTraceStream<'a> {
     }
 
     ///
-    /// Try to construct a new [XESParsingTraceStream] and directly try to parse until the first trace
+    /// Try to construct a new [`XESParsingTraceStream`] and directly try to parse until the first trace
     ///
-    /// As all log attributes must occur before the first trace, this already returns the parsed [XESOuterLogData]
+    /// As all log attributes must occur before the first trace, this already returns the parsed [`XESOuterLogData`]
     ///
     pub fn try_new(
         reader: Box<Reader<Box<dyn BufRead + 'a>>>,
@@ -642,7 +706,7 @@ impl<'a> XESParsingTraceStream<'a> {
 ///
 /// Stream XES [Trace]s from byte slice
 ///
-/// The returned [XESParsingStreamAndLogData] contains the [XESOuterLogData] and can be used to iterate over [Trace]s
+/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [Trace]s
 ///
 pub fn stream_xes_slice(
     xes_data: &[u8],
@@ -657,7 +721,7 @@ pub fn stream_xes_slice(
 ///
 /// Stream XES [Trace]s from gzipped byte slice
 ///
-/// The returned [XESParsingStreamAndLogData] contains the [XESOuterLogData] and can be used to iterate over [Trace]s
+/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [Trace]s
 ///
 pub fn stream_xes_slice_gz(
     xes_data: &[u8],
@@ -671,7 +735,7 @@ pub fn stream_xes_slice_gz(
 ///
 /// Stream XES [Trace]s from a file
 ///
-/// The returned [XESParsingStreamAndLogData] contains the [XESOuterLogData] and can be used to iterate over [Trace]s
+/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [Trace]s
 ///
 pub fn stream_xes_file<'a>(
     file: File,
@@ -686,7 +750,7 @@ pub fn stream_xes_file<'a>(
 ///
 /// Stream XES [Trace]s from a gzipped file
 ///
-/// The returned [XESParsingStreamAndLogData] contains the [XESOuterLogData] and can be used to iterate over [Trace]s
+/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [Trace]s
 ///
 pub fn stream_xes_file_gz<'a>(
     file: File,
@@ -702,7 +766,7 @@ pub fn stream_xes_file_gz<'a>(
 ///
 /// Stream XES [Trace]s from path (auto-detecting gz compression from file extension)
 ///
-/// The returned [XESParsingStreamAndLogData] contains the [XESOuterLogData] and can be used to iterate over [Trace]s
+/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [Trace]s
 ///
 pub fn stream_xes_from_path<'a>(
     path: &str,
@@ -716,7 +780,7 @@ pub fn stream_xes_from_path<'a>(
     }
 }
 
-fn get_attribute_string(t: &BytesStart, key: &'static str) -> String {
+fn get_attribute_string(t: &BytesStart<'_>, key: &'static str) -> String {
     if let Ok(Some(attr)) = t.try_get_attribute(key) {
         return String::from_utf8_lossy(&attr.value).to_string();
     }
@@ -727,8 +791,8 @@ fn get_attribute_string(t: &BytesStart, key: &'static str) -> String {
     String::new()
 }
 
-pub fn parse_attribute_value_from_tag(
-    t: &BytesStart,
+fn parse_attribute_value_from_tag(
+    t: &BytesStart<'_>,
     mode: &Mode,
     options: &XESImportOptions,
 ) -> AttributeValue {

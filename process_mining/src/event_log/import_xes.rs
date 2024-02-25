@@ -16,16 +16,27 @@ use serde::{Deserialize, Serialize};
 ///
 #[derive(Debug, Clone)]
 pub enum XESParseError {
+    /// An Attribute was encountered outside an open `<log>` tag
     AttributeOutsideLog,
+    /// There is not top-level `<log>`
     NoTopLevelLog,
+    /// Parsing error: Expected to have a previously constructed event available
     MissingLastEvent,
+    /// Parsing error: Expected to have a previously constructed traec available
     MissingLastTrace,
+    /// Parsing error: Expected to have a be in a different parsing mode than the current state suggests
     InvalidMode,
+    /// IO errror
     IOError(std::rc::Rc<std::io::Error>),
+    /// XML error (e.g., incorrect XML format )
     XMLParsingError(QuickXMLError),
+    /// Missing key on XML element (with expected key included)
     MissingKey(&'static str),
+    /// Invalid value of XML attribute with key (with key included)
     InvalidKeyValue(&'static str),
+    /// Parsing Transformation Error: Expected that [XESOuterLogData] would be emitted first
     ExpectedLogData,
+    /// Parsing Transformation Error: Expected that [Trace] would be emitted now
     ExpectedTraceData,
 }
 
@@ -70,7 +81,7 @@ impl From<QuickXMLError> for XESParseError {
 ///
 /// Options for XES Import
 ///
-/// See also [build_ignore_attributes] for easy construction of attributes set to not ignore
+/// See also [`build_ignore_attributes`] for easy construction of attributes set to not ignore
 pub struct XESImportOptions {
     /// If Some: Ignore all top-level log attributes, except attributes with keys in the provided allowlist
     pub ignore_log_attributes_except: Option<HashSet<String>>,
@@ -110,6 +121,7 @@ where
         .collect()
 }
 
+/// Parse XES from the given reader
 pub fn import_xes<T>(reader: T, options: XESImportOptions) -> Result<EventLog, XESParseError>
 where
     T: BufRead,
@@ -136,7 +148,7 @@ where
 }
 
 ///
-/// Import a XES [EventLog] from a file path
+/// Import a XES [`EventLog`] from a file path
 ///
 pub fn import_xes_file(path: &str, options: XESImportOptions) -> Result<EventLog, XESParseError> {
     if path.ends_with(".gz") {
@@ -152,7 +164,7 @@ pub fn import_xes_file(path: &str, options: XESImportOptions) -> Result<EventLog
 }
 
 ///
-/// Import a XES [EventLog] directly from a string
+/// Import a XES [`EventLog`] directly from a string
 ///
 pub fn import_xes_str(xes_str: &str, options: XESImportOptions) -> Result<EventLog, XESParseError> {
     let reader = BufReader::new(xes_str.as_bytes());
@@ -160,7 +172,7 @@ pub fn import_xes_str(xes_str: &str, options: XESImportOptions) -> Result<EventL
 }
 
 ///
-/// Import a XES [EventLog] from a byte slice (&\[u8\])
+/// Import a XES [`EventLog`] from a byte slice (&\[u8\])
 ///
 /// * `is_compressed_gz`: Parse the passed `xes_data` as a compressed .gz archive
 ///

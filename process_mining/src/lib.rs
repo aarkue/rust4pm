@@ -1,11 +1,13 @@
+#![warn(
+    clippy::doc_markdown,
+    missing_debug_implementations,
+    rust_2018_idioms,
+    missing_docs
+)]
 #![doc = include_str!("../README.md")]
 
-use event_log::activity_projection::{END_ACTIVITY, START_ACTIVITY};
-use event_log::event_log_struct::Event;
-use rayon::prelude::*;
-
 ///
-/// Event Logs (traditional [EventLog] and Object-Centric [OCEL])
+/// Event Logs (traditional [`EventLog`] and Object-Centric [OCEL])
 ///
 pub mod event_log {
     pub mod activity_projection;
@@ -65,6 +67,12 @@ pub use event_log::stream_xes::stream_xes_file;
 pub use event_log::stream_xes::stream_xes_file_gz;
 
 #[doc(inline)]
+pub use event_log::export_xes::export_xes_trace_stream_to_file;
+
+#[doc(inline)]
+pub use event_log::export_xes::export_xes_event_log_to_file_path;
+
+#[doc(inline)]
 pub use event_log::stream_xes::StreamingXESParser;
 
 #[doc(inline)]
@@ -103,77 +111,13 @@ pub mod alphappp {
 }
 
 ///
-/// Add artificial start and end activities to a given [EventLogActivityProjection]
-///
-/// Mutating the [EventLogActivityProjection] in place
-/// Additionally also checks if artificial [START_ACTIVITY] or [END_ACTIVITY] are already present in log
-///
-pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
-    let mut should_add_start = true;
-    let start_act = match log.act_to_index.get(&START_ACTIVITY.to_string()) {
-        Some(a) => {
-            eprintln!("Start activity ({}) already present in activity set! Will skip adding a start activity to every trace, which might not be the desired outcome.", START_ACTIVITY);
-            should_add_start = false;
-            *a
-        }
-        None => {
-            let a = log.activities.len();
-            log.activities.push(START_ACTIVITY.to_string());
-            log.act_to_index.insert(START_ACTIVITY.to_string(), a);
-            a
-        }
-    };
-
-    let mut should_add_end = true;
-    let end_act = match log.act_to_index.get(&END_ACTIVITY.to_string()) {
-        Some(a) => {
-            eprintln!("End activity ({}) already present in activity set! Still adding an end activity to every trace, which might not be the desired outcome.", END_ACTIVITY);
-            should_add_end = false;
-            *a
-        }
-        None => {
-            let a = log.activities.len();
-            log.activities.push(END_ACTIVITY.to_string());
-            log.act_to_index.insert(END_ACTIVITY.to_string(), a);
-            a
-        }
-    };
-
-    if should_add_start || should_add_end {
-        log.traces.iter_mut().for_each(|(t, _)| {
-            if should_add_start {
-                t.insert(0, start_act);
-            }
-            if should_add_end {
-                t.push(end_act);
-            }
-        });
-    }
-}
-
-///
-/// Add artificial start and end activities to a given [EventLog]
-///
-/// Mutating the [EventLog] in place
-/// Caution: Does not check if [START_ACTIVITY] or [END_ACTIVITY] are already present in the log
-///
-pub fn add_start_end_acts(log: &mut EventLog) {
-    log.traces.par_iter_mut().for_each(|t| {
-        let start_event = Event::new(START_ACTIVITY.to_string());
-        let end_event = Event::new(END_ACTIVITY.to_string());
-        t.events.insert(0, start_event);
-        t.events.push(end_event);
-    });
-}
-
-///
-/// Serialize a [PetriNet] as a JSON [String]
+/// Serialize a [`PetriNet`] as a JSON [String]
 ///
 pub fn petrinet_to_json(net: &PetriNet) -> String {
     serde_json::to_string(net).unwrap()
 }
 ///
-/// Deserialize a [PetriNet] from a JSON [String]
+/// Deserialize a [`PetriNet`] from a JSON [String]
 ///
 pub fn json_to_petrinet(net_json: &str) -> PetriNet {
     serde_json::from_str(net_json).unwrap()
@@ -182,7 +126,7 @@ pub fn json_to_petrinet(net_json: &str) -> PetriNet {
 ///
 /// Serialize [OCEL] as a JSON [String]
 ///
-/// [serde_json] can also be used to convert [OCEL] to other targets (e.g., `serde_json::to_writer`)
+/// [`serde_json`] can also be used to convert [OCEL] to other targets (e.g., `serde_json::to_writer`)
 ///
 pub fn ocel_to_json(ocel: &OCEL) -> String {
     serde_json::to_string(ocel).unwrap()
@@ -191,7 +135,7 @@ pub fn ocel_to_json(ocel: &OCEL) -> String {
 ///
 /// Import [OCEL] from a JSON [String]
 ///
-/// [serde_json] can also be used to import [OCEL] from other targets (e.g., `serde_json::from_reader`)
+/// [`serde_json`] can also be used to import [OCEL] from other targets (e.g., `serde_json::from_reader`)
 ///
 pub fn json_to_ocel(ocel_json: &str) -> OCEL {
     serde_json::from_str(ocel_json).unwrap()
