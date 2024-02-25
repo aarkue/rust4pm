@@ -63,14 +63,14 @@ pub enum Mode {
 }
 
 ///
-/// Streaming XES Parser over [Trace]s
+/// Streaming XES Parser over [`Trace`]s
 ///
 /// Can be initiated using any of the streaming functions (e.g. [`stream_xes_from_path`], [`stream_xes_slice`], ...)
 pub struct StreamingXESParser<'a> {
     ///
-    /// Boxed [quick_xml::reader::Reader] to read XML from
+    /// Boxed [`quick_xml::reader::Reader`] to read XML from
     ///
-    /// (2x Boxed to prevent making [XESTraceStream] generic, which for example is inconvenient for both gz- and non-gz-readers)
+    /// (2x Boxed to prevent making [`XESTraceStream`] generic, which for example is inconvenient for both gz- and non-gz-readers)
     reader: Box<Reader<Box<dyn BufRead + 'a>>>,
     /// Buffer to read xml into
     buf: Vec<u8>,
@@ -82,9 +82,9 @@ pub struct StreamingXESParser<'a> {
     last_mode_before_attr: Mode,
     /// Current nested attributes (used for nested attribute parsing)
     current_nested_attributes: Vec<Attribute>,
-    /// XES Import options (see [XESImportOptions])
+    /// XES Import options (see [`XESImportOptions`])
     options: XESImportOptions,
-    /// Whether a (top-level) log tag was encountered yet (top-level log tag is required for XES files, see [XESParseError::NoTopLevelLog])
+    /// Whether a (top-level) log tag was encountered yet (top-level log tag is required for XES files, see [`XESParseError::NoTopLevelLog`])
     encountered_log: bool,
     // [XESOuterLogData] parsed from the log (this will be emitted once the first trace is encountered or the file ends)
     log_data: XESOuterLogData,
@@ -127,9 +127,9 @@ pub enum XESNextStreamElement {
 impl<'a> StreamingXESParser<'a> {
     /// Try to parse a next [`XESNextStreamElement`] from the current position
     ///
-    /// Returns [None] if it encountered an error previously or there are no more traces left
+    /// Returns [`None`] if it encountered an error previously or there are no more traces left
     ///
-    /// Otherwise returns [Some] wrapping a [`XESNextStreamElement`]
+    /// Otherwise returns [`Some`] wrapping a [`XESNextStreamElement`]
     ///
     /// * `XESNextStreamElement:LogData` will be at most emitted once at the beginning (it is emitted before parsing the first trace)
     /// * `XESNextStreamElement:Trace` will be emitted for every trace found in the underlying XES
@@ -283,7 +283,6 @@ impl<'a> StreamingXESParser<'a> {
                                     );
                                 }
                                 {
-                                    let x = String::from_utf8_lossy(_x);
                                     // Nested attribute!
                                     let key = get_attribute_string(&t, "key");
                                     let value = parse_attribute_value_from_tag(
@@ -704,9 +703,9 @@ impl<'a> XESParsingTraceStream<'a> {
 }
 
 ///
-/// Stream XES [Trace]s from byte slice
+/// Stream XES [`Trace`]s from a byte slice
 ///
-/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [Trace]s
+/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [`Trace`]s
 ///
 pub fn stream_xes_slice(
     xes_data: &[u8],
@@ -719,9 +718,9 @@ pub fn stream_xes_slice(
 }
 
 ///
-/// Stream XES [Trace]s from gzipped byte slice
+/// Stream XES [`Trace`]s from a gzipped byte slice
 ///
-/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [Trace]s
+/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [`Trace`]s
 ///
 pub fn stream_xes_slice_gz(
     xes_data: &[u8],
@@ -733,9 +732,9 @@ pub fn stream_xes_slice_gz(
 }
 
 ///
-/// Stream XES [Trace]s from a file
+/// Stream XES [`Trace`]s from a file
 ///
-/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [Trace]s
+/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [`Trace`]s
 ///
 pub fn stream_xes_file<'a>(
     file: File,
@@ -748,9 +747,9 @@ pub fn stream_xes_file<'a>(
 }
 
 ///
-/// Stream XES [Trace]s from a gzipped file
+/// Stream XES [`Trace`]s from a gzipped file
 ///
-/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [Trace]s
+/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [`Trace`]s
 ///
 pub fn stream_xes_file_gz<'a>(
     file: File,
@@ -764,9 +763,9 @@ pub fn stream_xes_file_gz<'a>(
 }
 
 ///
-/// Stream XES [Trace]s from path (auto-detecting gz compression from file extension)
+/// Stream XES [`Trace`]s from path (auto-detecting gz compression from file extension)
 ///
-/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [Trace]s
+/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [`Trace`]s
 ///
 pub fn stream_xes_from_path<'a>(
     path: &str,

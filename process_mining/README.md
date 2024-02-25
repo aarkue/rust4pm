@@ -38,7 +38,13 @@ match log_res {
 
 ```
 
-## Example Usage
+## Additional Information
+<details>
+<summary>
+
+__Full Code Example Showcase__
+
+</summary>
 
 ```rust,no_run
 use std::{fs::File, io::BufReader, time::Instant};
@@ -176,8 +182,14 @@ Imported OCEL2 XML with 10840 objects and 21008 events in 101.156023ms
 ==Parsing JSON OCEL==
 Imported OCEL2 JSON with 10840 objects and 21008 events in 108.422759ms
 ```
+</details>
 
-## XES Import/Export: Normal vs. Streaming
+<details>
+<summary>
+
+__XES Import/Export: Normal vs. Streaming__
+
+</summary>
 
 For the import/export of event logs, either the normal API (e.g., [import_xes_file]) or the streaming API (e.g., [stream_xes_from_path]) can be used.
 Here, _streaming_ refers to supporting __iterators over traces__.
@@ -199,13 +211,17 @@ For example, if you want to transform trace attributes of an event log read from
 
 In such situations, streaming is clearly a better choice, as traces can easily be transformed individually.
 
-### Difference in Memory Consumption
+__Difference in Memory Consumption__
 
-For the `BPI Challenge 2018 Event Log`[^bpic2018] XES file (`150.9 MiB` as a gzipped `.xes.gz` or `1.8 GB` as a plain `.xes`), parsing the log completely and then exporting it to a `.xes.gz` file uses up to `3.3 GB` of memory at peak.
+For the [`BPI Challenge 2018`](https://data.4tu.nl/articles/dataset/BPI_Challenge_2018/12688355) Event Log XES file (`150.9 MiB` as a gzipped `.xes.gz` or `1.8 GB` as a plain `.xes`), parsing the log completely and then exporting it to a `.xes.gz` file uses up to `3.3 GB` of memory at peak.
 When using the streaming functions for the XES import and export instead, the memory consumption peaks at only `5.7 MiB`
 
 <style>
     table {
+        width: 100%;
+    }
+    img {
+        max-height: 20rem;
         width: 100%;
     }
 </style>
@@ -214,4 +230,5 @@ When using the streaming functions for the XES import and export instead, the me
 :-------------------------:|:-------------------------:
 [![Plot of Heap usage with a peak at 3.3GB](https://github.com/aarkue/rust-bridge-process-mining/assets/20766652/9ae3deb7-c28b-42e8-b22a-5901c70f505e)](https://github.com/aarkue/rust-bridge-process-mining/assets/20766652/9ae3deb7-c28b-42e8-b22a-5901c70f505e) | [![Plot of Heap usage with a peak at 5.7MiB](https://github.com/aarkue/rust-bridge-process-mining/assets/20766652/466dac4c-263f-4e6f-b9a3-db355dd4e603)](https://github.com/aarkue/rust-bridge-process-mining/assets/20766652/466dac4c-263f-4e6f-b9a3-db355dd4e603) 
 
-[^bpic2018]: [https://data.4tu.nl/articles/dataset/BPI_Challenge_2018/12688355](https://data.4tu.nl/articles/dataset/BPI_Challenge_2018/12688355)
+
+</details>

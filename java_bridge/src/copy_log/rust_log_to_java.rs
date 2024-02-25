@@ -13,13 +13,13 @@ use process_mining::event_log::{event_log_struct::HashMapAttribute, AttributeAdd
 
 use super::copy_log_shared::{JEventLog, JTrace};
 
-/// Given the passed reference to a (boxed) [EventLog] and the given `index`, retrieve all attributes of the trace and events
+/// Given the passed reference to a (boxed) [`EventLog`] and the given `index`, retrieve all attributes of the trace and events
 ///
-/// The returned String is a JSON-encoding of [Vec<Attributes>], where:
+/// The returned String is a JSON-encoding of `Vec<Attributes>``, where:
 /// - 0: Contains the trace attributes (of trace at index _index_)
 /// - i (1 to (n-1)): Contains the event attributes of the i'th event in the trace
 ///
-/// Note: This does not free/destroy the passed boxed [EventLog]
+/// Note: This does not free/destroy the passed boxed [`EventLog`]
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn getCompleteRustTraceAsString<'local>(
     mut _env: JNIEnv<'local>,
@@ -42,13 +42,13 @@ pub unsafe fn getCompleteRustTraceAsString<'local>(
     return _env.new_string(&all_json).unwrap();
 }
 
-/// Given the passed reference to a (boxed) [EventLog] and the given `index`, retrieve the indicated [Trace] as compatible JSON String
+/// Given the passed reference to a (boxed) [`EventLog`] and the given `index`, retrieve the indicated [`Trace`] as compatible JSON String
 ///
-/// The returned String is a JSON-encoding of a [JTrace], which should be compatible with a `XTrace` in java
+/// The returned String is a JSON-encoding of a [`JTrace`], which should be compatible with a `XTrace` in java
 ///
-/// All events contained in the [Trace]/[JTrace] are also included (see [JTrace] struct)
+/// All events contained in the [`Trace`]/[`JTrace`] are also included (see [`JTrace`] struct)
 ///
-/// Note: This does not free/destroy the passed boxed [EventLog]
+/// Note: This does not free/destroy the passed boxed [`EventLog`]
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn getCompleteRustTraceAsStringJsonCompatible<'local>(
     mut _env: JNIEnv<'local>,
@@ -65,13 +65,13 @@ pub unsafe fn getCompleteRustTraceAsStringJsonCompatible<'local>(
     return _env.new_string(&trace_json).unwrap();
 }
 
-/// Given the passed reference to a (boxed) [EventLog] retrieve the (complete) [EventLog] as compatible JSON String
+/// Given the passed reference to a (boxed) [`EventLog`] retrieve the (complete) [`EventLog`] as compatible JSON String
 ///
-/// The returned String is a JSON-encoding of a [JEventLog], which should be compatible with a `XLog` in Java
+/// The returned String is a JSON-encoding of a [`JEventLog`], which should be compatible with a `XLog` in Java
 ///
-/// All traces (and recursively events) contained in the [EventLog] are also included (see [JEventLog] struct)
+/// All traces (and recursively events) contained in the [`EventLog`] are also included (see [`JEventLog`] struct)
 ///
-/// Note: This does not free/destroy the passed boxed [EventLog]
+/// Note: This does not free/destroy the passed boxed [`EventLog`]
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn getCompleteRustLogAsStringJsonCompatible<'local>(
     mut _env: JNIEnv<'local>,

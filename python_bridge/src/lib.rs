@@ -121,7 +121,7 @@ fn convert_df_to_log(df: &DataFrame) -> Result<EventLog, PolarsError> {
 }
 
 ///
-/// Convert a attribute ([Attribute]) to an [AnyValue]
+/// Convert a attribute ([`Attribute`]) to an [`AnyValue`]
 ///
 /// Used for converting values and data types to the DataFrame equivalent
 ///
@@ -141,7 +141,7 @@ fn attribute_to_any_value<'a>(
 }
 
 ///
-/// Convert a attribute ([AttributeValue]) to an [AnyValue]
+/// Convert a attribute ([`AttributeValue`]) to an [`AnyValue`]
 ///
 /// Used for converting values and data types to the DataFrame equivalent
 ///
@@ -174,9 +174,9 @@ fn attribute_value_to_any_value<'a>(
     }
 }
 ///
-/// Convert an [EventLog] to a Polars [DataFrame]
+/// Convert an [`EventLog`] to a Polars [`DataFrame`]
 ///
-/// Flattens event log and adds trace-level attributes to events with prefixed attribute key (see [TRACE_PREFIX])
+/// Flattens event log and adds trace-level attributes to events with prefixed attribute key (see [`TRACE_PREFIX`])
 ///
 fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
     println!("Starting converting log to DataFrame");
@@ -279,7 +279,7 @@ fn convert_log_to_df(log: &EventLog) -> Result<DataFrame, PolarsError> {
 ///
 /// Import a XES event log
 ///
-/// Returns a tuple of a Polars [DataFrame] for the event data and a json-encoding of  all log attributes/extensions/classifiers
+/// Returns a tuple of a Polars [`DataFrame`] for the event data and a json-encoding of  all log attributes/extensions/classifiers
 ///
 #[pyfunction]
 fn import_xes_rs(path: String, options: Option<&str>) -> PyResult<(PyDataFrame, String)> {

@@ -7,21 +7,29 @@
 #![doc = include_str!("../README.md")]
 
 ///
-/// Event Logs (traditional [`EventLog`] and Object-Centric [OCEL])
+/// Event Logs (traditional [`EventLog`] and Object-Centric [`OCEL`])
 ///
 pub mod event_log {
+    /// Activity projection of event logs
     pub mod activity_projection;
+    /// Constants 
     pub mod constants;
+    /// [`EventLog`] struct and sub-structs
     pub mod event_log_struct;
+    /// XES Export
     pub mod export_xes;
+    /// XES Import
     pub mod import_xes;
+    /// Streaming XES Import
     pub mod stream_xes;
     ///
     /// OCEL2.0 (Object-Centric Event Logs)
     ///
     pub mod ocel {
+        /// [`OCEL`] struct and sub-structs
         pub mod ocel_struct;
         #[allow(clippy::single_match)]
+        /// Parser for the OCEL2 XML format
         pub mod xml_ocel_import;
     }
     pub use event_log_struct::{
@@ -35,7 +43,9 @@ pub mod event_log {
 /// Petri nets
 ///
 pub mod petri_net {
+    /// [`PetriNet`] struct
     pub mod petri_net_struct;
+    /// Export [`PetriNet`] to `.pnml`
     pub mod pnml;
 }
 
@@ -103,39 +113,44 @@ pub use event_log::activity_projection::EventLogActivityProjection;
 /// Module for the Alpha+++ Process Discovery algorithm
 ///
 pub mod alphappp {
+    /// Automatic determining algorithm parameters for Alpha+++
     pub mod auto_parameters;
+    /// Alpha+++ Place Candidate Building
     pub mod candidate_building;
+    /// Alpha+++ Place Candidate Pruning
     pub mod candidate_pruning;
+    /// Full Alpha+++ Discovery algorithm
     pub mod full;
+    /// Event Log Repair (Adding artificial activities)
     pub mod log_repair;
 }
 
 ///
-/// Serialize a [`PetriNet`] as a JSON [String]
+/// Serialize a [`PetriNet`] as a JSON [`String`]
 ///
 pub fn petrinet_to_json(net: &PetriNet) -> String {
     serde_json::to_string(net).unwrap()
 }
 ///
-/// Deserialize a [`PetriNet`] from a JSON [String]
+/// Deserialize a [`PetriNet`] from a JSON [`String`]
 ///
 pub fn json_to_petrinet(net_json: &str) -> PetriNet {
     serde_json::from_str(net_json).unwrap()
 }
 
 ///
-/// Serialize [OCEL] as a JSON [String]
+/// Serialize [`OCEL`] as a JSON [`String`]
 ///
-/// [`serde_json`] can also be used to convert [OCEL] to other targets (e.g., `serde_json::to_writer`)
+/// [`serde_json`] can also be used to convert [`OCEL`] to other targets (e.g., `serde_json::to_writer`)
 ///
 pub fn ocel_to_json(ocel: &OCEL) -> String {
     serde_json::to_string(ocel).unwrap()
 }
 
 ///
-/// Import [OCEL] from a JSON [String]
+/// Import [`OCEL`] from a JSON [`String`]
 ///
-/// [`serde_json`] can also be used to import [OCEL] from other targets (e.g., `serde_json::from_reader`)
+/// [`serde_json`] can also be used to import [`OCEL`] from other targets (e.g., `serde_json::from_reader`)
 ///
 pub fn json_to_ocel(ocel_json: &str) -> OCEL {
     serde_json::from_str(ocel_json).unwrap()

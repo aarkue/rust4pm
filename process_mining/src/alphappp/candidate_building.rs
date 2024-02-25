@@ -68,7 +68,7 @@ pub fn satisfies_cnd_condition(df_rel: &HashSet<(usize, usize)>, a: &[usize], b:
         && not_all_dfs_between(df_rel, &b_without_a, &a_without_b)
 }
 
-/// Build place candidates (represented as input transitions and output transitions) from a [ActivityProjectionDFG]
+/// Build place candidates (represented as input transitions and output transitions) from a [`ActivityProjectionDFG`]
 pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec<usize>)> {
     let df_relations: HashSet<(usize, usize)> = dfg
         .edges

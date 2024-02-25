@@ -1,10 +1,10 @@
 [package]
 name = "process_mining"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 homepage = "https://github.com/aarkue/rust-bridge-process-mining"
-description = "Basic Process Mining data structures, functions and co."
+description = "Process Mining library for working with (object-centric) event data"
 repository = "https://github.com/aarkue/rust-bridge-process-mining"
 readme = "README.md"
 keywords = ["process-mining"]

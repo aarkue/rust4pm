@@ -100,7 +100,7 @@ pub fn alphappp_discover_petri_net(
 
 /// Run Alpha+++ discovery
 ///
-/// Measures [AlgoDuration] using the passed `get_time_millis_fn` function
+/// Measures [`AlgoDuration`] using the passed `get_time_millis_fn` function
 pub fn alphappp_discover_petri_net_with_timing_fn(
     log_proj: &EventLogActivityProjection,
     config: AlphaPPPConfig,

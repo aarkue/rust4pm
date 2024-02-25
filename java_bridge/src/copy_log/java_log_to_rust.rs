@@ -9,21 +9,21 @@ use process_mining::event_log::{Attributes, Event, EventLog, Trace};
 
 use super::copy_log_shared::JTrace;
 
-/// Construction struct used when copying an XLog from Java (i.e., creating a [EventLog] from it)
+/// Construction struct used when copying an XLog from Java (i.e., creating a [`EventLog`] from it)
 ///
 /// User must guarantee, that same trace is not modified concurrently
 /// (This is achieved by only parallelizing on the trace ids)
 ///
-/// This struct is heavily used in unsafe code, to allow efficient copying of XLogs to [EventLog]s
+/// This struct is heavily used in unsafe code, to allow efficient copying of XLogs to [`EventLog`]s
 struct EventLogConstruction {
     #[allow(clippy::vec_box)]
     traces: Vec<Box<Trace>>,
     attributes: Attributes,
 }
 
-/// Intialize [EventLogConstruction] stub for (parallel) copying of Java XLog
+/// Intialize [`EventLogConstruction`] stub for (parallel) copying of Java XLog
 ///
-/// __Warning:__ Returned jlong points to (boxed) [EventLogConstruction] struct which __must be manually destroyed__
+/// __Warning:__ Returned jlong points to (boxed) [`EventLogConstruction`] struct which __must be manually destroyed__
 ///
 /// The __caller must guarantee__ to (eventually) call __[finishLogConstructionPar]__ and then __[destroyRustEventLog]__
 ///
@@ -57,13 +57,13 @@ pub unsafe fn createRustEventLogPar<'local>(
     Box::into_raw(Box::new(log_constr)) as jlong
 }
 
-/// Given a pointer ([jlong]) to a [EventLogConstruction], add the passed trace information to the trace at index `trace_index`
+/// Given a pointer ([`jlong`]) to a [`EventLogConstruction`], add the passed trace information to the trace at index `trace_index`
 ///
 /// The trace information is made up of:
-/// - `trace_attributes_json`: JSON-encoded string containing [HashMap<String,String]-like trace attributes
-/// - `event_attributes_json`: JSON-encoed string containing [Vec<HashMap<String,String>]-like event attributes (i.e., one entry for each event)
+/// - `trace_attributes_json`: JSON-encoded string containing `HashMap<String,String`-like trace attributes
+/// - `event_attributes_json`: JSON-encoed string containing `Vec<HashMap<String,String>`-like event attributes (i.e., one entry for each event)
 ///
-/// Note: The passed (referenced) [EventLogConstruction] _is not_ destroyed, freed or finalized by this function but __trace at index `trace_index` is modified__
+/// Note: The passed (referenced) [`EventLogConstruction`] _is not_ destroyed, freed or finalized by this function but __trace at index `trace_index` is modified__
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn setTracePar(
     mut env: JNIEnv<'_>,
@@ -98,13 +98,13 @@ pub unsafe fn setTracePar(
     let _pointer = Box::into_raw(log_constr_pointer);
 }
 
-/// Similar to [setTracePar] function, but use JSON string of XTrace-compatible [JTrace] object
+/// Similar to [`setTracePar`] function, but use JSON string of XTrace-compatible [`JTrace`] object
 ///
-/// i.e., Passed `trace_json` is assumed to be valid JSON-serialization of the [JTrace] struct
+/// i.e., Passed `trace_json` is assumed to be valid JSON-serialization of the [`JTrace`] struct
 ///
-/// `trace_index` indicates trace on `EventLogConstruction` which to _replace_ with converted [JTrace] (first converted to a [Trace])
+/// `trace_index` indicates trace on `EventLogConstruction` which to _replace_ with converted [`JTrace`] (first converted to a [`Trace`])
 ///
-/// Note: The passed (referenced) [EventLogConstruction] _is not_ destroyed, freed or finalized by this function but __trace at index `trace_index` is modified__
+/// Note: The passed (referenced) [`EventLogConstruction`] _is not_ destroyed, freed or finalized by this function but __trace at index `trace_index` is modified__
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn setTraceParJsonCompatible(
     mut env: JNIEnv<'_>,
@@ -121,13 +121,13 @@ pub unsafe fn setTraceParJsonCompatible(
     let _pointer = Box::into_raw(log_constr_pointer);
 }
 
-/// Converts a (populated) [EventLogConstruction] to an [EventLog]
+/// Converts a (populated) [`EventLogConstruction`] to an [`EventLog`]
 ///
-/// The [EventLogConstruction] can be created using [createRustEventLogPar]
+/// The [`EventLogConstruction`] can be created using [`createRustEventLogPar`]
 ///
-/// This frees/destroys the [EventLogConstruction] (given by box reference `pointer`)
+/// This frees/destroys the [`EventLogConstruction`] (given by box reference `pointer`)
 ///
-/// __Warning:__ Returned jlong points to (boxed) [EventLog] struct which __must be manually destroyed__
+/// __Warning:__ Returned jlong points to (boxed) [`EventLog`] struct which __must be manually destroyed__
 ///
 /// The __caller must guarantee__ to (eventually) call __[destroyRustEventLog]__ with the returned pointer!
 ///
@@ -153,9 +153,9 @@ pub unsafe fn finishLogConstructionPar(mut _env: JNIEnv<'_>, _: JClass, pointer:
     Box::into_raw(log_box) as jlong
 }
 
-/// Destroys the (boxed) [EventLog] referenced by `pointer` and frees associated memory
+/// Destroys the (boxed) [`EventLog`] referenced by `pointer` and frees associated memory
 ///
-/// This function __must__ be called for each created [EventLog], which is behind a pointer (e.g., `long` in Java)
+/// This function __must__ be called for each created [`EventLog`], which is behind a pointer (e.g., `long` in Java)
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn destroyRustEventLog(mut _env: JNIEnv<'_>, _: JClass, pointer: jlong) -> jboolean {
     let _log_pointer = Box::from_raw(pointer as *mut EventLog);

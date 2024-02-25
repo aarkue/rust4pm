@@ -30,26 +30,26 @@ pub struct JEventLog {
     traces: Vec<JTrace>,
 }
 
-/// Converts a [HashMap<String,String>] to a [HashMap<String,Attribute>] (i.e., to a mapping to [Attribute]s)
+/// Converts a `HashMap<String,String>` to a `HashMap<String,Attribute>` (i.e., to a mapping to [`Attribute`]s)
 ///
-/// Currently required for converting an [EventLog] to an [JEventLog] (+ all subtypes)
+/// Currently required for converting an [`EventLog`] to an [`JEventLog`] (+ all subtypes)
 fn stringMapToAttributeMap(map: &Attributes) -> HashMap<String, Attribute> {
     map.iter()
         .map(|attr| (attr.key.clone(), attr.clone()))
         .collect()
 }
 
-/// Converts as [HashMap<String, Attribute>] to a [Attributes] (i.e., from a mapping of [Attribute]s)
+/// Converts as `HashMap<String, Attribute>` to a [`Attributes`] (i.e., from a mapping of [`Attribute`]s)
 ///
-/// Currently, [Attribute]s can only hold Strings, so this just un-wraps that container
+/// Currently, [`Attribute`]s can only hold Strings, so this just un-wraps that container
 ///
-/// Required for converting a [JEventLog] to an [EventLog] (+ all subtypes)
+/// Required for converting a [`JEventLog`] to an [`EventLog`] (+ all subtypes)
 fn AttributeMapToStringMap(map: &HashMap<String, Attribute>) -> Attributes {
     map.iter().map(|(_, value)| value.clone()).collect()
 }
 
 impl From<&Event> for JEvent {
-    /// Note: Generates new uuids for the resulting [JEvent]!
+    /// Note: Generates new uuids for the resulting [`JEvent`]!
     fn from(value: &Event) -> Self {
         JEvent {
             attributes: stringMapToAttributeMap(&value.attributes),

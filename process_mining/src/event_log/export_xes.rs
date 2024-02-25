@@ -177,7 +177,7 @@ where
     )
 }
 
-/// Export an [EventLog] to a [File]
+/// Export an [`EventLog`] to a [`File`]
 pub fn export_xes_event_log_to_file(
     log: &EventLog,
     file: File,
@@ -224,7 +224,7 @@ where
     )
 }
 
-/// Export a trace stream (i.e., [`Iterator`] over [`Trace`]) and [`XESOuterLogData`] to a [File]
+/// Export a trace stream (i.e., [`Iterator`] over [`Trace`]) and [`XESOuterLogData`] to a [`File`]
 ///
 /// If `compress_gz` is `true`, the XES will be compressed to a `.xes.gz` file before writing to file
 pub fn export_xes_trace_stream_to_file<T: Borrow<Trace>, I>(

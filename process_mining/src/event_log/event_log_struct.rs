@@ -67,7 +67,7 @@ pub struct Attribute {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 /// Version of [`Attribute`] which represents underlying nested attributes as a [`HashMap`]
 ///
-/// Only used for easier JSON-interop with ProM
+/// Only used for easier JSON-interop with `ProM`
 pub struct HashMapAttribute {
     /// Attribute key
     pub key: String,
@@ -110,7 +110,7 @@ impl Attribute {
 }
 
 ///
-/// Attributes are [Vec] of [Attribute]s
+/// Attributes are [`Vec`] of [`Attribute`]s
 ///
 pub type Attributes = Vec<Attribute>;
 
@@ -259,7 +259,7 @@ impl Event {
 }
 
 ///
-/// A trace consists of a list of events and trace attributes (See also [Event] and [Attributes])
+/// A trace consists of a list of events and trace attributes (See also [`Event`] and [`Attributes`])
 ///
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Trace {
@@ -270,7 +270,7 @@ pub struct Trace {
 }
 
 ///
-/// Event log consisting of a list of [Trace]s and log [Attributes]
+/// Event log consisting of a list of [`Trace`]s and log [`Attributes`]
 ///
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EventLog {

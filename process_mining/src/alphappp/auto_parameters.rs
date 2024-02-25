@@ -106,7 +106,7 @@ const AUTO_CONFIGS: &[AlphaPPPConfig] = &[
     },
 ];
 
-/// Automatically select parameters for Alpha+++ and discover a [`Petrinet`] using the chosen parameters
+/// Automatically select parameters for Alpha+++ and discover a [`PetriNet`] using the chosen parameters
 ///
 /// Currently, tests out multiple paramater configurations and selects a best one based on the discovered Petri net
 pub fn alphappp_discover_with_auto_parameters(

@@ -7,9 +7,9 @@ use super::event_log_struct::{Attribute, AttributeValue, EventLog};
 use super::constants::ACTIVITY_NAME;
 use super::{AttributeAddable, Event};
 
-/// Name of START_ACTIVITY (can be added to [EventLogActivityProjection]/[EventLog] to mark START of traces)
+/// Name of `START_ACTIVITY` (can be added to [`EventLogActivityProjection`]/[`EventLog`] to mark START of traces)
 pub const START_ACTIVITY: &str = "__START";
-/// Name of START_ACTIVITY (can be added to [EventLogActivityProjection]/[EventLog] to mark END of traces)
+/// Name of `START_ACTIVITY` (can be added to [`EventLogActivityProjection`]/[`EventLog`] to mark END of traces)
 pub const END_ACTIVITY: &str = "__END";
 
 #[derive(Debug, Clone)]
@@ -34,7 +34,7 @@ pub struct EventLogActivityProjection {
 }
 
 #[derive(Debug, Default, Clone)]
-/// Weighted DFG of [`ActivityProjection`] 
+/// Weighted DFG of [`EventLogActivityProjection`] 
 pub struct ActivityProjectionDFG {
     /// Nodes of the DFG
     pub nodes: Vec<usize>,
@@ -212,7 +212,7 @@ impl From<&EventLog> for EventLogActivityProjection {
 }
 
 impl EventLogActivityProjection {
-    /// Convenience function to get sorted activity name lists back from a list of [`acts`]
+    /// Convenience function to get sorted activity name lists back from a list of `acts`
     pub fn acts_to_names(&self, acts: &[usize]) -> Vec<String> {
         let mut ret: Vec<String> = acts
             .iter()

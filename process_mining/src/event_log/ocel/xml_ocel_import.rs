@@ -33,12 +33,19 @@ enum Mode {
 }
 
 #[derive(Clone, Copy, Debug)]
+/// _Types_ of attribute values in OCEL2
 pub enum OCELAttributeType {
+    /// String
     String,
+    /// DateTime
     Time,
+    /// Integer
     Integer,
+    /// Float
     Float,
+    /// Boolean
     Boolean,
+    /// Placeholder for invalid types
     Null,
 }
 
@@ -119,7 +126,7 @@ fn parse_date(time: &str) -> Result<DateTime<FixedOffset>, &str> {
 }
 
 ///
-/// Import an [OCEL]2 XML file from the given reader
+/// Import an [`OCEL`]2 XML file from the given reader
 ///
 pub fn import_ocel_xml<T>(reader: &mut Reader<T>) -> OCEL
 where
@@ -498,14 +505,14 @@ where
 }
 
 ///
-/// Import an [OCEL]2 XML from a byte slice
+/// Import an [`OCEL`]2 XML from a byte slice
 ///
 pub fn import_ocel_xml_slice(xes_data: &[u8]) -> OCEL {
     import_ocel_xml(&mut Reader::from_reader(BufReader::new(xes_data)))
 }
 
 ///
-/// Import an [OCEL]2 XML from a filepath
+/// Import an [`OCEL`]2 XML from a filepath
 ///
 pub fn import_ocel_xml_file(path: &str) -> OCEL {
     let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();

@@ -37,7 +37,7 @@ fn main() {
         now.elapsed()
     );
 
-    // Streaming XES Parsing (constructing a primitive [EventLogActivityProjection])
+    // Streaming XES Parsing (constructing a primitive EventLogActivityProjection)
     // Streaming enables very low memory consumption and sometimes also faster processing
     let now = Instant::now();
     let st_res = stream_xes_from_path(

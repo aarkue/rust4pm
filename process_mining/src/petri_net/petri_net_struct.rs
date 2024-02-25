@@ -94,9 +94,9 @@ pub type Marking = HashMap<PlaceID, u64>;
 
 #[derive(Debug, Deserialize, Serialize)]
 ///
-/// A Petri net of [Place]s and [Transition]s
+/// A Petri net of [`Place`]s and [`Transition`]s
 ///
-/// Bipartite graph of [Place]s and [Transition]s with [Arc]s connecting them, as well as initial and final [Marking]s
+/// Bipartite graph of [`Place`]s and [`Transition`]s with [`Arc`]s connecting them, as well as initial and final [`Marking`]s
 pub struct PetriNet {
     /// Places
     pub places: HashMap<Uuid, Place>,
@@ -164,7 +164,7 @@ impl PetriNet {
         });
     }
 
-    /// Get the preset of a [`PetiNet`] node referred to by passed id
+    /// Get the preset of a [`PetriNet`] node referred to by passed id
     pub fn preset_of(&self, id: Uuid) -> PetriNetNodes {
         if self.places.contains_key(&id) {
             let p = self.places.get(&id).unwrap();
@@ -177,7 +177,7 @@ impl PetriNet {
         }
     }
 
-    /// Get the preset of a [`PetiNet`] place
+    /// Get the preset of a [`PetriNet`] place
     pub fn preset_of_place(&self, p: PlaceID) -> Vec<TransitionID> {
         self.arcs
             .iter()
@@ -188,7 +188,7 @@ impl PetriNet {
             .collect()
     }
 
-    /// Get the preset of [`PetiNet`] transition referred to by passed id
+    /// Get the preset of [`PetriNet`] transition referred to by passed id
     pub fn preset_of_transition(&self, t: TransitionID) -> Vec<PlaceID> {
         self.arcs
             .iter()
@@ -199,7 +199,7 @@ impl PetriNet {
             .collect()
     }
 
-    /// Get postset of [`PetiNet`] node referred to by passed id
+    /// Get postset of [`PetriNet`] node referred to by passed id
     pub fn postset_of(&self, id: Uuid) -> PetriNetNodes {
         if self.places.contains_key(&id) {
             let p = self.places.get(&id).unwrap();
@@ -212,7 +212,7 @@ impl PetriNet {
         }
     }
 
-    /// Get postset of [`PetiNet`] place referred to by passed id
+    /// Get postset of [`PetriNet`] place referred to by passed id
     pub fn postset_of_place(&self, p: PlaceID) -> Vec<TransitionID> {
         self.arcs
             .iter()
@@ -223,7 +223,7 @@ impl PetriNet {
             .collect()
     }
 
-    /// Get postset of [`PetiNet`] transition referred to by passed id
+    /// Get postset of [`PetriNet`] transition referred to by passed id
     pub fn postset_of_transition(&self, t: TransitionID) -> Vec<PlaceID> {
         self.arcs
             .iter()

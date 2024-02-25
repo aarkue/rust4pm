@@ -40,9 +40,9 @@ pub unsafe fn addStartEndToRustLog(mut _env: JNIEnv<'_>, _: JClass, pointer: jlo
     let _log_pointer = Box::into_raw(log_pointer);
 }
 
-/// Get attributes of (boxed) [EventLog] referenced by `pointer`
+/// Get attributes of (boxed) [`EventLog`] referenced by `pointer`
 ///
-/// Attributes are converted to JSON String (encoding a [HashMap<String,String>])
+/// Attributes are converted to JSON String (encoding a [`HashMap`])
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn getRustLogAttributes<'local>(
     mut _env: JNIEnv<'local>,
@@ -60,9 +60,9 @@ pub unsafe fn getRustLogAttributes<'local>(
     _env.new_string(attributes_json).unwrap()
 }
 
-/// Get the lengths of all traces in (boxed) [EventLog] referenced by `pointer`
+/// Get the lengths of all traces in (boxed) [`EventLog`] referenced by `pointer`
 ///
-/// The lengths are returned as a [JIntArray] of size of `EventLog.traces`,
+/// The lengths are returned as a [`JIntArray`] of size of `EventLog.traces`,
 /// where each entry contains the length of the trace (i.e., the length of `Trace.events`) at the corresponding index
 #[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
 pub unsafe fn getRustTraceLengths<'local>(
@@ -268,6 +268,6 @@ pub unsafe fn importXESLogStream(
             }
         };
     }
-    return jlong::from(42);
+    jlong::from(42)
     // let log_box = Box::new(log);
 }
