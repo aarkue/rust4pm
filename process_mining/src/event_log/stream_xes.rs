@@ -9,6 +9,7 @@ use std::{
 use chrono::{DateTime, NaiveDateTime, Utc};
 use flate2::read::GzDecoder;
 use quick_xml::{escape::unescape, events::BytesStart, Reader};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::XESImportOptions;
@@ -19,7 +20,6 @@ use super::{
     Attribute, AttributeAddable, AttributeValue, Attributes, Event, Trace,
 };
 
-#[derive(Default, Debug)]
 
 /// (Global) log data parsed during streaming
 ///
@@ -27,7 +27,7 @@ use super::{
 /// According to the state machine flow in XES standard (<https://xes-standard.org/_media/xes/xesstandarddefinition-2.0.pdf#page=11>) those must occur before the first trace
 ///
 /// Thus, __for XES-compliant logs it is guaranteed that this data is already complete once the first trace is parsed__.
-#[derive(Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct XESOuterLogData {
     /// XES Extensions of event log
     pub extensions: Vec<EventLogExtension>,
@@ -41,7 +41,7 @@ pub struct XESOuterLogData {
     pub global_event_attrs: Attributes,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 ///
 /// Current Parsing Mode (i.e., which tag is currently open / being parsed)
 ///

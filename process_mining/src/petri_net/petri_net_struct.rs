@@ -15,7 +15,7 @@ pub struct Transition {
     id: Uuid,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 
 /// Nodes (Places or Transitions) in a Petri net
 pub enum PetriNetNodes {
@@ -74,7 +74,7 @@ impl From<&Place> for PlaceID {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 /// Transition ID
 pub struct TransitionID(Uuid);
 impl From<&Transition> for TransitionID {

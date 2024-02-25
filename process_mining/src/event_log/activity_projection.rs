@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use super::event_log_struct::{Attribute, AttributeValue, EventLog};
 
@@ -12,7 +13,7 @@ pub const START_ACTIVITY: &str = "__START";
 /// Name of `START_ACTIVITY` (can be added to [`EventLogActivityProjection`]/[`EventLog`] to mark END of traces)
 pub const END_ACTIVITY: &str = "__END";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 /// Projection of an event log on just activity labels
 ///
 /// Currently assumes a default activity name ([`ACTIVITY_NAME`])
@@ -33,7 +34,7 @@ pub struct EventLogActivityProjection {
     pub traces: Vec<(Vec<usize>, u64)>,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 /// Weighted DFG of [`EventLogActivityProjection`] 
 pub struct ActivityProjectionDFG {
     /// Nodes of the DFG

@@ -5,6 +5,7 @@ use std::{
 
 use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use quick_xml::{events::BytesStart, Reader};
+use serde::{Deserialize, Serialize};
 
 use crate::{event_log::ocel::ocel_struct::OCELType, OCEL};
 
@@ -16,7 +17,7 @@ use super::ocel_struct::{
 ///
 /// Current Parsing Mode (i.e., which tag is currently open / being parsed)
 ///
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 enum Mode {
     Objects,
     Events,
@@ -32,7 +33,7 @@ enum Mode {
     None,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 /// _Types_ of attribute values in OCEL2
 pub enum OCELAttributeType {
     /// String
