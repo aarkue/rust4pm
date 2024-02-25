@@ -9,8 +9,8 @@ mod copy_log {
     mod rust_log_to_java;
 }
 use jni::{
-    objects::{JClass, JIntArray, JObject, JString},
-    sys::jlong,
+    objects::{AutoLocal, JClass, JIntArray, JObject, JString},
+    sys::{jint, jlong},
     JNIEnv,
 };
 
@@ -24,7 +24,7 @@ use process_mining::{
         activity_projection::{add_start_end_acts, EventLogActivityProjection},
         event_log_struct::HashMapAttribute,
         import_xes::{import_xes_file, XESImportOptions},
-        AttributeAddable, AttributeValue, Attributes, EventLog,
+        Attribute, AttributeAddable, AttributeValue, Attributes, EventLog,
     },
     petri_net::petri_net_struct::PetriNet,
     petrinet_to_json, stream_xes_from_path,
@@ -270,4 +270,125 @@ pub unsafe fn importXESLogStream(
     }
     jlong::from(42)
     // let log_box = Box::new(log);
+}
+
+
+
+fn create_attribute_map<'a>(
+    env: &mut JNIEnv<'a>,
+    attribute_map_class: &JClass,
+    size: usize,
+) -> AutoLocal<'a, JObject<'a>> {
+    let obj = env
+        .new_object(attribute_map_class, "(I)V", &[(size as i32).into()])
+        .unwrap();
+    env.auto_local(obj)
+}
+fn create_trace<'a>(
+    env: &mut JNIEnv<'a>,
+    trace_class: &JClass,
+    j_attribute_map: &JObject,
+) -> AutoLocal<'a, JObject<'a>> {
+    let obj = env
+        .new_object(
+            trace_class,
+            "(Lorg/deckfour/xes/model/XAttributeMap;)V",
+            &[(&j_attribute_map).into()],
+        )
+        .unwrap();
+    env.auto_local(obj)
+}
+fn create_event<'a>(
+    env: &mut JNIEnv<'a>,
+    event_class: &JClass,
+    j_attribute_map: &JObject,
+) -> AutoLocal<'a, JObject<'a>> {
+    let obj = env
+        .new_object(
+            event_class,
+            "(Lorg/deckfour/xes/model/XAttributeMap;)V",
+            &[(&j_attribute_map).into()],
+        )
+        .unwrap();
+    env.auto_local(obj)
+}
+
+fn add_to_list<'a>(env: &mut JNIEnv<'a>, list: &JObject, to_add: &JObject) {
+    let res = env
+        .call_method(&list, "add", "(Ljava/lang/Object;)Z", &[(&to_add).into()])
+        .unwrap();
+}
+
+fn put_in_map<'a>(env: &mut JNIEnv<'a>, map: &JObject, key: &str, value: &JObject) {
+    let j_key = env.auto_local(env.new_string(key).unwrap());
+    env.call_method(
+        &map,
+        "put",
+        "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+        &[(&j_key).into(), (&value).into()],
+    )
+    .unwrap();
+}
+
+fn new_attribute_value<'a>(
+    env: &mut JNIEnv<'a>,
+    attribute_string_class: &JClass,
+    attr: &Attribute,
+) -> AutoLocal<'a, JObject<'a>> {
+    let j_attr_key = env.auto_local(env.new_string(&attr.key).unwrap());
+    let j_attr_value = env.auto_local(env.new_string(&format!("{:?}", attr.value)).unwrap());
+    let j_attr_str = env
+        .new_object(
+            attribute_string_class,
+            "(Ljava/lang/String;Ljava/lang/String;)V",
+            &[(&j_attr_key).into(), (&j_attr_value).into()],
+        )
+        .unwrap();
+    return env.auto_local(j_attr_str);
+}
+///
+/// Experimental function for constructing the event log in Java directly
+///
+#[jni_fn("org.processmining.alpharevisitexperiments.bridge.RustBridge")]
+pub unsafe fn constructInRustTest(
+    mut env: JNIEnv<'_>,
+    _: JClass,
+    path: JString,
+    xlog: JObject,
+    trace_class: JClass,
+    event_class: JClass,
+    attribute_map_class: JClass,
+    attribute_string_class: JClass,
+) -> jlong {
+    let (mut stream, _log_data) = stream_xes_from_path(
+        env.get_string(&path).unwrap().to_str().unwrap(),
+        XESImportOptions::default(),
+    )
+    .unwrap();
+    for trace in &mut stream {
+        // println!("[Rust]: Next Trace!");
+        let j_trace_attribute_map =
+            create_attribute_map(&mut env, &attribute_map_class, trace.attributes.len());
+        for attr in trace.attributes {
+            if let Some(_) = attr.value.try_get_string() {
+                let j_attr_str = new_attribute_value(&mut env, &attribute_string_class, &attr);
+                put_in_map(&mut env, &j_trace_attribute_map, &attr.key, &j_attr_str);
+            }
+        }
+        let jtrace = create_trace(&mut env, &trace_class, &j_trace_attribute_map);
+        for event in trace.events {
+            let j_attribute_map =
+                create_attribute_map(&mut env, &attribute_map_class, event.attributes.len());
+            for attr in event.attributes {
+                if let Some(_) = attr.value.try_get_string() {
+                    let j_attr_str = new_attribute_value(&mut env, &attribute_string_class, &attr);
+                    put_in_map(&mut env, &j_attribute_map, &attr.key, &j_attr_str);
+                }
+            }
+            let jevent = create_event(&mut env, &event_class, &j_attribute_map);
+            add_to_list(&mut env, &jtrace, &jevent);
+        }
+        add_to_list(&mut env, &xlog, &jtrace);
+    }
+    jlong::from(42)
 }
