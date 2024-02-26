@@ -160,3 +160,40 @@ pub fn wasm_parse_ocel2_xml_to_json_vec(ocel_data: &[u8]) -> Vec<u8> {
     let ocel = import_ocel_xml_slice(ocel_data);
     serde_json::to_vec(&ocel).unwrap()
 }
+
+
+/// Parse OCEL XML from byte slice and keep it in WASM memory
+///
+/// __Note: Memory will leak if it is not cleaned up manually (e.g., by caliing [`wasm_destroy_ocel_pointer`])__  
+#[wasm_bindgen]
+pub fn wasm_parse_ocel2_xml_keep_state_in_wasm(ocel_data: &[u8]) -> JsValue {
+    let ocel = import_ocel_xml_slice(ocel_data);
+    let boxed_ocel = Box::new(ocel);
+    let memory_addr = Box::into_raw(boxed_ocel) as usize;
+    memory_addr.into()
+}
+
+/// Get number of events in OCEL at given memory location
+/// 
+/// # Safety
+/// Assumes that there is an valid OCEL stored at the given memory location
+#[wasm_bindgen]
+pub unsafe fn wasm_get_ocel_num_events_from_pointer(addr: usize) -> JsValue {
+    let boxed_ocel = Box::from_raw(addr as *mut OCEL);
+    let len = boxed_ocel.events.len();
+    // Into raw: do not destroy/deallocate OCEL
+    Box::into_raw(boxed_ocel);
+    len.into()
+}
+
+
+/// Destroy OCEL at memory location
+/// 
+/// # Safety
+/// Assumes that there is an valid OCEL stored at the given memory location
+#[wasm_bindgen]
+pub unsafe fn wasm_destroy_ocel_pointer(addr: usize) -> JsValue {
+    let _boxed_ocel = Box::from_raw(addr as *mut OCEL);
+    // OCEL implicitly detroyed/deallocated here
+    true.into()
+}
