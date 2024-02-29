@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::event_log_struct::{Attribute, AttributeValue, EventLog};
 
 use super::constants::ACTIVITY_NAME;
-use super::{AttributeAddable, Event};
+use super::{XESEditableAttribute, Event};
 
 /// Name of `START_ACTIVITY` (can be added to [`EventLogActivityProjection`]/[`EventLog`] to mark START of traces)
 pub const START_ACTIVITY: &str = "__START";

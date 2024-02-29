@@ -161,7 +161,6 @@ pub fn wasm_parse_ocel2_xml_to_json_vec(ocel_data: &[u8]) -> Vec<u8> {
     serde_json::to_vec(&ocel).unwrap()
 }
 
-
 /// Parse OCEL XML from byte slice and keep it in WASM memory
 ///
 /// __Note: Memory will leak if it is not cleaned up manually (e.g., by caliing [`wasm_destroy_ocel_pointer`])__  
@@ -174,7 +173,7 @@ pub fn wasm_parse_ocel2_xml_keep_state_in_wasm(ocel_data: &[u8]) -> JsValue {
 }
 
 /// Get number of events in OCEL at given memory location
-/// 
+///
 /// # Safety
 /// Assumes that there is an valid OCEL stored at the given memory location
 #[wasm_bindgen]
@@ -186,9 +185,8 @@ pub unsafe fn wasm_get_ocel_num_events_from_pointer(addr: usize) -> JsValue {
     len.into()
 }
 
-
 /// Destroy OCEL at memory location
-/// 
+///
 /// # Safety
 /// Assumes that there is an valid OCEL stored at the given memory location
 #[wasm_bindgen]

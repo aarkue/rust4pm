@@ -24,7 +24,7 @@ use process_mining::{
         activity_projection::{add_start_end_acts, EventLogActivityProjection},
         event_log_struct::HashMapAttribute,
         import_xes::{import_xes_file, XESImportOptions},
-        Attribute, AttributeAddable, AttributeValue, Attributes, EventLog,
+        Attribute, XESEditableAttribute, AttributeValue, Attributes, EventLog,
     },
     petri_net::petri_net_struct::PetriNet,
     petrinet_to_json, stream_xes_from_path,
@@ -271,8 +271,6 @@ pub unsafe fn importXESLogStream(
     jlong::from(42)
     // let log_box = Box::new(log);
 }
-
-
 
 fn create_attribute_map<'a>(
     env: &mut JNIEnv<'a>,

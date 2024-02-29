@@ -33,7 +33,7 @@ pub mod event_log {
         pub mod xml_ocel_import;
     }
     pub use event_log_struct::{
-        Attribute, AttributeAddable, AttributeValue, Attributes, Event, EventLog, Trace,
+        Attribute, XESEditableAttribute, AttributeValue, Attributes, Event, EventLog, Trace,
     };
     #[cfg(test)]
     mod tests;

@@ -17,7 +17,7 @@ use crate::XESImportOptions;
 use super::{
     event_log_struct::{EventLogClassifier, EventLogExtension},
     import_xes::XESParseError,
-    Attribute, AttributeAddable, AttributeValue, Attributes, Event, Trace,
+    Attribute, XESEditableAttribute, AttributeValue, Attributes, Event, Trace,
 };
 
 /// (Global) log data parsed during streaming

@@ -9,7 +9,10 @@ use jni::{
 use uuid::Uuid;
 
 use jni_fn::jni_fn;
-use process_mining::event_log::{event_log_struct::HashMapAttribute, AttributeAddable, AttributeValue, Attributes, EventLog, Trace};
+use process_mining::event_log::{
+    event_log_struct::HashMapAttribute, XESEditableAttribute, AttributeValue, Attributes, EventLog,
+    Trace,
+};
 
 use super::copy_log_shared::{JEventLog, JTrace};
 
@@ -29,7 +32,8 @@ pub unsafe fn getCompleteRustTraceAsString<'local>(
 ) -> JString<'local> {
     let log_pointer = Box::from_raw(pointer as *mut EventLog);
     let trace = log_pointer.traces.get(index as usize).unwrap();
-    let mut events_json: Vec<HashMap<String,HashMapAttribute>> = Vec::with_capacity(1 + trace.events.len());
+    let mut events_json: Vec<HashMap<String, HashMapAttribute>> =
+        Vec::with_capacity(1 + trace.events.len());
     events_json.push(trace.attributes.as_hash_map());
     trace.events.iter().for_each(|e| {
         let mut attrs: Attributes = e.attributes.clone();

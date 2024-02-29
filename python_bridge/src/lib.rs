@@ -19,7 +19,7 @@ use process_mining::event_log::event_log_struct::EventLogExtension;
 use process_mining::event_log::import_xes::import_xes_file;
 use process_mining::event_log::import_xes::XESImportOptions;
 use process_mining::event_log::{
-    Attribute, AttributeAddable, AttributeValue, Attributes, Event, EventLog, Trace,
+    Attribute, XESEditableAttribute, AttributeValue, Attributes, Event, EventLog, Trace,
 };
 use process_mining::json_to_petrinet;
 use process_mining::petri_net::petri_net_struct::PetriNet;

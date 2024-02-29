@@ -110,14 +110,18 @@ impl Attribute {
 }
 
 ///
-/// Attributes are [`Vec`] of [`Attribute`]s
+/// Attributes are [`Vec`]s of [`Attribute`]s
+///
+/// See the [`XESEditableAttribute`] trait for convenient functions to add, edit or remove attribute by keys.
+///
+/// In particular, see [`XESEditableAttribute::get_by_key`], [`XESEditableAttribute::add_attribute`] and [`XESEditableAttribute::get_by_key_or_global`].
 ///
 pub type Attributes = Vec<Attribute>;
 
 ///
 /// Trait to easily add and update attributes
 ///
-pub trait AttributeAddable {
+pub trait XESEditableAttribute {
     ///
     /// Add a new attribute (with key and value)
     ///
@@ -167,7 +171,7 @@ pub trait AttributeAddable {
     ///
     fn as_hash_map(&self) -> HashMap<String, HashMapAttribute>;
 }
-impl AttributeAddable for Attributes {
+impl XESEditableAttribute for Attributes {
     fn add_to_attributes(&mut self, key: String, value: AttributeValue) {
         let a = Attribute::new(key, value);
         self.push(a);
