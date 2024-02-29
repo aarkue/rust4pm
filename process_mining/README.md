@@ -216,15 +216,6 @@ __Difference in Memory Consumption__
 For the [`BPI Challenge 2018`](https://data.4tu.nl/articles/dataset/BPI_Challenge_2018/12688355) Event Log XES file (`150.9 MiB` as a gzipped `.xes.gz` or `1.8 GB` as a plain `.xes`), parsing the log completely and then exporting it to a `.xes.gz` file uses up to `3.3 GB` of memory at peak.
 When using the streaming functions for the XES import and export instead, the memory consumption peaks at only `5.7 MiB`
 
-<style>
-    table {
-        width: 100%;
-    }
-    img {
-        max-height: 20rem;
-        width: 100%;
-    }
-</style>
 
 | Memory Usage without Streaming (`3.3GB`) | Memory Usage with Streaming (`5.7MiB`) 
 :-------------------------:|:-------------------------:
