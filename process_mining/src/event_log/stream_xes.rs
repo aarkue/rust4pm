@@ -20,7 +20,6 @@ use super::{
     Attribute, AttributeAddable, AttributeValue, Attributes, Event, Trace,
 };
 
-
 /// (Global) log data parsed during streaming
 ///
 ///
@@ -264,7 +263,9 @@ impl<'a> StreamingXESParser<'a> {
                             },
                             b"log" => {
                                 if self.encountered_log {
-                                    eprintln!("Encountered two log tags. This is not a valid XES file")
+                                    eprintln!(
+                                        "Encountered two log tags. This is not a valid XES file"
+                                    )
                                 }
                                 self.encountered_log = true;
                                 self.current_mode = Mode::Log

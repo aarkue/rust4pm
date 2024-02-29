@@ -159,7 +159,7 @@ pub fn add_artificial_acts_for_skips(
 }
 
 /// Breadth first search in DFG
-/// 
+///
 /// Constructs visited sequences, stopping when encoutering a loop
 pub fn get_reachable_bf(
     act: usize,

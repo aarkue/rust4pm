@@ -18,7 +18,7 @@ pub const END_ACTIVITY: &str = "__END";
 ///
 /// Currently assumes a default activity name ([`ACTIVITY_NAME`])
 pub struct EventLogActivityProjection {
-    /// All activities 
+    /// All activities
     ///
     /// The index of an activity corresponds to `usize` representation of activity
     ///
@@ -35,7 +35,7 @@ pub struct EventLogActivityProjection {
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
-/// Weighted DFG of [`EventLogActivityProjection`] 
+/// Weighted DFG of [`EventLogActivityProjection`]
 pub struct ActivityProjectionDFG {
     /// Nodes of the DFG
     pub nodes: Vec<usize>,
@@ -49,7 +49,7 @@ impl ActivityProjectionDFG {
         *self.edges.get(&(a, b)).unwrap_or(&0)
     }
 
-    /// Get the preset of activity `act` in the DFG 
+    /// Get the preset of activity `act` in the DFG
     pub fn df_preset_of<T: FromIterator<usize>>(&self, act: usize, df_threshold: u64) -> T {
         self.edges
             .iter()
@@ -63,7 +63,7 @@ impl ActivityProjectionDFG {
             .collect()
     }
 
-    /// Get the postset of activity `act` in the DFG 
+    /// Get the postset of activity `act` in the DFG
     pub fn df_postset_of(&self, act: usize, df_threshold: u64) -> impl Iterator<Item = usize> + '_ {
         self.edges.iter().filter_map(move |((a, b), w)| {
             if *a == act && *w >= df_threshold {
@@ -223,9 +223,6 @@ impl EventLogActivityProjection {
         ret
     }
 }
-
-
-
 
 ///
 /// Add artificial start and end activities to a given [`EventLogActivityProjection`]

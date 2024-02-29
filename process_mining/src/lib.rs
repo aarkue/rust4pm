@@ -12,7 +12,7 @@
 pub mod event_log {
     /// Activity projection of event logs
     pub mod activity_projection;
-    /// Constants 
+    /// Constants
     pub mod constants;
     /// [`EventLog`] struct and sub-structs
     pub mod event_log_struct;

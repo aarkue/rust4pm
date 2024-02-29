@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     event_log::activity_projection::{
-        add_start_end_acts_proj, ActivityProjectionDFG, EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY
+        add_start_end_acts_proj, ActivityProjectionDFG, EventLogActivityProjection, END_ACTIVITY,
+        START_ACTIVITY,
     },
     petri_net::petri_net_struct::{ArcType, Marking, PetriNet, TransitionID},
 };
@@ -39,7 +40,6 @@ pub struct AlgoDuration {
     pub total: f32,
 }
 impl AlgoDuration {
-
     /// Serialize to JSON string
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap()
@@ -277,7 +277,6 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
     println!("\n====\nWhole Discovery took: {:.4}s", algo_dur.total);
     (pn, algo_dur)
 }
-
 
 /// Helper function to transform a place candidate to a list of input and output transition names/label
 pub fn cnds_to_names(

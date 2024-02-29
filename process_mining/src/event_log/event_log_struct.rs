@@ -309,13 +309,13 @@ pub struct EventLogExtension {
     pub name: String,
     /// Prefix of attributes defined by the extension
     pub prefix: String,
-    /// URI pointing to XESEXT of the XES extension 
+    /// URI pointing to XESEXT of the XES extension
     pub uri: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 /// Event classifier
-/// 
+///
 /// Enables classifying events by a set of attributes to consider for the _class identity_
 pub struct EventLogClassifier {
     /// Name of the classifier

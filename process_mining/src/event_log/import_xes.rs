@@ -116,9 +116,7 @@ pub fn build_ignore_attributes<I, S: AsRef<str>>(keys: I) -> HashSet<String>
 where
     I: IntoIterator<Item = S>,
 {
-    keys.into_iter()
-        .map(|s| s.as_ref().to_string())
-        .collect()
+    keys.into_iter().map(|s| s.as_ref().to_string()).collect()
 }
 
 /// Parse XES from the given reader

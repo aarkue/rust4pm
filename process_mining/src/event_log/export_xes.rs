@@ -194,7 +194,7 @@ pub fn export_xes_event_log_to_file(
 ///
 /// Automatically selects gz-compression if filepath ends with `.gz`
 ///
-/// See also [`export_xes_event_log_to_file`], which accepts a [`File`] and boolean flag for gz-compression. 
+/// See also [`export_xes_event_log_to_file`], which accepts a [`File`] and boolean flag for gz-compression.
 pub fn export_xes_event_log_to_file_path(
     log: &EventLog,
     path: &str,
