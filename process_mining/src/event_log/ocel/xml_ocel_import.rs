@@ -244,7 +244,6 @@ where
                         },
                         Mode::Events => match t.name().as_ref() {
                             b"event" => {
-                                // TODO: Parse attributes
                                 let id = get_attribute_value(&t, "id");
                                 let event_type = get_attribute_value(&t, "type");
                                 let time = get_attribute_value(&t, "time");
@@ -440,7 +439,6 @@ where
                             }
                             _ => {}
                         },
-                        // Mode::EventTypes => todo!(),
                         Mode::EventType => match t.name().as_ref() {
                             b"attributes" => {
                                 // No attributes, that's fine!

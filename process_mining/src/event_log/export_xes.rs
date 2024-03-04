@@ -132,7 +132,7 @@ where
         super::AttributeValue::ID(id) => ("id", Some(id.to_string())),
         super::AttributeValue::List(_) => ("list", None),
         super::AttributeValue::Container(_) => ("container", None),
-        super::AttributeValue::None() => todo!("None AttributeValue encountered"),
+        super::AttributeValue::None() => ("string", None),
     };
     let e = match value_opt {
         Some(value) => w

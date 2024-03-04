@@ -3,7 +3,7 @@ use chrono::DateTime;
 use crate::{
     event_log::{
         import_xes::{import_xes_slice, XESImportOptions, XESParseError},
-        XESEditableAttribute, AttributeValue, Trace,
+        AttributeValue, Trace, XESEditableAttribute,
     },
     import_xes_file,
 };
