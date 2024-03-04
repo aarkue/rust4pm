@@ -33,7 +33,7 @@ pub mod event_log {
         pub mod xml_ocel_import;
     }
     pub use event_log_struct::{
-        Attribute, XESEditableAttribute, AttributeValue, Attributes, Event, EventLog, Trace,
+        Attribute, AttributeValue, Attributes, Event, EventLog, Trace, XESEditableAttribute,
     };
     #[cfg(test)]
     mod tests;
@@ -48,6 +48,9 @@ pub mod petri_net {
     /// Export [`PetriNet`] to `.pnml`
     pub mod pnml;
 }
+
+use std::fs::File;
+use std::io::BufReader;
 
 #[doc(inline)]
 pub use event_log::ocel;
@@ -154,6 +157,16 @@ pub fn ocel_to_json(ocel: &OCEL) -> String {
 ///
 pub fn json_to_ocel(ocel_json: &str) -> OCEL {
     serde_json::from_str(ocel_json).unwrap()
+}
+
+///
+/// Import [`OCEL`] from a JSON file given by a filepath
+///
+/// [`serde_json`] can also be used to import [`OCEL`] from other targets (e.g., `serde_json::from_slice`)
+///
+pub fn import_ocel_json_from_path(path: &str) -> Result<OCEL, std::io::Error> {
+    let reader: BufReader<File> = BufReader::new(File::open(path)?);
+    Ok(serde_json::from_reader(reader)?)
 }
 
 // pub fn export_log<P: AsRef<Path>>(path: P, log: &EventLog) {
