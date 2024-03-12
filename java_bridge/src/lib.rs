@@ -24,7 +24,7 @@ use process_mining::{
         activity_projection::{add_start_end_acts, EventLogActivityProjection},
         event_log_struct::HashMapAttribute,
         import_xes::{import_xes_file, XESImportOptions},
-        Attribute, XESEditableAttribute, AttributeValue, Attributes, EventLog,
+        Attribute, AttributeValue, Attributes, EventLog, XESEditableAttribute,
     },
     petri_net::petri_net_struct::PetriNet,
     petrinet_to_json, stream_xes_from_path,

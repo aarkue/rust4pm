@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 use jni_fn::jni_fn;
 use process_mining::event_log::{
-    event_log_struct::HashMapAttribute, XESEditableAttribute, AttributeValue, Attributes, EventLog,
-    Trace,
+    event_log_struct::HashMapAttribute, AttributeValue, Attributes, EventLog, Trace,
+    XESEditableAttribute,
 };
 
 use super::copy_log_shared::{JEventLog, JTrace};
