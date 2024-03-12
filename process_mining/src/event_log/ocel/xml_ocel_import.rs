@@ -381,11 +381,49 @@ where
                                     }
                                 }
                             }
+                            // P2P log uses relobj instead of relationship?
+                            // TODO: Remove once fixed
+                            b"relobj" => {
+                                let object_id = get_attribute_value(&t, "object-id");
+                                let qualifier = get_attribute_value(&t, "qualifier");
+                                let new_rel: OCELRelationship = OCELRelationship {
+                                    object_id,
+                                    qualifier,
+                                };
+                                match ocel.objects.last_mut().unwrap().relationships.as_mut() {
+                                    Some(rels) => rels.push(new_rel),
+                                    None => {
+                                        ocel.objects.last_mut().unwrap().relationships =
+                                            Some(vec![new_rel])
+                                    }
+                                }
+                            }
                             b"objects" => {
                                 // No O2O, that's fine!
                             }
                             b"attributes" => {
                                 // No attributes, that's fine!
+                            }
+
+                            // Empty attributes => null value (?)
+                            b"attribute" => {
+                                let name = get_attribute_value(&t, "name");
+                                let time_str = get_attribute_value(&t, "time");
+                                let time = parse_date(&time_str);
+                                match time {
+                                    Ok(time_val) => {
+                                        ocel.objects.last_mut().unwrap().attributes.push(
+                                            OCELObjectAttribute {
+                                                name,
+                                                value: super::ocel_struct::OCELAttributeValue::Null,
+                                                time: time_val.into(),
+                                            },
+                                        )
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to parse time value of attribute: {}. Will skip this attribute completely for now.",e);
+                                    }
+                                }
                             }
                             _ => {}
                         },
@@ -430,6 +468,34 @@ where
                                             Some(vec![new_rel])
                                     }
                                 }
+                            }
+
+                            // P2P log uses relobj instead of relationship?
+                            // TODO: Remove once fixed
+                            b"relobj" => {
+                                let object_id = get_attribute_value(&t, "object-id");
+                                let qualifier = get_attribute_value(&t, "qualifier");
+                                let new_rel: OCELRelationship = OCELRelationship {
+                                    object_id,
+                                    qualifier,
+                                };
+                                match ocel.events.last_mut().unwrap().relationships.as_mut() {
+                                    Some(rels) => rels.push(new_rel),
+                                    None => {
+                                        ocel.events.last_mut().unwrap().relationships =
+                                            Some(vec![new_rel])
+                                    }
+                                }
+                            }
+                            // Empty attribute => Null value (?)
+                            b"attribute" => {
+                                let name = get_attribute_value(&t, "name");
+                                ocel.events.last_mut().unwrap().attributes.push(
+                                    OCELEventAttribute {
+                                        name,
+                                        value: super::ocel_struct::OCELAttributeValue::Null,
+                                    },
+                                )
                             }
                             _ => {}
                         },
