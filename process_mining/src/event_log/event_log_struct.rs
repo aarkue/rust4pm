@@ -9,6 +9,15 @@ use super::constants::ACTIVITY_NAME;
 ///
 /// Possible attribute values according to the XES Standard
 ///
+/// Tip: If you know the expected `AttributeValue` type, make use of the `try_as_xxx` functions (e.g., [`AttributeValue::try_as_string`])
+///
+/// ```rust
+/// use process_mining::event_log::{Attribute, AttributeValue, XESEditableAttribute};
+/// let v = AttributeValue::Float(42.0);
+///
+/// let f = v.try_as_float().unwrap();
+/// assert_eq!(*f,42.0);
+/// ````
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "content")]
 pub enum AttributeValue {
@@ -37,13 +46,90 @@ impl AttributeValue {
     ///
     /// Try to get attribute value as String
     ///
-    /// Returns inner value if self is of variant [`AttributeValue::String`]
+    /// Returns `Some()` of inner value if value is of variant [`AttributeValue::String`] and `None` otherwise
     ///
-    /// Otherwise, returns None
-
-    pub fn try_get_string(&self) -> Option<&String> {
+    pub fn try_as_string(&self) -> Option<&String> {
         match self {
-            AttributeValue::String(s) => Some(s),
+            AttributeValue::String(v) => Some(v),
+            _ => None,
+        }
+    }
+    ///
+    /// Try to get attribute value as date
+    ///
+    /// Returns `Some()` of inner value if value is of variant [`AttributeValue::Date`] and `None` otherwise
+    ///
+    pub fn try_as_date(&self) -> Option<&DateTime<Utc>> {
+        match self {
+            AttributeValue::Date(v) => Some(v),
+            _ => None,
+        }
+    }
+    ///
+    /// Try to get attribute value as int
+    ///
+    /// Returns `Some()` of inner value if value is of variant [`AttributeValue::Int`] and `None` otherwise
+    ///
+    pub fn try_as_int(&self) -> Option<&i64> {
+        match self {
+            AttributeValue::Int(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    ///
+    /// Try to get attribute value as float
+    ///
+    /// Returns `Some()` of inner value if value is of variant [`AttributeValue::Float`] and `None` otherwise
+    ///
+    pub fn try_as_float(&self) -> Option<&f64> {
+        match self {
+            AttributeValue::Float(v) => Some(v),
+            _ => None,
+        }
+    }
+    ///
+    /// Try to get attribute value as bool
+    ///
+    /// Returns `Some()` of inner value if value is of variant [`AttributeValue::Boolean`] and `None` otherwise
+    ///
+    pub fn try_as_bool(&self) -> Option<&bool> {
+        match self {
+            AttributeValue::Boolean(v) => Some(v),
+            _ => None,
+        }
+    }
+    ///
+    /// Try to get attribute value as [`Uuid`]
+    ///
+    /// Returns `Some()` of inner value if value is of variant [`AttributeValue::ID`] and `None` otherwise
+    ///
+    pub fn try_as_uuid(&self) -> Option<&Uuid> {
+        match self {
+            AttributeValue::ID(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    ///
+    /// Try to get attribute value as list (i.e., nested XES attribute list)
+    ///
+    /// Returns `Some()` of inner value if value is of variant [`AttributeValue::List`] and `None` otherwise
+    ///
+    pub fn try_as_list(&self) -> Option<&Vec<Attribute>> {
+        match self {
+            AttributeValue::List(v) => Some(v),
+            _ => None,
+        }
+    }
+    ///
+    /// Try to get attribute value as container (i.e., nested XES attributes)
+    ///
+    /// Returns `Some()` of inner value if value is of variant [`AttributeValue::Container`] and `None` otherwise
+    ///
+    pub fn try_as_container(&self) -> Option<&Vec<Attribute>> {
+        match self {
+            AttributeValue::Container(v) => Some(v),
             _ => None,
         }
     }
@@ -116,6 +202,14 @@ impl Attribute {
 ///
 /// In particular, see [`XESEditableAttribute::get_by_key`], [`XESEditableAttribute::add_attribute`] and [`XESEditableAttribute::get_by_key_or_global`].
 ///
+/// Tip: If you know the expected attribute type, make use of the `try_as_xxx` functions (e.g., [`AttributeValue::try_as_string`])
+/// ```rust
+/// use process_mining::event_log::{Attribute, AttributeValue, XESEditableAttribute};
+/// let attrs = vec![Attribute::new("key".to_string(), AttributeValue::Float(42.0))];
+///
+/// let f = attrs.get_by_key("key").and_then(|a| a.value.try_as_float()).unwrap();
+/// assert_eq!(*f,42.0);
+/// ````
 pub type Attributes = Vec<Attribute>;
 
 ///
@@ -149,7 +243,7 @@ pub trait XESEditableAttribute {
     fn get_by_key_or_global<'a>(
         &'a self,
         key: &str,
-        global_attrs: &'a Option<&'a Attributes>,
+        global_attrs: &'a Option<Attributes>,
     ) -> Option<&'a Attribute>;
     ///
     /// Remove attribute with given key
@@ -192,7 +286,7 @@ impl XESEditableAttribute for Attributes {
     fn get_by_key_or_global<'a>(
         &'a self,
         key: &str,
-        global_attrs: &'a Option<&'a Attributes>,
+        global_attrs: &'a Option<Attributes>,
     ) -> Option<&'a Attribute> {
         // TODO
         if let Some(attr) = self.iter().find(|attr| attr.key == key) {
@@ -303,6 +397,30 @@ impl EventLog {
         self.classifiers
             .as_ref()
             .and_then(|classifiers| classifiers.iter().find(|c| c.name == name).cloned())
+    }
+
+    ///
+    /// Get a trace attribute value using a key
+    ///
+    /// Uses global trace attributes of the event log (if any) as fallback
+    /// (i.e., uses the [`XESEditableAttribute::get_by_key_or_global`] function of [`Attributes`] internall)
+    ///
+    pub fn get_trace_attribute<'a>(&'a self, trace: &'a Trace, key: &str) -> Option<&'a Attribute> {
+        trace
+            .attributes
+            .get_by_key_or_global(key, &self.global_trace_attrs)
+    }
+
+    ///
+    /// Get an event attribute value using a key
+    ///
+    /// Uses global event attributes of the event log (if any) as fallback
+    /// (i.e., uses the [`XESEditableAttribute::get_by_key_or_global`] function of [`Attributes`] internall)
+    ///
+    pub fn get_event_attribute<'a>(&'a self, event: &'a Event, key: &str) -> Option<&'a Attribute> {
+        event
+            .attributes
+            .get_by_key_or_global(key, &self.global_trace_attrs)
     }
 }
 

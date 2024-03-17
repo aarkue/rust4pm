@@ -4,6 +4,8 @@ This crate contains basic data structures, functions and utilities for Process M
 
 Full documentation of the modules, structs and functions of this crate is available at **[docs.rs/process_mining/](https://docs.rs/process_mining/)**.
 
+_As this crate is still in very active development, expect larger API changes also in minor (or even patch) version updates._
+
 ## Features
 
 - Event Logs

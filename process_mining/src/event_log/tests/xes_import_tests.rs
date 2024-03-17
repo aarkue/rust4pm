@@ -194,7 +194,7 @@ pub fn test_xes_unsorted_traces() {
                     .get_by_key("testid")
                     .unwrap()
                     .value
-                    .try_get_string()
+                    .try_as_string()
                     .unwrap()
             })
             .collect()

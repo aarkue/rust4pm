@@ -10,7 +10,7 @@ mod copy_log {
 }
 use jni::{
     objects::{AutoLocal, JClass, JIntArray, JObject, JString},
-    sys::{jint, jlong},
+    sys::jlong,
     JNIEnv,
 };
 
@@ -311,16 +311,16 @@ fn create_event<'a>(
     env.auto_local(obj)
 }
 
-fn add_to_list<'a>(env: &mut JNIEnv<'a>, list: &JObject, to_add: &JObject) {
-    let res = env
-        .call_method(&list, "add", "(Ljava/lang/Object;)Z", &[(&to_add).into()])
+fn add_to_list(env: &mut JNIEnv<'_>, list: &JObject, to_add: &JObject) {
+    let _res = env
+        .call_method(list, "add", "(Ljava/lang/Object;)Z", &[(&to_add).into()])
         .unwrap();
 }
 
-fn put_in_map<'a>(env: &mut JNIEnv<'a>, map: &JObject, key: &str, value: &JObject) {
+fn put_in_map(env: &mut JNIEnv<'_>, map: &JObject, key: &str, value: &JObject) {
     let j_key = env.auto_local(env.new_string(key).unwrap());
     env.call_method(
-        &map,
+        map,
         "put",
         "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
         &[(&j_key).into(), (&value).into()],
@@ -368,7 +368,7 @@ pub unsafe fn constructInRustTest(
         let j_trace_attribute_map =
             create_attribute_map(&mut env, &attribute_map_class, trace.attributes.len());
         for attr in trace.attributes {
-            if let Some(_) = attr.value.try_get_string() {
+            if attr.value.try_as_string().is_some() {
                 let j_attr_str = new_attribute_value(&mut env, &attribute_string_class, &attr);
                 put_in_map(&mut env, &j_trace_attribute_map, &attr.key, &j_attr_str);
             }
@@ -378,7 +378,7 @@ pub unsafe fn constructInRustTest(
             let j_attribute_map =
                 create_attribute_map(&mut env, &attribute_map_class, event.attributes.len());
             for attr in event.attributes {
-                if let Some(_) = attr.value.try_get_string() {
+                if attr.value.try_as_string().is_some() {
                     let j_attr_str = new_attribute_value(&mut env, &attribute_string_class, &attr);
                     put_in_map(&mut env, &j_attribute_map, &attr.key, &j_attr_str);
                 }
