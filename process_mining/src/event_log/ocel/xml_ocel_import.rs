@@ -116,6 +116,12 @@ fn parse_date(time: &str) -> Result<DateTime<FixedOffset>, &str> {
         return Ok(dt.and_utc().into());
     }
 
+    // Some logs have this date: "2022-01-09T15:00:00"
+    // Assuming that this is UTC
+    if let Ok(dt) = NaiveDateTime::parse_from_str(time, "%FT%T") {
+        return Ok(dt.and_utc().into());
+    }
+
     // Who made me do this? 🫣
     // Some logs have this date: "Mon Apr 03 2023 12:08:18 GMT+0200 (Mitteleuropäische Sommerzeit)"
     // Below ignores the first "Mon " part (%Z) parses the rest (only if "GMT") and then parses the timezone (+0200)
@@ -123,6 +129,7 @@ fn parse_date(time: &str) -> Result<DateTime<FixedOffset>, &str> {
     if let Ok((dt, _)) = DateTime::parse_and_remainder(time, "%Z %b %d %Y %T GMT%z") {
         return Ok(dt);
     }
+    eprintln!("Failed to parse date: {time}");
     Err("Unexpected Date Format")
 }
 
@@ -252,7 +259,7 @@ where
                                     event_type,
                                     attributes: Vec::new(),
                                     relationships: None,
-                                    time: DateTime::parse_from_rfc3339(&time).unwrap().into(),
+                                    time: parse_date(&time).unwrap().into(),
                                 });
                                 current_mode = Mode::Event
                             }

@@ -15,8 +15,10 @@ pub struct OCEL {
     #[serde(rename = "objectTypes")]
     pub object_types: Vec<OCELType>,
     /// Events contained in OCEL
+    #[serde(default)]
     pub events: Vec<OCELEvent>,
     /// Objects contained in OCEL
+    #[serde(default)]
     pub objects: Vec<OCELObject>,
 }
 
@@ -26,6 +28,7 @@ pub struct OCELType {
     /// Name
     pub name: String,
     /// Attributes (defining the _type_ of values)
+    #[serde(default)]
     pub attributes: Vec<OCELTypeAttribute>,
 }
 
@@ -59,6 +62,7 @@ pub struct OCELEvent {
     /// DateTime when event occured
     pub time: DateTime<Utc>,
     /// Event attributes
+    #[serde(default)]
     pub attributes: Vec<OCELEventAttribute>,
     /// E2O (Event-to-Object) relationships
     pub relationships: Option<Vec<OCELRelationship>>,
@@ -83,6 +87,7 @@ pub struct OCELObject {
     #[serde(rename = "type")]
     pub object_type: String,
     /// Object attributes
+    #[serde(default)]
     pub attributes: Vec<OCELObjectAttribute>,
     /// O2O (Object-to-Object) relationships
     pub relationships: Option<Vec<OCELRelationship>>,
