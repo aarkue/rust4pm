@@ -111,6 +111,19 @@ pub fn test_invalid_xes_file_gz_expected() {
 }
 
 #[test]
+///
+/// Try to import normal (uncompressed) XES file with `is_compressed_gz=true`
+///
+pub fn test_normal_xes_file_gz_expected() {
+    let x = include_bytes!("test_data/RepairExample.xes");
+    let res_gz = import_xes_slice(x, true, XESImportOptions::default());
+    assert!(matches!(
+        res_gz,
+        Err(XESParseError::XMLParsingError(quick_xml::Error::Io(_)))
+    ));
+}
+
+#[test]
 pub fn test_invalid_xes_file_gz_unexpected() {
     let x = include_bytes!("test_data/Sepsis Cases - Event Log.xes.gz");
     let res = import_xes_slice(x, false, XESImportOptions::default());
