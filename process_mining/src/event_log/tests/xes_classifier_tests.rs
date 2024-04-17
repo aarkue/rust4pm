@@ -50,3 +50,46 @@ pub fn test_get_class_identity() {
         assert!(trace_variants.contains(&example_variant))
     }
 }
+
+#[test]
+pub fn test_get_class_identity_complex() {
+    let log_bytes = include_bytes!("test_data/AN1-example.xes");
+    let log = import_xes_slice(log_bytes, false, XESImportOptions::default()).unwrap();
+    let now = Instant::now();
+    let classifier = log.get_classifier_by_name("classifier1");
+    assert!(classifier.is_some());
+
+    if let Some(classifier) = classifier {
+        // Gather unique variants of traces (wrt. the event name classifier above)
+        let trace_variants: HashSet<Vec<String>> = log
+            .traces
+            .iter()
+            .map(|t| {
+                t.events
+                    .par_iter()
+                    .map(|e| classifier.get_class_identity_with_globals(e, &log.global_event_attrs))
+                    .collect()
+            })
+            .collect();
+
+        println!(
+            "Took: {:?}; got {} unique variants",
+            now.elapsed(),
+            trace_variants.len()
+        );
+        assert_eq!(trace_variants.len(), 5);
+
+        let example_variant: Vec<String> = vec![
+            "TEST+TEST2",
+            "TEST+TEST2",
+            "TEST+TEST2",
+            "TEST+TEST2",
+            "TEST+TEST2",
+            "TEST+TEST2",
+        ]
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert!(trace_variants.contains(&example_variant))
+    }
+}

@@ -444,9 +444,6 @@ pub struct EventLogClassifier {
     pub name: String,
     /// List of attribute keys to consider for the _class identity_
     ///
-    /// Note: Currently keys might not be correctly parsed (i.e., they are just split at a " " while the XES standard defined more complicated detection)
-    ///
-    /// TODO: Investigate aligning parsing implementation with XES standard
     pub keys: Vec<String>,
 }
 impl EventLogClassifier {
@@ -457,16 +454,27 @@ impl EventLogClassifier {
     ///
     /// Missing attributes and attributes with a type different than [`AttributeValue::String`] are represented by an empty String.
     ///
-    ///
-    /// Note: Currently classifier keys might not be correctly parsed (i.e., they are just split at a " " while the XES standard defined more complicated detection)
-    ///
-    /// TODO: Investigate aligning parsing implementation with XES standard
-    ///
     pub fn get_class_identity(&self, ev: &Event) -> String {
+        self.get_class_identity_with_globals(ev, &None)
+    }
+    ///
+    /// Get the class identity (joined with [`EventLogClassifier::DELIMITER`]) using the global event attributes for default values
+    ///
+    /// Missing attributes and attributes with a type different than [`AttributeValue::String`] are represented by an empty String.
+    ///
+    pub fn get_class_identity_with_globals(
+        &self,
+        ev: &Event,
+        global_attrs: &Option<Vec<Attribute>>,
+    ) -> String {
         let mut ret: String = String::new();
         let mut first = true;
         for k in &self.keys {
-            let s = match ev.attributes.get_by_key(k).map(|at| at.value.clone()) {
+            let s = match ev
+                .attributes
+                .get_by_key_or_global(k, global_attrs)
+                .map(|at| at.value.clone())
+            {
                 Some(AttributeValue::String(s)) => s,
                 _ => String::new(),
             };

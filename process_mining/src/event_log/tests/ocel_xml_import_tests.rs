@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use crate::import_ocel_xml_slice;
+use crate::{import_ocel_json_from_path, import_ocel_xml_slice};
 
 #[test]
 fn test_ocel_xml_import() {
@@ -34,4 +34,38 @@ fn test_ocel_p2p_xml_import() {
     );
     assert_eq!(ocel.objects.len(), 9543);
     assert_eq!(ocel.events.len(), 14671);
+}
+
+#[test]
+fn test_ocel_pm4py_log() {
+    let log_bytes = include_bytes!(
+        "/home/aarkue/doc/projects/pm4py-core/tests/input_data/ocel/ocel20_example.xmlocel"
+    );
+    let now = Instant::now();
+    let ocel = import_ocel_xml_slice(log_bytes);
+    let obj = ocel.objects.first().unwrap();
+    println!("{:?}", obj);
+    println!(
+        "Imported OCEL with {} objects and {} events in {:#?}",
+        ocel.objects.len(),
+        ocel.events.len(),
+        now.elapsed()
+    );
+}
+
+#[test]
+fn test_ocel_pm4py_log_json() {
+    let now = Instant::now();
+    let ocel = import_ocel_json_from_path(
+        "/home/aarkue/doc/projects/pm4py-core/tests/input_data/ocel/ocel20_example.jsonocel",
+    )
+    .unwrap();
+    let obj = ocel.objects.first().unwrap();
+    println!("{:?}", obj);
+    println!(
+        "Imported OCEL with {} objects and {} events in {:#?}",
+        ocel.objects.len(),
+        ocel.events.len(),
+        now.elapsed()
+    );
 }

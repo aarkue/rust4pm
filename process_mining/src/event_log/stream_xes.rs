@@ -192,12 +192,7 @@ impl<'a> StreamingXESParser<'a> {
         fn parse_classifier(t: &BytesStart<'_>, log_data: &mut XESOuterLogData) {
             log_data.classifiers.push(EventLogClassifier {
                 name: get_attribute_string(t, "name"),
-                // TODO: This is not strictly correct according to XES standard, as also strings _inside_ a classifier key are allowed
-                // See https://xes-standard.org/_media/xes/xesstandarddefinition-2.0.pdf#page=8
-                keys: get_attribute_string(t, "keys")
-                    .split(' ')
-                    .map(|s| s.to_string())
-                    .collect(),
+                keys: parse_classifier_key(get_attribute_string(t, "keys"), log_data),
             })
         }
 
@@ -475,6 +470,176 @@ impl<'a> StreamingXESParser<'a> {
     }
 }
 
+///
+/// Parse classifier key in accordance with XES Standard (which allows spaces under certain conditions)
+///
+/// For reference, see <https://xes-standard.org/_media/xes/xesstandarddefinition-2.0.pdf#page=8>
+fn parse_classifier_key(t: String, log_data: &XESOuterLogData) -> Vec<String> {
+    let mut ret: Vec<String> = Vec::new();
+    let mut buffer: Vec<char> = Vec::new();
+    let chars: Vec<char> = t.chars().collect();
+    let mut i = 0;
+    let mut is_inside_quotes = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\'' {
+            if is_inside_quotes {
+                ret.push(String::from_iter(buffer.iter()));
+                buffer.clear();
+                is_inside_quotes = false;
+            } else {
+                is_inside_quotes = true;
+            }
+        } else if !is_inside_quotes && c == ' ' {
+            let mut s = String::from_iter(buffer.iter());
+            if log_data
+                .global_event_attrs
+                .iter()
+                .any(|attr| attr.key == s)
+            {
+                // Test if there is a global event attribute with the same name (otherwise, we might want to try expand with space)?
+                ret.push(String::from_iter(buffer.iter()));
+                buffer.clear();
+            } else if log_data
+                .global_event_attrs
+                .iter()
+                .any(|attr| attr.key.starts_with(&(s.clone() + " ")))
+            {
+                // Otherwise, is there a global event attribute with s as a prefix?
+                let j = i;
+                let mut found_attr = false;
+                let prev_buffer = buffer.clone();
+                while i < chars.len()
+                    && log_data
+                        .global_event_attrs
+                        .iter()
+                        .any(|attr| attr.key.starts_with(&s))
+                {
+                    let c = chars[i];
+                    buffer.push(c);
+                    s = String::from_iter(buffer.iter());
+                    if log_data
+                        .global_event_attrs
+                        .iter()
+                        .any(|attr| attr.key == s) && (chars.get(i + 1).is_none() || chars.get(i + 1).is_some_and(|next_c| *next_c == ' ')) {
+                        ret.push(s.clone());
+                        buffer.clear();
+                        found_attr = true;
+                        break;
+                    }
+                    i += 1;
+                }
+                // Did the look-forward find a matching global attribute?
+                if !found_attr {
+                    // If not, reset to the last position...
+                    buffer = prev_buffer;
+                    if !buffer.is_empty() {
+                        ret.push(String::from_iter(buffer.iter()));
+                        buffer.clear();
+                    }
+                    // ...skipping the space
+                    i = j + 1;
+                    continue;
+                }
+            } else {
+                // i.e., c is a space, not inside quotes
+                //  and no global attribute matching
+                // In this case: Push the current buffer to ret
+                if !buffer.is_empty() {
+                    ret.push(String::from_iter(buffer.iter()));
+                    buffer.clear();
+                }
+            }
+        } else {
+            buffer.push(c);
+        }
+        i += 1;
+    }
+    // After loop: push the last buffer to ret (if it is not empty, which happens when encountering single quotes)
+    if !buffer.is_empty() {
+        ret.push(String::from_iter(buffer.iter()))
+    }
+    ret
+}
+
+#[test]
+fn test_classifier_parse() {
+    let data = XESOuterLogData {
+        extensions: Vec::new(),
+        classifiers: Vec::new(),
+        log_attributes: Vec::new(),
+        global_trace_attrs: Vec::new(),
+        global_event_attrs: vec![
+            Attribute {
+                key: "test key".into(),
+                value: AttributeValue::String("test value".into()),
+                own_attributes: None,
+            },
+            Attribute {
+                key: "aaa bbb ccc ddd".into(),
+                value: AttributeValue::String("test value".into()),
+                own_attributes: None,
+            },
+            Attribute {
+                key: "aaa bbb ccc ddd eee".into(),
+                value: AttributeValue::String("test value".into()),
+                own_attributes: None,
+            },
+        ],
+    };
+    assert_eq!(
+        parse_classifier_key(
+            "'test was geht' test key single test koo naa aaa bbb ccc ddd aaa bbb ccc dd was"
+                .into(),
+            &data
+        ),
+        vec![
+            "test was geht",
+            "test key",
+            "single",
+            "test",
+            "koo",
+            "naa",
+            "aaa bbb ccc ddd",
+            "aaa",
+            "bbb",
+            "ccc",
+            "dd",
+            "was"
+        ]
+    );
+
+    assert_eq!(
+        parse_classifier_key("test this is".into(), &data),
+        vec!["test", "this", "is"]
+    );
+
+    assert_eq!(
+        parse_classifier_key("'test key fake' test key 'test key' test koo".into(), &data),
+        vec!["test key fake", "test key", "test key", "test", "koo"]
+    );
+
+    assert_eq!(
+        parse_classifier_key("aa bb 'xx yy' cc dd".into(), &data),
+        vec!["aa", "bb", "xx yy", "cc", "dd"]
+    );
+
+    assert_eq!(
+        parse_classifier_key("test ke".into(), &data),
+        vec!["test", "ke"]
+    );
+    assert_eq!(
+        parse_classifier_key("test key".into(), &data),
+        vec!["test key"]
+    );
+
+    // This might be ambigious:
+    // Currently, the first matching global key is accepted, even if a longer match is possible
+    assert_eq!(
+        parse_classifier_key("aaa bbb ccc ddd eee".into(), &data),
+        vec!["aaa bbb ccc ddd", "eee"]
+    );
+}
 impl<'a> StreamingXESParser<'a> {
     ///
     /// Add XES attribute from tag to the currently active element (indicated by `current_mode`)

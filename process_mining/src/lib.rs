@@ -168,33 +168,3 @@ pub fn import_ocel_json_from_path(path: &str) -> Result<OCEL, std::io::Error> {
     let reader: BufReader<File> = BufReader::new(File::open(path)?);
     Ok(serde_json::from_reader(reader)?)
 }
-
-// pub fn export_log<P: AsRef<Path>>(path: P, log: &EventLog) {
-//     let file = File::create(path).unwrap();
-//     let writer = BufWriter::new(file);
-//     serde_json::to_writer(writer, log).unwrap();
-// }
-
-// pub fn export_log_to_string(log: &EventLog) -> String {
-//     serde_json::to_string(log).unwrap()
-// }
-
-// pub fn export_log_to_byte_vec(log: &EventLog) -> Vec<u8> {
-//     serde_json::to_vec(log).unwrap()
-// }
-
-// pub fn import_log<P: AsRef<Path>>(path: P) -> EventLog {
-//     let file = File::open(path).unwrap();
-//     let reader = BufReader::new(file);
-//     let log: EventLog = serde_json::from_reader(reader).unwrap();
-//     return log;
-// }
-
-// pub fn import_log_from_byte_array(bytes: &[u8]) -> EventLog {
-//     let log: EventLog = serde_json::from_slice(&bytes).unwrap();
-//     return log;
-// }
-
-// pub fn import_log_from_str(json: String) -> EventLog {
-//     serde_json::from_str(&json).unwrap()
-// }
