@@ -35,7 +35,7 @@ where
     writer
         .write_event(quick_xml::events::Event::Decl(BytesDecl::new(
             "1.0",
-            Some("utf8"),
+            Some("UTF-8"),
             None,
         )))
         .unwrap();
@@ -88,6 +88,7 @@ where
                     w.create_element("classifier")
                         .with_attributes(vec![
                             ("name", cl.name.as_str()),
+                            // TODO: Also handle quotation marks in keys (see XES standard and parsing)
                             ("keys", cl.keys.join(" ").as_str()),
                         ])
                         .write_empty()?;
