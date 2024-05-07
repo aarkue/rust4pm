@@ -162,9 +162,18 @@ pub fn json_to_ocel(ocel_json: &str) -> OCEL {
 ///
 /// Import [`OCEL`] from a JSON file given by a filepath
 ///
-/// [`serde_json`] can also be used to import [`OCEL`] from other targets (e.g., `serde_json::from_slice`)
+/// See also [`import_ocel_json_from_slice`].
 ///
 pub fn import_ocel_json_from_path(path: &str) -> Result<OCEL, std::io::Error> {
     let reader: BufReader<File> = BufReader::new(File::open(path)?);
     Ok(serde_json::from_reader(reader)?)
+}
+
+///
+/// Import [`OCEL`] from a JSON byte slice
+///
+/// See also [`import_ocel_json_from_path`].
+///
+pub fn import_ocel_json_from_slice(slice: &[u8]) -> Result<OCEL, std::io::Error> {
+    Ok(serde_json::from_slice(slice)?)
 }

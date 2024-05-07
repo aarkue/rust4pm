@@ -38,9 +38,7 @@ fn test_ocel_p2p_xml_import() {
 
 #[test]
 fn test_ocel_pm4py_log() {
-    let log_bytes = include_bytes!(
-        "/home/aarkue/doc/projects/pm4py-core/tests/input_data/ocel/ocel20_example.xmlocel"
-    );
+    let log_bytes = include_bytes!("test_data/pm4py-ocel20_example.xmlocel");
     let now = Instant::now();
     let ocel = import_ocel_xml_slice(log_bytes);
     let obj = ocel.objects.first().unwrap();
@@ -56,10 +54,8 @@ fn test_ocel_pm4py_log() {
 #[test]
 fn test_ocel_pm4py_log_json() {
     let now = Instant::now();
-    let ocel = import_ocel_json_from_path(
-        "/home/aarkue/doc/projects/pm4py-core/tests/input_data/ocel/ocel20_example.jsonocel",
-    )
-    .unwrap();
+    let log_bytes = include_bytes!("test_data/pm4py-ocel20_example.jsonocel");
+    let ocel = import_ocel_json_from_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
     println!("{:?}", obj);
     println!(
