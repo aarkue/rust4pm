@@ -1,5 +1,16 @@
-# Rust Bridge for Process Mining
-
+<div align="center">
+<h1>Rust Bridge for Process Mining</h1>
+  <p><strong><code>process_mining</code></pre> Rust Crate</strong></p>
+  <p>
+    <a href="https://crates.io/crates/process_mining">
+        <img src="https://img.shields.io/crates/v/process_mining.svg" alt="Crates.io"/></a>
+    <a href="https://crates.io/crates/process_mining">
+        <img src="https://img.shields.io/crates/d/process_mining" alt="Downloads"/></a>
+	<a href="https://docs.rs/process_mining"">
+        <img src="https://img.shields.io/badge/docs.rs-plotly-blue" alt="Documentation"/></a>
+  </p>
+</div>
+  
 This repository is a mono-repo containing the following parts:
 - `process_mining/` Process Mining library in Rust (See also https://crates.io/crates/process_mining)
 - `python_bridge/` Python Bindings
