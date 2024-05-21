@@ -249,6 +249,51 @@ impl PetriNet {
                 .iter()
                 .any(|m| m.contains_key(p))
     }
+
+    #[cfg(feature = "graphviz-export")]
+    /// Export Petri net as a PNG image
+    ///
+    /// The PNG file is written to the specified filepath
+    ///
+    /// _Note_: This is an export method for __visualizing__ the Petri net.
+    /// The resulting PNG file cannot be imported as a Petri net again (for that functionality, see [`PetriNet::export_pnml`]).
+    ///
+    /// Only available with the `graphviz-export` feature.
+    pub fn export_png(&self, path: &str) -> Result<(), std::io::Error> {
+        super::image_export::export_petri_net_image_png(self, path)
+    }
+
+    #[cfg(feature = "graphviz-export")]
+    /// Export Petri net as a SVG image
+    ///
+    /// The SVG file is written to the specified filepath
+    ///
+    /// _Note_: This is an export method for __visualizing__ the Petri net.
+    /// The resulting SVG file cannot be imported as a Petri net again (for that functionality, see [`PetriNet::export_pnml`]).
+    ///
+    /// Only available with the `graphviz-export` feature.
+    pub fn export_svg(&self, path: &str) -> Result<(), std::io::Error> {
+        super::image_export::export_petri_net_image_svg(self, path)
+    }
+
+    /// Export Petri net to a PNML file
+    ///
+    /// The PNML file is written to the specified filepath
+    ///
+    /// _Note_: This is an export method for __saving__ the Petri net data.
+    /// The resulting file can also be imported as a Petri net again (see [`PetriNet::import_pnml`]).
+    pub fn export_pnml(&self, path: &str) {
+        super::export_pnml::export_petri_net_to_pnml(self, path)
+    }
+    /// Import Petri net from a PNML file
+    ///
+    /// The PNML file is read from the specified filepath
+    ///
+    ///
+    /// For the related export function, see [`PetriNet::import_pnml`])
+    pub fn import_pnml(path: &str) -> Result<PetriNet, quick_xml::Error> {
+        super::import_pnml::import_pnml(&mut quick_xml::Reader::from_file(path)?)
+    }
 }
 
 #[cfg(test)]
