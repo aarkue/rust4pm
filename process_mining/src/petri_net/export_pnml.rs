@@ -137,7 +137,19 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                                     ))
                                     .with_attribute(("source", source_id.to_string().as_str()))
                                     .with_attribute(("target", target_id.to_string().as_str()))
-                                    .write_empty()
+                                    .write_inner_content(|w| {
+                                        w.create_element("inscription")
+                                            .write_inner_content(|w| {
+                                                w.create_element("text")
+                                                    .write_text_content(BytesText::new(
+                                                        arc.weight.to_string().as_str(),
+                                                    ))
+                                                    .unwrap();
+                                                OK
+                                            })
+                                            .unwrap();
+                                        OK
+                                    })
                                     .unwrap();
                             });
                             OK
@@ -187,4 +199,23 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
         })
         .unwrap();
     // String::from_utf8(writer.into_inner().into_inner()).unwrap()
+}
+
+#[cfg(test)]
+mod test {
+    use crate::import_xes_slice;
+
+    use super::export_petri_net_to_pnml;
+
+    #[test]
+    fn test_export_pnml() {
+        let xes_bytes = include_bytes!("../event_log/tests/test_data/AN1-example.xes");
+        let log = import_xes_slice(xes_bytes, false, crate::XESImportOptions::default()).unwrap();
+        let (_, mut pn) = crate::alphappp::auto_parameters::alphappp_discover_with_auto_parameters(
+            &(&log).into(),
+        );
+        pn.arcs.last_mut().unwrap().weight = 1337;
+        export_petri_net_to_pnml(&pn, "/tmp/pnml-export.pnml");
+        println!("file:///tmp/pnml-export.pnml")
+    }
 }
