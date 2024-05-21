@@ -43,13 +43,18 @@ pub mod event_log {
 /// Petri nets
 ///
 pub mod petri_net {
+    #[cfg(feature = "graphviz-export")]
+    /// Export [`PetriNet`] to images (SVG, PNG, ...)
+    ///
+    /// __Requires the `graphviz-export` feature to be enabled__
+    ///
+    /// Also requires an active graphviz installation in the PATH.
+    /// See also https://github.com/besok/graphviz-rust?tab=readme-ov-file#caveats and https://graphviz.org/download/
+    pub mod image_export;
     /// [`PetriNet`] struct
     pub mod petri_net_struct;
     /// Export [`PetriNet`] to `.pnml`
     pub mod pnml;
-    #[cfg(feature = "graphviz-export")]
-    /// Export [`PetriNet`] to an image (SVG, PNG, ...)
-    pub mod image_export;
 }
 
 use std::fs::File;

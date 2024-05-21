@@ -18,6 +18,8 @@ _As this crate is still in very active development, expect larger API changes al
   - OCEL struct
   - Fast OCEL XML & JSON Parsing
 - Petri Nets
+  - PNML Export
+  - Image Export (SVG, PNG, ...; Requires the `graphviz-export` feature)
 - Alpha+++ Process Discovery
 
 ## Getting Started
