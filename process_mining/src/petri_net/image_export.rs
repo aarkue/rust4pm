@@ -56,7 +56,12 @@ pub fn export_petri_net_image(
                     (transition_id, place_id)
                 }
             };
-            stmt!(edge!(node_id!(esc from_id) => node_id!(esc to_id)))
+            let attrs = if arc.weight == 1 {
+                Vec::default()
+            } else {
+                vec![attr!("label", (format!("{}", arc.weight)))]
+            };
+            stmt!(edge!(node_id!(esc from_id) => node_id!(esc to_id), attrs))
         })
         .collect();
 
