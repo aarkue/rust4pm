@@ -492,11 +492,7 @@ fn parse_classifier_key(t: String, log_data: &XESOuterLogData) -> Vec<String> {
             }
         } else if !is_inside_quotes && c == ' ' {
             let mut s = String::from_iter(buffer.iter());
-            if log_data
-                .global_event_attrs
-                .iter()
-                .any(|attr| attr.key == s)
-            {
+            if log_data.global_event_attrs.iter().any(|attr| attr.key == s) {
                 // Test if there is a global event attribute with the same name (otherwise, we might want to try expand with space)?
                 ret.push(String::from_iter(buffer.iter()));
                 buffer.clear();
@@ -518,10 +514,10 @@ fn parse_classifier_key(t: String, log_data: &XESOuterLogData) -> Vec<String> {
                     let c = chars[i];
                     buffer.push(c);
                     s = String::from_iter(buffer.iter());
-                    if log_data
-                        .global_event_attrs
-                        .iter()
-                        .any(|attr| attr.key == s) && (chars.get(i + 1).is_none() || chars.get(i + 1).is_some_and(|next_c| *next_c == ' ')) {
+                    if log_data.global_event_attrs.iter().any(|attr| attr.key == s)
+                        && (chars.get(i + 1).is_none()
+                            || chars.get(i + 1).is_some_and(|next_c| *next_c == ' '))
+                    {
                         ret.push(s.clone());
                         buffer.clear();
                         found_attr = true;
