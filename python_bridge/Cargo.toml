@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 process_mining = {path = "../process_mining"}
-pyo3 = "0.19.0"
+pyo3 = {version = "0.19.0", features = ["abi3-py311", "extension-module"]}
 polars = {version = "0.32.1", features = ["dtype-slim","csv","json","partition_by"]}
 pyo3-polars = "0.6.0"
 rayon = "1.7.0"
