@@ -47,6 +47,9 @@ pub mod petri_net {
     pub mod petri_net_struct;
     /// Export [`PetriNet`] to `.pnml`
     pub mod pnml;
+    #[cfg(feature = "graphviz-export")]
+    /// Export [`PetriNet`] to an image (SVG, PNG, ...)
+    pub mod image_export;
 }
 
 use std::fs::File;

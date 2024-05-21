@@ -61,7 +61,7 @@ pub struct Arc {
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Eq, Hash)]
 /// Place ID
-pub struct PlaceID(Uuid);
+pub struct PlaceID(pub Uuid);
 impl PlaceID {
     /// Get UUID
     pub fn get_uuid(self) -> Uuid {
@@ -76,7 +76,7 @@ impl From<&Place> for PlaceID {
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 /// Transition ID
-pub struct TransitionID(Uuid);
+pub struct TransitionID(pub Uuid);
 impl From<&Transition> for TransitionID {
     fn from(value: &Transition) -> Self {
         TransitionID(value.id)
