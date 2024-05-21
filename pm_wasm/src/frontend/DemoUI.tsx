@@ -206,7 +206,7 @@ export default function DemoUI() {
           The result was logged to console and can be downloaded as a .json file
           using the button below.
           <div className="mt-2 font-medium">
-            <ResultInfo
+            <ResultInfo workerAPI={workerAPI}
               mode={result.mode}
               data={resultDataRef.current as any}
             />

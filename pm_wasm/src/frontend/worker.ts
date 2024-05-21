@@ -4,6 +4,7 @@ import init, {
   wasm_discover_alphappp_petri_net_from_xes_vec,
   wasm_parse_ocel2_json,
   wasm_parse_ocel2_xml_to_json_vec,
+  wasm_petri_net_dot
 } from "../../pkg/pm_wasm.js";
 import type { WorkerAPI } from "./types.js";
 
@@ -46,6 +47,9 @@ const fun: WorkerAPI["fun"] = async (
 
 Comlink.expose({
   fun,
+  petri_net_to_dot: (json) => {
+    return wasm_petri_net_dot(json)
+  },
   init: async () => {
     await init();
   },

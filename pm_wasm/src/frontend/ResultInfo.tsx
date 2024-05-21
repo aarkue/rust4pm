@@ -1,6 +1,7 @@
+import { useEffect, useState } from "react";
 import { ResultInfoProps } from "./types";
 
-export default function ResultInfo({ mode, data }: ResultInfoProps) {
+export default function ResultInfo({ mode, data, workerAPI }: ResultInfoProps) {
   if (mode === "Import XES & Alpha+++ Discovery") {
     return (
       <div>
@@ -10,6 +11,7 @@ export default function ResultInfo({ mode, data }: ResultInfoProps) {
           <li>{Object.keys(data.transitions).length} Transitions</li>
           <li>{data.arcs.length} Arcs</li>
         </ul>
+        <PetriNetRenderer petriNetJSON={JSON.stringify(data)} workerAPI={workerAPI} />
       </div>
     );
   }
@@ -26,6 +28,31 @@ export default function ResultInfo({ mode, data }: ResultInfoProps) {
       </div>
     );
   }
-  console.log({ mode, data });
   return <div></div>;
+}
+
+import { Graphviz } from "@hpcc-js/wasm/graphviz";
+
+function PetriNetRenderer({
+  petriNetJSON,
+  workerAPI,
+}: {
+  petriNetJSON: string;
+  workerAPI: ResultInfoProps["workerAPI"];
+}) {
+  const [graphviz, setGraphviz] = useState<Graphviz>();
+  const [svg, setSVG] = useState<string>("");
+  useEffect(() => {
+    if (graphviz) {
+      workerAPI.petri_net_to_dot(petriNetJSON).then((dot) => {
+        setSVG(graphviz.dot(dot));
+      });
+    }
+  }, [graphviz, petriNetJSON, workerAPI]);
+
+  useEffect(() => {
+    Graphviz.load().then((gv) => setGraphviz(gv));
+  }, []);
+
+  return <div className="flex mt-0 [&>svg]:h-fit [&>svg]:w-fit p-1 m-2 rounded bg-white mb-8" dangerouslySetInnerHTML={{__html: svg}}></div>;
 }

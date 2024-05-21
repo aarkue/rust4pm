@@ -7,7 +7,8 @@ use process_mining::{
         ocel::xml_ocel_import::import_ocel_xml_slice,
         stream_xes::{stream_xes_slice, stream_xes_slice_gz},
     },
-    OCEL,
+    petri_net::image_export::{export_petri_net_to_dot_graph, graph_to_dot},
+    PetriNet, OCEL,
 };
 use wasm_bindgen::prelude::*;
 // pub use wasm_bindgen_rayon::init_thread_pool;
@@ -194,4 +195,11 @@ pub unsafe fn wasm_destroy_ocel_pointer(addr: usize) -> JsValue {
     let _boxed_ocel = Box::from_raw(addr as *mut OCEL);
     // OCEL implicitly detroyed/deallocated here
     true.into()
+}
+
+#[wasm_bindgen]
+pub fn wasm_petri_net_dot(pn: &str) -> String {
+    let pn: PetriNet = serde_json::from_str(pn).unwrap();
+    let g = export_petri_net_to_dot_graph(&pn, None);
+    graph_to_dot(&g)
 }
