@@ -43,13 +43,15 @@ pub mod event_log {
 /// Petri nets
 ///
 pub mod petri_net {
-    /// [`PetriNet`] struct
-    pub mod petri_net_struct;
     /// Export [`PetriNet`] to `.pnml`
-    pub mod pnml;
+    pub mod export_pnml;
     #[cfg(feature = "graphviz-export")]
     /// Export [`PetriNet`] to an image (SVG, PNG, ...)
     pub mod image_export;
+    /// Import [`PetriNet`] from `.pnml`
+    pub mod import_pnml;
+    /// [`PetriNet`] struct
+    pub mod petri_net_struct;
 }
 
 use std::fs::File;
