@@ -57,6 +57,9 @@ pub mod petri_net {
     pub mod import_pnml;
     /// [`PetriNet`] struct
     pub mod petri_net_struct;
+
+    #[doc(inline)]
+    pub use petri_net_struct::PetriNet;
 }
 
 use std::fs::File;
@@ -118,6 +121,20 @@ pub use event_log::ocel::xml_ocel_import::import_ocel_xml_slice;
 
 #[doc(inline)]
 pub use petri_net::petri_net_struct::PetriNet;
+
+#[cfg(feature = "graphviz-export")]
+#[doc(inline)]
+pub use petri_net::image_export::export_petri_net_image_png;
+
+#[cfg(feature = "graphviz-export")]
+#[doc(inline)]
+pub use petri_net::image_export::export_petri_net_image_svg;
+
+#[doc(inline)]
+pub use petri_net::export_pnml::export_petri_net_to_pnml;
+
+#[doc(inline)]
+pub use petri_net::import_pnml::import_pnml;
 
 #[doc(inline)]
 pub use event_log::activity_projection::EventLogActivityProjection;

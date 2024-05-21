@@ -85,6 +85,7 @@ pub fn export_petri_net_image(
 ///
 /// Export the image of a [`PetriNet`] as a SVG file
 ///
+/// Also consider using [`PetriNet::export_svg`] for convenience.
 pub fn export_petri_net_image_svg(net: &PetriNet, path: &str) -> Result<(), std::io::Error> {
     export_petri_net_image(net, path, Format::Svg, None)
 }
@@ -92,6 +93,7 @@ pub fn export_petri_net_image_svg(net: &PetriNet, path: &str) -> Result<(), std:
 ///
 /// Export the image of a [`PetriNet`] as a PNG file
 ///
+/// Also consider using [`PetriNet::export_png`] for convenience.
 pub fn export_petri_net_image_png(net: &PetriNet, path: &str) -> Result<(), std::io::Error> {
     export_petri_net_image(net, path, Format::Png, Some(2.0))
 }

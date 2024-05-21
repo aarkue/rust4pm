@@ -30,7 +30,9 @@ fn read_to_string(x: &mut &[u8]) -> String {
 
 ///
 /// Import a PNML file from the given reader
-/// 
+///
+/// Also consider using [`PetriNet::import_pnml`] for convenience.
+///
 /// Note, that this implementation (at least currently) is a best-effort parser for the basic types of Petri nets encountered commonly in Process Mining.
 /// In particular, the following Petri net features are implemented:
 ///
