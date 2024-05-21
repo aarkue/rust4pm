@@ -719,30 +719,14 @@ impl<'a> StreamingXESParser<'a> {
             Mode::None => return false,
             Mode::Attribute => {
                 if let Some(last_attr) = current_nested_attributes.last_mut() {
-                    last_attr.value = match last_attr.value.clone() {
-                        AttributeValue::List(mut l) => {
-                            l.push(Attribute {
-                                key,
-                                value: val,
-                                own_attributes: None,
-                            });
-                            AttributeValue::List(l)
-                        }
-                        AttributeValue::Container(mut c) => {
-                            c.add_to_attributes(key, val);
-                            AttributeValue::Container(c)
-                        }
-                        x => {
-                            if let Some(own_attributes) = &mut last_attr.own_attributes {
-                                own_attributes.add_to_attributes(key, val);
-                            } else {
-                                let mut new_own_attrs = Attributes::new();
-                                new_own_attrs.add_to_attributes(key, val);
-                                last_attr.own_attributes = Some(new_own_attrs);
-                            }
-                            x
-                        }
-                    };
+                    if last_attr.own_attributes.is_none() {
+                        last_attr.own_attributes = Some(Attributes::new());
+                    }
+                    last_attr
+                        .own_attributes
+                        .as_mut()
+                        .unwrap()
+                        .add_to_attributes(key, val);
                 } else {
                     return false;
                 }
@@ -946,7 +930,7 @@ fn get_attribute_string(t: &BytesStart<'_>, key: &'static str) -> String {
         return String::from_utf8_lossy(&attr.value).to_string();
     }
     eprintln!(
-        "Did not find expected XML attribute with key {}. Will assume empty string as value.",
+        "Did not find expected XML attribute with key {:?}. Will assume empty string as value.",
         key
     );
     String::new()
@@ -957,21 +941,27 @@ fn parse_attribute_value_from_tag(
     mode: &Mode,
     options: &XESImportOptions,
 ) -> AttributeValue {
-    let value = get_attribute_string(t, "value");
     let attribute_val: Option<AttributeValue> = match t.name().as_ref() {
-        b"string" => Some(AttributeValue::String(
-            unescape(value.as_str())
-                .unwrap_or(value.as_str().into())
-                .into(),
-        )),
-        b"date" => match parse_date_from_str(&value, &options.date_format) {
-            Some(dt) => Some(AttributeValue::Date(dt)),
-            None => {
-                eprintln!("Failed to parse data from {:?}", value);
-                None
+        b"string" => {
+            let value = get_attribute_string(t, "value");
+            Some(AttributeValue::String(
+                unescape(value.as_str())
+                    .unwrap_or(value.as_str().into())
+                    .into(),
+            ))
+        }
+        b"date" => {
+            let value = get_attribute_string(t, "value");
+            match parse_date_from_str(&value, &options.date_format) {
+                Some(dt) => Some(AttributeValue::Date(dt)),
+                None => {
+                    eprintln!("Failed to parse data from {:?}", value);
+                    None
+                }
             }
-        },
+        }
         b"int" => {
+            let value = get_attribute_string(t, "value");
             let parsed_val = match value.parse::<i64>() {
                 Ok(n) => n,
                 Err(e) => {
@@ -982,6 +972,7 @@ fn parse_attribute_value_from_tag(
             Some(AttributeValue::Int(parsed_val))
         }
         b"float" => {
+            let value = get_attribute_string(t, "value");
             let parsed_val = match value.parse::<f64>() {
                 Ok(n) => n,
                 Err(e) => {
@@ -992,6 +983,7 @@ fn parse_attribute_value_from_tag(
             Some(AttributeValue::Float(parsed_val))
         }
         b"boolean" => {
+            let value = get_attribute_string(t, "value");
             let parsed_val = match value.parse::<bool>() {
                 Ok(n) => n,
                 Err(e) => {
@@ -1002,6 +994,7 @@ fn parse_attribute_value_from_tag(
             Some(AttributeValue::Boolean(parsed_val))
         }
         b"id" => {
+            let value = get_attribute_string(t, "value");
             let parsed_val = match Uuid::from_str(&value) {
                 Ok(n) => n,
                 Err(e) => {
