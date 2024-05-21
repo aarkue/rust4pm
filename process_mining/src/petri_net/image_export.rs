@@ -21,6 +21,22 @@ pub fn export_petri_net_image(
     format: Format,
     dpi_factor: Option<f32>,
 ) -> Result<(), std::io::Error> {
+    let g = export_petri_net_to_dot_graph(net, dpi_factor);
+
+    g.print(&mut PrinterContext::default());
+
+    let out = graphviz_rust::exec(g, &mut PrinterContext::default(), vec![format.into()])?;
+
+    let mut f = File::create(path)?;
+    f.write_all(&out)?;
+    Ok(())
+}
+///
+/// Export the a [`PetriNet`] to a DOT graph (used in Graphviz)
+///
+/// Also see [`export_petri_net_image`], as well as [`export_petri_net_image_svg`] and [`export_petri_net_image_png`]
+///
+pub fn export_petri_net_to_dot_graph(net: &PetriNet, dpi_factor: Option<f32>) -> Graph {
     let place_nodes: Vec<_> = net
         .places
         .iter()
@@ -72,14 +88,14 @@ pub fn export_petri_net_image(
     }
 
     let g = graph!(strict di id!(esc Uuid::new_v4()),vec![global_graph_options,place_nodes,transition_nodes, arcs].into_iter().flatten().collect());
+    g
+}
 
-    g.print(&mut PrinterContext::default());
-
-    let mut out = graphviz_rust::exec(g, &mut PrinterContext::default(), vec![format.into()])?;
-
-    let mut f = File::create(path)?;
-    f.write(&mut out)?;
-    Ok(())
+///
+/// Convery a DOT graph to a String containing the DOT source
+///
+pub fn graph_to_dot(g: &Graph) -> String {
+    g.print(&mut PrinterContext::default())
 }
 
 ///
