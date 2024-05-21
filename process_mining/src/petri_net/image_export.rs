@@ -6,6 +6,7 @@ use graphviz_rust::{
     dot_structures::*,
     printer::{DotPrinter, PrinterContext},
 };
+use uuid::Uuid;
 
 use crate::PetriNet;
 
@@ -70,7 +71,7 @@ pub fn export_petri_net_image(
         global_graph_options.push(stmt!(attr!("dpi", (dpi_fac * 96.0))))
     }
 
-    let g = graph!(strict di id!("id"),vec![global_graph_options,place_nodes,transition_nodes, arcs].into_iter().flatten().collect());
+    let g = graph!(strict di id!(esc Uuid::new_v4()),vec![global_graph_options,place_nodes,transition_nodes, arcs].into_iter().flatten().collect());
 
     g.print(&mut PrinterContext::default());
 
@@ -97,12 +98,9 @@ pub fn export_petri_net_image_png(net: &PetriNet, path: &str) -> Result<(), std:
 
 #[cfg(test)]
 mod test {
-    use std::fs::{remove_file, File};
+    use std::fs::remove_file;
 
-    use crate::{
-        alphappp::auto_parameters, import_ocel_xml_slice, import_xes_file, import_xes_slice,
-        XESImportOptions,
-    };
+    use crate::{alphappp::auto_parameters, import_xes_slice, XESImportOptions};
 
     use super::{export_petri_net_image_png, export_petri_net_image_svg};
 
