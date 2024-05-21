@@ -39,8 +39,9 @@ pub fn export_petri_net_image(
         .iter()
         .map(|(t_id, t)| {
             let label = t.label.as_ref().cloned().unwrap_or_default();
-            let fill_color = if t.label.is_none() { "white"} else {"black"};
-            stmt!(node!(esc t_id; attr!("label", esc label), attr!("shape","box"), attr!("fillcolor",fill_color), attr!("fixedsize",true), attr!("width",1.0), attr!("height",0.5)))
+            let (font_size,width) = (12,1);
+            let fill_color = if t.label.is_none() { "black" } else { "white" };
+            stmt!(node!(esc t_id; attr!("label", esc label), attr!("shape","box"), attr!("fontsize",font_size),attr!("style","filled"), attr!("fillcolor",fill_color), attr!("width",width), attr!("height",0.5)))
         }).collect();
 
     let arcs: Vec<_> = net
