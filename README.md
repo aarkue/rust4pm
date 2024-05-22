@@ -7,7 +7,7 @@
     <a href="https://crates.io/crates/process_mining">
         <img src="https://img.shields.io/crates/d/process_mining" alt="Downloads"/></a>
 	<a href="https://docs.rs/process_mining"">
-        <img src="https://img.shields.io/badge/docs.rs-plotly-blue" alt="Documentation"/></a>
+        <img src="https://img.shields.io/badge/docs.rs-process_mining-blue" alt="Documentation"/></a>
   </p>
 </div>
   
