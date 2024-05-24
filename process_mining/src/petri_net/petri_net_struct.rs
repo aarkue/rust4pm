@@ -290,7 +290,7 @@ impl PetriNet {
     /// The PNML file is read from the specified filepath
     ///
     ///
-    /// For the related export function, see [`PetriNet::import_pnml`])
+    /// For the related export function, see [`PetriNet::export_pnml`])
     pub fn import_pnml(path: &str) -> Result<PetriNet, quick_xml::Error> {
         super::import_pnml::import_pnml(&mut quick_xml::Reader::from_file(path)?)
     }
