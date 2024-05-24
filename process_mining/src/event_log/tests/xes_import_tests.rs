@@ -1,7 +1,9 @@
 use chrono::DateTime;
+use quick_xml::Writer;
 
 use crate::{
     event_log::{
+        export_xes::export_xes_event_log,
         import_xes::{import_xes_slice, XESImportOptions, XESParseError},
         AttributeValue, Trace, XESEditableAttribute,
     },
@@ -254,4 +256,20 @@ pub fn test_xes_unsorted_traces() {
             "With default timestamp",
         ]
     );
+}
+
+#[test]
+// Test roundway for nested 
+pub fn test_xes_nested_attrs() {
+    let xes = include_str!("test_data/nested-attrs.xes");
+    let xes_bytes = Vec::from(xes);
+    let log = import_xes_slice(&xes_bytes, false, XESImportOptions::default()).unwrap();
+    let buf = std::io::BufWriter::new(Vec::new());
+    let mut writer = Writer::new_with_indent(buf, b' ', 4);
+    export_xes_event_log(&mut writer, &log).unwrap();
+    let out_xes_bytes = writer.into_inner().into_inner().unwrap();
+    let out_xes = String::from_utf8(out_xes_bytes).unwrap();
+    // println!("\n\n{}\n\n",out_xes);
+    // println!("{:#?}", log);
+    assert_eq!(xes, out_xes);
 }
