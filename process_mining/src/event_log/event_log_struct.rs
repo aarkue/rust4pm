@@ -35,8 +35,12 @@ pub enum AttributeValue {
     /// IDs (UUIDs)
     ID(Uuid),
     /// List of other Attributes (where order matters; might contain multiple child attributes with the same key)
+    /// 
+    /// _Note_: Lists should _not_ have nested attributes in the `own_attributes` field, but ONLY in the inner [`Vec<Attribute>`]
     List(Vec<Attribute>),
-    /// List of other Attributes (where order does not matter)
+    /// Container of other Attributes (where order does not matter)
+    /// 
+    /// _Note_: Containers should _not_ have nested attributes in the `own_attributes` field, but ONLY in the inner [`Attributes`]
     Container(Attributes),
     /// Used to represent invalid values (e.g., DateTime which could not be parsed)
     None(),

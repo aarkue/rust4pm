@@ -12,7 +12,7 @@ use crate::EventLog;
 use super::{
     event_log_struct::{EventLogClassifier, EventLogExtension},
     stream_xes::XESOuterLogData,
-    Attribute, Attributes, Trace,
+    Attribute, AttributeValue, Attributes, Trace,
 };
 const OK: Result<(), quick_xml::Error> = Ok::<(), quick_xml::Error>(());
 
@@ -143,7 +143,21 @@ where
             .create_element(tag_name)
             .with_attribute(("key", a.key.as_str())),
     };
-    if let Some(own_nested_attrs) = &a.own_attributes {
+    if let AttributeValue::List(c) = &a.value {
+        e.write_inner_content(|inner_w| {
+            for attr in c {
+                write_xes_attribute(inner_w, attr)?;
+            }
+            OK
+        })?;
+    } else if let AttributeValue::Container(c) = &a.value {
+        e.write_inner_content(|inner_w| {
+            for attr in c {
+                write_xes_attribute(inner_w, attr)?;
+            }
+            OK
+        })?;
+    } else if let Some(own_nested_attrs) = &a.own_attributes {
         e.write_inner_content(|inner_w| {
             for own_attr in own_nested_attrs {
                 write_xes_attribute(inner_w, own_attr)?;
