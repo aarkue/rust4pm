@@ -365,13 +365,23 @@ impl<'a> StreamingXESParser<'a> {
                                                 if let Some(current_nested) =
                                                     self.current_nested_attributes.last_mut()
                                                 {
-                                                    if let Some(own_attrs) =
-                                                        &mut current_nested.own_attributes
-                                                    {
-                                                        own_attrs.push(attr);
-                                                    } else {
-                                                        current_nested.own_attributes =
-                                                            Some(vec![attr])
+                                                    match &mut current_nested.value {
+                                                        AttributeValue::Container(c) => {
+                                                            c.push(attr);
+                                                        }
+                                                        AttributeValue::List(l) => {
+                                                            l.add_attribute(attr);
+                                                        }
+                                                        _ => {
+                                                            if let Some(own_attrs) =
+                                                                &mut current_nested.own_attributes
+                                                            {
+                                                                own_attrs.push(attr);
+                                                            } else {
+                                                                current_nested.own_attributes =
+                                                                    Some(vec![attr])
+                                                            }
+                                                        }
                                                     }
                                                 } else {
                                                     match self.last_mode_before_attr {
@@ -719,14 +729,22 @@ impl<'a> StreamingXESParser<'a> {
             Mode::None => return false,
             Mode::Attribute => {
                 if let Some(last_attr) = current_nested_attributes.last_mut() {
-                    if last_attr.own_attributes.is_none() {
-                        last_attr.own_attributes = Some(Attributes::new());
+                    match &mut last_attr.value {
+                        AttributeValue::List(l) => l.push(Attribute::new(key, val)),
+                        AttributeValue::Container(c) => {
+                            c.add_to_attributes(key, val);
+                        }
+                        _ => {
+                            if last_attr.own_attributes.is_none() {
+                                last_attr.own_attributes = Some(Attributes::new());
+                            }
+                            last_attr
+                                .own_attributes
+                                .as_mut()
+                                .unwrap()
+                                .add_to_attributes(key, val);
+                        }
                     }
-                    last_attr
-                        .own_attributes
-                        .as_mut()
-                        .unwrap()
-                        .add_to_attributes(key, val);
                 } else {
                     return false;
                 }
