@@ -140,8 +140,17 @@ where
         traces,
         extensions: Some(log_data.extensions),
         classifiers: Some(log_data.classifiers),
-        global_trace_attrs: Some(log_data.global_trace_attrs),
-        global_event_attrs: Some(log_data.global_event_attrs),
+        // Only put global_trace_attrs / global_event_attrs to log data if it is not empty
+        global_trace_attrs: if log_data.global_trace_attrs.is_empty() {
+            None
+        } else {
+            Some(log_data.global_trace_attrs)
+        },
+        global_event_attrs: if log_data.global_event_attrs.is_empty() {
+            None
+        } else {
+            Some(log_data.global_event_attrs)
+        },
     })
 }
 
