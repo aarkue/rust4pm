@@ -88,8 +88,7 @@ where
                     w.create_element("classifier")
                         .with_attributes(vec![
                             ("name", cl.name.as_str()),
-                            // TODO: Also handle quotation marks in keys (see XES standard and parsing)
-                            ("keys", cl.keys.join(" ").as_str()),
+                            ("keys", &serialize_classifier(&cl.keys)),
                         ])
                         .write_empty()?;
                 }
@@ -266,6 +265,19 @@ where
     )
 }
 
+fn serialize_classifier(classifier_keys: &[String]) -> String {
+    let should_quote = classifier_keys.iter().any(|key| key.contains(" "));
+    if should_quote {
+        classifier_keys
+            .iter()
+            .map(|k| format!("'{}'", k))
+            .collect::<Vec<String>>()
+            .join(" ")
+    } else {
+        classifier_keys.join(" ")
+    }
+}
+
 #[cfg(test)]
 mod export_xes_tests {
     use std::{collections::HashSet, fs::File, time::Instant};
@@ -273,7 +285,11 @@ mod export_xes_tests {
     use quick_xml::Writer;
 
     use crate::{
-        event_log::{event_log_struct::EventLogExtension, export_xes::export_xes_event_log},
+        event_log::{
+            event_log_struct::EventLogExtension,
+            export_xes::{export_xes_event_log, serialize_classifier},
+            stream_xes::{parse_classifier_key, XESOuterLogData},
+        },
         stream_xes_slice_gz, XESImportOptions,
     };
 
@@ -358,5 +374,52 @@ mod export_xes_tests {
         export_xes_trace_stream_to_file(traces, log_data, file, true).unwrap();
         std::fs::remove_file("/tmp/streaming-export.xes.gz").unwrap();
         println!("Streamed from .xes.gz to .xes.gz in {:?}", now.elapsed());
+    }
+
+    #[test]
+    fn test_classifier_serialization() {
+        // Basic tests
+        assert_eq!(
+            serialize_classifier(
+                &vec!["testing", "123"]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+            ),
+            "testing 123".to_string()
+        );
+        assert_eq!(
+            serialize_classifier(
+                &vec!["testing 123",]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+            ),
+            "'testing 123'".to_string()
+        );
+
+
+        // Round-trip test (together with parse_classifier_key)
+        let test_keys: Vec<Vec<String>> = vec![
+            vec!["test", "key", "without", "quotes"]
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect(),
+            vec!["test", "key", "with some", "quotes"]
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect(),
+            parse_classifier_key(
+                "'testing 123' test key single test koo naa aaa bbb ccc ddd aaa bbb ccc dd was"
+                    .to_string(),
+                &XESOuterLogData::default(),
+            ),
+        ];
+        for keys in test_keys {
+            assert_eq!(
+                keys,
+                parse_classifier_key(serialize_classifier(&keys), &XESOuterLogData::default())
+            );
+        }
     }
 }
