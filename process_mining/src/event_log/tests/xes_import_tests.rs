@@ -259,7 +259,7 @@ pub fn test_xes_unsorted_traces() {
 }
 
 #[test]
-// Test roundway for nested 
+// Test roundway for nested
 pub fn test_xes_nested_attrs() {
     let xes = include_str!("test_data/nested-attrs.xes");
     let xes_bytes = Vec::from(xes);

@@ -595,8 +595,7 @@ fn test_classifier_parse() {
     };
     assert_eq!(
         parse_classifier_key(
-            "'testing 123' test key single test koo naa aaa bbb ccc ddd aaa bbb ccc dd was"
-                .into(),
+            "'testing 123' test key single test koo naa aaa bbb ccc ddd aaa bbb ccc dd was".into(),
             &data
         ),
         vec![

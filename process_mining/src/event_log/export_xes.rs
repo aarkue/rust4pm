@@ -266,7 +266,7 @@ where
 }
 
 fn serialize_classifier(classifier_keys: &[String]) -> String {
-    let should_quote = classifier_keys.iter().any(|key| key.contains(" "));
+    let should_quote = classifier_keys.iter().any(|key| key.contains(' '));
     if should_quote {
         classifier_keys
             .iter()
@@ -381,7 +381,7 @@ mod export_xes_tests {
         // Basic tests
         assert_eq!(
             serialize_classifier(
-                &vec!["testing", "123"]
+                &["testing", "123"]
                     .iter()
                     .map(|s| s.to_string())
                     .collect::<Vec<_>>()
@@ -390,14 +390,13 @@ mod export_xes_tests {
         );
         assert_eq!(
             serialize_classifier(
-                &vec!["testing 123",]
+                &["testing 123"]
                     .iter()
                     .map(|s| s.to_string())
                     .collect::<Vec<_>>()
             ),
             "'testing 123'".to_string()
         );
-
 
         // Round-trip test (together with parse_classifier_key)
         let test_keys: Vec<Vec<String>> = vec![
