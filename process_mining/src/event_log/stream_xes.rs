@@ -484,7 +484,7 @@ impl<'a> StreamingXESParser<'a> {
 /// Parse classifier key in accordance with XES Standard (which allows spaces under certain conditions)
 ///
 /// For reference, see <https://xes-standard.org/_media/xes/xesstandarddefinition-2.0.pdf#page=8>
-fn parse_classifier_key(t: String, log_data: &XESOuterLogData) -> Vec<String> {
+pub fn parse_classifier_key(t: String, log_data: &XESOuterLogData) -> Vec<String> {
     let mut ret: Vec<String> = Vec::new();
     let mut buffer: Vec<char> = Vec::new();
     let chars: Vec<char> = t.chars().collect();
@@ -595,12 +595,12 @@ fn test_classifier_parse() {
     };
     assert_eq!(
         parse_classifier_key(
-            "'test was geht' test key single test koo naa aaa bbb ccc ddd aaa bbb ccc dd was"
+            "'testing 123' test key single test koo naa aaa bbb ccc ddd aaa bbb ccc dd was"
                 .into(),
             &data
         ),
         vec![
-            "test was geht",
+            "testing 123",
             "test key",
             "single",
             "test",
