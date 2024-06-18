@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
+
+use super::import_pnml::PNMLParseErrror;
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 /// Place in a Petri net
 pub struct Place {
@@ -291,7 +293,7 @@ impl PetriNet {
     ///
     ///
     /// For the related export function, see [`PetriNet::export_pnml`])
-    pub fn import_pnml(path: &str) -> Result<PetriNet, quick_xml::Error> {
+    pub fn import_pnml(path: &str) -> Result<PetriNet, PNMLParseErrror> {
         super::import_pnml::import_pnml(&mut quick_xml::Reader::from_file(path)?)
     }
 }

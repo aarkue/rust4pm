@@ -1,6 +1,6 @@
 use std::{collections::HashMap, io::BufRead};
 
-use quick_xml::Reader;
+use quick_xml::{Error as QuickXMLError, Reader};
 use uuid::Uuid;
 
 use crate::PetriNet;
@@ -28,6 +28,61 @@ fn read_to_string(x: &mut &[u8]) -> String {
     String::from_utf8_lossy(x).to_string()
 }
 
+
+///
+/// Error encountered while parsing PNML
+///
+#[derive(Debug, Clone)]
+pub enum PNMLParseErrror {
+    /// Encountered PNML/XML tag unexpected for the current parsing mode
+    InvalidMode,
+    /// IO errror
+    IOError(std::rc::Rc<std::io::Error>),
+    /// XML error (e.g., incorrect XML format )
+    XMLParsingError(QuickXMLError),
+    /// Missing key on XML element (with expected key included)
+    MissingKey(&'static str),
+    /// Invalid value of XML attribute with key (with key included)
+    InvalidKeyValue(&'static str),
+}
+
+impl std::fmt::Display for PNMLParseErrror {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Failed to parse PNML: {:?}", self)
+    }
+}
+
+impl std::error::Error for PNMLParseErrror {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PNMLParseErrror::IOError(e) => Some(e.as_ref()),
+            PNMLParseErrror::XMLParsingError(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    fn description(&self) -> &str {
+        "description() is deprecated; use Display"
+    }
+
+    fn cause(&self) -> Option<&dyn std::error::Error> {
+        self.source()
+    }
+}
+
+impl From<std::io::Error> for PNMLParseErrror {
+    fn from(e: std::io::Error) -> Self {
+        Self::IOError(std::rc::Rc::new(e))
+    }
+}
+
+impl From<QuickXMLError> for PNMLParseErrror {
+    fn from(e: QuickXMLError) -> Self {
+        Self::XMLParsingError(e)
+    }
+}
+
+
 ///
 /// Import a PNML file from the given reader
 ///
@@ -43,7 +98,7 @@ fn read_to_string(x: &mut &[u8]) -> String {
 /// - A single initial marking
 /// - Multiple final markings
 ///
-pub fn import_pnml<T>(reader: &mut Reader<T>) -> Result<PetriNet, quick_xml::Error>
+pub fn import_pnml<T>(reader: &mut Reader<T>) -> Result<PetriNet, PNMLParseErrror>
 where
     T: BufRead,
 {
@@ -87,8 +142,7 @@ where
                         let id_ref = read_to_string(
                             &mut b
                                 .try_get_attribute("idref")
-                                .unwrap_or_default()
-                                .unwrap()
+                                .unwrap_or_default().ok_or(PNMLParseErrror::MissingKey("idref"))?
                                 .value
                                 .as_ref(),
                         );
@@ -98,7 +152,7 @@ where
                     } else {
                         // Add place
                         current_mode = Mode::Place;
-                        let place_id = b.try_get_attribute("id").unwrap_or_default().unwrap();
+                        let place_id = b.try_get_attribute("id").unwrap_or_default().ok_or(PNMLParseErrror::MissingKey("id"))?;
                         let place_id_str = read_to_string(&mut place_id.value.as_ref());
                         let uuid = Uuid::new_v4();
                         current_id = Some(uuid);
@@ -108,7 +162,7 @@ where
                 }
                 b"transition" => {
                     current_mode = Mode::Transition;
-                    let trans_id = b.try_get_attribute("id").unwrap_or_default().unwrap();
+                    let trans_id = b.try_get_attribute("id").unwrap_or_default().ok_or(PNMLParseErrror::MissingKey("id"))?;
                     let trans_id_str = read_to_string(&mut trans_id.value.as_ref());
                     let uuid = Uuid::new_v4();
                     current_id = Some(uuid);
@@ -119,8 +173,7 @@ where
                     let source_id = read_to_string(
                         &mut b
                             .try_get_attribute("source")
-                            .unwrap_or_default()
-                            .unwrap()
+                            .unwrap_or_default().ok_or(PNMLParseErrror::MissingKey("source"))?
                             .value
                             .as_ref(),
                     );
@@ -128,7 +181,7 @@ where
                         &mut b
                             .try_get_attribute("target")
                             .unwrap_or_default()
-                            .unwrap()
+                            .ok_or(PNMLParseErrror::MissingKey("target"))?
                             .value
                             .as_ref(),
                     );
@@ -145,19 +198,19 @@ where
                 }
                 // For handling silent transitions
                 b"toolspecific" => {
-                    if b.try_get_attribute("activity")
-                        .unwrap_or_default()
-                        .as_ref()
-                        .unwrap()
-                        .value
-                        .as_ref()
-                        == b"$invisible$"
+                    if let Some(attr) = b.try_get_attribute("activity").unwrap_or_default().as_ref()
                     {
-                        if let Some(trans) = current_id.and_then(|id| pn.transitions.get_mut(&id)) {
-                            // Set label to None (silent)
-                            trans.label = None;
-                        } else {
-                            eprintln!("Can't find current transition when adding toolspecific!");
+                        if attr.value.as_ref() == b"$invisible$" {
+                            if let Some(trans) =
+                                current_id.and_then(|id| pn.transitions.get_mut(&id))
+                            {
+                                // Set label to None (silent)
+                                trans.label = None;
+                            } else {
+                                eprintln!(
+                                    "Can't find current transition when adding toolspecific!"
+                                );
+                            }
                         }
                     }
                 }
@@ -307,6 +360,27 @@ mod test {
         assert!(pn.final_markings.is_some());
         assert!(pn.arcs.iter().any(|arc| arc.weight == 1337));
         println!("{:#?}", pn);
+        #[cfg(feature = "graphviz-export")]
+        {
+            pn.export_svg("/tmp/pn.svg").unwrap();
+            println!("Exported to: file:///tmp/pn.svg");
+        }
+    }
+
+    #[test]
+    fn test_pnml_import_2() {
+        let pnml_str = include_str!("./test_data/bpic12-tsinghua.pnml");
+        let pn_res = import_pnml(&mut Reader::from_str(pnml_str));
+        assert!(pn_res.is_ok());
+        let pn = pn_res.unwrap();
+        // assert_eq!(pn.transitions.len(), 46);
+        // assert_eq!(pn.places.len(), 9);
+        // assert_eq!(pn.arcs.len(), 24);
+        // assert!(pn.initial_marking.is_some());
+        // assert!(pn.final_markings.is_some());
+        // assert!(pn.arcs.iter().any(|arc| arc.weight == 1337));
+        // println!("{:#?}", pn);
+        println!("Transitions: {:?}",pn.transitions);
         #[cfg(feature = "graphviz-export")]
         {
             pn.export_svg("/tmp/pn.svg").unwrap();
