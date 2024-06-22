@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Küsters"
+  given-names: "Aaron"
+  orcid: "https://orcid.org/0009−0006−9195−5380"
+- family-names: "van der Aalst"
+  given-names: "Wil M.P."
+  orcid: "https://orcid.org/0000−0002−0955−6940"
+title: "High-Performance Rust Process Mining Library with Python/Java Bindings"
+version: 2.0.4
+doi: 10.48550/arXiv.2401.14149
+date-released: 2023-12-13
+url: "https://github.com/github-linguist/linguist"
+preferred-citation:
+  type: generic
+  authors:
+  - family-names: "Küsters"
+    given-names: "Aaron"
+    orcid: "https://orcid.org/0009−0006−9195−5380"
+  - family-names: "van der Aalst"
+    given-names: "Wil M.P."
+    orcid: "https://orcid.org/0000−0002−0955−6940"
+  doi: "10.48550/arXiv.2401.14149"
+  title: "Developing a High-Performance Process Mining Library with Java and Python Bindings in Rust"
+  year: 2024
+  url: https://arxiv.org/abs/2401.14149
