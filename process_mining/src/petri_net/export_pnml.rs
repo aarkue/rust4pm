@@ -1,28 +1,21 @@
-use std::fs::File;
+use std::{fs::File, io::Write};
 
-use quick_xml::{
-    events::{BytesDecl, BytesText},
-    Writer,
-};
+use quick_xml::{events::BytesText, Writer};
 use uuid::Uuid;
 
 use super::petri_net_struct::PetriNet;
 const OK: Result<(), quick_xml::Error> = Ok::<(), quick_xml::Error>(());
 
-/// Export a [`PetriNet`] to a `.pnml` file (specified through path)
+/// Export a [`PetriNet`] to the PNML format and write the result to the provided [`quick_xml::Writer`]
 ///
-/// Also consider using [`PetriNet::export_pnml`] for convenience.
-pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
-    let file = File::create(path).unwrap();
-    // let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 4);
-    let mut writer = Writer::new_with_indent(file, b' ', 4);
-    writer
-        .write_event(quick_xml::events::Event::Decl(BytesDecl::new(
-            "1.0",
-            Some("utf8"),
-            None,
-        )))
-        .unwrap();
+/// Also see [`export_petri_net_to_pnml_writer`], which takes a writer argument implementing [`std::io::Write`] instead of the XML specific [`quick_xml::Writer`]
+pub fn export_petri_net_to_pnml<T>(
+    pn: &PetriNet,
+    writer: &mut Writer<T>,
+) -> Result<(), quick_xml::Error>
+where
+    T: Write,
+{
     writer
         .create_element("pnml")
         .write_inner_content(|writer| {
@@ -198,16 +191,42 @@ pub fn export_petri_net_to_pnml(pn: &PetriNet, path: &str) {
                 })
                 .unwrap();
             OK
-        })
-        .unwrap();
-    // String::from_utf8(writer.into_inner().into_inner()).unwrap()
+        })?;
+    Ok(())
+}
+
+/// Export a [`PetriNet`] to the PNML format and write the result to the provided Writer (i.e., something implementing [`std::io::Write`])
+///
+/// Also see [`export_petri_net_to_pnml`], which takes a [`quick_xml`] XML Writer ([`quick_xml::Writer`]) instead
+pub fn export_petri_net_to_pnml_writer<T>(
+    pn: &PetriNet,
+    writer: &mut T,
+) -> Result<(), quick_xml::Error>
+where
+    T: Write,
+{
+    export_petri_net_to_pnml(pn, &mut Writer::new(writer))
+}
+
+/// Export a [`PetriNet`] to a `.pnml` file (specified through path)
+///
+/// Also consider using [`PetriNet::export_pnml`] for convenience or [`export_petri_net_to_pnml`] for more control.
+pub fn export_petri_net_to_pnml_path(pn: &PetriNet, path: &str) -> Result<(), quick_xml::Error> {
+    let file = File::create(path).unwrap();
+    let mut writer = Writer::new_with_indent(file, b' ', 4);
+    export_petri_net_to_pnml(pn, &mut writer)
 }
 
 #[cfg(test)]
 mod test {
-    use crate::import_xes_slice;
+    use std::{fs::File, io::BufWriter};
 
-    use super::export_petri_net_to_pnml;
+    use crate::{
+        import_xes_slice,
+        petri_net::export_pnml::{export_petri_net_to_pnml, export_petri_net_to_pnml_writer},
+    };
+
+    use super::export_petri_net_to_pnml_path;
 
     #[test]
     fn test_export_pnml() {
@@ -217,7 +236,24 @@ mod test {
             &(&log).into(),
         );
         pn.arcs.last_mut().unwrap().weight = 1337;
-        export_petri_net_to_pnml(&pn, "/tmp/pnml-export.pnml");
+        export_petri_net_to_pnml_path(&pn, "/tmp/pnml-export.pnml").unwrap();
         println!("file:///tmp/pnml-export.pnml")
+    }
+
+    #[test]
+    fn test_export_pnml_to_writer() -> Result<(), quick_xml::Error> {
+        let xes_bytes = include_bytes!("../event_log/tests/test_data/AN1-example.xes");
+        let log = import_xes_slice(xes_bytes, false, crate::XESImportOptions::default()).unwrap();
+        let (_, mut pn) = crate::alphappp::auto_parameters::alphappp_discover_with_auto_parameters(
+            &(&log).into(),
+        );
+        pn.arcs.last_mut().unwrap().weight = 1337;
+        let file = File::create("/tmp/pnml-export.pnml")?;
+        let mut writer = BufWriter::new(file);
+        export_petri_net_to_pnml_writer(&pn, &mut writer)?;
+        // export_petri_net_to_pnml(&pn, &mut writer)?;
+        // export_petri_net_to_pnml_path(&pn, "/tmp/pnml-export.pnml");
+        println!("file:///tmp/pnml-export.pnml");
+        Ok(())
     }
 }
