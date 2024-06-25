@@ -1,0 +1,47 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: >-
+  Rust Process Mining Library with
+  Python/Java Bindings
+message: 'If you use this software, please cite it as below.'
+type: software
+authors:
+  - family-names: Küsters
+    given-names: Aaron
+    orcid: 'https://orcid.org/0009-0006-9195-5380'
+repository-code: 'https://github.com/aarkue/rust-bridge-process-mining/'
+url: 'https://crates.io/crates/process_mining'
+license: MIT
+version: 2.0.4
+date-released: '2023-12-13'
+doi: 10.48550/arXiv.2401.14149
+preferred-citation:
+  type: generic
+  authors:
+    - family-names: 'Küsters'
+      given-names: 'Aaron'
+    - family-names: 'van der Aalst'
+      given-names: 'Willibrordus Martinus Pancratius'
+  doi: '10.48550/arXiv.2401.14149'
+  title: 'Developing a High-Performance Process Mining Library with Java and Python Bindings in Rust'
+  year: 2024
+  abstract: >-
+    The most commonly used open-source process mining software
+    tools today are ProM and PM4Py, written in Java and
+    Python, respectively. Such high-level, often interpreted,
+    programming languages trade off performance with memory
+    safety and ease-of-use. In contrast, traditional compiled
+    languages, like C or C++, can achieve top performance but
+    often suffer from instability related to unsafe memory
+    management. Lately, Rust emerged as a highly performant,
+    compiled programming language with inherent memory safety.
+    In this paper, we describe our approach to developing a
+    shared process mining library in Rust with bindings to
+    both Java and Python, allowing full integration into the
+    existing ecosystems, like ProM and PM4Py. By facilitating
+    interoperability, our methodology enables researchers or
+    industry to develop novel algorithms in Rust once and make
+    them accessible to the entire community while also
+    achieving superior performance. 
