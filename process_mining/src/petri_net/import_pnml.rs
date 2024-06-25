@@ -28,7 +28,6 @@ fn read_to_string(x: &mut &[u8]) -> String {
     String::from_utf8_lossy(x).to_string()
 }
 
-
 ///
 /// Error encountered while parsing PNML
 ///
@@ -82,11 +81,10 @@ impl From<QuickXMLError> for PNMLParseError {
     }
 }
 
-
 ///
-/// Import a PNML file from the given reader
+/// Import a PNML file from the given XML reader ([`quick_xml::Reader`])
 ///
-/// Also consider using [`PetriNet::import_pnml`] for convenience.
+/// Also consider using [`PetriNet::import_pnml`] for importing from a filepath directly for convenience.
 ///
 /// Note, that this implementation (at least currently) is a best-effort parser for the basic types of Petri nets encountered commonly in Process Mining.
 /// In particular, the following Petri net features are implemented:
@@ -98,6 +96,8 @@ impl From<QuickXMLError> for PNMLParseError {
 /// - A single initial marking
 /// - Multiple final markings
 ///
+///
+/// Also see [`import_pnml_reader`] for an alternative version of this function, which takes a (standard) buffered reader implementing [`std::io::BufRead`] instead
 pub fn import_pnml<T>(reader: &mut Reader<T>) -> Result<PetriNet, PNMLParseError>
 where
     T: BufRead,
@@ -142,7 +142,8 @@ where
                         let id_ref = read_to_string(
                             &mut b
                                 .try_get_attribute("idref")
-                                .unwrap_or_default().ok_or(PNMLParseError::MissingKey("idref"))?
+                                .unwrap_or_default()
+                                .ok_or(PNMLParseError::MissingKey("idref"))?
                                 .value
                                 .as_ref(),
                         );
@@ -152,7 +153,10 @@ where
                     } else {
                         // Add place
                         current_mode = Mode::Place;
-                        let place_id = b.try_get_attribute("id").unwrap_or_default().ok_or(PNMLParseError::MissingKey("id"))?;
+                        let place_id = b
+                            .try_get_attribute("id")
+                            .unwrap_or_default()
+                            .ok_or(PNMLParseError::MissingKey("id"))?;
                         let place_id_str = read_to_string(&mut place_id.value.as_ref());
                         let uuid = Uuid::new_v4();
                         current_id = Some(uuid);
@@ -162,7 +166,10 @@ where
                 }
                 b"transition" => {
                     current_mode = Mode::Transition;
-                    let trans_id = b.try_get_attribute("id").unwrap_or_default().ok_or(PNMLParseError::MissingKey("id"))?;
+                    let trans_id = b
+                        .try_get_attribute("id")
+                        .unwrap_or_default()
+                        .ok_or(PNMLParseError::MissingKey("id"))?;
                     let trans_id_str = read_to_string(&mut trans_id.value.as_ref());
                     let uuid = Uuid::new_v4();
                     current_id = Some(uuid);
@@ -173,7 +180,8 @@ where
                     let source_id = read_to_string(
                         &mut b
                             .try_get_attribute("source")
-                            .unwrap_or_default().ok_or(PNMLParseError::MissingKey("source"))?
+                            .unwrap_or_default()
+                            .ok_or(PNMLParseError::MissingKey("source"))?
                             .value
                             .as_ref(),
                     );
@@ -343,6 +351,28 @@ where
     Ok(pn)
 }
 
+///
+/// Import a PNML file from the given standard buffered reader (implementing [`std::io::BufRead`])
+///
+/// Also consider using [`PetriNet::import_pnml`] for importing from a filepath directly for convenience.
+///
+///
+/// Also see [`import_pnml`] for an alternative version of this function, which takes a XML specific reader [`quick_xml::Reader`] instead
+pub fn import_pnml_reader<T>(std_reader: &mut T) -> Result<PetriNet, PNMLParseError>
+where
+    T: BufRead,
+{
+    let mut xml_reader = Reader::from_reader(std_reader);
+    import_pnml(&mut xml_reader)
+}
+
+///  Import a PNML file from the given filepath
+///
+/// Also consider using [`PetriNet::import_pnml`] for convenience or [`import_pnml`] for more control over the reader.
+pub fn import_pnml_from_path(path: &str) -> Result<PetriNet, PNMLParseError> {
+    import_pnml(&mut quick_xml::Reader::from_file(path)?)
+}
+
 #[cfg(test)]
 mod test {
     use quick_xml::Reader;
@@ -380,7 +410,7 @@ mod test {
         // assert!(pn.final_markings.is_some());
         // assert!(pn.arcs.iter().any(|arc| arc.weight == 1337));
         // println!("{:#?}", pn);
-        println!("Transitions: {:?}",pn.transitions);
+        println!("Transitions: {:?}", pn.transitions);
         #[cfg(feature = "graphviz-export")]
         {
             pn.export_svg("/tmp/pn.svg").unwrap();

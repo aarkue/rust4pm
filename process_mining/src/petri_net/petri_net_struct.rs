@@ -294,7 +294,7 @@ impl PetriNet {
     ///
     /// For the related export function, see [`PetriNet::export_pnml`])
     pub fn import_pnml(path: &str) -> Result<PetriNet, PNMLParseError> {
-        super::import_pnml::import_pnml(&mut quick_xml::Reader::from_file(path)?)
+        super::import_pnml::import_pnml_from_path(path)
     }
 }
 
