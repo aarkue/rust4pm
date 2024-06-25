@@ -221,10 +221,7 @@ pub fn export_petri_net_to_pnml_path(pn: &PetriNet, path: &str) -> Result<(), qu
 mod test {
     use std::{fs::File, io::BufWriter};
 
-    use crate::{
-        import_xes_slice,
-        petri_net::export_pnml::{export_petri_net_to_pnml, export_petri_net_to_pnml_writer},
-    };
+    use crate::{import_xes_slice, petri_net::export_pnml::export_petri_net_to_pnml_writer};
 
     use super::export_petri_net_to_pnml_path;
 
