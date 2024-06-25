@@ -33,7 +33,7 @@ fn read_to_string(x: &mut &[u8]) -> String {
 /// Error encountered while parsing PNML
 ///
 #[derive(Debug, Clone)]
-pub enum PNMLParseErrror {
+pub enum PNMLParseError {
     /// Encountered PNML/XML tag unexpected for the current parsing mode
     InvalidMode,
     /// IO errror
@@ -46,17 +46,17 @@ pub enum PNMLParseErrror {
     InvalidKeyValue(&'static str),
 }
 
-impl std::fmt::Display for PNMLParseErrror {
+impl std::fmt::Display for PNMLParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Failed to parse PNML: {:?}", self)
     }
 }
 
-impl std::error::Error for PNMLParseErrror {
+impl std::error::Error for PNMLParseError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            PNMLParseErrror::IOError(e) => Some(e.as_ref()),
-            PNMLParseErrror::XMLParsingError(e) => Some(e),
+            PNMLParseError::IOError(e) => Some(e.as_ref()),
+            PNMLParseError::XMLParsingError(e) => Some(e),
             _ => None,
         }
     }
@@ -70,13 +70,13 @@ impl std::error::Error for PNMLParseErrror {
     }
 }
 
-impl From<std::io::Error> for PNMLParseErrror {
+impl From<std::io::Error> for PNMLParseError {
     fn from(e: std::io::Error) -> Self {
         Self::IOError(std::rc::Rc::new(e))
     }
 }
 
-impl From<QuickXMLError> for PNMLParseErrror {
+impl From<QuickXMLError> for PNMLParseError {
     fn from(e: QuickXMLError) -> Self {
         Self::XMLParsingError(e)
     }
@@ -98,7 +98,7 @@ impl From<QuickXMLError> for PNMLParseErrror {
 /// - A single initial marking
 /// - Multiple final markings
 ///
-pub fn import_pnml<T>(reader: &mut Reader<T>) -> Result<PetriNet, PNMLParseErrror>
+pub fn import_pnml<T>(reader: &mut Reader<T>) -> Result<PetriNet, PNMLParseError>
 where
     T: BufRead,
 {
@@ -142,7 +142,7 @@ where
                         let id_ref = read_to_string(
                             &mut b
                                 .try_get_attribute("idref")
-                                .unwrap_or_default().ok_or(PNMLParseErrror::MissingKey("idref"))?
+                                .unwrap_or_default().ok_or(PNMLParseError::MissingKey("idref"))?
                                 .value
                                 .as_ref(),
                         );
@@ -152,7 +152,7 @@ where
                     } else {
                         // Add place
                         current_mode = Mode::Place;
-                        let place_id = b.try_get_attribute("id").unwrap_or_default().ok_or(PNMLParseErrror::MissingKey("id"))?;
+                        let place_id = b.try_get_attribute("id").unwrap_or_default().ok_or(PNMLParseError::MissingKey("id"))?;
                         let place_id_str = read_to_string(&mut place_id.value.as_ref());
                         let uuid = Uuid::new_v4();
                         current_id = Some(uuid);
@@ -162,7 +162,7 @@ where
                 }
                 b"transition" => {
                     current_mode = Mode::Transition;
-                    let trans_id = b.try_get_attribute("id").unwrap_or_default().ok_or(PNMLParseErrror::MissingKey("id"))?;
+                    let trans_id = b.try_get_attribute("id").unwrap_or_default().ok_or(PNMLParseError::MissingKey("id"))?;
                     let trans_id_str = read_to_string(&mut trans_id.value.as_ref());
                     let uuid = Uuid::new_v4();
                     current_id = Some(uuid);
@@ -173,7 +173,7 @@ where
                     let source_id = read_to_string(
                         &mut b
                             .try_get_attribute("source")
-                            .unwrap_or_default().ok_or(PNMLParseErrror::MissingKey("source"))?
+                            .unwrap_or_default().ok_or(PNMLParseError::MissingKey("source"))?
                             .value
                             .as_ref(),
                     );
@@ -181,7 +181,7 @@ where
                         &mut b
                             .try_get_attribute("target")
                             .unwrap_or_default()
-                            .ok_or(PNMLParseErrror::MissingKey("target"))?
+                            .ok_or(PNMLParseError::MissingKey("target"))?
                             .value
                             .as_ref(),
                     );
