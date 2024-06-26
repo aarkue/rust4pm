@@ -39,6 +39,9 @@ pub mod event_log {
     mod tests;
 }
 
+/// Util module with smaller helper functions, structs or enums
+pub mod utils;
+
 ///
 /// Petri nets
 ///

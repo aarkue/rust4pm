@@ -7,7 +7,7 @@ use std::{
 use flate2::{write::GzEncoder, Compression};
 use quick_xml::{events::BytesDecl, Writer};
 
-use crate::EventLog;
+use crate::{utils::xml_utils::XMLWriterWrapper, EventLog};
 
 use super::{
     event_log_struct::{EventLogClassifier, EventLogExtension},
@@ -19,8 +19,8 @@ const OK: Result<(), quick_xml::Error> = Ok::<(), quick_xml::Error>(());
 ///
 /// Export XES (from log data and an iterator over traces) to a XML writer
 ///
-pub fn export_xes<'a, W, T: Borrow<Trace>, I>(
-    writer: &mut Writer<W>,
+pub fn export_xes<'a,'b, W, T: Borrow<Trace>, I>(
+    writer: impl Into<XMLWriterWrapper<'b, W>>,
     log_extensions: &'a Option<&'a Vec<EventLogExtension>>,
     log_global_trace_attrs: &'a Option<&'a Attributes>,
     log_global_event_attrs: &'a Option<&'a Attributes>,
@@ -30,8 +30,10 @@ pub fn export_xes<'a, W, T: Borrow<Trace>, I>(
 ) -> Result<(), quick_xml::Error>
 where
     I: Iterator<Item = T>,
-    W: Write,
+    W: Write + 'b,
 {
+    let mut xml_writer = writer.into();
+    let writer = xml_writer.to_xml_writer();
     writer
         .write_event(quick_xml::events::Event::Decl(BytesDecl::new(
             "1.0",
@@ -171,14 +173,16 @@ where
 }
 
 ///
-/// Export an [`EventLog`] to a XML [`Writer`]
+/// Export an [`EventLog`] to a writer
+/// 
+/// Both [`quick_xml::Writer`] as well as [`std::io::Write`] are accepted
 //
-pub fn export_xes_event_log<T>(
-    writer: &mut Writer<T>,
-    log: &EventLog,
+pub fn export_xes_event_log<'a,W>(
+    writer: impl Into<XMLWriterWrapper<'a, W>>,
+    log: &'a EventLog,
 ) -> Result<(), quick_xml::Error>
 where
-    T: Write,
+W: Write + 'a,
 {
     export_xes(
         writer,
@@ -218,13 +222,13 @@ pub fn export_xes_event_log_to_file_path(
 }
 
 /// Export a trace stream (i.e., [`Iterator`] over [`Trace`]) and [`XESOuterLogData`] to a XML [`Writer`]
-pub fn export_xes_trace_stream<W, T: Borrow<Trace>, I>(
-    writer: &mut Writer<W>,
+pub fn export_xes_trace_stream<'a, W, T: Borrow<Trace>, I>(
+    writer: impl Into<XMLWriterWrapper<'a, W>>,
     trace_stream: I,
     log_data: XESOuterLogData,
 ) -> Result<(), quick_xml::Error>
 where
-    W: Write,
+    W: Write + 'a,
     I: Iterator<Item = T>,
 {
     export_xes(
@@ -280,7 +284,7 @@ fn serialize_classifier(classifier_keys: &[String]) -> String {
 
 #[cfg(test)]
 mod export_xes_tests {
-    use std::{collections::HashSet, fs::File, time::Instant};
+    use std::{collections::HashSet, fs::File, io::BufWriter, time::Instant};
 
     use quick_xml::Writer;
 
@@ -296,7 +300,49 @@ mod export_xes_tests {
     use super::export_xes_trace_stream_to_file;
 
     #[test]
-    fn test_xes_export() {
+    fn test_xes_export_std_writer() {
+        let x = include_bytes!("./tests/test_data/Sepsis Cases - Event Log.xes.gz");
+        let log = crate::import_xes_slice(x, true, crate::XESImportOptions::default()).unwrap();
+        let exported_xes_data: Vec<u8> = Vec::new();
+        // let mut writer = Writer::new(exported_xes_data);
+        let mut buf_writer = BufWriter::new(exported_xes_data);
+        export_xes_event_log(&mut buf_writer, &log).unwrap();
+        let data = buf_writer.into_inner().unwrap();
+        let log2 =
+            crate::import_xes_slice(&data, false, crate::XESImportOptions::default()).unwrap();
+        assert_eq!(log.traces.len(), log2.traces.len());
+        assert_eq!(log.attributes.len(), log2.attributes.len());
+        assert_eq!(
+            log.classifiers
+                .as_ref()
+                .map(|c| c.len())
+                .unwrap_or_default(),
+            log2.classifiers
+                .as_ref()
+                .map(|c| c.len())
+                .unwrap_or_default(),
+        );
+        assert_eq!(
+            log.extensions
+                .as_ref()
+                .unwrap()
+                .iter()
+                .collect::<HashSet<&EventLogExtension>>(),
+            log2.extensions
+                .as_ref()
+                .unwrap()
+                .iter()
+                .collect::<HashSet<&EventLogExtension>>()
+        );
+
+        // The below assumes that also all orders of events, traces, log attributes, extensions etc. must be the same
+        // In reality, we would also accept a weaker equality relation (e.g., ignoring the order of attributes)
+        assert!(log2 == log);
+    }
+
+
+    #[test]
+    fn test_xes_export_xml_writer() {
         let x = include_bytes!("./tests/test_data/Sepsis Cases - Event Log.xes.gz");
         let log = crate::import_xes_slice(x, true, crate::XESImportOptions::default()).unwrap();
         let exported_xes_data: Vec<u8> = Vec::new();
