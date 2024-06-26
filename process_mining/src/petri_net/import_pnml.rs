@@ -35,7 +35,7 @@ fn read_to_string(x: &mut &[u8]) -> String {
 pub enum PNMLParseError {
     /// Encountered PNML/XML tag unexpected for the current parsing mode
     InvalidMode,
-    /// IO errror
+    /// IO error
     IOError(std::rc::Rc<std::io::Error>),
     /// XML error (e.g., incorrect XML format )
     XMLParsingError(QuickXMLError),
@@ -43,6 +43,8 @@ pub enum PNMLParseError {
     MissingKey(&'static str),
     /// Invalid value of XML attribute with key (with key included)
     InvalidKeyValue(&'static str),
+    /// Encountered no PNML tag (i.e., the parsed data was not a PNML file)
+    NoPNMLTag,
 }
 
 impl std::fmt::Display for PNMLParseError {
@@ -107,7 +109,7 @@ where
     let mut buf: Vec<u8> = Vec::new();
 
     let mut current_mode: Mode = Mode::None;
-
+    let mut encountered_pnml_tag = false;
     let mut pn = PetriNet::new();
     let mut initial_marking: Marking = HashMap::new();
     let mut final_markings: Vec<Marking> = vec![];
@@ -123,6 +125,7 @@ where
             quick_xml::events::Event::Start(b) => match b.name().as_ref() {
                 b"pnml" => {
                     current_mode = Mode::Pnml;
+                    encountered_pnml_tag = true;
                 }
                 b"net" => {
                     if current_mode != Mode::Pnml {
@@ -319,6 +322,10 @@ where
         }
     }
 
+    if !encountered_pnml_tag {
+        return Err(PNMLParseError::NoPNMLTag)
+    }
+
     for (from, to, weight) in arcs {
         let from_uuid = id_map.get(&from);
         let to_uuid = id_map.get(&to);
@@ -416,5 +423,12 @@ mod test {
             pn.export_svg("/tmp/pn.svg").unwrap();
             println!("Exported to: file:///tmp/pn.svg");
         }
+    }
+
+    #[test]
+    fn test_invalid_pnml_import(){
+        let pnml_str = include_str!("./test_data/not-a-petri-net.slang");
+        let pn_res = import_pnml(&mut Reader::from_str(&pnml_str));
+        assert!(pn_res.is_err());
     }
 }
