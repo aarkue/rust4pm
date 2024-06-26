@@ -323,7 +323,7 @@ where
     }
 
     if !encountered_pnml_tag {
-        return Err(PNMLParseError::NoPNMLTag)
+        return Err(PNMLParseError::NoPNMLTag);
     }
 
     for (from, to, weight) in arcs {
@@ -426,9 +426,9 @@ mod test {
     }
 
     #[test]
-    fn test_invalid_pnml_import(){
+    fn test_invalid_pnml_import() {
         let pnml_str = include_str!("./test_data/not-a-petri-net.slang");
-        let pn_res = import_pnml(&mut Reader::from_str(&pnml_str));
+        let pn_res = import_pnml(&mut Reader::from_str(pnml_str));
         assert!(pn_res.is_err());
     }
 }
