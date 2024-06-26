@@ -3,19 +3,23 @@ use std::{fs::File, io::Write};
 use quick_xml::{events::BytesText, Writer};
 use uuid::Uuid;
 
+use crate::utils::xml_utils::XMLWriterWrapper;
+
 use super::petri_net_struct::PetriNet;
 const OK: Result<(), quick_xml::Error> = Ok::<(), quick_xml::Error>(());
 
-/// Export a [`PetriNet`] to the PNML format and write the result to the provided [`quick_xml::Writer`]
-///
-/// Also see [`export_petri_net_to_pnml_writer`], which takes a writer argument implementing [`std::io::Write`] instead of the XML specific [`quick_xml::Writer`]
-pub fn export_petri_net_to_pnml<T>(
+/// 
+/// Export a [`PetriNet`] to the PNML format and write the result to the provided writer which implements into [`quick_xml::Writer`] / [`std::io::Write`]
+/// 
+pub fn export_petri_net_to_pnml<'a, W>(
     pn: &PetriNet,
-    writer: &mut Writer<T>,
+    into_writer: impl Into<XMLWriterWrapper<'a, W>>,
 ) -> Result<(), quick_xml::Error>
 where
-    T: Write,
+    W: Write + 'a,
 {
+    let mut xml_writer: XMLWriterWrapper<'_, W> = into_writer.into();
+    let writer = xml_writer.to_xml_writer();
     writer
         .create_element("pnml")
         .write_inner_content(|writer| {
@@ -195,19 +199,6 @@ where
     Ok(())
 }
 
-/// Export a [`PetriNet`] to the PNML format and write the result to the provided Writer (i.e., something implementing [`std::io::Write`])
-///
-/// Also see [`export_petri_net_to_pnml`], which takes a [`quick_xml`] XML Writer ([`quick_xml::Writer`]) instead
-pub fn export_petri_net_to_pnml_writer<T>(
-    pn: &PetriNet,
-    writer: &mut T,
-) -> Result<(), quick_xml::Error>
-where
-    T: Write,
-{
-    export_petri_net_to_pnml(pn, &mut Writer::new(writer))
-}
-
 /// Export a [`PetriNet`] to a `.pnml` file (specified through path)
 ///
 /// Also consider using [`PetriNet::export_pnml`] for convenience or [`export_petri_net_to_pnml`] for more control.
@@ -221,7 +212,7 @@ pub fn export_petri_net_to_pnml_path(pn: &PetriNet, path: &str) -> Result<(), qu
 mod test {
     use std::{fs::File, io::BufWriter};
 
-    use crate::{import_xes_slice, petri_net::export_pnml::export_petri_net_to_pnml_writer};
+    use crate::{import_xes_slice, petri_net::export_pnml::export_petri_net_to_pnml};
 
     use super::export_petri_net_to_pnml_path;
 
@@ -247,7 +238,7 @@ mod test {
         pn.arcs.last_mut().unwrap().weight = 1337;
         let file = File::create("/tmp/pnml-export.pnml")?;
         let mut writer = BufWriter::new(file);
-        export_petri_net_to_pnml_writer(&pn, &mut writer)?;
+        export_petri_net_to_pnml(&pn, &mut writer)?;
         // export_petri_net_to_pnml(&pn, &mut writer)?;
         // export_petri_net_to_pnml_path(&pn, "/tmp/pnml-export.pnml");
         println!("file:///tmp/pnml-export.pnml");
