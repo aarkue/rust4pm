@@ -8,9 +8,9 @@ use crate::utils::xml_utils::XMLWriterWrapper;
 use super::petri_net_struct::PetriNet;
 const OK: Result<(), quick_xml::Error> = Ok::<(), quick_xml::Error>(());
 
-/// 
+///
 /// Export a [`PetriNet`] to the PNML format and write the result to the provided writer which implements into [`quick_xml::Writer`] / [`std::io::Write`]
-/// 
+///
 pub fn export_petri_net_to_pnml<'a, W>(
     pn: &PetriNet,
     into_writer: impl Into<XMLWriterWrapper<'a, W>>,

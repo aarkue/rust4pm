@@ -281,29 +281,33 @@ impl<'a> StreamingXESParser<'a> {
                                 {
                                     // Nested attribute!
                                     let key = get_attribute_string(&t, "key");
-                                    if !should_ignore_attribute(&self.options, &self.current_mode
-                                        , &key) {
-                                    let value = parse_attribute_value_from_tag(
-                                        &t,
-                                        &self.current_mode,
+                                    if !should_ignore_attribute(
                                         &self.options,
-                                    );
-                                    if !(key.is_empty() && matches!(value, AttributeValue::None()))
-                                    {
-                                        self.current_nested_attributes.push(Attribute {
-                                            key,
-                                            value,
-                                            own_attributes: None,
-                                        });
-                                        match self.current_mode {
-                                            Mode::Attribute => {}
-                                            m => {
-                                                self.last_mode_before_attr = m;
+                                        &self.current_mode,
+                                        &key,
+                                    ) {
+                                        let value = parse_attribute_value_from_tag(
+                                            &t,
+                                            &self.current_mode,
+                                            &self.options,
+                                        );
+                                        if !(key.is_empty()
+                                            && matches!(value, AttributeValue::None()))
+                                        {
+                                            self.current_nested_attributes.push(Attribute {
+                                                key,
+                                                value,
+                                                own_attributes: None,
+                                            });
+                                            match self.current_mode {
+                                                Mode::Attribute => {}
+                                                m => {
+                                                    self.last_mode_before_attr = m;
+                                                }
                                             }
+                                            self.current_mode = Mode::Attribute;
                                         }
-                                        self.current_mode = Mode::Attribute;
                                     }
-                                }
                                 }
                             }
                         },
@@ -570,38 +574,38 @@ pub fn parse_classifier_key(t: String, log_data: &XESOuterLogData) -> Vec<String
     }
     ret
 }
-fn should_ignore_attribute(options: &XESImportOptions, mode: &Mode, key: &str) -> bool{
+fn should_ignore_attribute(options: &XESImportOptions, mode: &Mode, key: &str) -> bool {
     if options.ignore_event_attributes_except.is_some()
-            || options.ignore_trace_attributes_except.is_some()
-            || options.ignore_log_attributes_except.is_some()
+        || options.ignore_trace_attributes_except.is_some()
+        || options.ignore_log_attributes_except.is_some()
+    {
+        if matches!(mode, Mode::Event)
+            && options
+                .ignore_event_attributes_except
+                .as_ref()
+                .is_some_and(|not_ignored| !not_ignored.contains(key))
         {
-            if matches!(mode, Mode::Event)
-                && options
-                    .ignore_event_attributes_except
-                    .as_ref()
-                    .is_some_and(|not_ignored| !not_ignored.contains(key))
-            {
-                return true;
-            }
-            if matches!(mode, Mode::Trace)
-                && options
-                    .ignore_trace_attributes_except
-                    .as_ref()
-                    .is_some_and(|not_ignored| !not_ignored.contains(key))
-            {
-                return true;
-            }
-
-            if matches!(mode, Mode::Log)
-                && options
-                    .ignore_log_attributes_except
-                    .as_ref()
-                    .is_some_and(|not_ignored| !not_ignored.contains(key))
-            {
-                return true;
-            }
+            return true;
         }
-        return false
+        if matches!(mode, Mode::Trace)
+            && options
+                .ignore_trace_attributes_except
+                .as_ref()
+                .is_some_and(|not_ignored| !not_ignored.contains(key))
+        {
+            return true;
+        }
+
+        if matches!(mode, Mode::Log)
+            && options
+                .ignore_log_attributes_except
+                .as_ref()
+                .is_some_and(|not_ignored| !not_ignored.contains(key))
+        {
+            return true;
+        }
+    }
+    false
 }
 #[test]
 fn test_classifier_parse() {
@@ -693,7 +697,7 @@ impl<'a> StreamingXESParser<'a> {
         t: &BytesStart<'_>,
     ) -> bool {
         let key = get_attribute_string(t, "key");
-        if should_ignore_attribute(options,current_mode,&key){
+        if should_ignore_attribute(options, current_mode, &key) {
             return true;
         }
 
@@ -1154,16 +1158,18 @@ mod stream_test {
 
     #[test]
     pub fn test_stream_ignoring_attributes() {
-        let log_bytes =
-            include_bytes!("tests/test_data/nested-attrs.xes");
-        let (mut _log_stream, log_data) =
-            stream_xes_slice(log_bytes, XESImportOptions{
+        let log_bytes = include_bytes!("tests/test_data/nested-attrs.xes");
+        let (mut _log_stream, log_data) = stream_xes_slice(
+            log_bytes,
+            XESImportOptions {
                 ignore_event_attributes_except: Some(HashSet::new()),
                 ignore_trace_attributes_except: Some(HashSet::new()),
                 ignore_log_attributes_except: Some(HashSet::new()),
                 ..Default::default()
-            }).unwrap();
-            println!("{:#?}",log_data.log_attributes);
-            assert!(log_data.log_attributes.is_empty());
+            },
+        )
+        .unwrap();
+        println!("{:#?}", log_data.log_attributes);
+        assert!(log_data.log_attributes.is_empty());
     }
 }

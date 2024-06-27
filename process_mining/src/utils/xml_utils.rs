@@ -29,8 +29,6 @@ impl<'a, W> From<&'a mut quick_xml::Writer<W>> for XMLWriterWrapper<'a, W> {
     }
 }
 
-
-
 // Not used yet, but maybe useful in the future:
 
 // /// A wrapper for either an owned or mutable reference to a [`quick_xml::Reader`]
@@ -51,7 +49,6 @@ impl<'a, W> From<&'a mut quick_xml::Writer<W>> for XMLWriterWrapper<'a, W> {
 //         }
 //     }
 // }
-
 
 // impl<'a, R: std::io::Read> From<R> for XMLReaderWrapper<'a, R> {
 //     fn from(r: R) -> Self {

@@ -19,7 +19,7 @@ const OK: Result<(), quick_xml::Error> = Ok::<(), quick_xml::Error>(());
 ///
 /// Export XES (from log data and an iterator over traces) to a XML writer
 ///
-pub fn export_xes<'a,'b, W, T: Borrow<Trace>, I>(
+pub fn export_xes<'a, 'b, W, T: Borrow<Trace>, I>(
     writer: impl Into<XMLWriterWrapper<'b, W>>,
     log_extensions: &'a Option<&'a Vec<EventLogExtension>>,
     log_global_trace_attrs: &'a Option<&'a Attributes>,
@@ -174,15 +174,15 @@ where
 
 ///
 /// Export an [`EventLog`] to a writer
-/// 
+///
 /// Both [`quick_xml::Writer`] as well as [`std::io::Write`] are accepted
 //
-pub fn export_xes_event_log<'a,W>(
+pub fn export_xes_event_log<'a, W>(
     writer: impl Into<XMLWriterWrapper<'a, W>>,
     log: &'a EventLog,
 ) -> Result<(), quick_xml::Error>
 where
-W: Write + 'a,
+    W: Write + 'a,
 {
     export_xes(
         writer,
@@ -339,7 +339,6 @@ mod export_xes_tests {
         // In reality, we would also accept a weaker equality relation (e.g., ignoring the order of attributes)
         assert!(log2 == log);
     }
-
 
     #[test]
     fn test_xes_export_xml_writer() {
