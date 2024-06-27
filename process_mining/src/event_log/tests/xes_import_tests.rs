@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use chrono::DateTime;
 use quick_xml::Writer;
 
@@ -272,4 +274,77 @@ pub fn test_xes_nested_attrs() {
     // println!("\n\n{}\n\n",out_xes);
     // println!("{:#?}", log);
     assert_eq!(xes, out_xes);
+}
+
+#[test]
+pub fn test_2017bpic_log() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("event_log")
+        .join("tests")
+        .join("test_data")
+        .join("BPI_Challenge_2017.xes");
+    let log = import_xes_file(
+        path.to_str().unwrap(),
+        XESImportOptions {
+            ignore_log_attributes_except: Some(HashSet::default()),
+            ignore_trace_attributes_except: Some(
+                vec!["concept:name".to_string()].into_iter().collect(),
+            ),
+            ignore_event_attributes_except: Some(
+                vec!["concept:name".to_string(), "time:timestamp".to_string()]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..XESImportOptions::default()
+        },
+    )
+    .unwrap();
+    log.traces.iter().for_each(|t| {
+        assert!(t.attributes.get_by_key("concept:name").is_some());
+        t.events.iter().for_each(|e| {
+            assert!(e.attributes.get_by_key("concept:name").is_some());
+            assert!(e
+                .attributes
+                .get_by_key("time:timestamp")
+                .is_some_and(|a| a.value.try_as_date().is_some()));
+        })
+    })
+}
+
+
+#[test]
+pub fn test_2018bpic_log() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("event_log")
+        .join("tests")
+        .join("test_data")
+        .join("BPI Challenge 2018.xes.gz");
+    let log = import_xes_file(
+        path.to_str().unwrap(),
+        XESImportOptions {
+            ignore_log_attributes_except: Some(HashSet::default()),
+            ignore_trace_attributes_except: Some(
+                vec!["concept:name".to_string()].into_iter().collect(),
+            ),
+            ignore_event_attributes_except: Some(
+                vec!["concept:name".to_string(), "time:timestamp".to_string()]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..XESImportOptions::default()
+        },
+    )
+    .unwrap();
+    log.traces.iter().for_each(|t| {
+        assert!(t.attributes.get_by_key("concept:name").is_some());
+        t.events.iter().for_each(|e| {
+            assert!(e.attributes.get_by_key("concept:name").is_some());
+            assert!(e
+                .attributes
+                .get_by_key("time:timestamp")
+                .is_some_and(|a| a.value.try_as_date().is_some()));
+        })
+    })
 }

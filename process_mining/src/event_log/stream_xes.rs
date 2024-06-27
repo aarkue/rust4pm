@@ -457,7 +457,10 @@ impl<'a> StreamingXESParser<'a> {
                                                 self.current_mode = self.last_mode_before_attr;
                                             }
                                         }
-                                        _ => self.current_mode = Mode::Log,
+                                        _ => {
+                                            // We might end up here if there are nested, ignored attributes
+                                            // Noop
+                                        },
                                     }
                                 }
                             }
