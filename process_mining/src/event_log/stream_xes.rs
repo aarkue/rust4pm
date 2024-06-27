@@ -281,6 +281,8 @@ impl<'a> StreamingXESParser<'a> {
                                 {
                                     // Nested attribute!
                                     let key = get_attribute_string(&t, "key");
+                                    if !should_ignore_attribute(&self.options, &self.current_mode
+                                        , &key) {
                                     let value = parse_attribute_value_from_tag(
                                         &t,
                                         &self.current_mode,
@@ -301,6 +303,7 @@ impl<'a> StreamingXESParser<'a> {
                                         }
                                         self.current_mode = Mode::Attribute;
                                     }
+                                }
                                 }
                             }
                         },
@@ -567,7 +570,39 @@ pub fn parse_classifier_key(t: String, log_data: &XESOuterLogData) -> Vec<String
     }
     ret
 }
+fn should_ignore_attribute(options: &XESImportOptions, mode: &Mode, key: &str) -> bool{
+    if options.ignore_event_attributes_except.is_some()
+            || options.ignore_trace_attributes_except.is_some()
+            || options.ignore_log_attributes_except.is_some()
+        {
+            if matches!(mode, Mode::Event)
+                && options
+                    .ignore_event_attributes_except
+                    .as_ref()
+                    .is_some_and(|not_ignored| !not_ignored.contains(key))
+            {
+                return true;
+            }
+            if matches!(mode, Mode::Trace)
+                && options
+                    .ignore_trace_attributes_except
+                    .as_ref()
+                    .is_some_and(|not_ignored| !not_ignored.contains(key))
+            {
+                return true;
+            }
 
+            if matches!(mode, Mode::Log)
+                && options
+                    .ignore_log_attributes_except
+                    .as_ref()
+                    .is_some_and(|not_ignored| !not_ignored.contains(key))
+            {
+                return true;
+            }
+        }
+        return false
+}
 #[test]
 fn test_classifier_parse() {
     let data = XESOuterLogData {
@@ -658,35 +693,8 @@ impl<'a> StreamingXESParser<'a> {
         t: &BytesStart<'_>,
     ) -> bool {
         let key = get_attribute_string(t, "key");
-        if options.ignore_event_attributes_except.is_some()
-            || options.ignore_trace_attributes_except.is_some()
-            || options.ignore_log_attributes_except.is_some()
-        {
-            if matches!(current_mode, Mode::Event)
-                && options
-                    .ignore_event_attributes_except
-                    .as_ref()
-                    .is_some_and(|not_ignored| !not_ignored.contains(&key))
-            {
-                return true;
-            }
-            if matches!(current_mode, Mode::Trace)
-                && options
-                    .ignore_trace_attributes_except
-                    .as_ref()
-                    .is_some_and(|not_ignored| !not_ignored.contains(&key))
-            {
-                return true;
-            }
-
-            if matches!(current_mode, Mode::Log)
-                && options
-                    .ignore_log_attributes_except
-                    .as_ref()
-                    .is_some_and(|ignored| !ignored.contains(&key))
-            {
-                return true;
-            }
+        if should_ignore_attribute(options,current_mode,&key){
+            return true;
         }
 
         let val = parse_attribute_value_from_tag(t, current_mode, options);
@@ -1142,5 +1150,20 @@ mod stream_test {
         .map(|s| s.to_string())
         .collect();
         assert!(trace_variants.contains(&example_variant))
+    }
+
+    #[test]
+    pub fn test_stream_ignoring_attributes() {
+        let log_bytes =
+            include_bytes!("tests/test_data/nested-attrs.xes");
+        let (mut _log_stream, log_data) =
+            stream_xes_slice(log_bytes, XESImportOptions{
+                ignore_event_attributes_except: Some(HashSet::new()),
+                ignore_trace_attributes_except: Some(HashSet::new()),
+                ignore_log_attributes_except: Some(HashSet::new()),
+                ..Default::default()
+            }).unwrap();
+            println!("{:#?}",log_data.log_attributes);
+            assert!(log_data.log_attributes.is_empty());
     }
 }
