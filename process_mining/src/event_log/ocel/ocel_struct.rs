@@ -110,8 +110,6 @@ pub struct OCELObjectAttribute {
 #[serde(untagged)]
 /// OCEL Attribute Values
 pub enum OCELAttributeValue {
-    /// String
-    String(String),
     /// DateTime
     Time(DateTime<Utc>),
     /// Integer
@@ -120,6 +118,8 @@ pub enum OCELAttributeValue {
     Float(f64),
     /// Boolean
     Boolean(bool),
+    /// String
+    String(String),
     /// Placeholder for invalid values
     Null,
 }
