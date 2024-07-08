@@ -14,6 +14,31 @@ use super::ocel_struct::{
     OCELRelationship, OCELTypeAttribute,
 };
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+
+///
+/// Options for OCEL Import
+///
+pub struct OCELImportOptions {
+    /// Verbosely log errors or warnings (e.g., for missing referenced objects or invalid attribute values)
+    pub verbose: bool,
+    /// Optional date format to use when parsing DateTimes (first trying [`chrono::DateTime`] then falling back to [`chrono::NaiveDateTime`] with UTC timezone).
+    ///
+    /// See <https://docs.rs/chrono/latest/chrono/format/strftime/index.html> for all available Specifiers.
+    ///
+    /// Will fall back to default formats (e.g., rfc3339) if parsing fails using passed date_format
+    pub date_format: Option<String>,
+}
+
+impl Default for OCELImportOptions {
+    fn default() -> Self {
+        Self {
+            verbose: true,
+            date_format: None,
+        }
+    }
+}
+
 ///
 /// Current Parsing Mode (i.e., which tag is currently open / being parsed)
 ///
@@ -69,7 +94,11 @@ fn get_attribute_value(t: &BytesStart<'_>, key: &str) -> String {
     read_to_string(&mut t.try_get_attribute(key).unwrap().unwrap().value.as_ref())
 }
 
-fn parse_attribute_value(attribute_type: &OCELAttributeType, value: String) -> OCELAttributeValue {
+fn parse_attribute_value(
+    attribute_type: &OCELAttributeType,
+    value: String,
+    options: &OCELImportOptions,
+) -> OCELAttributeValue {
     let res = match attribute_type {
         OCELAttributeType::String => Ok(OCELAttributeValue::String(value.clone())),
         OCELAttributeType::Integer => value
@@ -85,23 +114,33 @@ fn parse_attribute_value(attribute_type: &OCELAttributeType, value: String) -> O
             .map_err(|e| format!("{}", e))
             .map(OCELAttributeValue::Boolean),
         OCELAttributeType::Null => Ok(OCELAttributeValue::Null),
-        OCELAttributeType::Time => parse_date(&value)
+        OCELAttributeType::Time => parse_date(&value, options)
             .map_err(|e| e.to_string())
             .map(|v| OCELAttributeValue::Time(v.into())),
     };
     match res {
         Ok(attribute_val) => attribute_val,
         Err(e) => {
-            eprintln!(
-                "Failed to parse attribute value {:?} with supposed type {:?}\n{}",
-                value, attribute_type, e
-            );
+            if options.verbose {
+                eprintln!(
+                    "Failed to parse attribute value {:?} with supposed type {:?}\n{}",
+                    value, attribute_type, e
+                );
+            }
             OCELAttributeValue::Null
         }
     }
 }
 
-fn parse_date(time: &str) -> Result<DateTime<FixedOffset>, &str> {
+fn parse_date<'a>(
+    time: &'a str,
+    options: &OCELImportOptions,
+) -> Result<DateTime<FixedOffset>, &'a str> {
+    if let Some(date_format) = &options.date_format {
+        if let Ok(dt) = DateTime::parse_from_str(time, date_format) {
+            return Ok(dt);
+        }
+    }
     if let Ok(dt) = DateTime::parse_from_rfc3339(time) {
         return Ok(dt);
     }
@@ -129,14 +168,16 @@ fn parse_date(time: &str) -> Result<DateTime<FixedOffset>, &str> {
     if let Ok((dt, _)) = DateTime::parse_and_remainder(time, "%Z %b %d %Y %T GMT%z") {
         return Ok(dt);
     }
-    eprintln!("Failed to parse date: {time}");
+    if options.verbose {
+        eprintln!("Failed to parse date: {time}");
+    }
     Err("Unexpected Date Format")
 }
 
 ///
 /// Import an [`OCEL`]2 XML file from the given reader
 ///
-pub fn import_ocel_xml<T>(reader: &mut Reader<T>) -> OCEL
+pub fn import_ocel_xml<T>(reader: &mut Reader<T>, options: OCELImportOptions) -> OCEL
 where
     T: BufRead,
 {
@@ -230,7 +271,7 @@ where
                             b"attribute" => {
                                 let name = get_attribute_value(&t, "name");
                                 let time_str = get_attribute_value(&t, "time");
-                                let time = parse_date(&time_str);
+                                let time = parse_date(&time_str, &options);
                                 match time {
                                     Ok(time_val) => {
                                         ocel.objects.last_mut().unwrap().attributes.push(
@@ -242,7 +283,9 @@ where
                                         )
                                     }
                                     Err(e) => {
-                                        eprintln!("Failed to parse time value of attribute: {}. Will skip this attribute completely for now.",e);
+                                        if options.verbose {
+                                            eprintln!("Failed to parse time value of attribute: {}. Will skip this attribute completely for now.",e);
+                                        }
                                     }
                                 }
                             }
@@ -259,7 +302,7 @@ where
                                     event_type,
                                     attributes: Vec::new(),
                                     relationships: None,
-                                    time: parse_date(&time).unwrap().into(),
+                                    time: parse_date(&time, &options).unwrap().into(),
                                 });
                                 current_mode = Mode::Event
                             }
@@ -416,7 +459,7 @@ where
                             b"attribute" => {
                                 let name = get_attribute_value(&t, "name");
                                 let time_str = get_attribute_value(&t, "time");
-                                let time = parse_date(&time_str);
+                                let time = parse_date(&time_str, &options);
                                 match time {
                                     Ok(time_val) => {
                                         ocel.objects.last_mut().unwrap().attributes.push(
@@ -428,7 +471,9 @@ where
                                         )
                                     }
                                     Err(e) => {
-                                        eprintln!("Failed to parse time value of attribute: {}. Will skip this attribute completely for now.",e);
+                                        if options.verbose {
+                                            eprintln!("Failed to parse time value of attribute: {}. Will skip this attribute completely for now.",e);
+                                        }
                                     }
                                 }
                             }
@@ -547,6 +592,7 @@ where
                                     .get(&(o.object_type.clone(), attribute.name.clone()))
                                     .unwrap(),
                                 str_val,
+                                &options,
                             );
                             // parse_attribute_value
                         }
@@ -559,6 +605,7 @@ where
                                     .get(&(e.event_type.clone(), attribute.name.clone()))
                                     .unwrap(),
                                 str_val,
+                                &options,
                             );
                         }
                         _ => {
@@ -569,7 +616,11 @@ where
                     _ => {}
                 }
             }
-            Err(err) => eprintln!("Error: {:?}", err),
+            Err(err) => {
+                if options.verbose {
+                    eprintln!("Error: {:?}", err)
+                }
+            }
         }
     }
 
@@ -577,16 +628,30 @@ where
 }
 
 ///
-/// Import an [`OCEL`]2 XML from a byte slice
+/// Import an [`OCEL`]2 XML from a byte slice __with__ _custom options_
 ///
-pub fn import_ocel_xml_slice(xes_data: &[u8]) -> OCEL {
-    import_ocel_xml(&mut Reader::from_reader(BufReader::new(xes_data)))
+pub fn import_ocel_xml_slice_with(xes_data: &[u8], options: OCELImportOptions) -> OCEL {
+    import_ocel_xml(&mut Reader::from_reader(BufReader::new(xes_data)), options)
 }
 
 ///
-/// Import an [`OCEL`]2 XML from a filepath
+/// Import an [`OCEL`]2 XML from a filepath __with__ _custom options_
+///
+pub fn import_ocel_xml_file_with(path: &str, options: OCELImportOptions) -> OCEL {
+    let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();
+    import_ocel_xml(&mut reader, options)
+}
+
+///
+/// Import an [`OCEL`]2 XML from a byte slice with default options
+///
+pub fn import_ocel_xml_slice(xes_data: &[u8]) -> OCEL {
+    import_ocel_xml_slice_with(xes_data, OCELImportOptions::default())
+}
+
+///
+/// Import an [`OCEL`]2 XML from a filepath with default options
 ///
 pub fn import_ocel_xml_file(path: &str) -> OCEL {
-    let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();
-    import_ocel_xml(&mut reader)
+    import_ocel_xml_file_with(path, OCELImportOptions::default())
 }
