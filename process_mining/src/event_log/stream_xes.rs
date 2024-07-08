@@ -460,7 +460,7 @@ impl<'a> StreamingXESParser<'a> {
                                         _ => {
                                             // We might end up here if there are nested, ignored attributes
                                             // Noop
-                                        },
+                                        }
                                     }
                                 }
                             }

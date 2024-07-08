@@ -312,7 +312,6 @@ pub fn test_2017bpic_log() {
     })
 }
 
-
 #[test]
 pub fn test_2018bpic_log() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
