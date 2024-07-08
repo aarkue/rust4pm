@@ -1,5 +1,5 @@
 <div align="center">
-<h1>Rust Bridge for Process Mining</h1>
+<h1>Rust4PM: A Rust Bridge for Process Mining</h1>
   <p><strong><code>process_mining</code></pre> Rust Crate</strong></p>
   <p>
     <a href="https://crates.io/crates/process_mining">
