@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::{serde::ts_milliseconds, DateTime, Utc};
+use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -23,9 +23,9 @@ use super::constants::ACTIVITY_NAME;
 pub enum AttributeValue {
     /// String values
     String(String),
-    #[serde(with = "ts_milliseconds")]
+    // #[serde(with = "ts_milliseconds")]
     /// DateTime values
-    Date(DateTime<Utc>),
+    Date(DateTime<FixedOffset>),
     /// Integer values
     Int(i64),
     /// Float values
@@ -63,7 +63,7 @@ impl AttributeValue {
     ///
     /// Returns `Some()` of inner value if value is of variant [`AttributeValue::Date`] and `None` otherwise
     ///
-    pub fn try_as_date(&self) -> Option<&DateTime<Utc>> {
+    pub fn try_as_date(&self) -> Option<&DateTime<FixedOffset>> {
         match self {
             AttributeValue::Date(v) => Some(v),
             _ => None,

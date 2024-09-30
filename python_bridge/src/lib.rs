@@ -53,9 +53,9 @@ fn any_value_to_attribute_value(from: &AnyValue) -> AttributeValue {
         AnyValue::Float64(v) => AttributeValue::Float(*v),
         AnyValue::Datetime(ns, _, _) => {
             // Convert nanos to micros; tz is not used!
-            let d: DateTime<Utc> = NaiveDateTime::from_timestamp_micros(ns / 1000)
+            let d: DateTime<_> = NaiveDateTime::from_timestamp_micros(ns / 1000)
                 .unwrap()
-                .and_utc();
+                .and_utc().fixed_offset();
             AttributeValue::Date(d)
         }
         AnyValue::Utf8Owned(v) => AttributeValue::String(v.to_string()),

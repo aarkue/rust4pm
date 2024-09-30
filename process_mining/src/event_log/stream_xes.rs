@@ -6,7 +6,7 @@ use std::{
     str::FromStr,
 };
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use flate2::read::GzDecoder;
 use quick_xml::{escape::unescape, events::BytesStart, Reader};
 use serde::{Deserialize, Serialize};
@@ -1058,7 +1058,7 @@ fn parse_attribute_value_from_tag(
     attribute_val.unwrap_or(AttributeValue::None())
 }
 
-fn parse_date_from_str(value: &str, date_format: &Option<String>) -> Option<DateTime<Utc>> {
+fn parse_date_from_str(value: &str, date_format: &Option<String>) -> Option<DateTime<FixedOffset>> {
     // Is a date_format string provided?
     if let Some(date_format) = &date_format {
         if let Ok(dt) = DateTime::parse_from_str(value, date_format) {
@@ -1066,7 +1066,7 @@ fn parse_date_from_str(value: &str, date_format: &Option<String>) -> Option<Date
         }
         // If parsing with DateTime with provided date format fail, try to parse NaiveDateTime using format (i.e., without time-zone, assuming UTC)
         if let Ok(dt) = NaiveDateTime::parse_from_str(value, date_format) {
-            return Some(dt.and_utc());
+            return Some(dt.and_utc().fixed_offset());
         }
     }
 
@@ -1081,7 +1081,7 @@ fn parse_date_from_str(value: &str, date_format: &Option<String>) -> Option<Date
     }
 
     if let Ok(dt) = NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f") {
-        return Some(dt.and_utc());
+        return Some(dt.and_utc().fixed_offset());
     }
 
     None

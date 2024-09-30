@@ -28,7 +28,24 @@ fn test_xes_gz_import() {
     });
     assert!(case_a.is_some());
     assert_eq!(case_a.unwrap().events.len(), 22);
-
+    let case_a_first_ev_time = case_a
+        .unwrap()
+        .events
+        .first()
+        .unwrap()
+        .attributes
+        .get_by_key("time:timestamp")
+        .unwrap()
+        .value
+        .try_as_date()
+        .unwrap();
+    println!("{:?}", case_a_first_ev_time);
+    assert_eq!(
+        case_a_first_ev_time,
+        &DateTime::parse_from_rfc3339("2014-10-22T11:15:41.000+02:00")
+            .unwrap()
+            .fixed_offset()
+    );
     // Test if activity trace of case "A" is correct
     let case_a_act_trace: Vec<AttributeValue> = case_a
         .unwrap()
@@ -92,6 +109,7 @@ fn test_xes_gz_import() {
     };
     assert_eq!(log_name, Some("Sepsis Cases - Event Log"));
 }
+
 #[test]
 pub fn test_invalid_xes_non_existing_file_gz() {
     let res_gz = import_xes_file(
