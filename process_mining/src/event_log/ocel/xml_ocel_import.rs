@@ -155,9 +155,9 @@ fn parse_date<'a>(
         return Ok(dt.and_utc().into());
     }
 
-    // Some logs have this date: "2022-01-09T15:00:00"
-    // Assuming that this is UTC
-    if let Ok(dt) = NaiveDateTime::parse_from_str(time, "%FT%T") {
+    // Also handle "2024-10-02T07:55:15.348555" as well as "2022-01-09T15:00:00"
+    // Assuming UTC time zone
+    if let Ok(dt) =  NaiveDateTime::parse_from_str(time, "%FT%T%.f") {
         return Ok(dt.and_utc().into());
     }
 
