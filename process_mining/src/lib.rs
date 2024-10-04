@@ -29,8 +29,10 @@ pub mod event_log {
         /// [`OCEL`] struct and sub-structs
         pub mod ocel_struct;
         #[allow(clippy::single_match)]
-        /// Parser for the OCEL2 XML format
+        /// Parser for the OCEL 2.0 XML format
         pub mod xml_ocel_import;
+        /// XML Export for OCEL 2.0
+        pub mod xml_ocel_export;
     }
     pub use event_log_struct::{
         Attribute, AttributeValue, Attributes, Event, EventLog, Trace, XESEditableAttribute,

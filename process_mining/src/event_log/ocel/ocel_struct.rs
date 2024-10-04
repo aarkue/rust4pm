@@ -123,3 +123,17 @@ pub enum OCELAttributeValue {
     /// Placeholder for invalid values
     Null,
 }
+
+
+impl OCELAttributeValue {
+    pub fn to_string(&self) -> String {
+        match self {
+            OCELAttributeValue::Time(dt) => dt.to_rfc3339(),
+            OCELAttributeValue::Integer(i) => i.to_string(),
+            OCELAttributeValue::Float(f) => f.to_string(),
+            OCELAttributeValue::Boolean(b) => b.to_string(),
+            OCELAttributeValue::String(s) => s.clone(),
+            OCELAttributeValue::Null => "INVALID_VALUE".to_string(),
+        }
+    }
+}
