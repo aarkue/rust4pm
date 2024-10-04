@@ -6,7 +6,8 @@ members = [
 	"process_mining",
 	"python_bridge",
 	"java_bridge",
-	"pm_wasm"
+	"pm_wasm",
+	"npm_wasm"
 ]
 
 [profile.release.package.pm_wasm]
