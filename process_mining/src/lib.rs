@@ -33,6 +33,8 @@ pub mod event_log {
         pub mod xml_ocel_import;
         /// XML Export for OCEL 2.0
         pub mod xml_ocel_export;
+        /// SQLite OCEL 2.0
+        pub mod sqlite_ocel;
     }
     pub use event_log_struct::{
         Attribute, AttributeValue, Attributes, Event, EventLog, Trace, XESEditableAttribute,
