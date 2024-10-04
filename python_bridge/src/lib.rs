@@ -1,6 +1,5 @@
 use chrono::DateTime;
 use chrono::NaiveDateTime;
-use chrono::Utc;
 use polars::prelude::AnyValue;
 use polars::prelude::DataFrame;
 use polars::prelude::DataType;
