@@ -254,7 +254,7 @@ where
                                     id,
                                     object_type,
                                     attributes: Vec::new(),
-                                    relationships: None,
+                                    relationships: Vec::new(),
                                 });
                                 current_mode = Mode::Object
                             }
@@ -301,7 +301,7 @@ where
                                     id,
                                     event_type,
                                     attributes: Vec::new(),
-                                    relationships: None,
+                                    relationships: Vec::new(),
                                     time: parse_date(&time, &options).unwrap().into(),
                                 });
                                 current_mode = Mode::Event
@@ -423,13 +423,7 @@ where
                                     object_id,
                                     qualifier,
                                 };
-                                match ocel.objects.last_mut().unwrap().relationships.as_mut() {
-                                    Some(rels) => rels.push(new_rel),
-                                    None => {
-                                        ocel.objects.last_mut().unwrap().relationships =
-                                            Some(vec![new_rel])
-                                    }
-                                }
+                                ocel.objects.last_mut().unwrap().relationships.push(new_rel);
                             }
                             // P2P log uses relobj instead of relationship?
                             // TODO: Remove once fixed
@@ -440,13 +434,7 @@ where
                                     object_id,
                                     qualifier,
                                 };
-                                match ocel.objects.last_mut().unwrap().relationships.as_mut() {
-                                    Some(rels) => rels.push(new_rel),
-                                    None => {
-                                        ocel.objects.last_mut().unwrap().relationships =
-                                            Some(vec![new_rel])
-                                    }
-                                }
+                                ocel.objects.last_mut().unwrap().relationships.push(new_rel);
                             }
                             b"objects" => {
                                 // No O2O, that's fine!
@@ -495,13 +483,7 @@ where
                                     object_id,
                                     qualifier,
                                 };
-                                match ocel.events.last_mut().unwrap().relationships.as_mut() {
-                                    Some(rels) => rels.push(new_rel),
-                                    None => {
-                                        ocel.events.last_mut().unwrap().relationships =
-                                            Some(vec![new_rel])
-                                    }
-                                }
+                                ocel.events.last_mut().unwrap().relationships.push(new_rel);
                             }
                             // Angular log uses object instead?
                             // TODO: Remove once example logs are updated
@@ -513,13 +495,7 @@ where
                                     object_id,
                                     qualifier,
                                 };
-                                match ocel.events.last_mut().unwrap().relationships.as_mut() {
-                                    Some(rels) => rels.push(new_rel),
-                                    None => {
-                                        ocel.events.last_mut().unwrap().relationships =
-                                            Some(vec![new_rel])
-                                    }
-                                }
+                                ocel.events.last_mut().unwrap().relationships.push(new_rel);
                             }
 
                             // P2P log uses relobj instead of relationship?
@@ -531,13 +507,7 @@ where
                                     object_id,
                                     qualifier,
                                 };
-                                match ocel.events.last_mut().unwrap().relationships.as_mut() {
-                                    Some(rels) => rels.push(new_rel),
-                                    None => {
-                                        ocel.events.last_mut().unwrap().relationships =
-                                            Some(vec![new_rel])
-                                    }
-                                }
+                                ocel.events.last_mut().unwrap().relationships.push(new_rel);
                             }
                             // Empty attribute => Null value (?)
                             b"attribute" => {

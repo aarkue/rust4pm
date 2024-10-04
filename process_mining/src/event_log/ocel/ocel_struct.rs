@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 
 ///
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Consists of multiple [`OCELEvent`]s and [`OCELObject`]s with corresponding event and object [`OCELType`]s
 ///
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct OCEL {
     /// Event Types in OCEL
     #[serde(rename = "eventTypes")]
@@ -22,7 +22,7 @@ pub struct OCEL {
     pub objects: Vec<OCELObject>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 /// OCEL Event/Object Type
 pub struct OCELType {
     /// Name
@@ -32,7 +32,7 @@ pub struct OCELType {
     pub attributes: Vec<OCELTypeAttribute>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 /// OCEL Attribute types
 pub struct OCELTypeAttribute {
     /// Name of attribute
@@ -42,7 +42,7 @@ pub struct OCELTypeAttribute {
     pub value_type: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 /// OCEL Event Attributes
 pub struct OCELEventAttribute {
     /// Name of event attribute
@@ -51,7 +51,7 @@ pub struct OCELEventAttribute {
     pub value: OCELAttributeValue,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 /// OCEL Event
 pub struct OCELEvent {
     /// Event ID
@@ -60,15 +60,16 @@ pub struct OCELEvent {
     #[serde(rename = "type")]
     pub event_type: String,
     /// DateTime when event occured
-    pub time: DateTime<Utc>,
+    pub time: DateTime<FixedOffset>,
     /// Event attributes
     #[serde(default)]
     pub attributes: Vec<OCELEventAttribute>,
     /// E2O (Event-to-Object) relationships
-    pub relationships: Option<Vec<OCELRelationship>>,
+    #[serde(default)]
+    pub relationships: Vec<OCELRelationship>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 /// OCEL Relationship (qualified; referring back to an [`OCELObject`])
 pub struct OCELRelationship {
     /// ID of referenced [`OCELObject`]
@@ -78,7 +79,7 @@ pub struct OCELRelationship {
     pub qualifier: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 /// OCEL Object
 pub struct OCELObject {
     /// Object ID
@@ -90,10 +91,11 @@ pub struct OCELObject {
     #[serde(default)]
     pub attributes: Vec<OCELObjectAttribute>,
     /// O2O (Object-to-Object) relationships
-    pub relationships: Option<Vec<OCELRelationship>>,
+    #[serde(default)]
+    pub relationships: Vec<OCELRelationship>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 /// OCEL Object Attribute
 ///
 /// Describing a named value _at a certain point in time_
@@ -103,15 +105,15 @@ pub struct OCELObjectAttribute {
     /// Value of attribute
     pub value: OCELAttributeValue,
     /// Time of attribute value
-    pub time: DateTime<Utc>,
+    pub time: DateTime<FixedOffset>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 /// OCEL Attribute Values
 pub enum OCELAttributeValue {
     /// DateTime
-    Time(DateTime<Utc>),
+    Time(DateTime<FixedOffset>),
     /// Integer
     Integer(i64),
     /// Float
@@ -126,6 +128,11 @@ pub enum OCELAttributeValue {
 
 
 impl OCELAttributeValue {
+    ///
+    /// Convert the attribute value to [`String`]
+    /// 
+    /// Time values ([`OCELAttributeValue::Time`]) are represented as a RFC 3339 and ISO 8601 datetime string (e.g., `1996-12-19T16:39:57-08:00``)
+    /// 
     pub fn to_string(&self) -> String {
         match self {
             OCELAttributeValue::Time(dt) => dt.to_rfc3339(),
@@ -133,7 +140,9 @@ impl OCELAttributeValue {
             OCELAttributeValue::Float(f) => f.to_string(),
             OCELAttributeValue::Boolean(b) => b.to_string(),
             OCELAttributeValue::String(s) => s.clone(),
-            OCELAttributeValue::Null => "INVALID_VALUE".to_string(),
+            OCELAttributeValue::Null => String::default(),//"INVALID_VALUE".to_string(),
         }
     }
 }
+
+

@@ -143,11 +143,11 @@ fn write_ocel_type_attrs<W: std::io::Write>(
 }
 
 fn write_ocel_relationships<W: std::io::Write>(
-    rels: &Option<Vec<OCELRelationship>>,
+    rels: &Vec<OCELRelationship>,
     w: &mut quick_xml::Writer<W>,
 ) -> Result<(), quick_xml::Error> {
     w.create_element("objects").write_inner_content(|w| {
-        for r in rels.iter().flatten() {
+        for r in rels {
             w.create_element("relationship")
                 .with_attribute(("object-id", r.object_id.as_str()))
                 .with_attribute(("qualifier", r.qualifier.as_str()))
@@ -169,4 +169,110 @@ pub fn export_ocel_to_xml_file(
         return export_ocel_xml(&mut Writer::new(BufWriter::new(encoder)), ocel);
     }
     export_ocel_xml(&mut Writer::new(BufWriter::new(file)), ocel)
+}
+
+#[cfg(test)]
+mod ocel_xml_export_test {
+    use std::{fs::File, time::Instant};
+
+    use crate::{import_ocel_xml_file, import_ocel_xml_slice, ocel::xml_ocel_export::export_ocel_to_xml_file};
+
+
+
+    #[test]
+    fn export_round_trip_order_management(){
+        let log_bytes = include_bytes!("../tests/test_data/order-management.xml");
+        let mut now = Instant::now();
+        let ocel = import_ocel_xml_slice(log_bytes);
+        let obj = ocel.objects.first().unwrap();
+        println!("{:?}", obj);
+        println!(
+            "Imported OCEL with {} objects and {} events in {:#?}",
+            ocel.objects.len(),
+            ocel.events.len(),
+            now.elapsed()
+        );
+        assert_eq!(ocel.objects.len(), 10840);
+        assert_eq!(ocel.events.len(), 21008);
+
+        let export_path = "/tmp/order-mangement-export.xml";
+        now = Instant::now();
+        export_ocel_to_xml_file(&ocel, File::create(export_path).unwrap(), false).unwrap();
+        println!(
+            "Exported OCEL with {} objects and {} events in {:#?}",
+            ocel.objects.len(),
+            ocel.events.len(),
+            now.elapsed()
+        );
+        now = Instant::now();
+        let ocel2 = import_ocel_xml_file(&export_path);
+        println!(
+            "Imported OCEL AGAIN with {} objects and {} events in {:#?}",
+            ocel.objects.len(),
+            ocel.events.len(),
+            now.elapsed()
+        );
+
+        std::fs::remove_file(export_path).unwrap();
+        assert_eq!(ocel2.objects.len(), 10840);
+        assert_eq!(ocel2.events.len(), 21008);
+
+        // Do not use assert_eq!(...) because this will flood stdout with full OCEL if not true
+        assert!(ocel == ocel2);
+        
+    }
+
+
+    #[test]
+    fn export_round_trip_p2p(){
+        let log_bytes = include_bytes!("../tests/test_data/ocel2-p2p.xml");
+        let mut now = Instant::now();
+        let ocel = import_ocel_xml_slice(log_bytes);
+        let obj = ocel.objects.first().unwrap();
+        println!("{:?}", obj);
+        println!(
+            "Imported OCEL with {} objects and {} events in {:#?}",
+            ocel.objects.len(),
+            ocel.events.len(),
+            now.elapsed()
+        );
+        assert_eq!(ocel.objects.len(), 9543);
+        assert_eq!(ocel.events.len(), 14671);
+
+        let export_path = "/tmp/ocel2-p2p-export.xml";
+        now = Instant::now();
+        export_ocel_to_xml_file(&ocel, File::create(export_path).unwrap(), false).unwrap();
+        println!(
+            "Exported OCEL with {} objects and {} events in {:#?}",
+            ocel.objects.len(),
+            ocel.events.len(),
+            now.elapsed()
+        );
+        now = Instant::now();
+        let ocel2 = import_ocel_xml_file(&export_path);
+        println!(
+            "Imported OCEL AGAIN with {} objects and {} events in {:#?}",
+            ocel.objects.len(),
+            ocel.events.len(),
+            now.elapsed()
+        );
+        std::fs::remove_file(export_path).unwrap();
+        assert_eq!(ocel2.objects.len(), 9543);
+        assert_eq!(ocel2.events.len(), 14671);
+
+        assert_eq!(ocel.event_types,ocel2.event_types);
+        assert_eq!(ocel.object_types,ocel2.object_types);
+        assert_eq!(ocel.events,ocel2.events);
+        
+        // Do not use assert_eq!(...) because this will flood stdout with full OCEL if not true
+        assert!(ocel == ocel2);
+
+        // for (o1,o2) in ocel.objects.iter().zip(ocel2.objects.iter()) {
+        //     for (a1,a2) in o1.attributes.iter().zip(o2.attributes.iter()) {
+        //         assert_eq!(a1,a2);
+        //     } 
+        // }
+        
+    }
+
 }
