@@ -146,3 +146,49 @@ impl OCELAttributeValue {
 }
 
 
+
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+/// _Types_ of attribute values in OCEL2
+pub enum OCELAttributeType {
+    /// String
+    String,
+    /// DateTime
+    Time,
+    /// Integer
+    Integer,
+    /// Float
+    Float,
+    /// Boolean
+    Boolean,
+    /// Placeholder for invalid types
+    Null,
+}
+
+impl OCELAttributeType {
+    pub fn to_string(&self) -> String {
+        match self {
+            OCELAttributeType::String => "string",
+            OCELAttributeType::Float => "float",
+            OCELAttributeType::Boolean => "boolean",
+            OCELAttributeType::Integer => "integer",
+            OCELAttributeType::Time => "time",
+            //  Null is not a real attribute type
+            OCELAttributeType::Null => "string",
+        }
+        .to_string()
+    }
+}
+
+
+
+pub fn ocel_type_string_to_attribute_type(s: &str) -> OCELAttributeType {
+    match s {
+        "string" => OCELAttributeType::String,
+        "float" => OCELAttributeType::Float,
+        "boolean" => OCELAttributeType::Boolean,
+        "integer" => OCELAttributeType::Integer,
+        "time" => OCELAttributeType::Time,
+        _ => OCELAttributeType::Null,
+    }
+}

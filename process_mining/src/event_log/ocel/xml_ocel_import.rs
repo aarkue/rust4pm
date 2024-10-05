@@ -10,8 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{event_log::ocel::ocel_struct::OCELType, OCEL};
 
 use super::ocel_struct::{
-    OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute,
-    OCELRelationship, OCELTypeAttribute,
+    ocel_type_string_to_attribute_type, OCELAttributeType, OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute, OCELRelationship, OCELTypeAttribute
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -58,51 +57,8 @@ enum Mode {
     None,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-/// _Types_ of attribute values in OCEL2
-pub enum OCELAttributeType {
-    /// String
-    String,
-    /// DateTime
-    Time,
-    /// Integer
-    Integer,
-    /// Float
-    Float,
-    /// Boolean
-    Boolean,
-    /// Placeholder for invalid types
-    Null,
-}
-
-impl OCELAttributeType {
-    pub fn to_string(&self) -> String {
-        match self {
-            OCELAttributeType::String => "string",
-            OCELAttributeType::Float => "float",
-            OCELAttributeType::Boolean => "boolean",
-            OCELAttributeType::Integer => "integer",
-            OCELAttributeType::Time => "time",
-            //  Null is not a real attribute type
-            OCELAttributeType::Null => "string",
-        }
-        .to_string()
-    }
-}
-
 fn read_to_string(x: &mut &[u8]) -> String {
     String::from_utf8_lossy(x).to_string()
-}
-
-fn type_string_to_attribute_type(s: &str) -> OCELAttributeType {
-    match s {
-        "string" => OCELAttributeType::String,
-        "float" => OCELAttributeType::Float,
-        "boolean" => OCELAttributeType::Boolean,
-        "integer" => OCELAttributeType::Integer,
-        "time" => OCELAttributeType::Time,
-        _ => OCELAttributeType::Null,
-    }
 }
 
 fn get_attribute_value(t: &BytesStart<'_>, key: &str) -> String {
@@ -147,7 +103,7 @@ fn parse_attribute_value(
     }
 }
 
-fn parse_date<'a>(
+pub fn parse_date<'a>(
     time: &'a str,
     options: &OCELImportOptions,
 ) -> Result<DateTime<FixedOffset>, &'a str> {
@@ -419,7 +375,7 @@ where
                                 let object_type = &ocel.object_types.last().unwrap().name;
                                 object_attribute_types.insert(
                                     (object_type.clone(), name.clone()),
-                                    type_string_to_attribute_type(&value_type),
+                                    ocel_type_string_to_attribute_type(&value_type),
                                 );
                                 ocel.object_types
                                     .last_mut()
@@ -555,7 +511,7 @@ where
                                 let event_type = &ocel.event_types.last().unwrap().name;
                                 event_attribute_types.insert(
                                     (event_type.clone(), name.clone()),
-                                    type_string_to_attribute_type(&value_type),
+                                    ocel_type_string_to_attribute_type(&value_type),
                                 );
                                 ocel.event_types
                                     .last_mut()
