@@ -75,6 +75,21 @@ pub enum OCELAttributeType {
     Null,
 }
 
+impl OCELAttributeType {
+    pub fn to_string(&self) -> String {
+        match self {
+            OCELAttributeType::String => "string",
+            OCELAttributeType::Float => "float",
+            OCELAttributeType::Boolean => "boolean",
+            OCELAttributeType::Integer => "integer",
+            OCELAttributeType::Time => "time",
+            //  Null is not a real attribute type
+            OCELAttributeType::Null => "string",
+        }
+        .to_string()
+    }
+}
+
 fn read_to_string(x: &mut &[u8]) -> String {
     String::from_utf8_lossy(x).to_string()
 }
@@ -157,7 +172,7 @@ fn parse_date<'a>(
 
     // Also handle "2024-10-02T07:55:15.348555" as well as "2022-01-09T15:00:00"
     // Assuming UTC time zone
-    if let Ok(dt) =  NaiveDateTime::parse_from_str(time, "%FT%T%.f") {
+    if let Ok(dt) = NaiveDateTime::parse_from_str(time, "%FT%T%.f") {
         return Ok(dt.and_utc().into());
     }
 
