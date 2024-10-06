@@ -1,10 +1,15 @@
-use std::{collections::HashMap, time::UNIX_EPOCH};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    time::UNIX_EPOCH,
+};
 
 use chrono::{Date, DateTime, FixedOffset};
 use rusqlite::{Connection, Params, Row, Rows, Statement};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    import_ocel_xml_file, import_ocel_xml_slice,
     ocel::{
         ocel_struct::{
             OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute, OCELType,
@@ -43,7 +48,8 @@ const IGNORED_PRAGMA_COLUMNS: [&'static str; 3] = ["ocel_id", "ocel_time", "ocel
 const OCEL_CHANGED_FIELD: &'static str = "ocel_changed_field";
 const OCEL_TIME_COLUMN: &'static str = "ocel_time";
 
-pub fn import_ocel_sqlite(con: Connection) -> Result<OCEL, rusqlite::Error> {
+/// Import OCEL 2.0 log from SQLite connection
+pub fn import_ocel_sqlite_con(con: Connection) -> Result<OCEL, rusqlite::Error> {
     let mut ocel = OCEL {
         event_types: Vec::default(),
         object_types: Vec::default(),
@@ -71,7 +77,6 @@ pub fn import_ocel_sqlite(con: Connection) -> Result<OCEL, rusqlite::Error> {
     let mut event_map: HashMap<String, OCELEvent> = HashMap::new();
 
     for (ob_type, ob_type_ocel) in ob_type_map.iter() {
-        println!("{ob_type}");
         let mut s = con.prepare(format!("PRAGMA table_info(object_{ob_type})").as_str())?;
         let ob_attr_query = query_all::<_>(&mut s, [])?;
         let ob_type_attrs: Vec<OCELTypeAttribute> = ob_attr_query
@@ -93,7 +98,13 @@ pub fn import_ocel_sqlite(con: Connection) -> Result<OCEL, rusqlite::Error> {
                 x.get(OCEL_TIME_COLUMN)?,
                 ob_type_attrs
                     .iter()
-                    .map(|attr| Ok::<(&String, OCELAttributeValue),rusqlite::Error>((&attr.name, get_row_attribute_value(attr, x)?))).flatten()
+                    .map(|attr| {
+                        Ok::<(&String, OCELAttributeValue), rusqlite::Error>((
+                            &attr.name,
+                            get_row_attribute_value(attr, x)?,
+                        ))
+                    })
+                    .flatten()
                     .collect(),
             ))
         })
@@ -109,15 +120,20 @@ pub fn import_ocel_sqlite(con: Connection) -> Result<OCEL, rusqlite::Error> {
             // Technically time should probably be set to UNIX epoch (1970-01-01 00:00 UTC) for these "initial" attribute values
             // however there are some OCEL logs for which this does not hold?
             if UNIX_EPOCH != time.into() {
-                println!("Expected initial object attribute value to have UNIX epoch as time. Instead got {time:?}. Overwriting to UNIX epoch.");
+                // eprintln!("Expected initial object attribute value to have UNIX epoch as time. Instead got {time:?}. Overwriting to UNIX epoch.");
                 time = DateTime::UNIX_EPOCH.into();
             }
-            o.attributes.extend(attrs.into_iter().map(|(attr_name, attr_value)| OCELObjectAttribute {
-                name: attr_name.clone(),
+            o.attributes
+                .extend(
+                    attrs
+                        .into_iter()
+                        .map(|(attr_name, attr_value)| OCELObjectAttribute {
+                            name: attr_name.clone(),
 
-                value: attr_value,
-                time,
-            }));
+                            value: attr_value,
+                            time,
+                        }),
+                );
             object_map.insert(ob_id, o);
         });
         // Get changed attributes
@@ -160,7 +176,7 @@ pub fn import_ocel_sqlite(con: Connection) -> Result<OCEL, rusqlite::Error> {
         });
 
         let t = OCELType {
-            name: ob_type.clone(),
+            name: ob_type_ocel.clone(),
             attributes: ob_type_attrs,
         };
         // Add object type to ocel
@@ -168,7 +184,6 @@ pub fn import_ocel_sqlite(con: Connection) -> Result<OCEL, rusqlite::Error> {
     }
 
     for (ev_type, ev_type_ocel) in ev_type_map.iter() {
-        println!("{ev_type}");
         let mut s = con.prepare(format!("PRAGMA table_info(event_{ev_type})").as_str())?;
         let ev_attr_query = query_all::<_>(&mut s, [])?;
         let ev_type_attrs: Vec<OCELTypeAttribute> = ev_attr_query
@@ -221,7 +236,7 @@ pub fn import_ocel_sqlite(con: Connection) -> Result<OCEL, rusqlite::Error> {
             event_map.insert(ev_id, e);
         });
         let t = OCELType {
-            name: ev_type.clone(),
+            name: ev_type_ocel.clone(),
             attributes: ev_type_attrs,
         };
         ocel.event_types.push(t);
@@ -275,7 +290,6 @@ pub fn import_ocel_sqlite(con: Connection) -> Result<OCEL, rusqlite::Error> {
 
     ocel.objects = object_map.into_values().collect();
     ocel.events = event_map.into_values().collect();
-    // TODO: Continue SQLite importer
     Ok(ocel)
 }
 
@@ -328,25 +342,87 @@ fn get_row_attribute_value(
     }
 }
 
+///
+/// Import an OCEL 2.0 SQLite file from the given path
+/// 
+pub fn import_ocel_sqlite<P: AsRef<std::path::Path>>(path: P) -> Result<OCEL, rusqlite::Error> {
+    let con = Connection::open(path)?;
+    import_ocel_sqlite_con(con)
+}
+
 #[test]
 fn test_sqlite_ocel() -> Result<(), rusqlite::Error> {
-    let con = Connection::open("/home/aarkue/dow/order-management.sqlite").unwrap();
-    let ocel = import_ocel_sqlite(con)?;
-    ocel.objects
-        .iter()
-        .filter(|o| o.object_type == "orders")
-        .take(1)
-        .for_each(|p| println!("{p:#?}"));
-    ocel.events
-        .iter()
-        .filter(|o| o.event_type == "pay order")
-        .take(1)
-        .for_each(|p| println!("{p:#?}"));
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("src");
+    path.push("event_log");
+    path.push("tests");
+    path.push("test_data");
+    path.push("order-management.sqlite");
 
-    // let con = Connection::open("/home/aarkue/dow/ocel2-p2p.sqlite").unwrap();
-    // let ocel = import_ocel_sqlite(con)?;
-    // ocel.objects.iter().filter(|o| o.object_type == "purchase_order").take(1).for_each(|p| println!("{p:#?}"));
-    // ocel.events.iter().filter(|o| o.event_type == "Approve Purchase Order").take(1).for_each(|p| println!("{p:#?}"));
+    let con = Connection::open(path).unwrap();
+    let ocel = import_ocel_sqlite_con(con)?;
+
+    assert_eq!(ocel.objects.len(), 10840);
+    assert_eq!(ocel.events.len(), 21008);
+
+    assert_eq!(ocel.event_types.len(), 11);
+    assert_eq!(ocel.object_types.len(), 6);
+
+    let po_1337 = ocel.events.iter().find(|e| e.id == "pay_o-991337").unwrap();
+    assert_eq!(
+        po_1337.time,
+        DateTime::parse_from_rfc3339("2023-12-13T10:31:50+00:00").unwrap()
+    );
+    assert_eq!(
+        po_1337
+            .relationships
+            .clone()
+            .into_iter()
+            .collect::<HashSet<_>>(),
+        vec![
+            ("Echo", "product"),
+            ("iPad", "product"),
+            ("iPad Pro", "product"),
+            ("o-991337", "order"),
+            ("i-885283", "item"),
+            ("i-885284", "item"),
+            ("i-885285", "item"),
+        ]
+        .into_iter()
+        .map(|(o_id, q)| OCELRelationship {
+            object_id: o_id.to_string(),
+            qualifier: q.to_string()
+        })
+        .collect::<HashSet<_>>()
+    );
+
+    let o_1337 = ocel.objects.iter().find(|o| o.id == "o-991337").unwrap();
+    assert_eq!(
+        o_1337.attributes,
+        vec![OCELObjectAttribute {
+            name: "price".to_string(),
+            value: OCELAttributeValue::Float(1909.04),
+            time: DateTime::UNIX_EPOCH.into()
+        }]
+    );
+    assert_eq!(
+        o_1337
+            .relationships
+            .clone()
+            .into_iter()
+            .collect::<HashSet<_>>(),
+        vec![
+            ("i-885283", "comprises"),
+            ("i-885284", "comprises"),
+            ("i-885285", "comprises"),
+        ]
+        .into_iter()
+        .map(|(o_id, q)| OCELRelationship {
+            object_id: o_id.to_string(),
+            qualifier: q.to_string()
+        })
+        .collect::<HashSet<_>>()
+    );
 
     Ok(())
 }
