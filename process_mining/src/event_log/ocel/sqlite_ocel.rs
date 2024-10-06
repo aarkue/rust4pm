@@ -1,15 +1,10 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-    time::UNIX_EPOCH,
-};
+use std::{collections::HashMap, time::UNIX_EPOCH};
 
-use chrono::{Date, DateTime, FixedOffset};
+use chrono::{DateTime, FixedOffset};
 use rusqlite::{Connection, Params, Row, Rows, Statement};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    import_ocel_xml_file, import_ocel_xml_slice,
     ocel::{
         ocel_struct::{
             OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute, OCELType,
@@ -20,9 +15,7 @@ use crate::{
     OCEL,
 };
 
-use super::ocel_struct::{
-    ocel_type_string_to_attribute_type, OCELAttributeType, OCELAttributeValue, OCELRelationship,
-};
+use super::ocel_struct::{OCELAttributeType, OCELAttributeValue, OCELRelationship};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct MapTypeOCELRow {
@@ -44,11 +37,25 @@ struct PragmaRow {
     #[serde(rename = "type")]
     value_type: String,
 }
-const IGNORED_PRAGMA_COLUMNS: [&'static str; 3] = ["ocel_id", "ocel_time", "ocel_changed_field"];
-const OCEL_CHANGED_FIELD: &'static str = "ocel_changed_field";
-const OCEL_TIME_COLUMN: &'static str = "ocel_time";
+const OCEL_ID_COLUMN: &str = "ocel_id";
+const OCEL_TIME_COLUMN: &str = "ocel_time";
+const OCEL_CHANGED_FIELD: &str = "ocel_changed_field";
 
-/// Import OCEL 2.0 log from SQLite connection
+const IGNORED_PRAGMA_COLUMNS: [&str; 3] = [OCEL_ID_COLUMN, OCEL_TIME_COLUMN, OCEL_CHANGED_FIELD];
+
+const OCEL_TYPE_MAP_COLUMN: &str = "ocel_type_map";
+const OCEL_TYPE_COLUMN: &str = "ocel_type";
+
+const OCEL_O2O_SOURCE_ID_COLUMN: &str = "ocel_source_id";
+const OCEL_O2O_TARGET_ID_COLUMN: &str = "ocel_target_id";
+const OCEL_E2O_EVENT_ID_COLUMN: &str = "ocel_event_id";
+const OCEL_E2O_OBJECT_ID_COLUMN: &str = "ocel_object_id";
+const OCEL_REL_QUALIFIER_COLUMN: &str = "ocel_qualifier";
+
+/// Import [`OCEL`] 2.0 log from `SQLite` connection
+///
+/// If you want to import from a filepath, see [`import_ocel_sqlite_path`] instead.
+///
 pub fn import_ocel_sqlite_con(con: Connection) -> Result<OCEL, rusqlite::Error> {
     let mut ocel = OCEL {
         event_types: Vec::default(),
@@ -61,7 +68,9 @@ pub fn import_ocel_sqlite_con(con: Connection) -> Result<OCEL, rusqlite::Error> 
     let mut s = con.prepare("SELECT * FROM event_map_type")?;
     let ev_map_type = query_all::<_>(&mut s, [])?;
     let ev_type_map: HashMap<String, String> = ev_map_type
-        .and_then(|x| Ok::<_, rusqlite::Error>((x.get("ocel_type_map")?, x.get("ocel_type")?)))
+        .and_then(|x| {
+            Ok::<_, rusqlite::Error>((x.get(OCEL_TYPE_MAP_COLUMN)?, x.get(OCEL_TYPE_COLUMN)?))
+        })
         .flatten()
         .collect();
 
@@ -69,7 +78,9 @@ pub fn import_ocel_sqlite_con(con: Connection) -> Result<OCEL, rusqlite::Error> 
     let ob_map_type = query_all::<_>(&mut s, [])?;
 
     let ob_type_map: HashMap<String, String> = ob_map_type
-        .and_then(|x| Ok::<_, rusqlite::Error>((x.get("ocel_type_map")?, x.get("ocel_type")?)))
+        .and_then(|x| {
+            Ok::<_, rusqlite::Error>((x.get(OCEL_TYPE_MAP_COLUMN)?, x.get(OCEL_TYPE_COLUMN)?))
+        })
         .flatten()
         .collect();
 
@@ -85,7 +96,7 @@ pub fn import_ocel_sqlite_con(con: Connection) -> Result<OCEL, rusqlite::Error> 
             .filter(|(name, _)| !IGNORED_PRAGMA_COLUMNS.contains(&name.as_str()))
             .map(|(name, atype)| OCELTypeAttribute {
                 name,
-                value_type: sql_type_to_ocel(&atype).to_string(),
+                value_type: sql_type_to_ocel(&atype).to_type_string(),
             })
             .collect();
         let mut s = con.prepare(
@@ -94,17 +105,16 @@ pub fn import_ocel_sqlite_con(con: Connection) -> Result<OCEL, rusqlite::Error> 
         let objs = query_all::<_>(&mut s, [])?;
         objs.and_then(|x| {
             Ok::<(String, String, Vec<_>), rusqlite::Error>((
-                x.get("ocel_id")?,
+                x.get(OCEL_ID_COLUMN)?,
                 x.get(OCEL_TIME_COLUMN)?,
                 ob_type_attrs
                     .iter()
-                    .map(|attr| {
+                    .flat_map(|attr| {
                         Ok::<(&String, OCELAttributeValue), rusqlite::Error>((
                             &attr.name,
                             get_row_attribute_value(attr, x)?,
                         ))
                     })
-                    .flatten()
                     .collect(),
             ))
         })
@@ -150,7 +160,7 @@ pub fn import_ocel_sqlite_con(con: Connection) -> Result<OCEL, rusqlite::Error> 
                 .ok_or(rusqlite::Error::InvalidQuery)
                 .and_then(|attr| get_row_attribute_value(attr, x))?;
             Ok::<(String, String, String, OCELAttributeValue), rusqlite::Error>((
-                x.get("ocel_id")?,
+                x.get(OCEL_ID_COLUMN)?,
                 x.get(OCEL_TIME_COLUMN)?,
                 changed_field,
                 changed_val,
@@ -192,7 +202,7 @@ pub fn import_ocel_sqlite_con(con: Connection) -> Result<OCEL, rusqlite::Error> 
             .filter(|(name, _)| !IGNORED_PRAGMA_COLUMNS.contains(&name.as_str()))
             .map(|(name, atype)| OCELTypeAttribute {
                 name,
-                value_type: sql_type_to_ocel(&atype).to_string(),
+                value_type: sql_type_to_ocel(&atype).to_type_string(),
             })
             .collect();
         // Next, query events
@@ -200,17 +210,16 @@ pub fn import_ocel_sqlite_con(con: Connection) -> Result<OCEL, rusqlite::Error> 
         let evs = query_all::<_>(&mut s, [])?;
         evs.and_then(|x| {
             Ok::<(String, String, Vec<_>), rusqlite::Error>((
-                x.get("ocel_id")?,
+                x.get(OCEL_ID_COLUMN)?,
                 x.get(OCEL_TIME_COLUMN)?,
                 ev_type_attrs
                     .iter()
-                    .map(|attr| {
+                    .flat_map(|attr| {
                         Ok::<(&String, OCELAttributeValue), rusqlite::Error>((
                             &attr.name,
                             get_row_attribute_value(attr, x)?,
                         ))
                     })
-                    .flatten()
                     .collect(),
             ))
         })
@@ -243,13 +252,13 @@ pub fn import_ocel_sqlite_con(con: Connection) -> Result<OCEL, rusqlite::Error> 
     }
 
     // E2O Relationships
-    let mut s = con.prepare(format!("SELECT * FROM event_object").as_str())?;
+    let mut s = con.prepare("SELECT * FROM event_object".to_string().as_str())?;
     let evs = query_all::<_>(&mut s, [])?;
     evs.and_then(|x| {
         Ok::<(String, String, String), rusqlite::Error>((
-            x.get("ocel_event_id")?,
-            x.get("ocel_object_id")?,
-            x.get("ocel_qualifier")?,
+            x.get(OCEL_E2O_EVENT_ID_COLUMN)?,
+            x.get(OCEL_E2O_OBJECT_ID_COLUMN)?,
+            x.get(OCEL_REL_QUALIFIER_COLUMN)?,
         ))
     })
     .flatten()
@@ -267,13 +276,13 @@ pub fn import_ocel_sqlite_con(con: Connection) -> Result<OCEL, rusqlite::Error> 
     });
 
     // O2O Relationships
-    let mut s = con.prepare(format!("SELECT * FROM object_object").as_str())?;
+    let mut s = con.prepare("SELECT * FROM object_object".to_string().as_str())?;
     let evs = query_all::<_>(&mut s, [])?;
     evs.and_then(|x| {
             Ok::<(String, String, String), rusqlite::Error>((
-                x.get("ocel_source_id")?,
-                x.get("ocel_target_id")?,
-                x.get("ocel_qualifier")?,
+                x.get(OCEL_O2O_SOURCE_ID_COLUMN)?,
+                x.get(OCEL_O2O_TARGET_ID_COLUMN)?,
+                x.get(OCEL_REL_QUALIFIER_COLUMN)?,
             ))
         })
         .flatten()
@@ -313,7 +322,7 @@ fn get_row_attribute_value(
     a: &OCELTypeAttribute,
     r: &Row<'_>,
 ) -> Result<OCELAttributeValue, rusqlite::Error> {
-    match ocel_type_string_to_attribute_type(&a.value_type) {
+    match OCELAttributeType::from_type_str(&a.value_type) {
         OCELAttributeType::String => Ok(OCELAttributeValue::String(
             r.get::<_, String>(a.name.as_str())?,
         )),
@@ -324,7 +333,7 @@ fn get_row_attribute_value(
                     r.get::<_, String>(a.name.as_str())?.as_str(),
                     &OCELImportOptions::default(),
                 )
-                .map_err(|e| rusqlite::Error::InvalidQuery),
+                .map_err(|_e| rusqlite::Error::InvalidQuery),
             }?;
             Ok(OCELAttributeValue::Time(time_res))
         }
@@ -343,86 +352,158 @@ fn get_row_attribute_value(
 }
 
 ///
-/// Import an OCEL 2.0 SQLite file from the given path
-/// 
-pub fn import_ocel_sqlite<P: AsRef<std::path::Path>>(path: P) -> Result<OCEL, rusqlite::Error> {
+/// Import an [`OCEL`] 2.0 `SQLite` file from the given path
+///
+pub fn import_ocel_sqlite_path<P: AsRef<std::path::Path>>(
+    path: P,
+) -> Result<OCEL, rusqlite::Error> {
     let con = Connection::open(path)?;
     import_ocel_sqlite_con(con)
 }
 
-#[test]
-fn test_sqlite_ocel() -> Result<(), rusqlite::Error> {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("src");
-    path.push("event_log");
-    path.push("tests");
-    path.push("test_data");
-    path.push("order-management.sqlite");
+#[cfg(test)]
+mod sqlite_tests {
+    use std::{collections::HashSet, path::PathBuf};
 
-    let con = Connection::open(path).unwrap();
-    let ocel = import_ocel_sqlite_con(con)?;
+    use chrono::DateTime;
+    use rusqlite::Connection;
 
-    assert_eq!(ocel.objects.len(), 10840);
-    assert_eq!(ocel.events.len(), 21008);
+    use crate::ocel::{
+        ocel_struct::{OCELAttributeValue, OCELObjectAttribute, OCELRelationship},
+        sqlite_ocel::import_ocel_sqlite_con,
+    };
 
-    assert_eq!(ocel.event_types.len(), 11);
-    assert_eq!(ocel.object_types.len(), 6);
+    #[test]
+    fn test_sqlite_ocel() -> Result<(), rusqlite::Error> {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("src");
+        path.push("event_log");
+        path.push("tests");
+        path.push("test_data");
+        path.push("order-management.sqlite");
 
-    let po_1337 = ocel.events.iter().find(|e| e.id == "pay_o-991337").unwrap();
-    assert_eq!(
-        po_1337.time,
-        DateTime::parse_from_rfc3339("2023-12-13T10:31:50+00:00").unwrap()
-    );
-    assert_eq!(
-        po_1337
-            .relationships
-            .clone()
+        let con = Connection::open(path).unwrap();
+        let ocel = import_ocel_sqlite_con(con)?;
+
+        assert_eq!(ocel.objects.len(), 10840);
+        assert_eq!(ocel.events.len(), 21008);
+
+        assert_eq!(ocel.event_types.len(), 11);
+        assert_eq!(ocel.object_types.len(), 6);
+
+        let po_1337 = ocel.events.iter().find(|e| e.id == "pay_o-991337").unwrap();
+        assert_eq!(
+            po_1337.time,
+            DateTime::parse_from_rfc3339("2023-12-13T10:31:50+00:00").unwrap()
+        );
+        assert_eq!(
+            po_1337
+                .relationships
+                .clone()
+                .into_iter()
+                .collect::<HashSet<_>>(),
+            vec![
+                ("Echo", "product"),
+                ("iPad", "product"),
+                ("iPad Pro", "product"),
+                ("o-991337", "order"),
+                ("i-885283", "item"),
+                ("i-885284", "item"),
+                ("i-885285", "item"),
+            ]
             .into_iter()
-            .collect::<HashSet<_>>(),
-        vec![
-            ("Echo", "product"),
-            ("iPad", "product"),
-            ("iPad Pro", "product"),
-            ("o-991337", "order"),
-            ("i-885283", "item"),
-            ("i-885284", "item"),
-            ("i-885285", "item"),
-        ]
-        .into_iter()
-        .map(|(o_id, q)| OCELRelationship {
-            object_id: o_id.to_string(),
-            qualifier: q.to_string()
-        })
-        .collect::<HashSet<_>>()
-    );
+            .map(|(o_id, q)| OCELRelationship {
+                object_id: o_id.to_string(),
+                qualifier: q.to_string()
+            })
+            .collect::<HashSet<_>>()
+        );
 
-    let o_1337 = ocel.objects.iter().find(|o| o.id == "o-991337").unwrap();
-    assert_eq!(
-        o_1337.attributes,
-        vec![OCELObjectAttribute {
-            name: "price".to_string(),
-            value: OCELAttributeValue::Float(1909.04),
-            time: DateTime::UNIX_EPOCH.into()
-        }]
-    );
-    assert_eq!(
-        o_1337
-            .relationships
-            .clone()
+        let o_1337 = ocel.objects.iter().find(|o| o.id == "o-991337").unwrap();
+        assert_eq!(
+            o_1337.attributes,
+            vec![OCELObjectAttribute {
+                name: "price".to_string(),
+                value: OCELAttributeValue::Float(1909.04),
+                time: DateTime::UNIX_EPOCH.into()
+            }]
+        );
+        assert_eq!(
+            o_1337
+                .relationships
+                .clone()
+                .into_iter()
+                .collect::<HashSet<_>>(),
+            vec![
+                ("i-885283", "comprises"),
+                ("i-885284", "comprises"),
+                ("i-885285", "comprises"),
+            ]
             .into_iter()
-            .collect::<HashSet<_>>(),
-        vec![
-            ("i-885283", "comprises"),
-            ("i-885284", "comprises"),
-            ("i-885285", "comprises"),
-        ]
-        .into_iter()
-        .map(|(o_id, q)| OCELRelationship {
-            object_id: o_id.to_string(),
-            qualifier: q.to_string()
-        })
-        .collect::<HashSet<_>>()
-    );
+            .map(|(o_id, q)| OCELRelationship {
+                object_id: o_id.to_string(),
+                qualifier: q.to_string()
+            })
+            .collect::<HashSet<_>>()
+        );
 
+        Ok(())
+    }
+}
+
+
+fn clean_type_name(type_name: &str) -> String {
+    type_name.chars().filter(|c| c.is_ascii_alphanumeric()).collect()
+}
+///
+/// Export an [`OCEL`] 2.0 log to a SQLite connection
+///
+pub fn export_ocel_to_sqlite(con: &Connection, ocel: &OCEL) -> Result<(), rusqlite::Error> {
+    // event
+    con.execute(&format!(r#"CREATE TABLE IF NOT EXISTS "event" ("{OCEL_ID_COLUMN}"	TEXT, "{OCEL_TYPE_COLUMN}"	TEXT, PRIMARY KEY("{OCEL_ID_COLUMN}"), FOREIGN KEY("{OCEL_TYPE_COLUMN}") REFERENCES "event_map_type" ("{OCEL_TYPE_COLUMN}"))"#), [])?;
+    // object
+    con.execute(&format!(r#"CREATE TABLE IF NOT EXISTS "object" ("{OCEL_ID_COLUMN}"	TEXT, "{OCEL_TYPE_COLUMN}"	TEXT, PRIMARY KEY("{OCEL_ID_COLUMN}"), FOREIGN KEY("{OCEL_TYPE_COLUMN}") REFERENCES "object_map_type" ("{OCEL_TYPE_COLUMN}"))"#), [])?;
+
+    // event map type
+    con.execute(&format!(r#"CREATE TABLE IF NOT EXISTS "event_map_type" ("{OCEL_TYPE_COLUMN}" TEXT, "{OCEL_TYPE_MAP_COLUMN}"	TEXT, PRIMARY KEY("{OCEL_TYPE_COLUMN}"))"#), [])?;
+    // object map type
+    con.execute(&format!(r#"CREATE TABLE IF NOT EXISTS "object_map_type" ("{OCEL_TYPE_COLUMN}" TEXT, "{OCEL_TYPE_MAP_COLUMN}"	TEXT, PRIMARY KEY("{OCEL_TYPE_COLUMN}"))"#), [])?;
+
+    // O2O (object_object)
+    con.execute(&format!(r#"CREATE TABLE IF NOT EXISTS "object_object" ("{OCEL_O2O_SOURCE_ID_COLUMN}" TEXT, "{OCEL_O2O_TARGET_ID_COLUMN}" TEXT, "{OCEL_REL_QUALIFIER_COLUMN}" TEXT, PRIMARY KEY("{OCEL_O2O_SOURCE_ID_COLUMN}", "{OCEL_O2O_TARGET_ID_COLUMN}", "{OCEL_REL_QUALIFIER_COLUMN}"), FOREIGN KEY("{OCEL_O2O_SOURCE_ID_COLUMN}") REFERENCES "object"("{OCEL_ID_COLUMN}"), FOREIGN KEY("{OCEL_O2O_TARGET_ID_COLUMN}") REFERENCES "object"("{OCEL_ID_COLUMN}"))"#), [])?;
+    // E2O (event_object)
+    con.execute(&format!(r#"CREATE TABLE IF NOT EXISTS "event_object" ("{OCEL_E2O_EVENT_ID_COLUMN}" TEXT, "{OCEL_E2O_OBJECT_ID_COLUMN}" TEXT, "{OCEL_REL_QUALIFIER_COLUMN}" TEXT, PRIMARY KEY("{OCEL_E2O_EVENT_ID_COLUMN}", "{OCEL_E2O_OBJECT_ID_COLUMN}", "{OCEL_REL_QUALIFIER_COLUMN}"), FOREIGN KEY("{OCEL_E2O_EVENT_ID_COLUMN}") REFERENCES "event"("{OCEL_ID_COLUMN}"), FOREIGN KEY("{OCEL_E2O_OBJECT_ID_COLUMN}") REFERENCES "object"("{OCEL_ID_COLUMN}"))"#), [])?;
+
+    // Tables for event types
+    for et in &ocel.event_types {
+        con.execute(&format!(r#"CREATE TABLE IF NOT EXISTS "event_{}" ("{OCEL_ID_COLUMN}"	TEXT, "{OCEL_TYPE_COLUMN}"	TEXT, PRIMARY KEY("{OCEL_ID_COLUMN}"), FOREIGN KEY("{OCEL_TYPE_COLUMN}") REFERENCES "event_map_type" ("{OCEL_TYPE_COLUMN}"))"#,clean_type_name(&et.name)), [])?;
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod sqlite_export_tests {
+    use std::path::PathBuf;
+
+    use rusqlite::Connection;
+
+    use super::{export_ocel_to_sqlite, import_ocel_sqlite_con};
+
+    #[test]
+    fn test_sqlite_export() {
+
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("src");
+        path.push("event_log");
+        path.push("tests");
+        path.push("test_data");
+        path.push("order-management.sqlite");
+
+        let in_con = Connection::open(path).unwrap();
+        let in_ocel = import_ocel_sqlite_con(in_con).unwrap();
+
+        let con = Connection::open("test.sqlite").unwrap();
+
+        export_ocel_to_sqlite(&con,&in_ocel).unwrap();
+    }
 }
