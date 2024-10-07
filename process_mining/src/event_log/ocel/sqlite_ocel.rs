@@ -307,17 +307,6 @@ fn query_all<'a, P: Params>(s: &'a mut Statement<'_>, p: P) -> Result<Rows<'a>, 
     Ok(q)
 }
 
-fn sql_type_to_ocel(s: &str) -> OCELAttributeType {
-    match s {
-        "TEXT" => OCELAttributeType::String,
-        "REAL" => OCELAttributeType::Float,
-        "INTEGER" => OCELAttributeType::Integer,
-        "BOOLEAN" => OCELAttributeType::Boolean,
-        "TIMESTAMP" => OCELAttributeType::Time,
-        _ => OCELAttributeType::String,
-    }
-}
-
 fn get_row_attribute_value(
     a: &OCELTypeAttribute,
     r: &Row<'_>,
@@ -451,9 +440,11 @@ mod sqlite_tests {
     }
 }
 
-
-fn clean_type_name(type_name: &str) -> String {
-    type_name.chars().filter(|c| c.is_ascii_alphanumeric()).collect()
+fn clean_sql_name(type_name: &str) -> String {
+    type_name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect()
 }
 ///
 /// Export an [`OCEL`] 2.0 log to a SQLite connection
@@ -474,10 +465,185 @@ pub fn export_ocel_to_sqlite(con: &Connection, ocel: &OCEL) -> Result<(), rusqli
     // E2O (event_object)
     con.execute(&format!(r#"CREATE TABLE IF NOT EXISTS "event_object" ("{OCEL_E2O_EVENT_ID_COLUMN}" TEXT, "{OCEL_E2O_OBJECT_ID_COLUMN}" TEXT, "{OCEL_REL_QUALIFIER_COLUMN}" TEXT, PRIMARY KEY("{OCEL_E2O_EVENT_ID_COLUMN}", "{OCEL_E2O_OBJECT_ID_COLUMN}", "{OCEL_REL_QUALIFIER_COLUMN}"), FOREIGN KEY("{OCEL_E2O_EVENT_ID_COLUMN}") REFERENCES "event"("{OCEL_ID_COLUMN}"), FOREIGN KEY("{OCEL_E2O_OBJECT_ID_COLUMN}") REFERENCES "object"("{OCEL_ID_COLUMN}"))"#), [])?;
 
+    let mut et_attr_map: HashMap<&String, &Vec<OCELTypeAttribute>> = HashMap::new();
     // Tables for event types
     for et in &ocel.event_types {
-        con.execute(&format!(r#"CREATE TABLE IF NOT EXISTS "event_{}" ("{OCEL_ID_COLUMN}"	TEXT, "{OCEL_TYPE_COLUMN}"	TEXT, PRIMARY KEY("{OCEL_ID_COLUMN}"), FOREIGN KEY("{OCEL_TYPE_COLUMN}") REFERENCES "event_map_type" ("{OCEL_TYPE_COLUMN}"))"#,clean_type_name(&et.name)), [])?;
+        let mut attr_cols = et
+            .attributes
+            .iter()
+            .map(|att| {
+                format!(
+                    "{} {}",
+                    clean_sql_name(&att.name),
+                    ocel_type_to_sql(&OCELAttributeType::from_type_str(&att.value_type))
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !attr_cols.is_empty() {
+            attr_cols.push(',');
+        }
+        et_attr_map.insert(&et.name, &et.attributes);
+        con.execute(&format!(r#"CREATE TABLE IF NOT EXISTS "event_{}" ("{OCEL_ID_COLUMN}"	TEXT, "{OCEL_TIME_COLUMN}"	TIMESTAMP,{attr_cols} PRIMARY KEY("{OCEL_ID_COLUMN}"))"#,clean_sql_name(&et.name)), [])?;
+
+        con.execute(
+            &format!(
+                "INSERT INTO 'event_map_type' VALUES ('{}', '{}')",
+                et.name,
+                clean_sql_name(&et.name)
+            ),
+            [],
+        )?;
     }
+
+    let mut ot_attr_map: HashMap<&String, &Vec<OCELTypeAttribute>> = HashMap::new();
+
+    // Tables for object types
+    for ot in &ocel.object_types {
+        let mut attr_cols = ot
+            .attributes
+            .iter()
+            .map(|att| {
+                format!(
+                    "{} {}",
+                    clean_sql_name(&att.name),
+                    ocel_type_to_sql(&OCELAttributeType::from_type_str(&att.value_type))
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !attr_cols.is_empty() {
+            attr_cols.insert_str(0, ", ");
+            // attr_cols.push(',');
+        }
+        ot_attr_map.insert(&ot.name, &ot.attributes);
+        con.execute(&format!(r#"CREATE TABLE IF NOT EXISTS "object_{}" ("{OCEL_ID_COLUMN}"	TEXT, "{OCEL_TIME_COLUMN}" TIMESTAMP, {OCEL_CHANGED_FIELD} TEXT{attr_cols})"#,clean_sql_name(&ot.name)), [])?;
+
+        con.execute(
+            &format!(
+                "INSERT INTO 'object_map_type' VALUES ('{}', '{}')",
+                ot.name,
+                clean_sql_name(&ot.name)
+            ),
+            [],
+        )?;
+    }
+
+    con.execute("BEGIN TRANSACTION", [])?;
+    for o in &ocel.objects {
+        con.execute(
+            &format!(
+                "INSERT INTO 'object' VALUES ('{}', '{}')",
+                o.id, o.object_type
+            ),
+            [],
+        )?;
+        // Table for object type with initial attribute values
+        let mut attr_vals = ot_attr_map
+            .get(&o.object_type)
+            .unwrap()
+            .into_iter()
+            .map(|a| {
+                let initial_val = o
+                    .attributes
+                    .iter()
+                    .find(|oa| oa.name == a.name && oa.time == DateTime::UNIX_EPOCH);
+                if let Some(val) = initial_val {
+                    format!("'{}'", val.value)
+                } else {
+                    "NULL".to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !attr_vals.is_empty() {
+            attr_vals.insert_str(0, ", ");
+        }
+        con.execute(
+            &format!(
+                "INSERT INTO 'object_{}' VALUES ('{}','{}', NULL{})",
+                clean_sql_name(&o.object_type),
+                o.id,
+                DateTime::UNIX_EPOCH,
+                attr_vals
+            ),
+            [],
+        )?;
+
+        // Object attributes changes
+        for attr in &o.attributes {
+            if attr.time != DateTime::UNIX_EPOCH {
+                let mut attr_vals = ot_attr_map
+                    .get(&o.object_type)
+                    .unwrap()
+                    .into_iter()
+                    .map(|a| {
+                        if a.name == attr.name {
+                            format!("'{}'", attr.value)
+                        } else {
+                            "NULL".to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if !attr_vals.is_empty() {
+                    attr_vals.insert_str(0, ", ");
+                }
+                con.execute(
+                    &format!(
+                        "INSERT INTO 'object_{}' VALUES ('{}','{}', '{}'{})",
+                        clean_sql_name(&o.object_type),
+                        o.id,
+                        attr.time,
+                        clean_sql_name(&attr.name),
+                        attr_vals
+                    ),
+                    [],
+                )?;
+            }
+        }
+    }
+
+    for e in &ocel.events {
+        con.execute(
+            &format!(
+                "INSERT INTO 'event' VALUES ('{}', '{}')",
+                e.id,
+                e.event_type,
+            ),
+            [],
+        )?;
+        // Table for event type with attribute values
+        let mut attr_vals = et_attr_map
+            .get(&e.event_type)
+            .unwrap()
+            .into_iter()
+            .map(|a| {
+                let value = e.attributes.iter().find(|oa| oa.name == a.name);
+                if let Some(val) = value {
+                    format!("'{}'", val.value)
+                } else {
+                    "NULL".to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !attr_vals.is_empty() {
+            attr_vals.insert_str(0, ", ");
+        }
+        con.execute(
+            &format!(
+                "INSERT INTO 'event_{}' VALUES ('{}','{}'{})",
+                clean_sql_name(&e.event_type),
+                e.id,
+                e.time,
+                attr_vals
+            ),
+            [],
+        )?;
+    }
+    con.execute("COMMIT", [])?;
+
     Ok(())
 }
 
@@ -491,7 +657,6 @@ mod sqlite_export_tests {
 
     #[test]
     fn test_sqlite_export() {
-
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         path.push("src");
         path.push("event_log");
@@ -504,6 +669,28 @@ mod sqlite_export_tests {
 
         let con = Connection::open("test.sqlite").unwrap();
 
-        export_ocel_to_sqlite(&con,&in_ocel).unwrap();
+        export_ocel_to_sqlite(&con, &in_ocel).unwrap();
+    }
+}
+
+fn sql_type_to_ocel(s: &str) -> OCELAttributeType {
+    match s {
+        "TEXT" => OCELAttributeType::String,
+        "REAL" => OCELAttributeType::Float,
+        "INTEGER" => OCELAttributeType::Integer,
+        "BOOLEAN" => OCELAttributeType::Boolean,
+        "TIMESTAMP" => OCELAttributeType::Time,
+        _ => OCELAttributeType::String,
+    }
+}
+
+fn ocel_type_to_sql(attr: &OCELAttributeType) -> &'static str {
+    match attr {
+        OCELAttributeType::String => "TEXT",
+        OCELAttributeType::Float => "REAL",
+        OCELAttributeType::Integer => "INTEGER",
+        OCELAttributeType::Boolean => "BOOLEAN",
+        OCELAttributeType::Time => "TIMESTAMP",
+        _ => "TEXT",
     }
 }
