@@ -149,6 +149,11 @@ pub use event_log::ocel::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_con
 
 #[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
+pub use event_log::ocel::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_slice;
+
+
+#[cfg(feature = "ocel-sqlite")]
+#[doc(inline)]
 pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_path;
 #[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]

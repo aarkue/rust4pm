@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::UNIX_EPOCH};
+use std::{collections::HashMap, ffi::CString, time::UNIX_EPOCH};
 
 use chrono::{DateTime, FixedOffset};
 use rusqlite::{Connection, Params, Row, Rows, Statement};
@@ -325,6 +325,42 @@ pub fn import_ocel_sqlite_from_path<P: AsRef<std::path::Path>>(
     import_ocel_sqlite_from_con(con)
 }
 
+///
+/// Import an [`OCEL`] `SQLite` file from the given byte slice
+///
+/// Note: This function is only available if the `ocel-sqlite` feature is enabled.
+pub fn import_ocel_sqlite_from_slice(
+    bytes: &[u8],
+) -> Result<OCEL, rusqlite::Error> {
+    let mut con = Connection::open_in_memory()?;
+    deserialize_sqlite_slice(&mut con,bytes, false)?;
+    import_ocel_sqlite_from_con(con)
+}
+
+fn deserialize_sqlite_slice(
+    con: &mut Connection,
+    data: &[u8],
+    read_only: bool,
+) -> Result<(),rusqlite::Error> {
+    let schema = CString::new("main")?;
+    let sz = data.len().try_into().unwrap();
+    let flags = if read_only {
+        rusqlite::ffi::SQLITE_DESERIALIZE_READONLY
+    } else {
+        rusqlite::ffi::SQLITE_DESERIALIZE_RESIZEABLE
+    };
+    let _rc = unsafe {
+        rusqlite::ffi::sqlite3_deserialize(
+            con.handle(),
+            schema.as_ptr(),
+            data.as_ptr() as *mut u8,
+            sz,
+            sz,
+            flags,
+        )
+    };
+    Ok(())
+}
 #[cfg(test)]
 mod sqlite_tests {
     use std::{collections::HashSet, path::PathBuf};
