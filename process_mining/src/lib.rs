@@ -29,7 +29,7 @@ pub mod event_log {
         /// [`OCEL`] struct and sub-structs
         pub mod ocel_struct;
         /// `SQLite` OCEL 2.0
-        pub mod sqlite_ocel;
+        pub mod sqlite;
         /// XML Export for OCEL 2.0
         pub mod xml_ocel_export;
         #[allow(clippy::single_match)]
@@ -76,6 +76,7 @@ use std::path::Path;
 
 #[doc(inline)]
 pub use event_log::ocel;
+
 
 #[doc(inline)]
 pub use alphappp::full::alphappp_discover_petri_net;
@@ -128,11 +129,26 @@ pub use event_log::ocel::xml_ocel_import::import_ocel_xml_file;
 #[doc(inline)]
 pub use event_log::ocel::xml_ocel_import::import_ocel_xml_slice;
 
-#[doc(inline)]
-pub use event_log::ocel::sqlite_ocel::import_ocel_sqlite_path;
 
 #[doc(inline)]
-pub use event_log::ocel::sqlite_ocel::import_ocel_sqlite_con;
+pub use  event_log::ocel::xml_ocel_export::export_ocel_xml_path;
+
+#[doc(inline)]
+pub use  event_log::ocel::xml_ocel_export::export_ocel_xml;
+
+
+#[doc(inline)]
+pub use event_log::ocel::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_path;
+
+#[doc(inline)]
+pub use event_log::ocel::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_con;
+
+
+#[doc(inline)]
+pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_path;
+
+#[doc(inline)]
+pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_con;
 
 
 #[doc(inline)]
@@ -227,7 +243,7 @@ pub fn import_ocel_json_from_slice(slice: &[u8]) -> Result<OCEL, std::io::Error>
 /// 
 /// To import an OCEL .json file see [`import_ocel_json_from_path`] instead.
 /// 
-pub fn export_ocel_json_to_path<P: AsRef<Path>>(ocel: &OCEL,path: P) -> Result<(),std::io::Error> {
+pub fn export_ocel_json_path<P: AsRef<Path>>(ocel: &OCEL,path: P) -> Result<(),std::io::Error> {
     let writer: BufWriter<File> = BufWriter::new(File::open(path)?);
     Ok(serde_json::to_writer(writer,ocel)?)
 }

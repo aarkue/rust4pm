@@ -16,7 +16,8 @@ _As this crate is still in very active development, expect larger API changes al
     - See [`export_xes_event_log_to_file_path`] or [`export_xes_trace_stream_to_file`]
 - Object-Centric Event Logs (OCEL 2.0)
   - OCEL struct
-  - Fast OCEL XML & JSON Parsing
+  - OCEL import from all available formats (XML, JSON, and SQLite)
+  - OCEL export to all available formats (XML, JSON, and SQLite)
 - Petri Nets
   - PNML Export
   - PNML Import

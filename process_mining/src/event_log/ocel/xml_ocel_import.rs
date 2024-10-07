@@ -79,6 +79,13 @@ fn parse_attribute_value(
             .map(OCELAttributeValue::Integer),
         OCELAttributeType::Float => value
             .parse::<f64>()
+            .or_else(|e| {
+                if value == "null" {
+                    Ok(f64::NAN)
+                } else {
+                    Err(e)
+                }
+            })
             .map_err(|e| format!("{}", e))
             .map(OCELAttributeValue::Float),
         OCELAttributeType::Boolean => value
@@ -138,6 +145,12 @@ pub fn parse_date<'a>(
         return Ok(dt.and_utc().into());
     }
 
+    // export_path
+    if let Ok(dt) = NaiveDateTime::parse_from_str(time, "%F %T UTC") {
+        return Ok(dt.and_utc().into());
+    }
+
+
     // Who made me do this? 🫣
     // Some logs have this date: "Mon Apr 03 2023 12:08:18 GMT+0200 (Mitteleuropäische Sommerzeit)"
     // Below ignores the first "Mon " part (%Z) parses the rest (only if "GMT") and then parses the timezone (+0200)
@@ -152,7 +165,7 @@ pub fn parse_date<'a>(
 }
 
 ///
-/// Import an [`OCEL`]2 XML file from the given reader
+/// Import an [`OCEL`] XML file from the given reader
 ///
 pub fn import_ocel_xml<T>(reader: &mut Reader<T>, options: OCELImportOptions) -> OCEL
 where
@@ -575,14 +588,14 @@ where
 }
 
 ///
-/// Import an [`OCEL`]2 XML from a byte slice __with__ _custom options_
+/// Import an [`OCEL`] XML from a byte slice __with__ _custom options_
 ///
 pub fn import_ocel_xml_slice_with(xes_data: &[u8], options: OCELImportOptions) -> OCEL {
     import_ocel_xml(&mut Reader::from_reader(BufReader::new(xes_data)), options)
 }
 
 ///
-/// Import an [`OCEL`]2 XML from a filepath __with__ _custom options_
+/// Import an [`OCEL`] XML from a filepath __with__ _custom options_
 ///
 pub fn import_ocel_xml_file_with(path: &str, options: OCELImportOptions) -> OCEL {
     let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();
@@ -590,14 +603,14 @@ pub fn import_ocel_xml_file_with(path: &str, options: OCELImportOptions) -> OCEL
 }
 
 ///
-/// Import an [`OCEL`]2 XML from a byte slice with default options
+/// Import an [`OCEL`] XML from a byte slice with default options
 ///
 pub fn import_ocel_xml_slice(xes_data: &[u8]) -> OCEL {
     import_ocel_xml_slice_with(xes_data, OCELImportOptions::default())
 }
 
 ///
-/// Import an [`OCEL`]2 XML from a filepath with default options
+/// Import an [`OCEL`] XML from a filepath with default options
 ///
 pub fn import_ocel_xml_file(path: &str) -> OCEL {
     import_ocel_xml_file_with(path, OCELImportOptions::default())
