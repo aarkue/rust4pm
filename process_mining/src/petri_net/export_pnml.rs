@@ -202,7 +202,7 @@ where
 /// Export a [`PetriNet`] to a `.pnml` file (specified through path)
 ///
 /// Also consider using [`PetriNet::export_pnml`] for convenience or [`export_petri_net_to_pnml`] for more control.
-pub fn export_petri_net_to_pnml_path(pn: &PetriNet, path: &str) -> Result<(), quick_xml::Error> {
+pub fn export_petri_net_to_pnml_path<P: AsRef<std::path::Path>>(pn: &PetriNet, path: P) -> Result<(), quick_xml::Error> {
     let file = File::create(path).unwrap();
     let mut writer = Writer::new_with_indent(file, b' ', 4);
     export_petri_net_to_pnml(pn, &mut writer)

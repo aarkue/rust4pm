@@ -261,7 +261,7 @@ impl PetriNet {
     /// The resulting PNG file cannot be imported as a Petri net again (for that functionality, see [`PetriNet::export_pnml`]).
     ///
     /// Only available with the `graphviz-export` feature.
-    pub fn export_png(&self, path: &str) -> Result<(), std::io::Error> {
+    pub fn export_png<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
         super::image_export::export_petri_net_image_png(self, path)
     }
 
@@ -274,7 +274,7 @@ impl PetriNet {
     /// The resulting SVG file cannot be imported as a Petri net again (for that functionality, see [`PetriNet::export_pnml`]).
     ///
     /// Only available with the `graphviz-export` feature.
-    pub fn export_svg(&self, path: &str) -> Result<(), std::io::Error> {
+    pub fn export_svg<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
         super::image_export::export_petri_net_image_svg(self, path)
     }
 
@@ -284,7 +284,7 @@ impl PetriNet {
     ///
     /// _Note_: This is an export method for __saving__ the Petri net data.
     /// The resulting file can also be imported as a Petri net again (see [`PetriNet::import_pnml`]).
-    pub fn export_pnml(&self, path: &str) -> Result<(), quick_xml::Error> {
+    pub fn export_pnml<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), quick_xml::Error> {
         super::export_pnml::export_petri_net_to_pnml_path(self, path)
     }
     /// Import Petri net from a PNML file
@@ -293,7 +293,7 @@ impl PetriNet {
     ///
     ///
     /// For the related export function, see [`PetriNet::export_pnml`])
-    pub fn import_pnml(path: &str) -> Result<PetriNet, PNMLParseError> {
+    pub fn import_pnml<P: AsRef<std::path::Path>>(path: P) -> Result<PetriNet, PNMLParseError> {
         super::import_pnml::import_pnml_from_path(path)
     }
 }

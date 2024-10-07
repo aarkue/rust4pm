@@ -335,7 +335,7 @@ pub fn test_2018bpic_log() {
         .join("test_data")
         .join("BPI Challenge 2018.xes.gz");
     let log = import_xes_file(
-        path.to_str().unwrap(),
+        path,
         XESImportOptions {
             ignore_log_attributes_except: Some(HashSet::default()),
             ignore_trace_attributes_except: Some(

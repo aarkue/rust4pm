@@ -461,9 +461,7 @@ where
                                 // Noop
                             }
                             b"objects" => {
-                                // Angular OCEL uses <objects> tag for relationships
                                 // If they are empty => Noop
-                                // TODO: Remove once example logs are updated
                             }
                             b"relationship" => {
                                 let object_id = get_attribute_value(&t, "object-id");
@@ -596,7 +594,7 @@ pub fn import_ocel_xml_slice_with(xes_data: &[u8], options: OCELImportOptions) -
 ///
 /// Import an [`OCEL`] XML from a filepath __with__ _custom options_
 ///
-pub fn import_ocel_xml_file_with(path: &str, options: OCELImportOptions) -> OCEL {
+pub fn import_ocel_xml_file_with<P: AsRef<std::path::Path>>(path: P, options: OCELImportOptions) -> OCEL {
     let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();
     import_ocel_xml(&mut reader, options)
 }
@@ -611,6 +609,6 @@ pub fn import_ocel_xml_slice(xes_data: &[u8]) -> OCEL {
 ///
 /// Import an [`OCEL`] XML from a filepath with default options
 ///
-pub fn import_ocel_xml_file(path: &str) -> OCEL {
+pub fn import_ocel_xml_file<P: AsRef<std::path::Path>>(path: P) -> OCEL {
     import_ocel_xml_file_with(path, OCELImportOptions::default())
 }

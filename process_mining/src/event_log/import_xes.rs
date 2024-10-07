@@ -157,8 +157,8 @@ where
 ///
 /// Import a XES [`EventLog`] from a file path
 ///
-pub fn import_xes_file(path: &str, options: XESImportOptions) -> Result<EventLog, XESParseError> {
-    if path.ends_with(".gz") {
+pub fn import_xes_file<P: AsRef<std::path::Path>>(path: P, options: XESImportOptions) -> Result<EventLog, XESParseError> {
+    if path.as_ref().as_os_str().to_str().is_some_and(|p| p.ends_with(".gz")) {
         let file = File::open(path)?;
         let dec: GzDecoder<BufReader<&File>> = GzDecoder::new(BufReader::new(&file));
         let reader = BufReader::new(dec);

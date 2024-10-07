@@ -1,8 +1,7 @@
-use std::{fs::File, io::BufWriter, time::Instant};
+use std::{fs::File, io::BufWriter, path::PathBuf, time::Instant};
 
 use crate::{
-    import_ocel_json_from_path, import_ocel_json_from_slice, import_ocel_xml_slice,
-    ocel::xml_ocel_export::export_ocel_xml_path,
+    export_ocel_json_path, import_ocel_json_from_path, import_ocel_json_from_slice, import_ocel_xml_file, import_ocel_xml_slice, ocel::xml_ocel_export::export_ocel_xml_path
 };
 
 #[test]
@@ -89,7 +88,7 @@ fn test_ocel_logistics_xml_import() {
     );
     assert_eq!(ocel.events.len(), 35413); //35761
     assert_eq!(ocel.objects.len(), 13910); //14013
-    export_ocel_xml_path(&ocel, "ContainerLogistics-export.xml").unwrap();
+    export_ocel_xml_path(&ocel, "ContainerLogistics-EXPORT.xml").unwrap();
 }
 
 #[test]
@@ -107,6 +106,57 @@ fn test_ocel_logistics_json_import() {
     );
     assert_eq!(ocel.events.len(), 35413); //35761
     assert_eq!(ocel.objects.len(), 13910); //14013
+}
+
+
+#[test]
+fn test_ocel_angular_xml_import() {
+    // Use PathBuf instead of including bytes because the file is very large
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("src");
+    path.push("event_log");
+    path.push("tests");
+    path.push("test_data");
+    path.push("angular_github_commits_ocel.xml");
+    let now = Instant::now();
+    let ocel = import_ocel_xml_file(&path);
+    let obj = ocel.objects.first().unwrap();
+    println!("{:?}", obj);
+    println!(
+        "Imported OCEL with {} objects and {} events in {:#?}",
+        ocel.objects.len(),
+        ocel.events.len(),
+        now.elapsed()
+    );
+    assert_eq!(ocel.events.len(), 27847);
+    assert_eq!(ocel.objects.len(), 28317); // 35392
+    export_ocel_xml_path(&ocel, "angular_github_commits_ocel-EXPORT.xml").unwrap();
+    export_ocel_json_path(&ocel, "angular_github_commits_ocel-EXPORT.json").unwrap();
+}
+
+
+#[test]
+fn test_ocel_angular_json_import() {
+    // Use PathBuf instead of including bytes because the file is very large
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("src");
+    path.push("event_log");
+    path.push("tests");
+    path.push("test_data");
+    path.push("angular_github_commits_ocel-EXPORT.json");
+    let now = Instant::now();
+    let ocel = import_ocel_json_from_path(path).unwrap();
+    let obj = ocel.objects.first().unwrap();
+    println!("{:?}", obj);
+    println!(
+        "Imported OCEL with {} objects and {} events in {:#?}",
+        ocel.objects.len(),
+        ocel.events.len(),
+        now.elapsed()
+    );
+    assert_eq!(ocel.events.len(), 27847);
+    assert_eq!(ocel.objects.len(), 28317); // 35392
+    export_ocel_xml_path(&ocel, "angular_github_commits_ocel-EXPORT.xml").unwrap();
 }
 
 #[test]

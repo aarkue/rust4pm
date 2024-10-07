@@ -945,12 +945,13 @@ pub fn stream_xes_file_gz<'a>(
 ///
 /// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [`Trace`]s
 ///
-pub fn stream_xes_from_path<'a>(
-    path: &str,
+pub fn stream_xes_from_path<'a,P: AsRef<std::path::Path>>(
+    path: P,
     options: XESImportOptions,
 ) -> Result<XESParsingStreamAndLogData<'a>, XESParseError> {
+    let is_gz =  path.as_ref().as_os_str().to_str().is_some_and(|p| p.ends_with(".gz"));
     let file = File::open(path)?;
-    if path.ends_with(".gz") {
+    if is_gz{
         stream_xes_file_gz(file, options)
     } else {
         stream_xes_file(file, options)

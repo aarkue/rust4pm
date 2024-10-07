@@ -213,12 +213,13 @@ pub fn export_xes_event_log_to_file(
 /// Automatically selects gz-compression if filepath ends with `.gz`
 ///
 /// See also [`export_xes_event_log_to_file`], which accepts a [`File`] and boolean flag for gz-compression.
-pub fn export_xes_event_log_to_file_path(
+pub fn export_xes_event_log_to_file_path<P: AsRef<std::path::Path>>(
     log: &EventLog,
-    path: &str,
+    path: P,
 ) -> Result<(), quick_xml::Error> {
+    let is_gz = path.as_ref().as_os_str().to_str().is_some_and(|p| p.ends_with(".gz"));
     let file = File::create(path)?;
-    export_xes_event_log_to_file(log, file, path.ends_with(".gz"))
+    export_xes_event_log_to_file(log, file, is_gz)
 }
 
 /// Export a trace stream (i.e., [`Iterator`] over [`Trace`]) and [`XESOuterLogData`] to a XML [`Writer`]
