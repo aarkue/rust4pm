@@ -29,6 +29,7 @@ pub mod event_log {
         /// [`OCEL`] struct and sub-structs
         pub mod ocel_struct;
         /// `SQLite` OCEL 2.0
+        #[cfg(feature = "ocel-sqlite")]
         pub mod sqlite;
         /// XML Export for OCEL 2.0
         pub mod xml_ocel_export;
@@ -137,16 +138,19 @@ pub use  event_log::ocel::xml_ocel_export::export_ocel_xml_path;
 pub use  event_log::ocel::xml_ocel_export::export_ocel_xml;
 
 
+#[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
 pub use event_log::ocel::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_path;
 
+#[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
 pub use event_log::ocel::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_con;
 
 
+#[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
 pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_path;
-
+#[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
 pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_con;
 

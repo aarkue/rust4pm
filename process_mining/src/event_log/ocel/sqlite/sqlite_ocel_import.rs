@@ -63,6 +63,8 @@ fn get_row_attribute_value(
 ///
 /// If you want to import from a filepath, see [`import_ocel_sqlite_from_path`] instead.
 ///
+/// Note: This function is only available if the `ocel-sqlite` feature is enabled.
+/// 
 pub fn import_ocel_sqlite_from_con(con: Connection) -> Result<OCEL, rusqlite::Error> {
     let mut ocel = OCEL {
         event_types: Vec::default(),
@@ -315,6 +317,7 @@ fn query_all<'a, P: Params>(s: &'a mut Statement<'_>, p: P) -> Result<Rows<'a>, 
 ///
 /// Import an [`OCEL`] `SQLite` file from the given path
 ///
+/// Note: This function is only available if the `ocel-sqlite` feature is enabled.
 pub fn import_ocel_sqlite_from_path<P: AsRef<std::path::Path>>(
     path: P,
 ) -> Result<OCEL, rusqlite::Error> {

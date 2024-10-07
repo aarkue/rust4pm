@@ -22,7 +22,7 @@ uuid = {version = "1.4.1", features = ["v4", "serde"]}
 quick-xml = {version = "0.31.0"}
 flate2 = "1.0"
 graphviz-rust = {version = "0.9.0", optional = true}
-rusqlite = { version = "0.32.1", features = ["bundled","chrono"] }
+rusqlite = { version = "0.32.1", features = ["bundled","chrono"], optional = true }
 
 
 [features]
@@ -30,6 +30,11 @@ rusqlite = { version = "0.32.1", features = ["bundled","chrono"] }
 # Enables exporting Petri nets as PNG/SVG/... images using graphviz.
 # Note: graphviz needs to be locally installed to the PATH for the image export functions to work.
 graphviz-export = ["dep:graphviz-rust"] 
+
+# Enables OCEL 2.0 SQLite import and export functionality
+# Note: this might not work on certain architectures or machines if SQLite is not available/cannot be build
+ocel-sqlite = ["dep:rusqlite"] 
+
 
 [package.metadata.docs.rs]
 all-features = true
