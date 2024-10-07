@@ -594,7 +594,10 @@ pub fn import_ocel_xml_slice_with(xes_data: &[u8], options: OCELImportOptions) -
 ///
 /// Import an [`OCEL`] XML from a filepath __with__ _custom options_
 ///
-pub fn import_ocel_xml_file_with<P: AsRef<std::path::Path>>(path: P, options: OCELImportOptions) -> OCEL {
+pub fn import_ocel_xml_file_with<P: AsRef<std::path::Path>>(
+    path: P,
+    options: OCELImportOptions,
+) -> OCEL {
     let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();
     import_ocel_xml(&mut reader, options)
 }

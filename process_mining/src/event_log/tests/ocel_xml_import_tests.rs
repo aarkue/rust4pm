@@ -1,7 +1,8 @@
 use std::{fs::File, io::BufWriter, path::PathBuf, time::Instant};
 
 use crate::{
-    export_ocel_json_path, import_ocel_json_from_path, import_ocel_json_from_slice, import_ocel_xml_file, import_ocel_xml_slice, ocel::xml_ocel_export::export_ocel_xml_path
+    export_ocel_json_path, import_ocel_json_from_path, import_ocel_json_from_slice,
+    import_ocel_xml_file, import_ocel_xml_slice, ocel::xml_ocel_export::export_ocel_xml_path,
 };
 
 #[test]
@@ -108,7 +109,6 @@ fn test_ocel_logistics_json_import() {
     assert_eq!(ocel.objects.len(), 13910); //14013
 }
 
-
 #[test]
 fn test_ocel_angular_xml_import() {
     // Use PathBuf instead of including bytes because the file is very large
@@ -133,7 +133,6 @@ fn test_ocel_angular_xml_import() {
     export_ocel_xml_path(&ocel, "angular_github_commits_ocel-EXPORT.xml").unwrap();
     export_ocel_json_path(&ocel, "angular_github_commits_ocel-EXPORT.json").unwrap();
 }
-
 
 #[test]
 fn test_ocel_angular_json_import() {

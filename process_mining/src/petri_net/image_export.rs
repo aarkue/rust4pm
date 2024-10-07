@@ -102,7 +102,10 @@ pub fn graph_to_dot(g: &Graph) -> String {
 /// Export the image of a [`PetriNet`] as a SVG file
 ///
 /// Also consider using [`PetriNet::export_svg`] for convenience.
-pub fn export_petri_net_image_svg<P: AsRef<std::path::Path>>(net: &PetriNet, path: P) -> Result<(), std::io::Error> {
+pub fn export_petri_net_image_svg<P: AsRef<std::path::Path>>(
+    net: &PetriNet,
+    path: P,
+) -> Result<(), std::io::Error> {
     export_petri_net_image(net, path, Format::Svg, None)
 }
 
@@ -110,7 +113,10 @@ pub fn export_petri_net_image_svg<P: AsRef<std::path::Path>>(net: &PetriNet, pat
 /// Export the image of a [`PetriNet`] as a PNG file
 ///
 /// Also consider using [`PetriNet::export_png`] for convenience.
-pub fn export_petri_net_image_png<P: AsRef<std::path::Path>>(net: &PetriNet, path: P) -> Result<(), std::io::Error> {
+pub fn export_petri_net_image_png<P: AsRef<std::path::Path>>(
+    net: &PetriNet,
+    path: P,
+) -> Result<(), std::io::Error> {
     export_petri_net_image(net, path, Format::Png, Some(2.0))
 }
 

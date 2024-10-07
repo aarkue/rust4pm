@@ -376,7 +376,9 @@ where
 ///  Import a PNML file from the given filepath
 ///
 /// Also consider using [`PetriNet::import_pnml`] for convenience or [`import_pnml`] for more control over the reader.
-pub fn import_pnml_from_path<P: AsRef<std::path::Path>>(path: P) -> Result<PetriNet, PNMLParseError> {
+pub fn import_pnml_from_path<P: AsRef<std::path::Path>>(
+    path: P,
+) -> Result<PetriNet, PNMLParseError> {
     import_pnml(&mut quick_xml::Reader::from_file(path)?)
 }
 

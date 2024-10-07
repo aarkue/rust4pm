@@ -226,7 +226,9 @@ pub fn json_to_ocel(ocel_json: &str) -> OCEL {
 ///
 /// See also [`import_ocel_json_from_slice`].
 ///
-pub fn import_ocel_json_from_path<P: AsRef<std::path::Path>>(path: P) -> Result<OCEL, std::io::Error> {
+pub fn import_ocel_json_from_path<P: AsRef<std::path::Path>>(
+    path: P,
+) -> Result<OCEL, std::io::Error> {
     let reader: BufReader<File> = BufReader::new(File::open(path)?);
     Ok(serde_json::from_reader(reader)?)
 }
