@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +24,7 @@ pub struct OCEL {
     pub objects: Vec<OCELObject>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 /// OCEL Event/Object Type
 pub struct OCELType {
     /// Name
@@ -32,7 +34,7 @@ pub struct OCELType {
     pub attributes: Vec<OCELTypeAttribute>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 /// OCEL Attribute types
 pub struct OCELTypeAttribute {
     /// Name of attribute
@@ -59,7 +61,7 @@ pub struct OCELEvent {
     /// Event Type (referring back to the `name` of an [`OCELType`])
     #[serde(rename = "type")]
     pub event_type: String,
-    /// DateTime when event occured
+    /// `DateTime` when event occured
     pub time: DateTime<FixedOffset>,
     /// Event attributes
     #[serde(default)]
@@ -69,7 +71,7 @@ pub struct OCELEvent {
     pub relationships: Vec<OCELRelationship>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 /// OCEL Relationship (qualified; referring back to an [`OCELObject`])
 pub struct OCELRelationship {
     /// ID of referenced [`OCELObject`]
@@ -112,7 +114,7 @@ pub struct OCELObjectAttribute {
 #[serde(untagged)]
 /// OCEL Attribute Values
 pub enum OCELAttributeValue {
-    /// DateTime
+    /// `DateTime`
     Time(DateTime<FixedOffset>),
     /// Integer
     Integer(i64),
@@ -127,22 +129,75 @@ pub enum OCELAttributeValue {
 }
 
 
-impl OCELAttributeValue {
-    ///
-    /// Convert the attribute value to [`String`]
-    /// 
-    /// Time values ([`OCELAttributeValue::Time`]) are represented as a RFC 3339 and ISO 8601 datetime string (e.g., `1996-12-19T16:39:57-08:00``)
-    /// 
-    pub fn to_string(&self) -> String {
-        match self {
+
+impl Display for OCELAttributeValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
             OCELAttributeValue::Time(dt) => dt.to_rfc3339(),
             OCELAttributeValue::Integer(i) => i.to_string(),
             OCELAttributeValue::Float(f) => f.to_string(),
             OCELAttributeValue::Boolean(b) => b.to_string(),
             OCELAttributeValue::String(s) => s.clone(),
-            OCELAttributeValue::Null => String::default(),//"INVALID_VALUE".to_string(),
-        }
+            OCELAttributeValue::Null => String::default(), //"INVALID_VALUE".to_string(),
+        };
+        write!(f,"{s}")
     }
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+/// _Types_ of attribute values in OCEL2
+pub enum OCELAttributeType {
+    /// String
+    String,
+    /// `DateTime`
+    Time,
+    /// Integer
+    Integer,
+    /// Float
+    Float,
+    /// Boolean
+    Boolean,
+    /// Placeholder for invalid types
+    Null,
+}
+
+impl OCELAttributeType {
+    ///
+    /// Returns the OCEL 2.0 string names of the data types as used in the XML format.
+    ///
+    /// For instance "string", "time" or "float"
+    ///
+    /// See [`OCELAttributeType::from_type_str`] for the reverse functionality.
+    ///
+    pub fn to_type_string(&self) -> String {
+        match self {
+            OCELAttributeType::String => "string",
+            OCELAttributeType::Float => "float",
+            OCELAttributeType::Boolean => "boolean",
+            OCELAttributeType::Integer => "integer",
+            OCELAttributeType::Time => "time",
+            //  Null is not a real attribute type
+            OCELAttributeType::Null => "string",
+        }
+        .to_string()
+    }
+
+    ///
+    /// Returns the [`OCELAttributeType`] corresponding to the given attribute type string.
+    ///
+    /// For instance "string" yields [`OCELAttributeType::String`]
+    ///
+    /// See [`OCELAttributeType::to_type_string`] for the reverse functionality.
+    ///  
+    pub fn from_type_str(s: &str) -> Self {
+        match s {
+            "string" => OCELAttributeType::String,
+            "float" => OCELAttributeType::Float,
+            "boolean" => OCELAttributeType::Boolean,
+            "integer" => OCELAttributeType::Integer,
+            "time" => OCELAttributeType::Time,
+            _ => OCELAttributeType::Null,
+        }
+    }
+}
 

@@ -28,11 +28,13 @@ pub mod event_log {
     pub mod ocel {
         /// [`OCEL`] struct and sub-structs
         pub mod ocel_struct;
+        /// `SQLite` OCEL 2.0
+        pub mod sqlite;
+        /// XML Export for OCEL 2.0
+        pub mod xml_ocel_export;
         #[allow(clippy::single_match)]
         /// Parser for the OCEL 2.0 XML format
         pub mod xml_ocel_import;
-        /// XML Export for OCEL 2.0
-        pub mod xml_ocel_export;
     }
     pub use event_log_struct::{
         Attribute, AttributeValue, Attributes, Event, EventLog, Trace, XESEditableAttribute,
@@ -69,9 +71,12 @@ pub mod petri_net {
 
 use std::fs::File;
 use std::io::BufReader;
+use std::io::BufWriter;
+use std::path::Path;
 
 #[doc(inline)]
 pub use event_log::ocel;
+
 
 #[doc(inline)]
 pub use alphappp::full::alphappp_discover_petri_net;
@@ -123,6 +128,28 @@ pub use event_log::ocel::xml_ocel_import::import_ocel_xml_file;
 
 #[doc(inline)]
 pub use event_log::ocel::xml_ocel_import::import_ocel_xml_slice;
+
+
+#[doc(inline)]
+pub use  event_log::ocel::xml_ocel_export::export_ocel_xml_path;
+
+#[doc(inline)]
+pub use  event_log::ocel::xml_ocel_export::export_ocel_xml;
+
+
+#[doc(inline)]
+pub use event_log::ocel::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_path;
+
+#[doc(inline)]
+pub use event_log::ocel::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_con;
+
+
+#[doc(inline)]
+pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_path;
+
+#[doc(inline)]
+pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_con;
+
 
 #[doc(inline)]
 pub use petri_net::petri_net_struct::PetriNet;
@@ -208,4 +235,25 @@ pub fn import_ocel_json_from_path(path: &str) -> Result<OCEL, std::io::Error> {
 ///
 pub fn import_ocel_json_from_slice(slice: &[u8]) -> Result<OCEL, std::io::Error> {
     Ok(serde_json::from_slice(slice)?)
+}
+
+
+///
+/// Export [`OCEL`] to a JSON file at the specified path
+/// 
+/// To import an OCEL .json file see [`import_ocel_json_from_path`] instead.
+/// 
+pub fn export_ocel_json_path<P: AsRef<Path>>(ocel: &OCEL,path: P) -> Result<(),std::io::Error> {
+    let writer: BufWriter<File> = BufWriter::new(File::open(path)?);
+    Ok(serde_json::to_writer(writer,ocel)?)
+}
+
+
+///
+/// Export [`OCEL`] to JSON in a byte array ([`Vec<u8>`]) 
+/// 
+/// To import an OCEL .json file see [`import_ocel_json_from_path`] instead.
+/// 
+pub fn export_ocel_json_to_vec(ocel: &OCEL) -> Result<Vec<u8>,std::io::Error> {
+    Ok(serde_json::to_vec(ocel)?)
 }

@@ -1062,7 +1062,7 @@ fn parse_date_from_str(value: &str, date_format: &Option<String>) -> Option<Date
     // Is a date_format string provided?
     if let Some(date_format) = &date_format {
         if let Ok(dt) = DateTime::parse_from_str(value, date_format) {
-            return Some(dt.into());
+            return Some(dt);
         }
         // If parsing with DateTime with provided date format fail, try to parse NaiveDateTime using format (i.e., without time-zone, assuming UTC)
         if let Ok(dt) = NaiveDateTime::parse_from_str(value, date_format) {
@@ -1073,11 +1073,11 @@ fn parse_date_from_str(value: &str, date_format: &Option<String>) -> Option<Date
     // Default parsing options for commonly used formats
 
     if let Ok(dt) = DateTime::parse_from_rfc3339(value) {
-        return Some(dt.into());
+        return Some(dt);
     }
 
     if let Ok(dt) = DateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S:%f%:z") {
-        return Some(dt.into());
+        return Some(dt);
     }
 
     if let Ok(dt) = NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f") {

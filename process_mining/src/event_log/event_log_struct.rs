@@ -24,7 +24,7 @@ pub enum AttributeValue {
     /// String values
     String(String),
     // #[serde(with = "ts_milliseconds")]
-    /// DateTime values
+    /// `DateTime` values
     Date(DateTime<FixedOffset>),
     /// Integer values
     Int(i64),
@@ -42,7 +42,7 @@ pub enum AttributeValue {
     ///
     /// _Note_: Containers should _not_ have nested attributes in the `own_attributes` field, but ONLY in the inner [`Attributes`]
     Container(Attributes),
-    /// Used to represent invalid values (e.g., DateTime which could not be parsed)
+    /// Used to represent invalid values (e.g., `DateTime` which could not be parsed)
     None(),
 }
 

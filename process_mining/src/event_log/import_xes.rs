@@ -34,7 +34,7 @@ pub enum XESParseError {
     MissingKey(&'static str),
     /// Invalid value of XML attribute with key (with key included)
     InvalidKeyValue(&'static str),
-    /// Parsing Transformation Error: Expected that XESOuterLogData would be emitted first
+    /// Parsing Transformation Error: Expected that `XESOuterLogData` would be emitted first
     ExpectedLogData,
     /// Parsing Transformation Error: Expected that Trace would be emitted now
     ExpectedTraceData,
@@ -93,11 +93,11 @@ pub struct XESImportOptions {
     ///
     /// Does not effect global event attributes
     pub ignore_event_attributes_except: Option<HashSet<String>>,
-    /// Optional date format to use when parsing DateTimes (first trying [`chrono::DateTime`] then falling back to [`chrono::NaiveDateTime`] with UTC timezone).
+    /// Optional date format to use when parsing `DateTimes` (first trying [`chrono::DateTime`] then falling back to [`chrono::NaiveDateTime`] with UTC timezone).
     ///
     /// See <https://docs.rs/chrono/latest/chrono/format/strftime/index.html> for all available Specifiers.
     ///
-    /// Will fall back to default formats (e.g., rfc3339) if parsing fails using passed date_format
+    /// Will fall back to default formats (e.g., rfc3339) if parsing fails using passed `date_format`
     pub date_format: Option<String>,
     /// Sort events via timestamp key directly when parsing:
     /// * If None: No sorting (i.e., events of traces are included in order of occurence in event log)

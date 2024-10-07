@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::{event_log::ocel::ocel_struct::OCELType, OCEL};
 
 use super::ocel_struct::{
-    OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute,
-    OCELRelationship, OCELTypeAttribute,
+    OCELAttributeType, OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject,
+    OCELObjectAttribute, OCELRelationship, OCELTypeAttribute,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -22,11 +22,11 @@ use super::ocel_struct::{
 pub struct OCELImportOptions {
     /// Verbosely log errors or warnings (e.g., for missing referenced objects or invalid attribute values)
     pub verbose: bool,
-    /// Optional date format to use when parsing DateTimes (first trying [`chrono::DateTime`] then falling back to [`chrono::NaiveDateTime`] with UTC timezone).
+    /// Optional date format to use when parsing `DateTimes` (first trying [`chrono::DateTime`] then falling back to [`chrono::NaiveDateTime`] with UTC timezone).
     ///
     /// See <https://docs.rs/chrono/latest/chrono/format/strftime/index.html> for all available Specifiers.
     ///
-    /// Will fall back to default formats (e.g., rfc3339) if parsing fails using passed date_format
+    /// Will fall back to default formats (e.g., rfc3339) if parsing fails using passed `date_format`
     pub date_format: Option<String>,
 }
 
@@ -58,36 +58,8 @@ enum Mode {
     None,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-/// _Types_ of attribute values in OCEL2
-pub enum OCELAttributeType {
-    /// String
-    String,
-    /// DateTime
-    Time,
-    /// Integer
-    Integer,
-    /// Float
-    Float,
-    /// Boolean
-    Boolean,
-    /// Placeholder for invalid types
-    Null,
-}
-
 fn read_to_string(x: &mut &[u8]) -> String {
     String::from_utf8_lossy(x).to_string()
-}
-
-fn type_string_to_attribute_type(s: &str) -> OCELAttributeType {
-    match s {
-        "string" => OCELAttributeType::String,
-        "float" => OCELAttributeType::Float,
-        "boolean" => OCELAttributeType::Boolean,
-        "integer" => OCELAttributeType::Integer,
-        "time" => OCELAttributeType::Time,
-        _ => OCELAttributeType::Null,
-    }
 }
 
 fn get_attribute_value(t: &BytesStart<'_>, key: &str) -> String {
@@ -107,6 +79,13 @@ fn parse_attribute_value(
             .map(OCELAttributeValue::Integer),
         OCELAttributeType::Float => value
             .parse::<f64>()
+            .or_else(|e| {
+                if value == "null" {
+                    Ok(f64::NAN)
+                } else {
+                    Err(e)
+                }
+            })
             .map_err(|e| format!("{}", e))
             .map(OCELAttributeValue::Float),
         OCELAttributeType::Boolean => value
@@ -116,7 +95,7 @@ fn parse_attribute_value(
         OCELAttributeType::Null => Ok(OCELAttributeValue::Null),
         OCELAttributeType::Time => parse_date(&value, options)
             .map_err(|e| e.to_string())
-            .map(|v| OCELAttributeValue::Time(v.into())),
+            .map(OCELAttributeValue::Time),
     };
     match res {
         Ok(attribute_val) => attribute_val,
@@ -132,7 +111,12 @@ fn parse_attribute_value(
     }
 }
 
-fn parse_date<'a>(
+///
+/// Parse Date from string, trying multiple different formats
+///
+/// Additionally, a date format can be passed as a parameter
+///
+pub fn parse_date<'a>(
     time: &'a str,
     options: &OCELImportOptions,
 ) -> Result<DateTime<FixedOffset>, &'a str> {
@@ -157,9 +141,15 @@ fn parse_date<'a>(
 
     // Also handle "2024-10-02T07:55:15.348555" as well as "2022-01-09T15:00:00"
     // Assuming UTC time zone
-    if let Ok(dt) =  NaiveDateTime::parse_from_str(time, "%FT%T%.f") {
+    if let Ok(dt) = NaiveDateTime::parse_from_str(time, "%FT%T%.f") {
         return Ok(dt.and_utc().into());
     }
+
+    // export_path
+    if let Ok(dt) = NaiveDateTime::parse_from_str(time, "%F %T UTC") {
+        return Ok(dt.and_utc().into());
+    }
+
 
     // Who made me do this? 🫣
     // Some logs have this date: "Mon Apr 03 2023 12:08:18 GMT+0200 (Mitteleuropäische Sommerzeit)"
@@ -175,7 +165,7 @@ fn parse_date<'a>(
 }
 
 ///
-/// Import an [`OCEL`]2 XML file from the given reader
+/// Import an [`OCEL`] XML file from the given reader
 ///
 pub fn import_ocel_xml<T>(reader: &mut Reader<T>, options: OCELImportOptions) -> OCEL
 where
@@ -278,7 +268,7 @@ where
                                             OCELObjectAttribute {
                                                 name,
                                                 value: super::ocel_struct::OCELAttributeValue::Null,
-                                                time: time_val.into(),
+                                                time: time_val,
                                             },
                                         )
                                     }
@@ -302,7 +292,7 @@ where
                                     event_type,
                                     attributes: Vec::new(),
                                     relationships: Vec::new(),
-                                    time: parse_date(&time, &options).unwrap().into(),
+                                    time: parse_date(&time, &options).unwrap(),
                                 });
                                 current_mode = Mode::Event
                             }
@@ -404,7 +394,7 @@ where
                                 let object_type = &ocel.object_types.last().unwrap().name;
                                 object_attribute_types.insert(
                                     (object_type.clone(), name.clone()),
-                                    type_string_to_attribute_type(&value_type),
+                                    OCELAttributeType::from_type_str(&value_type),
                                 );
                                 ocel.object_types
                                     .last_mut()
@@ -454,7 +444,7 @@ where
                                             OCELObjectAttribute {
                                                 name,
                                                 value: super::ocel_struct::OCELAttributeValue::Null,
-                                                time: time_val.into(),
+                                                time: time_val,
                                             },
                                         )
                                     }
@@ -540,7 +530,7 @@ where
                                 let event_type = &ocel.event_types.last().unwrap().name;
                                 event_attribute_types.insert(
                                     (event_type.clone(), name.clone()),
-                                    type_string_to_attribute_type(&value_type),
+                                    OCELAttributeType::from_type_str(&value_type),
                                 );
                                 ocel.event_types
                                     .last_mut()
@@ -598,14 +588,14 @@ where
 }
 
 ///
-/// Import an [`OCEL`]2 XML from a byte slice __with__ _custom options_
+/// Import an [`OCEL`] XML from a byte slice __with__ _custom options_
 ///
 pub fn import_ocel_xml_slice_with(xes_data: &[u8], options: OCELImportOptions) -> OCEL {
     import_ocel_xml(&mut Reader::from_reader(BufReader::new(xes_data)), options)
 }
 
 ///
-/// Import an [`OCEL`]2 XML from a filepath __with__ _custom options_
+/// Import an [`OCEL`] XML from a filepath __with__ _custom options_
 ///
 pub fn import_ocel_xml_file_with(path: &str, options: OCELImportOptions) -> OCEL {
     let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();
@@ -613,14 +603,14 @@ pub fn import_ocel_xml_file_with(path: &str, options: OCELImportOptions) -> OCEL
 }
 
 ///
-/// Import an [`OCEL`]2 XML from a byte slice with default options
+/// Import an [`OCEL`] XML from a byte slice with default options
 ///
 pub fn import_ocel_xml_slice(xes_data: &[u8]) -> OCEL {
     import_ocel_xml_slice_with(xes_data, OCELImportOptions::default())
 }
 
 ///
-/// Import an [`OCEL`]2 XML from a filepath with default options
+/// Import an [`OCEL`] XML from a filepath with default options
 ///
 pub fn import_ocel_xml_file(path: &str) -> OCEL {
     import_ocel_xml_file_with(path, OCELImportOptions::default())

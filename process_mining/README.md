@@ -1,4 +1,4 @@
-# process_mining
+# `process_mining`
 
 This crate contains basic data structures, functions and utilities for Process Mining.
 
@@ -16,7 +16,8 @@ _As this crate is still in very active development, expect larger API changes al
     - See [`export_xes_event_log_to_file_path`] or [`export_xes_trace_stream_to_file`]
 - Object-Centric Event Logs (OCEL 2.0)
   - OCEL struct
-  - Fast OCEL XML & JSON Parsing
+  - OCEL import from all available formats (XML, JSON, and SQLite)
+  - OCEL export to all available formats (XML, JSON, and SQLite)
 - Petri Nets
   - PNML Export
   - PNML Import
@@ -196,11 +197,11 @@ __XES Import/Export: Normal vs. Streaming__
 
 </summary>
 
-For the import/export of event logs, either the normal API (e.g., [import_xes_file]) or the streaming API (e.g., [stream_xes_from_path]) can be used.
+For the import/export of event logs, either the normal API (e.g., [`import_xes_file`]) or the streaming API (e.g., [`stream_xes_from_path`]) can be used.
 Here, _streaming_ refers to supporting __iterators over traces__.
 
 Internally, the XES import and export functionality is only implemented as a streaming version.
-The normal API uses the streaming implementation under the hood to provide convenient wrappers for common situations (i.e., simply importing an XES file as a complete [EventLog] struct into memory).
+The normal API uses the streaming implementation under the hood to provide convenient wrappers for common situations (i.e., simply importing an XES file as a complete [`EventLog`] struct into memory).
 
 When parsing, only a part of the input XES file containing log-level information will be parsed initially (specifically: parsing will stop before the first trace).
 The rest is wrapped behind an iterator and only lazily parses until the next trace is available.
