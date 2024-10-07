@@ -1,7 +1,5 @@
 use std::{collections::HashMap, ffi::CString, time::UNIX_EPOCH};
 
-use chrono::{DateTime, FixedOffset};
-use rusqlite::{Connection, Params, Row, Rows, Statement};
 use super::*;
 use crate::{
     ocel::{
@@ -13,11 +11,10 @@ use crate::{
     },
     OCEL,
 };
+use chrono::{DateTime, FixedOffset};
+use rusqlite::{Connection, Params, Row, Rows, Statement};
 
 use crate::ocel::ocel_struct::{OCELAttributeType, OCELAttributeValue, OCELRelationship};
-
-
-
 
 fn try_get_column_date_val(
     r: &Row<'_>,
@@ -58,13 +55,12 @@ fn get_row_attribute_value(
     }
 }
 
-
 /// Import [`OCEL`] log from `SQLite` connection
 ///
 /// If you want to import from a filepath, see [`import_ocel_sqlite_from_path`] instead.
 ///
 /// Note: This function is only available if the `ocel-sqlite` feature is enabled.
-/// 
+///
 pub fn import_ocel_sqlite_from_con(con: Connection) -> Result<OCEL, rusqlite::Error> {
     let mut ocel = OCEL {
         event_types: Vec::default(),
@@ -115,7 +111,7 @@ pub fn import_ocel_sqlite_from_con(con: Connection) -> Result<OCEL, rusqlite::Er
         objs.and_then(|x| {
             Ok::<(String, _, Vec<_>), rusqlite::Error>((
                 x.get(OCEL_ID_COLUMN)?,
-                try_get_column_date_val(x,OCEL_TIME_COLUMN)?,
+                try_get_column_date_val(x, OCEL_TIME_COLUMN)?,
                 ob_type_attrs
                     .iter()
                     .flat_map(|attr| {
@@ -169,7 +165,7 @@ pub fn import_ocel_sqlite_from_con(con: Connection) -> Result<OCEL, rusqlite::Er
                 .and_then(|attr| get_row_attribute_value(attr, x))?;
             Ok::<(String, _, String, OCELAttributeValue), rusqlite::Error>((
                 x.get(OCEL_ID_COLUMN)?,
-                try_get_column_date_val(x,OCEL_TIME_COLUMN)?,
+                try_get_column_date_val(x, OCEL_TIME_COLUMN)?,
                 changed_field,
                 changed_val,
             ))
@@ -218,7 +214,7 @@ pub fn import_ocel_sqlite_from_con(con: Connection) -> Result<OCEL, rusqlite::Er
         evs.and_then(|x| {
             Ok::<(String, _, Vec<_>), rusqlite::Error>((
                 x.get(OCEL_ID_COLUMN)?,
-                try_get_column_date_val(x,OCEL_TIME_COLUMN)?,
+                try_get_column_date_val(x, OCEL_TIME_COLUMN)?,
                 ev_type_attrs
                     .iter()
                     .flat_map(|attr| {
@@ -313,7 +309,6 @@ fn query_all<'a, P: Params>(s: &'a mut Statement<'_>, p: P) -> Result<Rows<'a>, 
     Ok(q)
 }
 
-
 ///
 /// Import an [`OCEL`] `SQLite` file from the given path
 ///
@@ -329,11 +324,9 @@ pub fn import_ocel_sqlite_from_path<P: AsRef<std::path::Path>>(
 /// Import an [`OCEL`] `SQLite` file from the given byte slice
 ///
 /// Note: This function is only available if the `ocel-sqlite` feature is enabled.
-pub fn import_ocel_sqlite_from_slice(
-    bytes: &[u8],
-) -> Result<OCEL, rusqlite::Error> {
+pub fn import_ocel_sqlite_from_slice(bytes: &[u8]) -> Result<OCEL, rusqlite::Error> {
     let mut con = Connection::open_in_memory()?;
-    deserialize_sqlite_slice(&mut con,bytes, false)?;
+    deserialize_sqlite_slice(&mut con, bytes, false)?;
     import_ocel_sqlite_from_con(con)
 }
 
@@ -341,7 +334,7 @@ fn deserialize_sqlite_slice(
     con: &mut Connection,
     data: &[u8],
     read_only: bool,
-) -> Result<(),rusqlite::Error> {
+) -> Result<(), rusqlite::Error> {
     let schema = CString::new("main")?;
     let sz = data.len().try_into().unwrap();
     let flags = if read_only {
@@ -368,7 +361,10 @@ mod sqlite_tests {
     use chrono::DateTime;
     use rusqlite::Connection;
 
-    use crate::{import_ocel_sqlite_from_con, ocel::ocel_struct::{OCELAttributeValue, OCELObjectAttribute, OCELRelationship}};
+    use crate::{
+        import_ocel_sqlite_from_con,
+        ocel::ocel_struct::{OCELAttributeValue, OCELObjectAttribute, OCELRelationship},
+    };
 
     #[test]
     fn test_sqlite_ocel() -> Result<(), rusqlite::Error> {

@@ -128,8 +128,6 @@ pub enum OCELAttributeValue {
     Null,
 }
 
-
-
 impl Display for OCELAttributeValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
@@ -140,7 +138,7 @@ impl Display for OCELAttributeValue {
             OCELAttributeValue::String(s) => s.clone(),
             OCELAttributeValue::Null => String::default(), //"INVALID_VALUE".to_string(),
         };
-        write!(f,"{s}")
+        write!(f, "{s}")
     }
 }
 
@@ -200,4 +198,3 @@ impl OCELAttributeType {
         }
     }
 }
-

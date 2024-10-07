@@ -1,6 +1,9 @@
 use std::{fs::File, io::BufWriter, time::Instant};
 
-use crate::{import_ocel_json_from_path, import_ocel_json_from_slice, import_ocel_xml_slice, ocel::xml_ocel_export::export_ocel_xml_path};
+use crate::{
+    import_ocel_json_from_path, import_ocel_json_from_slice, import_ocel_xml_slice,
+    ocel::xml_ocel_export::export_ocel_xml_path,
+};
 
 #[test]
 fn test_ocel_xml_import() {
@@ -54,8 +57,6 @@ fn test_ocel_p2p_xml_import() {
     assert_eq!(ocel.objects.len(), 9543);
 }
 
-
-
 #[test]
 fn test_ocel_p2p_json_import() {
     let log_bytes = include_bytes!("test_data/ocel2-p2p.json");
@@ -107,9 +108,6 @@ fn test_ocel_logistics_json_import() {
     assert_eq!(ocel.events.len(), 35413); //35761
     assert_eq!(ocel.objects.len(), 13910); //14013
 }
-
-
-
 
 #[test]
 fn test_ocel_pm4py_log() {

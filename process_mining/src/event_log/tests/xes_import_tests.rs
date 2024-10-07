@@ -95,10 +95,7 @@ fn test_xes_gz_import() {
             .get_by_key("time:timestamp")
             .unwrap()
             .value,
-        AttributeValue::Date(
-            DateTime::parse_from_rfc3339("2014-10-22 09:15:41+00:00")
-                .unwrap()
-        )
+        AttributeValue::Date(DateTime::parse_from_rfc3339("2014-10-22 09:15:41+00:00").unwrap())
     );
 
     // Test if log name is correct

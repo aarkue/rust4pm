@@ -1,14 +1,7 @@
 use std::collections::HashMap;
 
 use super::*;
-use crate::{
-    ocel::
-        ocel_struct::
-            OCELTypeAttribute
-        
-    ,
-    OCEL,
-};
+use crate::{ocel::ocel_struct::OCELTypeAttribute, OCEL};
 use chrono::DateTime;
 use rusqlite::Connection;
 
@@ -26,7 +19,7 @@ fn clean_sql_name(type_name: &str) -> String {
 /// Export an [`OCEL`] to an `SQLite` file at the specified path
 ///
 /// Note: This function is only available if the `ocel-sqlite` feature is enabled.
-/// 
+///
 pub fn export_ocel_sqlite_to_path<P: AsRef<std::path::Path>>(
     path: P,
     ocel: &OCEL,
@@ -37,7 +30,7 @@ pub fn export_ocel_sqlite_to_path<P: AsRef<std::path::Path>>(
 
 ///
 /// Export an [`OCEL`] log to a SQLite connection
-/// 
+///
 /// Note: This function is only available if the `ocel-sqlite` feature is enabled.
 ///
 pub fn export_ocel_sqlite_to_con(con: &Connection, ocel: &OCEL) -> Result<(), rusqlite::Error> {

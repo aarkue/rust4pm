@@ -150,7 +150,6 @@ pub fn parse_date<'a>(
         return Ok(dt.and_utc().into());
     }
 
-
     // Who made me do this? 🫣
     // Some logs have this date: "Mon Apr 03 2023 12:08:18 GMT+0200 (Mitteleuropäische Sommerzeit)"
     // Below ignores the first "Mon " part (%Z) parses the rest (only if "GMT") and then parses the timezone (+0200)
