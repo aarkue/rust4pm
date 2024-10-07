@@ -98,7 +98,6 @@ fn test_xes_gz_import() {
         AttributeValue::Date(
             DateTime::parse_from_rfc3339("2014-10-22 09:15:41+00:00")
                 .unwrap()
-                .into()
         )
     );
 

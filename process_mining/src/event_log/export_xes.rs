@@ -33,7 +33,7 @@ where
     W: Write + 'b,
 {
     let mut xml_writer = writer.into();
-    let writer = xml_writer.to_xml_writer();
+    let writer: &mut quick_xml::Writer<_> = xml_writer.to_xml_writer();
     writer
         .write_event(quick_xml::events::Event::Decl(BytesDecl::new(
             "1.0",

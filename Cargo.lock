@@ -1226,6 +1226,7 @@ dependencies = [
  "console_error_panic_hook",
  "getrandom",
  "process_mining",
+ "rusqlite",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
@@ -1550,7 +1551,6 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "serde_rusqlite",
  "uuid",
 ]
 
@@ -1837,6 +1837,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7753b721174eb8ff87a9a0e799e2d7bc3749323e773db92e0984debb00019d6e"
 dependencies = [
  "bitflags",
+ "chrono",
  "fallible-iterator",
  "fallible-streaming-iterator",
  "hashlink",
@@ -1945,16 +1946,6 @@ dependencies = [
  "itoa",
  "memchr",
  "ryu",
- "serde",
-]
-
-[[package]]
-name = "serde_rusqlite"
-version = "0.36.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b741cc5ef185cd96157e762c3bba743c4e94c8dc6af0edb053c48d2b3c27e691"
-dependencies = [
- "rusqlite",
  "serde",
 ]
 

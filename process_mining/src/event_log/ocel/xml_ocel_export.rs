@@ -208,7 +208,7 @@ mod ocel_xml_export_test {
             now.elapsed()
         );
         now = Instant::now();
-        let ocel2 = import_ocel_xml_file(&export_path);
+        let ocel2 = import_ocel_xml_file(export_path);
         println!(
             "Imported OCEL AGAIN with {} objects and {} events in {:#?}",
             ocel.objects.len(),
@@ -250,7 +250,7 @@ mod ocel_xml_export_test {
             now.elapsed()
         );
         now = Instant::now();
-        let ocel2 = import_ocel_xml_file(&export_path);
+        let ocel2 = import_ocel_xml_file(export_path);
         println!(
             "Imported OCEL AGAIN with {} objects and {} events in {:#?}",
             ocel.objects.len(),

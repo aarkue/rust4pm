@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::{event_log::ocel::ocel_struct::OCELType, OCEL};
 
 use super::ocel_struct::{
-    ocel_type_string_to_attribute_type, OCELAttributeType, OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute, OCELRelationship, OCELTypeAttribute
+    OCELAttributeType, OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject,
+    OCELObjectAttribute, OCELRelationship, OCELTypeAttribute,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -21,11 +22,11 @@ use super::ocel_struct::{
 pub struct OCELImportOptions {
     /// Verbosely log errors or warnings (e.g., for missing referenced objects or invalid attribute values)
     pub verbose: bool,
-    /// Optional date format to use when parsing DateTimes (first trying [`chrono::DateTime`] then falling back to [`chrono::NaiveDateTime`] with UTC timezone).
+    /// Optional date format to use when parsing `DateTimes` (first trying [`chrono::DateTime`] then falling back to [`chrono::NaiveDateTime`] with UTC timezone).
     ///
     /// See <https://docs.rs/chrono/latest/chrono/format/strftime/index.html> for all available Specifiers.
     ///
-    /// Will fall back to default formats (e.g., rfc3339) if parsing fails using passed date_format
+    /// Will fall back to default formats (e.g., rfc3339) if parsing fails using passed `date_format`
     pub date_format: Option<String>,
 }
 
@@ -87,7 +88,7 @@ fn parse_attribute_value(
         OCELAttributeType::Null => Ok(OCELAttributeValue::Null),
         OCELAttributeType::Time => parse_date(&value, options)
             .map_err(|e| e.to_string())
-            .map(|v| OCELAttributeValue::Time(v.into())),
+            .map(OCELAttributeValue::Time),
     };
     match res {
         Ok(attribute_val) => attribute_val,
@@ -103,6 +104,11 @@ fn parse_attribute_value(
     }
 }
 
+///
+/// Parse Date from string, trying multiple different formats
+///
+/// Additionally, a date format can be passed as a parameter
+///
 pub fn parse_date<'a>(
     time: &'a str,
     options: &OCELImportOptions,
@@ -249,7 +255,7 @@ where
                                             OCELObjectAttribute {
                                                 name,
                                                 value: super::ocel_struct::OCELAttributeValue::Null,
-                                                time: time_val.into(),
+                                                time: time_val,
                                             },
                                         )
                                     }
@@ -273,7 +279,7 @@ where
                                     event_type,
                                     attributes: Vec::new(),
                                     relationships: Vec::new(),
-                                    time: parse_date(&time, &options).unwrap().into(),
+                                    time: parse_date(&time, &options).unwrap(),
                                 });
                                 current_mode = Mode::Event
                             }
@@ -375,7 +381,7 @@ where
                                 let object_type = &ocel.object_types.last().unwrap().name;
                                 object_attribute_types.insert(
                                     (object_type.clone(), name.clone()),
-                                    ocel_type_string_to_attribute_type(&value_type),
+                                    OCELAttributeType::from_type_str(&value_type),
                                 );
                                 ocel.object_types
                                     .last_mut()
@@ -425,7 +431,7 @@ where
                                             OCELObjectAttribute {
                                                 name,
                                                 value: super::ocel_struct::OCELAttributeValue::Null,
-                                                time: time_val.into(),
+                                                time: time_val,
                                             },
                                         )
                                     }
@@ -511,7 +517,7 @@ where
                                 let event_type = &ocel.event_types.last().unwrap().name;
                                 event_attribute_types.insert(
                                     (event_type.clone(), name.clone()),
-                                    ocel_type_string_to_attribute_type(&value_type),
+                                    OCELAttributeType::from_type_str(&value_type),
                                 );
                                 ocel.event_types
                                     .last_mut()
