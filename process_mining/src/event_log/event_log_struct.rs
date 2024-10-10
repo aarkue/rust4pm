@@ -4,6 +4,14 @@ use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[cfg(feature = "dataframes")]
+use polars::error::PolarsError;
+#[cfg(feature = "dataframes")]
+use polars::frame::DataFrame;
+
+#[cfg(feature = "dataframes")]
+use crate::convert_log_to_dataframe;
+
 use super::constants::ACTIVITY_NAME;
 
 ///
@@ -425,6 +433,18 @@ impl EventLog {
         event
             .attributes
             .get_by_key_or_global(key, &self.global_trace_attrs)
+    }
+
+    #[cfg(feature = "dataframes")]
+    ///
+    /// Convert this [`EventLog`] to a Polars [`DataFrame`]
+    ///
+    /// Flattens event log and adds trace-level attributes to events with prefixed attribute key.
+    /// 
+    /// Note: This function is only available if the `dataframes` feature is enabled.
+    ///
+    pub fn to_dataframe(&self) -> Result<DataFrame, PolarsError> {
+        convert_log_to_dataframe(self, false)
     }
 }
 

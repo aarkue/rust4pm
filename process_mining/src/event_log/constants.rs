@@ -7,7 +7,7 @@
 pub const ACTIVITY_NAME: &str = "concept:name";
 /// Prefix prepended to attribute keys when flattening event log to events only
 ///
-/// __Usage Generally Discouraged__:  Primarily used only for interoperability with `PM4Py`
+/// Primarily used only for interoperability with `PM4Py`
 pub const TRACE_PREFIX: &str = "case:";
 /// Common identifying field for trace identities (i.e., trace IDs)
 ///
@@ -17,5 +17,5 @@ pub const TRACE_PREFIX: &str = "case:";
 pub const TRACE_ID_NAME: &str = "concept:name";
 /// Constructed combination of [`TRACE_PREFIX`] and [`TRACE_ID_NAME`]
 ///
-/// __Usage Generally Discouraged__:  Primarily used only for interoperability with `PM4Py`
+/// Primarily used only for interoperability with `PM4Py`
 pub const PREFIXED_TRACE_ID_NAME: &str = "case:concept:name";

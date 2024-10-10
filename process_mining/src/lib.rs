@@ -22,6 +22,9 @@ pub mod event_log {
     pub mod import_xes;
     /// Streaming XES Import
     pub mod stream_xes;
+    /// Conversion of XES event data from/to polars DataFrame
+    #[cfg(feature = "dataframes")]
+    pub mod dataframe;
     ///
     /// OCEL2.0 (Object-Centric Event Logs)
     ///
@@ -153,6 +156,16 @@ pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_con;
 #[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
 pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_path;
+
+
+
+#[cfg(feature = "dataframes")]
+#[doc(inline)]
+pub use event_log::dataframe::convert_log_to_dataframe;
+
+#[cfg(feature = "dataframes")]
+#[doc(inline)]
+pub use event_log::dataframe::convert_dataframe_to_log;
 
 #[doc(inline)]
 pub use petri_net::petri_net_struct::PetriNet;

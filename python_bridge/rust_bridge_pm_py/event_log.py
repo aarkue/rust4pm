@@ -1,7 +1,8 @@
 ACTIVITY_NAME: str = "concept:name"
 TRACE_ID_NAME: str = "case:concept:name"
 from dataclasses import dataclass
-import orjson
+# import orjson
+import json
 import time
 from rust_bridge_pm_py import native
 
@@ -87,12 +88,12 @@ def py_test_event_log():
     # log_dict = log.to_dict()
     # print("Log to dict took " + str((time.time() - start) * 1000) + "ms")
     # start = time.time()
-    json_res = orjson.dumps(log)
+    json_res = json.dumps(log)
     print("JSON dump took " + str((time.time() - start) * 1000) + "ms")
     # new_log_dict = native.test_event_log(log_dict)
     new_log_dict_bytes= native.test_event_log_bytes(json_res)
     print("Native call took " + str((time.time() - start) * 1000) + "ms")
-    new_log_dict = orjson.loads(new_log_dict_bytes)
+    new_log_dict = json.loads(new_log_dict_bytes)
     start = time.time()
     new_log = EventLog.from_dict(new_log_dict)
     print("Dict to log took " + str((time.time() - start) * 1000) + "ms")
