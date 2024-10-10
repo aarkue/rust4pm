@@ -70,7 +70,7 @@ fn attribute_value_to_any_value<'a>(
 }
 
 ///
-/// Convert an [EventLog] to a Polars [DataFrame]
+/// Convert an [`EventLog`] to a Polars [`DataFrame`]
 ///
 /// Flattens event log and adds trace-level attributes to events with prefixed attribute key (see [TRACE_PREFIX])
 ///
@@ -264,8 +264,9 @@ fn any_value_to_attribute_value(from: &AnyValue<'_>) -> AttributeValue {
 
 
 /// Convert Polars [`DataFrame`] to [`EventLog`]
-///     - Extracts attributes as Strings (converting other formats using debug format macro)
-///     - Assumes valid EventLog structure of DataFrame (i.e., assuming that [`PREFIXED_TRACE_ID_NAME`] is present)
+/// 
+///  - Extracts attributes as Strings (converting other formats using debug format macro)
+///  - Assumes valid EventLog structure of DataFrame (i.e., assuming that [`PREFIXED_TRACE_ID_NAME`] is present)
 ///
 /// Note: This function is only available if the `dataframes` feature is enabled.
 /// 

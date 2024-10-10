@@ -29,7 +29,7 @@ pub mod event_log {
     /// OCEL2.0 (Object-Centric Event Logs)
     ///
     pub mod ocel {
-        /// [`OCEL`] struct and sub-structs
+        /// OCEL 2.0 struct and sub-structs
         pub mod ocel_struct;
         /// `SQLite` OCEL 2.0
         #[cfg(feature = "ocel-sqlite")]
