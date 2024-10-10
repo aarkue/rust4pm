@@ -17,7 +17,7 @@ rust-version = "1.77"
 rayon = "1.7.0"
 serde_json = "1.0.105"
 serde = {version = "1.0.188", features = ["derive"]}
-chrono = {version = "0.4.29", features = ["serde"] }
+chrono = {version = "0.4.34", features = ["serde"] }
 uuid = {version = "1.4.1", features = ["v4", "serde"]}
 quick-xml = {version = "0.31.0"}
 flate2 = "1.0"
