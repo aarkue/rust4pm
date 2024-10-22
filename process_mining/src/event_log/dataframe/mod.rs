@@ -11,20 +11,18 @@ use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use super::{constants::PREFIXED_TRACE_ID_NAME, Attributes, Event, Trace};
 
 ///
-/// Prefix to attribute keys for trace-level attributes (e.g., when "flattening" the log to a [DataFrame])
+/// Prefix to attribute keys for trace-level attributes (e.g., when "flattening" the log to a [`DataFrame`])
 ///
 pub const TRACE_PREFIX: &str = "case:";
 
 ///
-/// Convert a attribute ([Attribute]) to an [AnyValue]
+/// Convert a attribute ([Attribute]) to an [`AnyValue`]
 ///
-/// Used for converting values and data types to the DataFrame equivalent
+/// Used for converting values and data types to the `DataFrame` equivalent
 ///
-/// The UTC timezone argument is used to correctly convert to AnyValue::Datetime with UTC timezone
+/// The UTC timezone argument is used to correctly convert to `AnyValue::Datetime` with UTC timezone
 ///
-fn attribute_to_any_value<'a>(
-    from_option: Option<&Attribute>,
-) -> AnyValue<'a> {
+fn attribute_to_any_value<'a>(from_option: Option<&Attribute>) -> AnyValue<'a> {
     match from_option {
         Some(from) => {
             let x = attribute_value_to_any_value(&from.value);
@@ -35,15 +33,13 @@ fn attribute_to_any_value<'a>(
 }
 
 ///
-/// Convert a attribute ([AttributeValue]) to an [AnyValue]
+/// Convert a attribute ([`AttributeValue`]) to an [`AnyValue`]
 ///
-/// Used for converting values and data types to the DataFrame equivalent
+/// Used for converting values and data types to the `DataFrame` equivalent
 ///
-/// The UTC timezone argument is used to correctly convert to AnyValue::Datetime with UTC timezone
+/// The UTC timezone argument is used to correctly convert to `AnyValue::Datetime` with UTC timezone
 ///
-fn attribute_value_to_any_value<'a>(
-    from: &AttributeValue,
-) -> AnyValue<'a> {
+fn attribute_value_to_any_value<'a>(from: &AttributeValue) -> AnyValue<'a> {
     match from {
         AttributeValue::String(v) => AnyValue::StringOwned(v.into()),
         AttributeValue::Date(v) => {
@@ -72,10 +68,10 @@ fn attribute_value_to_any_value<'a>(
 ///
 /// Convert an [`EventLog`] to a Polars [`DataFrame`]
 ///
-/// Flattens event log and adds trace-level attributes to events with prefixed attribute key (see [TRACE_PREFIX])
+/// Flattens event log and adds trace-level attributes to events with prefixed attribute key (see [`TRACE_PREFIX`])
 ///
 /// Note: This function is only available if the `dataframes` feature is enabled.
-/// 
+///
 pub fn convert_log_to_dataframe(
     log: &EventLog,
     print_debug: bool,
@@ -234,7 +230,6 @@ mod df_xes_tests {
     }
 }
 
-
 fn any_value_to_attribute_value(from: &AnyValue<'_>) -> AttributeValue {
     match from {
         AnyValue::Null => AttributeValue::None(),
@@ -254,22 +249,21 @@ fn any_value_to_attribute_value(from: &AnyValue<'_>) -> AttributeValue {
         AnyValue::Datetime(ns, _, _) => {
             // Convert nanos to micros; tz is not used!
             let d: DateTime<_> = DateTime::from_timestamp_micros(ns / 1000)
-                .unwrap().fixed_offset();
+                .unwrap()
+                .fixed_offset();
             AttributeValue::Date(d)
         }
         x => AttributeValue::String(format!("{:?}", x)),
     }
 }
 
-
-
 /// Convert Polars [`DataFrame`] to [`EventLog`]
-/// 
+///
 ///  - Extracts attributes as Strings (converting other formats using debug format macro)
-///  - Assumes valid EventLog structure of DataFrame (i.e., assuming that [`PREFIXED_TRACE_ID_NAME`] is present)
+///  - Assumes valid `EventLog` structure of `DataFrame` (i.e., assuming that [`PREFIXED_TRACE_ID_NAME`] is present)
 ///
 /// Note: This function is only available if the `dataframes` feature is enabled.
-/// 
+///
 pub fn convert_dataframe_to_log(df: &DataFrame) -> Result<EventLog, PolarsError> {
     let groups = df.partition_by_stable([PREFIXED_TRACE_ID_NAME], true)?;
     let columns = df.get_column_names();

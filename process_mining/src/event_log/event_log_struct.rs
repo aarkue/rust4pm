@@ -440,7 +440,7 @@ impl EventLog {
     /// Convert this [`EventLog`] to a Polars [`DataFrame`]
     ///
     /// Flattens event log and adds trace-level attributes to events with prefixed attribute key.
-    /// 
+    ///
     /// Note: This function is only available if the `dataframes` feature is enabled.
     ///
     pub fn to_dataframe(&self) -> Result<DataFrame, PolarsError> {

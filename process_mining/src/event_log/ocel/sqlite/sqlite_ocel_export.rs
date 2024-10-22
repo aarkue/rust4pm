@@ -21,15 +21,26 @@ fn clean_sql_name(type_name: &str) -> String {
 /// Note: This function is only available if the `ocel-sqlite` feature is enabled.
 ///
 pub fn export_ocel_sqlite_to_path<P: AsRef<std::path::Path>>(
-    path: P,
     ocel: &OCEL,
+    path: P,
 ) -> Result<(), rusqlite::Error> {
     let con = Connection::open(path)?;
     export_ocel_sqlite_to_con(&con, ocel)
 }
 
 ///
-/// Export an [`OCEL`] log to a SQLite connection
+/// Export an [`OCEL`] to an `SQLite` to bytes
+///
+/// Note: This function is only available if the `ocel-sqlite` feature is enabled.
+pub fn export_ocel_sqlite_to_slice(ocel: &OCEL) -> Result<Vec<u8>, rusqlite::Error> {
+    let con = Connection::open_in_memory()?;
+    export_ocel_sqlite_to_con(&con, ocel)?;
+    let data = con.serialize(rusqlite::DatabaseName::Main)?;
+    Ok((*data).to_vec())
+}
+
+///
+/// Export an [`OCEL`] log to a `SQLite` connection
 ///
 /// Note: This function is only available if the `ocel-sqlite` feature is enabled.
 ///
@@ -130,7 +141,7 @@ pub fn export_ocel_sqlite_to_con(con: &Connection, ocel: &OCEL) -> Result<(), ru
         let mut attr_vals = ot_attr_map
             .get(&o.object_type)
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|a| {
                 let initial_val = o
                     .attributes
@@ -164,7 +175,7 @@ pub fn export_ocel_sqlite_to_con(con: &Connection, ocel: &OCEL) -> Result<(), ru
                 let mut attr_vals = ot_attr_map
                     .get(&o.object_type)
                     .unwrap()
-                    .into_iter()
+                    .iter()
                     .map(|a| {
                         if a.name == attr.name {
                             format!("'{}'", attr.value)
@@ -217,7 +228,7 @@ pub fn export_ocel_sqlite_to_con(con: &Connection, ocel: &OCEL) -> Result<(), ru
         let mut attr_vals = et_attr_map
             .get(&e.event_type)
             .unwrap()
-            .into_iter()
+            .iter()
             .map(|a| {
                 let value = e.attributes.iter().find(|oa| oa.name == a.name);
                 if let Some(val) = value {
