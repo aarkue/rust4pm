@@ -29,10 +29,10 @@ pub fn export_ocel_sqlite_to_path<P: AsRef<std::path::Path>>(
 }
 
 ///
-/// Export an [`OCEL`] to an `SQLite` to bytes
+/// Export an [`OCEL`] to an `SQLite` to a byte array
 ///
 /// Note: This function is only available if the `ocel-sqlite` feature is enabled.
-pub fn export_ocel_sqlite_to_slice(ocel: &OCEL) -> Result<Vec<u8>, rusqlite::Error> {
+pub fn export_ocel_sqlite_to_vec(ocel: &OCEL) -> Result<Vec<u8>, rusqlite::Error> {
     let con = Connection::open_in_memory()?;
     export_ocel_sqlite_to_con(&con, ocel)?;
     let data = con.serialize(rusqlite::DatabaseName::Main)?;

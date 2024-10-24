@@ -159,7 +159,7 @@ pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_path;
 
 #[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
-pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_slice;
+pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_vec;
 
 #[cfg(feature = "dataframes")]
 #[doc(inline)]
