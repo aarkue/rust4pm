@@ -1,8 +1,8 @@
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::ops::Deref;
-use serde::ser::{SerializeMap, SerializeStruct};
 use serde_with::serde_as;
+use crate::event_log::event_log_struct::EventLogClassifier;
+use crate::EventLog;
 
 /// Activity in a directly-follows graph.
 type Activity = String;
@@ -32,13 +32,42 @@ impl Default for DirectlyFollowsGraph {
 
 impl DirectlyFollowsGraph {
     /// Create new [`DirectlyFollowsGraph`] with no activities and directly-follows relations.
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             activities: HashMap::new(),
             directly_follows_relations: HashMap::new(),
             start_activities: HashSet::new(),
             end_activities: HashSet::new(),
         }
+    }
+
+    pub fn create_from_eventlog(event_log: EventLog, classifier: EventLogClassifier) -> Self {
+        let mut result = Self::new();
+
+        let mut last_event_identity: Option<String> = None;
+        event_log.traces.iter().for_each(|t| {
+            t.events.iter().for_each(|e| {
+                let curr_event_identity = classifier.get_class_identity(e);
+                result.add_activity(curr_event_identity.clone(), 1);
+
+                if last_event_identity.is_some() {
+                    result.add_directly_follows_relation(
+                        last_event_identity.clone().unwrap(),
+                        curr_event_identity.clone(),
+                        1,
+                    )
+                } else {
+                    result.add_start_activity(curr_event_identity.clone());
+                }
+
+                last_event_identity = Some(curr_event_identity.clone());
+            });
+            if last_event_identity.is_some() {
+                result.add_end_activity(last_event_identity.clone().unwrap());
+            }
+        });
+
+        result
     }
 
     /// Serialize to JSON string.
@@ -219,6 +248,11 @@ mod tests {
     ]
 }"#;
 
+    #[cfg(feature = "graphviz-export")]
+    use crate::dfg::image_export::export_dfg_image_png;
+    #[cfg(feature = "graphviz-export")]
+    use crate::dfg::image_export::export_dfg_image_svg;
+    use crate::event_log::import_xes::{import_xes, import_xes_file, XESImportOptions};
     use super::*;
 
     #[test]
@@ -255,5 +289,45 @@ mod tests {
         assert!(dfg.directly_follows_relations.len() == 4);
         assert!(dfg.start_activities.len() == 2);
         assert!(dfg.end_activities.len() == 2);
+    }
+
+    #[test]
+    fn reading_dfg_from_event_log_bpi_2018() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("event_log")
+            .join("tests")
+            .join("test_data")
+            .join("repairExample.xes");
+
+        let log: EventLog = import_xes_file(
+            path,
+            XESImportOptions {
+                ignore_log_attributes_except: Some(HashSet::default()),
+                ignore_trace_attributes_except: Some(
+                    vec!["concept:name".to_string()].into_iter().collect(),
+                ),
+                ignore_event_attributes_except: Some(
+                    vec!["concept:name".to_string(), "time:timestamp".to_string()]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..XESImportOptions::default()
+            },
+        ).unwrap();
+
+        let classifier = log.classifiers.clone().unwrap().get(0).unwrap().clone();
+
+        let graph = DirectlyFollowsGraph::create_from_eventlog(log, classifier);
+
+        let path_output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("event_log")
+            .join("tests")
+            .join("test_data")
+            .join("repairExample.png");
+        #[cfg(feature = "graphviz-export")]
+        export_dfg_image_png(&graph, &path_output).unwrap();
+        std::fs::remove_file(&path_output).unwrap();
     }
 }
