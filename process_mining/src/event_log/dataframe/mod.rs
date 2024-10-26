@@ -192,19 +192,17 @@ mod df_xes_tests {
     use std::time::Instant;
 
     use crate::{
-        event_log::dataframe::convert_log_to_dataframe, import_xes_file, XESImportOptions,
+        event_log::dataframe::convert_log_to_dataframe, import_xes_file,
+        utils::test_utils::get_test_data_path, XESImportOptions,
     };
 
     #[test]
     fn basic_xes() {
         let now = Instant::now();
         let now_total = Instant::now();
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src")
-            .join("event_log")
-            .join("tests")
-            .join("test_data")
-            .join("BPI_Challenge_2017.xes");
+        let path = get_test_data_path()
+            .join("xes")
+            .join("Road_Traffic_Fine_Management_Process.xes.gz");
         let log = import_xes_file(
             path,
             XESImportOptions {
@@ -218,6 +216,8 @@ mod df_xes_tests {
             log.traces.len(),
             now.elapsed()
         );
+        assert_eq!(log.traces.len(),150_370);
+        assert_eq!(num_events,561_470);
         let now = Instant::now();
         let converted_log = convert_log_to_dataframe(&log, true).unwrap();
         println!(
@@ -226,7 +226,7 @@ mod df_xes_tests {
             now.elapsed()
         );
         println!("Total: {:?}\n\n", now_total.elapsed());
-        assert_eq!(converted_log.shape(), (num_events, 19));
+        assert_eq!(converted_log.shape(), (num_events, 16));
     }
 }
 

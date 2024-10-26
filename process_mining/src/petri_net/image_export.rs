@@ -122,27 +122,33 @@ pub fn export_petri_net_image_png<P: AsRef<std::path::Path>>(
 
 #[cfg(test)]
 mod test {
-    use std::fs::remove_file;
 
-    use crate::{alphappp::auto_parameters, import_xes_slice, XESImportOptions};
+    use crate::{
+        alphappp::auto_parameters, import_xes_file, utils::test_utils::get_test_data_path,
+        XESImportOptions,
+    };
 
     use super::{export_petri_net_image_png, export_petri_net_image_svg};
 
     #[test]
     pub fn test_petri_net_png_export() {
-        let xes_bytes = include_bytes!("../event_log/tests/test_data/AN1-example.xes");
-        let log = import_xes_slice(xes_bytes, false, XESImportOptions::default()).unwrap();
+        let path = get_test_data_path().join("xes").join("AN1-example.xes");
+        let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
         let (_, pn) = auto_parameters::alphappp_discover_with_auto_parameters(&(&log).into());
-        export_petri_net_image_png(&pn, "/tmp/petri-net-export-test.png").unwrap();
-        remove_file("/tmp/petri-net-export-test.png").unwrap();
+        let export_path = get_test_data_path()
+            .join("export")
+            .join("petri-net-export-test.png");
+        export_petri_net_image_png(&pn, export_path).unwrap();
     }
 
     #[test]
     pub fn test_petri_net_svg_export() {
-        let xes_bytes = include_bytes!("../event_log/tests/test_data/AN1-example.xes");
-        let log = import_xes_slice(xes_bytes, false, XESImportOptions::default()).unwrap();
+        let path = get_test_data_path().join("xes").join("AN1-example.xes");
+        let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
         let (_, pn) = auto_parameters::alphappp_discover_with_auto_parameters(&(&log).into());
-        export_petri_net_image_svg(&pn, "/tmp/petri-net-export-test.svg").unwrap();
-        remove_file("/tmp/petri-net-export-test.svg").unwrap();
+        let export_path = get_test_data_path()
+            .join("export")
+            .join("petri-net-export-test.svg");
+        export_petri_net_image_svg(&pn, export_path).unwrap();
     }
 }

@@ -298,16 +298,15 @@ mod export_xes_tests {
             event_log_struct::EventLogExtension,
             export_xes::{export_xes_event_log, serialize_classifier},
             stream_xes::{parse_classifier_key, XESOuterLogData},
-        },
-        stream_xes_slice_gz, XESImportOptions,
+        }, import_xes_file, stream_xes_from_path, utils::test_utils::get_test_data_path, XESImportOptions
     };
 
     use super::export_xes_trace_stream_to_file;
 
     #[test]
     fn test_xes_export_std_writer() {
-        let x = include_bytes!("./tests/test_data/Sepsis Cases - Event Log.xes.gz");
-        let log = crate::import_xes_slice(x, true, crate::XESImportOptions::default()).unwrap();
+        let path = get_test_data_path().join("xes").join("Sepsis Cases - Event Log.xes.gz");
+        let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
         let exported_xes_data: Vec<u8> = Vec::new();
         // let mut writer = Writer::new(exported_xes_data);
         let mut buf_writer = BufWriter::new(exported_xes_data);
@@ -347,8 +346,8 @@ mod export_xes_tests {
 
     #[test]
     fn test_xes_export_xml_writer() {
-        let x = include_bytes!("./tests/test_data/Sepsis Cases - Event Log.xes.gz");
-        let log = crate::import_xes_slice(x, true, crate::XESImportOptions::default()).unwrap();
+        let path = get_test_data_path().join("xes").join("Sepsis Cases - Event Log.xes.gz");
+        let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
         let exported_xes_data: Vec<u8> = Vec::new();
         let mut writer = Writer::new(exported_xes_data);
         export_xes_event_log(&mut writer, &log).unwrap();
@@ -388,11 +387,11 @@ mod export_xes_tests {
     #[test]
     fn test_stream_from_gz_to_plain() {
         let now = Instant::now();
-        let data = include_bytes!("./tests/test_data/Road_Traffic_Fine_Management_Process.xes.gz");
+        let path = get_test_data_path().join("xes").join("Road_Traffic_Fine_Management_Process.xes.gz");
 
         let (mut stream, mut log_data) =
-            stream_xes_slice_gz(data, XESImportOptions::default()).unwrap();
-        let file = File::create("/tmp/streaming-export.xes.gz").unwrap();
+            stream_xes_from_path(&path, XESImportOptions::default()).unwrap();
+            let export_path = get_test_data_path().join("export").join("streaming-export.xes.gz");
 
         let traces = stream.map(|mut t| {
             for a in t.attributes.iter_mut() {
@@ -421,8 +420,7 @@ mod export_xes_tests {
             }
         }
 
-        export_xes_trace_stream_to_file(traces, log_data, file, true).unwrap();
-        std::fs::remove_file("/tmp/streaming-export.xes.gz").unwrap();
+        export_xes_trace_stream_to_file(traces, log_data, File::create(&export_path).unwrap(), true).unwrap();
         println!("Streamed from .xes.gz to .xes.gz in {:?}", now.elapsed());
     }
 

@@ -270,32 +270,26 @@ pub fn export_ocel_sqlite_to_con(con: &Connection, ocel: &OCEL) -> Result<(), ru
 
 #[cfg(test)]
 mod sqlite_export_tests {
-    use std::{
-        fs::{self},
-        path::PathBuf,
-    };
+    use std::fs::{self};
 
     use rusqlite::Connection;
 
-    use crate::import_ocel_sqlite_from_con;
+    use crate::{import_ocel_sqlite_from_con, utils::test_utils::get_test_data_path};
 
     use super::export_ocel_sqlite_to_con;
 
     #[test]
     fn test_sqlite_export_order_management() {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("src");
-        path.push("event_log");
-        path.push("tests");
-        path.push("test_data");
-        let mut export_path = path.clone();
-
-        path.push("order-management.sqlite");
+        let path = get_test_data_path()
+            .join("ocel")
+            .join("order-management.sqlite");
 
         let in_con = Connection::open(path).unwrap();
         let ocel = import_ocel_sqlite_from_con(in_con).unwrap();
 
-        export_path.push("order-management-EXPORT.sqlite");
+        let export_path = get_test_data_path()
+            .join("export")
+            .join("order-management-EXPORT.sqlite");
         if let Err(_e) = fs::remove_file(&export_path) {}
         let con = Connection::open(&export_path).unwrap();
 
@@ -328,19 +322,16 @@ mod sqlite_export_tests {
 
     #[test]
     fn test_sqlite_export_p2p() {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("src");
-        path.push("event_log");
-        path.push("tests");
-        path.push("test_data");
-        let mut export_path = path.clone();
-
-        path.push("ocel2-p2p.sqlite");
+        let path = get_test_data_path()
+            .join("ocel")
+            .join("ocel2-p2p.sqlite");
 
         let in_con = Connection::open(path).unwrap();
         let ocel = import_ocel_sqlite_from_con(in_con).unwrap();
 
-        export_path.push("ocel2-p2p-EXPORT.sqlite");
+        let export_path = get_test_data_path()
+            .join("export")
+            .join("ocel2-p2p-EXPORT.sqlite");
         if let Err(_e) = fs::remove_file(&export_path) {}
         let con = Connection::open(&export_path).unwrap();
 

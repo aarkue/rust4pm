@@ -3,12 +3,12 @@ use std::{collections::HashSet, time::Instant};
 
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
-use crate::event_log::import_xes::{import_xes_slice, XESImportOptions};
+use crate::{event_log::import_xes::XESImportOptions, import_xes_file, utils::test_utils::get_test_data_path};
 
 #[test]
 pub fn test_get_class_identity() {
-    let log_bytes = include_bytes!("test_data/Road_Traffic_Fine_Management_Process.xes.gz");
-    let log = import_xes_slice(log_bytes, true, XESImportOptions::default()).unwrap();
+    let path = get_test_data_path().join("xes").join("Road_Traffic_Fine_Management_Process.xes.gz");
+    let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
     let now = Instant::now();
     let event_name_classifier = log.get_classifier_by_name("Event Name");
     assert!(event_name_classifier.is_some());
@@ -53,8 +53,8 @@ pub fn test_get_class_identity() {
 
 #[test]
 pub fn test_get_class_identity_complex() {
-    let log_bytes = include_bytes!("test_data/AN1-example.xes");
-    let log = import_xes_slice(log_bytes, false, XESImportOptions::default()).unwrap();
+    let path = get_test_data_path().join("xes").join("AN1-example.xes");
+    let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
     let now = Instant::now();
     let classifier = log.get_classifier_by_name("classifier1");
     assert!(classifier.is_some());

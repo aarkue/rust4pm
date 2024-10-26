@@ -1,4 +1,6 @@
-use crate::{import_xes_slice, XESImportOptions};
+use crate::{
+    import_xes_file, utils::test_utils::get_test_data_path, XESImportOptions,
+};
 
 use super::XESEditableAttribute;
 
@@ -8,8 +10,8 @@ mod xes_import_tests;
 
 #[test]
 fn test_event_log_attribute_helpers() {
-    let x = include_bytes!("./test_data/RepairExample.xes");
-    let mut log = import_xes_slice(x, false, XESImportOptions::default()).unwrap();
+    let path = get_test_data_path().join("xes").join("RepairExample.xes");
+    let mut log = import_xes_file(&path, XESImportOptions::default()).unwrap();
     // Global trace attribute for "concept:name" is set to "__INVALID__"
     let trace = log.traces.last_mut().unwrap();
     // Last trace has a "concept:name" value 999

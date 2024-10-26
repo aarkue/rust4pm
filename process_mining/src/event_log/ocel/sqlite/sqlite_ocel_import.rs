@@ -356,24 +356,19 @@ fn deserialize_sqlite_slice(
 }
 #[cfg(test)]
 mod sqlite_tests {
-    use std::{collections::HashSet, path::PathBuf};
+    use std::collections::HashSet;
 
     use chrono::DateTime;
     use rusqlite::Connection;
 
     use crate::{
         import_ocel_sqlite_from_con,
-        ocel::ocel_struct::{OCELAttributeValue, OCELObjectAttribute, OCELRelationship},
+        ocel::ocel_struct::{OCELAttributeValue, OCELObjectAttribute, OCELRelationship}, utils::test_utils::get_test_data_path,
     };
 
     #[test]
     fn test_sqlite_ocel() -> Result<(), rusqlite::Error> {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("src");
-        path.push("event_log");
-        path.push("tests");
-        path.push("test_data");
-        path.push("order-management.sqlite");
+        let path = get_test_data_path().join("ocel").join("order-management.sqlite");
 
         let con = Connection::open(path).unwrap();
         let ocel = import_ocel_sqlite_from_con(con)?;

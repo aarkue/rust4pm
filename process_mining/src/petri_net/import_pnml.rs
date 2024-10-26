@@ -386,12 +386,14 @@ pub fn import_pnml_from_path<P: AsRef<std::path::Path>>(
 mod test {
     use quick_xml::Reader;
 
+    use crate::utils::test_utils::get_test_data_path;
+
     use super::import_pnml;
 
     #[test]
     fn test_pnml_import() {
-        let pnml_str = include_str!("./test_data/pn.pnml");
-        let pn = import_pnml(&mut Reader::from_str(pnml_str)).unwrap();
+        let path = get_test_data_path().join("petri-net").join("pn.pnml");
+        let pn = import_pnml(&mut Reader::from_file(path).unwrap()).unwrap();
         assert_eq!(pn.transitions.len(), 46);
         assert_eq!(pn.places.len(), 9);
         assert_eq!(pn.arcs.len(), 24);
@@ -401,15 +403,18 @@ mod test {
         println!("{:#?}", pn);
         #[cfg(feature = "graphviz-export")]
         {
-            pn.export_svg("/tmp/pn.svg").unwrap();
-            println!("Exported to: file:///tmp/pn.svg");
+            let svg_export_path = get_test_data_path().join("export").join("pn.svg");
+            pn.export_svg(&svg_export_path).unwrap();
+            println!("Exported to: file:///{}", svg_export_path.to_string_lossy());
         }
     }
 
     #[test]
     fn test_pnml_import_2() {
-        let pnml_str = include_str!("./test_data/bpic12-tsinghua.pnml");
-        let pn_res = import_pnml(&mut Reader::from_str(pnml_str));
+        let path = get_test_data_path()
+            .join("petri-net")
+            .join("bpic12-tsinghua.pnml");
+        let pn_res = import_pnml(&mut Reader::from_file(path).unwrap());
         assert!(pn_res.is_ok());
         let pn = pn_res.unwrap();
         // assert_eq!(pn.transitions.len(), 46);
@@ -422,15 +427,20 @@ mod test {
         println!("Transitions: {:?}", pn.transitions);
         #[cfg(feature = "graphviz-export")]
         {
-            pn.export_svg("/tmp/pn.svg").unwrap();
-            println!("Exported to: file:///tmp/pn.svg");
+            let svg_export_path = get_test_data_path()
+                .join("export")
+                .join("bpic12-tsinghua.svg");
+            pn.export_svg(&svg_export_path).unwrap();
+            println!("Exported to: file:///{}", svg_export_path.to_string_lossy());
         }
     }
 
     #[test]
     fn test_invalid_pnml_import() {
-        let pnml_str = include_str!("./test_data/not-a-petri-net.slang");
-        let pn_res = import_pnml(&mut Reader::from_str(pnml_str));
+        let path = get_test_data_path()
+            .join("petri-net")
+            .join("not-a-petri-net.slang");
+        let pn_res = import_pnml(&mut Reader::from_file(path).unwrap());
         assert!(pn_res.is_err());
     }
 }

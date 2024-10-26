@@ -171,14 +171,14 @@ mod ocel_xml_export_test {
     use std::time::Instant;
 
     use crate::{
-        import_ocel_xml_file, import_ocel_xml_slice, ocel::xml_ocel_export::export_ocel_xml_path,
+        import_ocel_xml_file, ocel::xml_ocel_export::export_ocel_xml_path, utils::test_utils::get_test_data_path,
     };
 
     #[test]
     fn export_round_trip_order_management() {
-        let log_bytes = include_bytes!("../tests/test_data/order-management.xml");
+        let path = get_test_data_path().join("ocel").join("order-management.xml");
         let mut now = Instant::now();
-        let ocel = import_ocel_xml_slice(log_bytes);
+        let ocel = import_ocel_xml_file(&path);
         let obj = ocel.objects.first().unwrap();
         println!("{:?}", obj);
         println!(
@@ -193,9 +193,9 @@ mod ocel_xml_export_test {
         assert_eq!(ocel.object_types.len(), 6);
         assert_eq!(ocel.event_types.len(), 11);
 
-        let export_path = "/tmp/order-mangement-export.xml";
+        let export_path = get_test_data_path().join("export").join("order-mangement-export.xml");
         now = Instant::now();
-        export_ocel_xml_path(&ocel, export_path).unwrap();
+        export_ocel_xml_path(&ocel, &export_path).unwrap();
         println!(
             "Exported OCEL with {} objects and {} events in {:#?}",
             ocel.objects.len(),
@@ -203,7 +203,7 @@ mod ocel_xml_export_test {
             now.elapsed()
         );
         now = Instant::now();
-        let ocel2 = import_ocel_xml_file(export_path);
+        let ocel2 = import_ocel_xml_file(&export_path);
         println!(
             "Imported OCEL AGAIN with {} objects and {} events in {:#?}",
             ocel.objects.len(),
@@ -211,7 +211,6 @@ mod ocel_xml_export_test {
             now.elapsed()
         );
 
-        std::fs::remove_file(export_path).unwrap();
         assert_eq!(ocel2.objects.len(), 10840);
         assert_eq!(ocel2.events.len(), 21008);
 
@@ -221,9 +220,9 @@ mod ocel_xml_export_test {
 
     #[test]
     fn export_round_trip_p2p() {
-        let log_bytes = include_bytes!("../tests/test_data/ocel2-p2p.xml");
+        let path = get_test_data_path().join("ocel").join("ocel2-p2p.xml");
         let mut now = Instant::now();
-        let ocel = import_ocel_xml_slice(log_bytes);
+        let ocel = import_ocel_xml_file(&path);
         let obj = ocel.objects.first().unwrap();
         println!("{:?}", obj);
         println!(
@@ -235,9 +234,9 @@ mod ocel_xml_export_test {
         assert_eq!(ocel.objects.len(), 9543);
         assert_eq!(ocel.events.len(), 14671);
 
-        let export_path = "/tmp/ocel2-p2p-export.xml";
+        let export_path = get_test_data_path().join("export").join("ocel2-p2p-export.xml");
         now = Instant::now();
-        export_ocel_xml_path(&ocel, export_path).unwrap();
+        export_ocel_xml_path(&ocel, &export_path).unwrap();
         println!(
             "Exported OCEL with {} objects and {} events in {:#?}",
             ocel.objects.len(),
@@ -245,14 +244,13 @@ mod ocel_xml_export_test {
             now.elapsed()
         );
         now = Instant::now();
-        let ocel2 = import_ocel_xml_file(export_path);
+        let ocel2 = import_ocel_xml_file(&export_path);
         println!(
             "Imported OCEL AGAIN with {} objects and {} events in {:#?}",
             ocel.objects.len(),
             ocel.events.len(),
             now.elapsed()
         );
-        std::fs::remove_file(export_path).unwrap();
         assert_eq!(ocel2.objects.len(), 9543);
         assert_eq!(ocel2.events.len(), 14671);
 

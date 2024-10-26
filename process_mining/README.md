@@ -6,6 +6,7 @@ Full documentation of the modules, structs and functions of this crate is availa
 
 _As this crate is still in very active development, expect larger API changes also in minor (or even patch) version updates._
 
+
 ## Features
 
 - Event Logs
@@ -67,7 +68,7 @@ use process_mining::{
 };
 
 fn main() {
-    let xes_path = "./src/event_log/tests/test_data/BPI Challenge 2018.xes.gz";
+    let xes_path = "BPI Challenge 2018.xes.gz";
 
     // Parsing XES
     println!("==Parsing XES==");
@@ -229,3 +230,11 @@ When using the streaming functions for the XES import and export instead, the me
 
 
 </details>
+
+
+## Contributing
+
+### Test Data
+
+The data (OCEL2, XES, etc. files) used for the tests of this crate are available for download at https://rwth-aachen.sciebo.de/s/4cvtTU3lLOgtxt1.
+Simply download this zip and extract it into the `test_data` folder.

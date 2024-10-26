@@ -215,36 +215,40 @@ pub fn export_petri_net_to_pnml_path<P: AsRef<std::path::Path>>(
 mod test {
     use std::{fs::File, io::BufWriter};
 
-    use crate::{import_xes_slice, petri_net::export_pnml::export_petri_net_to_pnml};
+    use crate::{import_xes_file, petri_net::export_pnml::export_petri_net_to_pnml, utils::test_utils::get_test_data_path, XESImportOptions};
 
     use super::export_petri_net_to_pnml_path;
 
     #[test]
     fn test_export_pnml() {
-        let xes_bytes = include_bytes!("../event_log/tests/test_data/AN1-example.xes");
-        let log = import_xes_slice(xes_bytes, false, crate::XESImportOptions::default()).unwrap();
+        let path = get_test_data_path().join("xes").join("AN1-example.xes");
+        let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
         let (_, mut pn) = crate::alphappp::auto_parameters::alphappp_discover_with_auto_parameters(
             &(&log).into(),
         );
         pn.arcs.last_mut().unwrap().weight = 1337;
-        export_petri_net_to_pnml_path(&pn, "/tmp/pnml-export.pnml").unwrap();
-        println!("file:///tmp/pnml-export.pnml")
+        let export_path = get_test_data_path()
+        .join("export")
+        .join("pnml-export.pnml");
+        export_petri_net_to_pnml_path(&pn, &export_path).unwrap();
+        println!("file:///{}",export_path.to_string_lossy());
     }
 
     #[test]
     fn test_export_pnml_to_writer() -> Result<(), quick_xml::Error> {
-        let xes_bytes = include_bytes!("../event_log/tests/test_data/AN1-example.xes");
-        let log = import_xes_slice(xes_bytes, false, crate::XESImportOptions::default()).unwrap();
+        let path = get_test_data_path().join("xes").join("AN1-example.xes");
+        let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
         let (_, mut pn) = crate::alphappp::auto_parameters::alphappp_discover_with_auto_parameters(
             &(&log).into(),
         );
         pn.arcs.last_mut().unwrap().weight = 1337;
-        let file = File::create("/tmp/pnml-export.pnml")?;
+        let export_path = get_test_data_path()
+        .join("export")
+        .join("pnml-export.pnml");
+        let file = File::create(&export_path)?;
         let mut writer = BufWriter::new(file);
         export_petri_net_to_pnml(&pn, &mut writer)?;
-        // export_petri_net_to_pnml(&pn, &mut writer)?;
-        // export_petri_net_to_pnml_path(&pn, "/tmp/pnml-export.pnml");
-        println!("file:///tmp/pnml-export.pnml");
+        println!("file:///{}",export_path.to_string_lossy());
         Ok(())
     }
 }

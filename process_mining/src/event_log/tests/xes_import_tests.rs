@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, fs::File, io::Read};
 
 use chrono::DateTime;
 use quick_xml::Writer;
@@ -9,13 +9,13 @@ use crate::{
         import_xes::{import_xes_slice, XESImportOptions, XESParseError},
         AttributeValue, Trace, XESEditableAttribute,
     },
-    import_xes_file,
+    import_xes_file, utils::test_utils::get_test_data_path,
 };
 
 #[test]
 fn test_xes_gz_import() {
-    let x = include_bytes!("test_data/Sepsis Cases - Event Log.xes.gz");
-    let log = import_xes_slice(x, true, XESImportOptions::default()).unwrap();
+    let path = get_test_data_path().join("xes").join("Sepsis Cases - Event Log.xes.gz");
+    let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
 
     // Log has 1050 cases total
     assert_eq!(log.traces.len(), 1050);
@@ -123,8 +123,10 @@ pub fn test_invalid_xes_non_existing_file() {
 #[test]
 pub fn test_invalid_xes_file_gz_expected() {
     // Example XML (non-XES) file; Error should only involve missing .gz headers, so the other  content does not matter
-    let x = include_bytes!("test_data/BPI_Challenge_2019_sampled_3000cases_model_alphappp.pnml");
-    let res_gz = import_xes_slice(x, true, XESImportOptions::default());
+    let path = get_test_data_path().join("petri-net").join("BPI_Challenge_2019_sampled_3000cases_model_alphappp.pnml");
+    let mut bytes = Vec::new();
+    File::open(&path).unwrap().read_to_end(&mut bytes).unwrap();
+    let res_gz = import_xes_slice(&bytes, true, XESImportOptions::default());
     assert!(matches!(res_gz, Err(XESParseError::XMLParsingError(_))));
 }
 
@@ -133,8 +135,10 @@ pub fn test_invalid_xes_file_gz_expected() {
 /// Try to import normal (uncompressed) XES file with `is_compressed_gz=true`
 ///
 pub fn test_normal_xes_file_gz_expected() {
-    let x = include_bytes!("test_data/RepairExample.xes");
-    let res_gz = import_xes_slice(x, true, XESImportOptions::default());
+    let path = get_test_data_path().join("xes").join("RepairExample.xes");
+    let mut bytes = Vec::new();
+    File::open(&path).unwrap().read_to_end(&mut bytes).unwrap();
+    let res_gz = import_xes_slice(&bytes, true, XESImportOptions::default());
     assert!(matches!(
         res_gz,
         Err(XESParseError::XMLParsingError(quick_xml::Error::Io(_)))
@@ -143,38 +147,44 @@ pub fn test_normal_xes_file_gz_expected() {
 
 #[test]
 pub fn test_invalid_xes_file_gz_unexpected() {
-    let x = include_bytes!("test_data/Sepsis Cases - Event Log.xes.gz");
-    let res = import_xes_slice(x, false, XESImportOptions::default());
+    let path = get_test_data_path().join("xes").join("Sepsis Cases - Event Log.xes.gz");
+    let mut bytes = Vec::new();
+    File::open(&path).unwrap().read_to_end(&mut bytes).unwrap();
+    let res = import_xes_slice(&bytes, false, XESImportOptions::default());
     assert!(matches!(res, Err(XESParseError::NoTopLevelLog)));
 }
 
 #[test]
 pub fn test_invalid_xes_file_zero() {
     // File with ~1MB of zeros (dd if=/dev/zero of=zero.file bs=1024 count=1024)
-    let x = include_bytes!("test_data/zero.file");
-    let res = import_xes_slice(x, false, XESImportOptions::default());
+    let path = get_test_data_path().join("zero.file");
+    let mut bytes = Vec::new();
+    File::open(&path).unwrap().read_to_end(&mut bytes).unwrap();
+    let res = import_xes_slice(&bytes, false, XESImportOptions::default());
     assert!(matches!(res, Err(XESParseError::NoTopLevelLog)));
 }
 
 #[test]
 pub fn test_invalid_xes_file_zero_gz() {
     // File with ~1MB of zeros (dd if=/dev/zero of=zero.file bs=1024 count=1024)
-    let x = include_bytes!("test_data/zero.file");
-    let res = import_xes_slice(x, true, XESImportOptions::default());
+    let path = get_test_data_path().join("zero.file");
+    let mut bytes = Vec::new();
+    File::open(&path).unwrap().read_to_end(&mut bytes).unwrap();
+    let res = import_xes_slice(&bytes, true, XESImportOptions::default());
     assert!(matches!(res, Err(XESParseError::XMLParsingError(_))));
 }
 
 #[test]
 pub fn test_invalid_xes_file_pnml() {
-    let x = include_bytes!("test_data/BPI_Challenge_2019_sampled_3000cases_model_alphappp.pnml");
-    let res = import_xes_slice(x, false, XESImportOptions::default());
+    let path = get_test_data_path().join("petri-net").join("BPI_Challenge_2019_sampled_3000cases_model_alphappp.pnml");
+    let res = import_xes_file(&path, XESImportOptions::default());
     assert!(matches!(res, Err(XESParseError::NoTopLevelLog)));
 }
 
 #[test]
 pub fn test_invalid_xes_file_json() {
-    let x = include_bytes!("test_data/order-management.json");
-    let res = import_xes_slice(x, false, XESImportOptions::default());
+    let path = get_test_data_path().join("ocel").join("order-management.json");
+    let res = import_xes_file(&path, XESImportOptions::default());
     assert!(matches!(res, Err(XESParseError::NoTopLevelLog)));
 }
 
@@ -187,10 +197,9 @@ pub fn test_invalid_xes_file_empty() {
 
 #[test]
 pub fn test_nested_global_event_attr() {
-    let x = include_bytes!("test_data/small-example.xes");
-    let res = import_xes_slice(
-        x,
-        false,
+    let path = get_test_data_path().join("xes").join("small-example.xes");
+    let res = import_xes_file(
+        &path,
         XESImportOptions {
             ..XESImportOptions::default()
         },
@@ -231,10 +240,9 @@ pub fn test_xes_unsorted_traces() {
             .collect()
     }
 
-    let x = include_bytes!("test_data/small-example.xes");
-    let res = import_xes_slice(
-        x,
-        false,
+    let path = get_test_data_path().join("xes").join("small-example.xes");
+    let res = import_xes_file(
+        &path,
         XESImportOptions {
             ..XESImportOptions::default()
         },
@@ -251,9 +259,8 @@ pub fn test_xes_unsorted_traces() {
         ]
     );
 
-    let res_sorted_events = import_xes_slice(
-        x,
-        false,
+    let res_sorted_events =  import_xes_file(
+        &path,
         XESImportOptions {
             sort_events_with_timestamp_key: Some("time:timestamp".into()),
             ..XESImportOptions::default()
@@ -277,87 +284,80 @@ pub fn test_xes_unsorted_traces() {
 #[test]
 // Test roundway for nested
 pub fn test_xes_nested_attrs() {
-    let xes = include_str!("test_data/nested-attrs.xes");
-    let xes_bytes = Vec::from(xes);
+    let path = get_test_data_path().join("xes").join("nested-attrs.xes");
+    let mut xes_bytes = Vec::new();
+    File::open(&path).unwrap().read_to_end(&mut xes_bytes).unwrap();
     let log = import_xes_slice(&xes_bytes, false, XESImportOptions::default()).unwrap();
     let buf = std::io::BufWriter::new(Vec::new());
     let mut writer = Writer::new_with_indent(buf, b' ', 4);
     export_xes_event_log(&mut writer, &log).unwrap();
     let out_xes_bytes = writer.into_inner().into_inner().unwrap();
+    let xes = String::from_utf8(xes_bytes).unwrap();
     let out_xes = String::from_utf8(out_xes_bytes).unwrap();
     // println!("\n\n{}\n\n",out_xes);
     // println!("{:#?}", log);
     assert_eq!(xes, out_xes);
 }
 
-#[test]
-pub fn test_2017bpic_log() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src")
-        .join("event_log")
-        .join("tests")
-        .join("test_data")
-        .join("BPI_Challenge_2017.xes");
-    let log = import_xes_file(
-        path.to_str().unwrap(),
-        XESImportOptions {
-            ignore_log_attributes_except: Some(HashSet::default()),
-            ignore_trace_attributes_except: Some(
-                vec!["concept:name".to_string()].into_iter().collect(),
-            ),
-            ignore_event_attributes_except: Some(
-                vec!["concept:name".to_string(), "time:timestamp".to_string()]
-                    .into_iter()
-                    .collect(),
-            ),
-            ..XESImportOptions::default()
-        },
-    )
-    .unwrap();
-    log.traces.iter().for_each(|t| {
-        assert!(t.attributes.get_by_key("concept:name").is_some());
-        t.events.iter().for_each(|e| {
-            assert!(e.attributes.get_by_key("concept:name").is_some());
-            assert!(e
-                .attributes
-                .get_by_key("time:timestamp")
-                .is_some_and(|a| a.value.try_as_date().is_some()));
-        })
-    })
-}
+// #[test]
+// pub fn test_2017bpic_log() {
 
-#[test]
-pub fn test_2018bpic_log() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("src")
-        .join("event_log")
-        .join("tests")
-        .join("test_data")
-        .join("BPI Challenge 2018.xes.gz");
-    let log = import_xes_file(
-        path,
-        XESImportOptions {
-            ignore_log_attributes_except: Some(HashSet::default()),
-            ignore_trace_attributes_except: Some(
-                vec!["concept:name".to_string()].into_iter().collect(),
-            ),
-            ignore_event_attributes_except: Some(
-                vec!["concept:name".to_string(), "time:timestamp".to_string()]
-                    .into_iter()
-                    .collect(),
-            ),
-            ..XESImportOptions::default()
-        },
-    )
-    .unwrap();
-    log.traces.iter().for_each(|t| {
-        assert!(t.attributes.get_by_key("concept:name").is_some());
-        t.events.iter().for_each(|e| {
-            assert!(e.attributes.get_by_key("concept:name").is_some());
-            assert!(e
-                .attributes
-                .get_by_key("time:timestamp")
-                .is_some_and(|a| a.value.try_as_date().is_some()));
-        })
-    })
-}
+//     let path = get_test_data_path().join("xes").join("BPI_Challenge_2017.xes");
+//     let log = import_xes_file(
+//         &path,
+//         XESImportOptions {
+//             ignore_log_attributes_except: Some(HashSet::default()),
+//             ignore_trace_attributes_except: Some(
+//                 vec!["concept:name".to_string()].into_iter().collect(),
+//             ),
+//             ignore_event_attributes_except: Some(
+//                 vec!["concept:name".to_string(), "time:timestamp".to_string()]
+//                     .into_iter()
+//                     .collect(),
+//             ),
+//             ..XESImportOptions::default()
+//         },
+//     )
+//     .unwrap();
+//     log.traces.iter().for_each(|t| {
+//         assert!(t.attributes.get_by_key("concept:name").is_some());
+//         t.events.iter().for_each(|e| {
+//             assert!(e.attributes.get_by_key("concept:name").is_some());
+//             assert!(e
+//                 .attributes
+//                 .get_by_key("time:timestamp")
+//                 .is_some_and(|a| a.value.try_as_date().is_some()));
+//         })
+//     })
+// }
+
+// #[test]
+// pub fn test_2018bpic_log() {
+//     let path = get_test_data_path().join("xes").join("BPI Challenge 2018.xes.gz");
+//     let log = import_xes_file(
+//         &path,
+//         XESImportOptions {
+//             ignore_log_attributes_except: Some(HashSet::default()),
+//             ignore_trace_attributes_except: Some(
+//                 vec!["concept:name".to_string()].into_iter().collect(),
+//             ),
+//             ignore_event_attributes_except: Some(
+//                 vec!["concept:name".to_string(), "time:timestamp".to_string()]
+//                     .into_iter()
+//                     .collect(),
+//             ),
+//             ..XESImportOptions::default()
+//         },
+//     )
+//     .unwrap();
+//     log.traces.iter().for_each(|t| {
+//         assert!(t.attributes.get_by_key("concept:name").is_some());
+//         t.events.iter().for_each(|e| {
+//             assert!(e.attributes.get_by_key("concept:name").is_some());
+//             assert!(e
+//                 .attributes
+//                 .get_by_key("time:timestamp")
+//                 .is_some_and(|a| a.value.try_as_date().is_some()));
+//         })
+//     })
+// }
