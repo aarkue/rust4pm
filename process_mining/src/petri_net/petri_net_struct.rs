@@ -29,7 +29,7 @@ pub enum PetriNetNodes {
     Transitions(Vec<TransitionID>),
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(tag = "type", content = "nodes")]
 /// Arc type in a Petri net
 pub enum ArcType {
@@ -48,9 +48,16 @@ impl ArcType {
     pub fn transition_to_place(from: TransitionID, to: PlaceID) -> ArcType {
         ArcType::TransitionPlace(from.0, to.0)
     }
+    /// Checks if a given node ID is start or end of this arc
+    pub fn contains(&self, id: &Uuid) -> bool {
+        match self {
+            ArcType::PlaceTransition(from, to) => from == id || to == id,
+            ArcType::TransitionPlace(from, to) => from == id || to == id,
+        }
+    }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 /// Arc in a Petri net
 ///
 /// Connecting a transition and a place (or the other way around)
@@ -94,7 +101,7 @@ impl TransitionID {
 /// Marking of a Petri net: Assigning [`PlaceID`]s to a number of tokens
 pub type Marking = HashMap<PlaceID, u64>;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 ///
 /// A Petri net of [`Place`]s and [`Transition`]s
 ///
@@ -166,6 +173,41 @@ impl PetriNet {
         });
     }
 
+    /// Remove any node (Transition/Place) from the Petri net
+    pub fn remove_node(&mut self, id: &Uuid) {
+        if let Some(p) = self.places.remove(id) {
+            if let Some(im) = &mut self.initial_marking {
+                im.remove(&(&p).into());
+            }
+            if let Some(fm) = &mut self.final_markings {
+                for m in fm {
+                    m.remove(&(&p).into());
+                }
+            }
+        }
+        self.transitions.remove(id);
+        self.arcs = self
+            .arcs
+            .clone()
+            .into_iter()
+            .filter(|arc| !arc.from_to.contains(id))
+            .collect();
+    }
+
+    /// Remove a Place from the Petri net
+    pub fn remove_place(&mut self, place_id: &Uuid) {
+        if self.places.contains_key(place_id) {
+            self.remove_node(place_id);
+        }
+    }
+
+    /// Remove a Transition from the Petri net
+    pub fn remove_transition(&mut self, transition_id: &Uuid) {
+        if self.transitions.contains_key(transition_id) {
+            self.remove_node(transition_id);
+        }
+    }
+
     /// Get the preset of a [`PetriNet`] node referred to by passed id
     pub fn preset_of(&self, id: Uuid) -> PetriNetNodes {
         if self.places.contains_key(&id) {
@@ -202,12 +244,12 @@ impl PetriNet {
     }
 
     /// Get postset of [`PetriNet`] node referred to by passed id
-    pub fn postset_of(&self, id: Uuid) -> PetriNetNodes {
-        if self.places.contains_key(&id) {
-            let p = self.places.get(&id).unwrap();
+    pub fn postset_of(&self, id: &Uuid) -> PetriNetNodes {
+        if self.places.contains_key(id) {
+            let p = self.places.get(id).unwrap();
             PetriNetNodes::Transitions(self.postset_of_place(p.into()))
-        } else if self.transitions.contains_key(&id) {
-            let t = self.transitions.get(&id).unwrap();
+        } else if self.transitions.contains_key(id) {
+            let t = self.transitions.get(id).unwrap();
             PetriNetNodes::Places(self.postset_of_transition(t.into()))
         } else {
             PetriNetNodes::None
@@ -404,6 +446,8 @@ mod tests {
     ]
 }
 "#;
+    use std::str::FromStr;
+
     use super::*;
 
     #[test]
@@ -433,5 +477,29 @@ mod tests {
             .len()
                 == 2
         );
+    }
+
+    #[test]
+    fn remove_nodes_petri_net_test() {
+        let mut pn: PetriNet = serde_json::from_str(SAMPLE_JSON_NET).unwrap();
+        let x : HashMap<String,u32> = vec![("Christian".to_string(),100),("Chris".to_string(),50)].into_iter().collect();
+        println!("{x:?}");
+        let p1_id = Uuid::from_str("f20ded2a-d308-44d7-abb2-6d0acd30e43e").unwrap();
+        let t1_id = Uuid::from_str("f18e00b0-e90b-48f6-99b7-9ee526571213").unwrap();
+        if let PetriNetNodes::Places(p) = pn.postset_of(&t1_id) {
+            assert!(p.len() == 1);
+        } else {
+            assert!(false);
+        }
+
+        pn.remove_transition(&p1_id);
+        assert!(pn.places.contains_key(&p1_id));
+        pn.remove_place(&p1_id);
+        assert!(!pn.places.contains_key(&p1_id));
+        if let PetriNetNodes::Places(p) = pn.postset_of(&t1_id) {
+            assert!(p.is_empty());
+        } else {
+            assert!(false);
+        }
     }
 }
