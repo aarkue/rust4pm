@@ -56,7 +56,7 @@ pub fn export_dfg_to_dot_graph(dfg: &DirectlyFollowsGraph<'_>, dpi_factor: Optio
         .into_iter()
         .map(|(x, &y)| {
             let mut counted_label = x.to_owned();
-            counted_label.push_str(": ".into());
+            counted_label.push_str(": ");
             counted_label.push_str(&y.to_string());
             let fill_color: String = if dfg.is_start_activity(x) && dfg.is_end_activity(x) {
                 // "\"#009966:#C1272D\"".into()

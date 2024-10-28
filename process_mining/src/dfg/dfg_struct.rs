@@ -51,16 +51,15 @@ impl<'a> DirectlyFollowsGraph<'a> {
     /// If there is no special classifier to be used, the default (`&EventLogClassifier::default()`) can also simply be passed in
     pub fn create_from_log(event_log: &EventLog, classifier: &EventLogClassifier) -> Self {
         let mut result = Self::new();
-
         event_log.traces.iter().for_each(|t| {
             let mut last_event_identity: Option<String> = None;
             t.events.iter().for_each(|e| {
                 let curr_event_identity = classifier.get_class_identity(e);
                 result.add_activity(curr_event_identity.clone(), 1);
 
-                if last_event_identity.is_some() {
+                if let Some(last_ev_id) = last_event_identity.take() {
                     result.add_df_relation(
-                        last_event_identity.clone().unwrap().into(),
+                        last_ev_id.into(),
                         curr_event_identity.clone().into(),
                         1,
                     )
@@ -70,8 +69,8 @@ impl<'a> DirectlyFollowsGraph<'a> {
 
                 last_event_identity = Some(curr_event_identity.clone());
             });
-            if last_event_identity.is_some() {
-                result.add_end_activity(last_event_identity.clone().unwrap());
+            if let Some(last_ev_id) = last_event_identity.take() {
+                result.add_end_activity(last_ev_id);
             }
         });
 
@@ -251,7 +250,7 @@ mod tests {
     ]
 }"#;
 
-    use std::time::Instant;
+    
 
     use super::*;
     #[cfg(feature = "graphviz-export")]
@@ -317,9 +316,9 @@ mod tests {
         )
         .unwrap();
 
-        let classifier = log.classifiers.as_ref().and_then(|c| c.get(0)).unwrap();
+        let classifier = log.classifiers.as_ref().and_then(|c| c.first()).unwrap();
 
-        let graph = DirectlyFollowsGraph::create_from_log(&log, &classifier);
+        let graph = DirectlyFollowsGraph::create_from_log(&log, classifier);
 
         #[cfg(feature = "graphviz-export")]
         {
@@ -409,19 +408,4 @@ mod tests {
         }
     }
 
-
-    #[test]
-    fn dfg_test_bpic2018_perf(){
-        println!("Importing Log...");
-        let now =  Instant::now();
-        let log = import_xes_file("/home/aarkue/dow/BPI Challenge 2018.xes.gz", XESImportOptions::default()).unwrap();
-        println!("Imported log in {:?}",now.elapsed());
-        
-        let now =  Instant::now();
-        let dfg = DirectlyFollowsGraph::create_from_log(&log, &EventLogClassifier::default());
-        // dfg.export_svg("bpic2018.svg").unwrap();
-        // dfg.outgoing_activities("activity");
-        println!("{:?}",now.elapsed());
-        println!("{}",dfg.activities.len());
-    }
 }
