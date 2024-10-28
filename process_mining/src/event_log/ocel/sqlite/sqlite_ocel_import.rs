@@ -363,12 +363,15 @@ mod sqlite_tests {
 
     use crate::{
         import_ocel_sqlite_from_con,
-        ocel::ocel_struct::{OCELAttributeValue, OCELObjectAttribute, OCELRelationship}, utils::test_utils::get_test_data_path,
+        ocel::ocel_struct::{OCELAttributeValue, OCELObjectAttribute, OCELRelationship},
+        utils::test_utils::get_test_data_path,
     };
 
     #[test]
     fn test_sqlite_ocel() -> Result<(), rusqlite::Error> {
-        let path = get_test_data_path().join("ocel").join("order-management.sqlite");
+        let path = get_test_data_path()
+            .join("ocel")
+            .join("order-management.sqlite");
 
         let con = Connection::open(path).unwrap();
         let ocel = import_ocel_sqlite_from_con(con)?;

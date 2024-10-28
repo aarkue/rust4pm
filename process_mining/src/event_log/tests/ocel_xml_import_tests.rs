@@ -5,9 +5,8 @@ use std::{
 };
 
 use crate::{
-    export_ocel_json_path, import_ocel_json_from_path, import_ocel_json_from_slice,
-    import_ocel_xml_file, import_ocel_xml_slice, ocel::xml_ocel_export::export_ocel_xml_path,
-    utils::test_utils::get_test_data_path,
+    import_ocel_json_from_path, import_ocel_json_from_slice, import_ocel_xml_slice,
+    ocel::xml_ocel_export::export_ocel_xml_path, utils::test_utils::get_test_data_path,
 };
 
 fn get_ocel_file_bytes(name: &str) -> Vec<u8> {
@@ -32,7 +31,9 @@ fn test_ocel_xml_import() {
     );
     assert_eq!(ocel.events.len(), 21008);
     assert_eq!(ocel.objects.len(), 10840);
-    let export_path = get_test_data_path().join("export").join("order-management-export.xml");
+    let export_path = get_test_data_path()
+        .join("export")
+        .join("order-management-export.xml");
     export_ocel_xml_path(&ocel, &export_path).unwrap();
 }
 
@@ -102,7 +103,9 @@ fn test_ocel_logistics_xml_import() {
     );
     assert_eq!(ocel.events.len(), 35413); //35761
     assert_eq!(ocel.objects.len(), 13910); //14013
-    let export_path = get_test_data_path().join("export").join("ContainerLogistics-EXPORT.xml");
+    let export_path = get_test_data_path()
+        .join("export")
+        .join("ContainerLogistics-EXPORT.xml");
     export_ocel_xml_path(&ocel, &export_path).unwrap();
 }
 

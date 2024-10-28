@@ -77,6 +77,8 @@ pub mod petri_net {
 /// Directly-follows graph
 ///
 pub mod dfg {
+    /// [`DirectlyFollowsGraph`] struct
+    pub mod dfg_struct;
     #[cfg(feature = "graphviz-export")]
     /// Export [`DirectlyFollowsGraph`] to images (SVG, PNG, ...)
     ///
@@ -85,8 +87,6 @@ pub mod dfg {
     /// Also requires an active graphviz installation in the PATH.
     /// See also <https://github.com/besok/graphviz-rust?tab=readme-ov-file#caveats> and <https://graphviz.org/download/>
     pub mod image_export;
-    /// [`DirectlyFollowsGraph`] struct
-    pub mod dfg_struct;
 
     #[doc(inline)]
     pub use crate::dfg::dfg_struct::DirectlyFollowsGraph;

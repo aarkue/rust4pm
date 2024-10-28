@@ -3,11 +3,15 @@ use std::{collections::HashSet, time::Instant};
 
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
-use crate::{event_log::import_xes::XESImportOptions, import_xes_file, utils::test_utils::get_test_data_path};
+use crate::{
+    event_log::import_xes::XESImportOptions, import_xes_file, utils::test_utils::get_test_data_path,
+};
 
 #[test]
 pub fn test_get_class_identity() {
-    let path = get_test_data_path().join("xes").join("Road_Traffic_Fine_Management_Process.xes.gz");
+    let path = get_test_data_path()
+        .join("xes")
+        .join("Road_Traffic_Fine_Management_Process.xes.gz");
     let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
     let now = Instant::now();
     let event_name_classifier = log.get_classifier_by_name("Event Name");

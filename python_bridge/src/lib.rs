@@ -1,4 +1,3 @@
-
 use polars::prelude::DataFrame;
 use polars::prelude::SerReader;
 use process_mining::alphappp::full::alphappp_discover_petri_net;
@@ -40,7 +39,7 @@ fn import_xes_rs(path: String, options: Option<&str>) -> PyResult<(PyDataFrame, 
     println!("Importing XES Log took {:.2?}", now.elapsed());
     now = Instant::now();
     // add_start_end_acts(&mut log);
-    let converted_log = convert_log_to_dataframe(&log,false).unwrap();
+    let converted_log = convert_log_to_dataframe(&log, false).unwrap();
     println!("Finished Converting Log; Took {:.2?}", now.elapsed());
     #[derive(Debug, Serialize, Deserialize)]
     struct OtherLogData {
@@ -80,7 +79,7 @@ fn test_df_pandas(df_serialized: String, format: String) -> PyResult<PyDataFrame
     match convert_dataframe_to_log(&df) {
         Ok(mut log) => {
             add_start_end_acts(&mut log);
-            Ok(PyDataFrame(convert_log_to_dataframe(&log,true).unwrap()))
+            Ok(PyDataFrame(convert_log_to_dataframe(&log, true).unwrap()))
         }
         Err(e) => Err(PyErr::new::<PyTypeError, _>(format!(
             "Could not convert to EventLog: {}",
@@ -115,7 +114,7 @@ fn polars_df_to_log(pydf: PyDataFrame) -> PyResult<PyDataFrame> {
     match convert_dataframe_to_log(&df) {
         Ok(mut log) => {
             add_start_end_acts(&mut log);
-            Ok(PyDataFrame(convert_log_to_dataframe(&log,false).unwrap()))
+            Ok(PyDataFrame(convert_log_to_dataframe(&log, false).unwrap()))
         }
         Err(e) => Err(PyErr::new::<PyTypeError, _>(format!(
             "Could not convert to EventLog: {}",

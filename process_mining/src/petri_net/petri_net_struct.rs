@@ -482,7 +482,10 @@ mod tests {
     #[test]
     fn remove_nodes_petri_net_test() {
         let mut pn: PetriNet = serde_json::from_str(SAMPLE_JSON_NET).unwrap();
-        let x : HashMap<String,u32> = vec![("Christian".to_string(),100),("Chris".to_string(),50)].into_iter().collect();
+        let x: HashMap<String, u32> =
+            vec![("Christian".to_string(), 100), ("Chris".to_string(), 50)]
+                .into_iter()
+                .collect();
         println!("{x:?}");
         let p1_id = Uuid::from_str("f20ded2a-d308-44d7-abb2-6d0acd30e43e").unwrap();
         let t1_id = Uuid::from_str("f18e00b0-e90b-48f6-99b7-9ee526571213").unwrap();

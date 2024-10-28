@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fs::File, io::Read};
+use std::{fs::File, io::Read};
 
 use chrono::DateTime;
 use quick_xml::Writer;
@@ -9,12 +9,15 @@ use crate::{
         import_xes::{import_xes_slice, XESImportOptions, XESParseError},
         AttributeValue, Trace, XESEditableAttribute,
     },
-    import_xes_file, utils::test_utils::get_test_data_path,
+    import_xes_file,
+    utils::test_utils::get_test_data_path,
 };
 
 #[test]
 fn test_xes_gz_import() {
-    let path = get_test_data_path().join("xes").join("Sepsis Cases - Event Log.xes.gz");
+    let path = get_test_data_path()
+        .join("xes")
+        .join("Sepsis Cases - Event Log.xes.gz");
     let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
 
     // Log has 1050 cases total
@@ -123,7 +126,9 @@ pub fn test_invalid_xes_non_existing_file() {
 #[test]
 pub fn test_invalid_xes_file_gz_expected() {
     // Example XML (non-XES) file; Error should only involve missing .gz headers, so the other  content does not matter
-    let path = get_test_data_path().join("petri-net").join("BPI_Challenge_2019_sampled_3000cases_model_alphappp.pnml");
+    let path = get_test_data_path()
+        .join("petri-net")
+        .join("BPI_Challenge_2019_sampled_3000cases_model_alphappp.pnml");
     let mut bytes = Vec::new();
     File::open(&path).unwrap().read_to_end(&mut bytes).unwrap();
     let res_gz = import_xes_slice(&bytes, true, XESImportOptions::default());
@@ -147,7 +152,9 @@ pub fn test_normal_xes_file_gz_expected() {
 
 #[test]
 pub fn test_invalid_xes_file_gz_unexpected() {
-    let path = get_test_data_path().join("xes").join("Sepsis Cases - Event Log.xes.gz");
+    let path = get_test_data_path()
+        .join("xes")
+        .join("Sepsis Cases - Event Log.xes.gz");
     let mut bytes = Vec::new();
     File::open(&path).unwrap().read_to_end(&mut bytes).unwrap();
     let res = import_xes_slice(&bytes, false, XESImportOptions::default());
@@ -176,14 +183,18 @@ pub fn test_invalid_xes_file_zero_gz() {
 
 #[test]
 pub fn test_invalid_xes_file_pnml() {
-    let path = get_test_data_path().join("petri-net").join("BPI_Challenge_2019_sampled_3000cases_model_alphappp.pnml");
+    let path = get_test_data_path()
+        .join("petri-net")
+        .join("BPI_Challenge_2019_sampled_3000cases_model_alphappp.pnml");
     let res = import_xes_file(&path, XESImportOptions::default());
     assert!(matches!(res, Err(XESParseError::NoTopLevelLog)));
 }
 
 #[test]
 pub fn test_invalid_xes_file_json() {
-    let path = get_test_data_path().join("ocel").join("order-management.json");
+    let path = get_test_data_path()
+        .join("ocel")
+        .join("order-management.json");
     let res = import_xes_file(&path, XESImportOptions::default());
     assert!(matches!(res, Err(XESParseError::NoTopLevelLog)));
 }
@@ -259,7 +270,7 @@ pub fn test_xes_unsorted_traces() {
         ]
     );
 
-    let res_sorted_events =  import_xes_file(
+    let res_sorted_events = import_xes_file(
         &path,
         XESImportOptions {
             sort_events_with_timestamp_key: Some("time:timestamp".into()),
@@ -286,7 +297,10 @@ pub fn test_xes_unsorted_traces() {
 pub fn test_xes_nested_attrs() {
     let path = get_test_data_path().join("xes").join("nested-attrs.xes");
     let mut xes_bytes = Vec::new();
-    File::open(&path).unwrap().read_to_end(&mut xes_bytes).unwrap();
+    File::open(&path)
+        .unwrap()
+        .read_to_end(&mut xes_bytes)
+        .unwrap();
     let log = import_xes_slice(&xes_bytes, false, XESImportOptions::default()).unwrap();
     let buf = std::io::BufWriter::new(Vec::new());
     let mut writer = Writer::new_with_indent(buf, b' ', 4);

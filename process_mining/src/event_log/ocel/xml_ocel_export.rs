@@ -171,12 +171,15 @@ mod ocel_xml_export_test {
     use std::time::Instant;
 
     use crate::{
-        import_ocel_xml_file, ocel::xml_ocel_export::export_ocel_xml_path, utils::test_utils::get_test_data_path,
+        import_ocel_xml_file, ocel::xml_ocel_export::export_ocel_xml_path,
+        utils::test_utils::get_test_data_path,
     };
 
     #[test]
     fn export_round_trip_order_management() {
-        let path = get_test_data_path().join("ocel").join("order-management.xml");
+        let path = get_test_data_path()
+            .join("ocel")
+            .join("order-management.xml");
         let mut now = Instant::now();
         let ocel = import_ocel_xml_file(&path);
         let obj = ocel.objects.first().unwrap();
@@ -193,7 +196,9 @@ mod ocel_xml_export_test {
         assert_eq!(ocel.object_types.len(), 6);
         assert_eq!(ocel.event_types.len(), 11);
 
-        let export_path = get_test_data_path().join("export").join("order-mangement-export.xml");
+        let export_path = get_test_data_path()
+            .join("export")
+            .join("order-mangement-export.xml");
         now = Instant::now();
         export_ocel_xml_path(&ocel, &export_path).unwrap();
         println!(
@@ -234,7 +239,9 @@ mod ocel_xml_export_test {
         assert_eq!(ocel.objects.len(), 9543);
         assert_eq!(ocel.events.len(), 14671);
 
-        let export_path = get_test_data_path().join("export").join("ocel2-p2p-export.xml");
+        let export_path = get_test_data_path()
+            .join("export")
+            .join("ocel2-p2p-export.xml");
         now = Instant::now();
         export_ocel_xml_path(&ocel, &export_path).unwrap();
         println!(

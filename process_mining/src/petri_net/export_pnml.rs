@@ -215,7 +215,10 @@ pub fn export_petri_net_to_pnml_path<P: AsRef<std::path::Path>>(
 mod test {
     use std::{fs::File, io::BufWriter};
 
-    use crate::{import_xes_file, petri_net::export_pnml::export_petri_net_to_pnml, utils::test_utils::get_test_data_path, XESImportOptions};
+    use crate::{
+        import_xes_file, petri_net::export_pnml::export_petri_net_to_pnml,
+        utils::test_utils::get_test_data_path, XESImportOptions,
+    };
 
     use super::export_petri_net_to_pnml_path;
 
@@ -227,11 +230,9 @@ mod test {
             &(&log).into(),
         );
         pn.arcs.last_mut().unwrap().weight = 1337;
-        let export_path = get_test_data_path()
-        .join("export")
-        .join("pnml-export.pnml");
+        let export_path = get_test_data_path().join("export").join("pnml-export.pnml");
         export_petri_net_to_pnml_path(&pn, &export_path).unwrap();
-        println!("file:///{}",export_path.to_string_lossy());
+        println!("file:///{}", export_path.to_string_lossy());
     }
 
     #[test]
@@ -242,13 +243,11 @@ mod test {
             &(&log).into(),
         );
         pn.arcs.last_mut().unwrap().weight = 1337;
-        let export_path = get_test_data_path()
-        .join("export")
-        .join("pnml-export.pnml");
+        let export_path = get_test_data_path().join("export").join("pnml-export.pnml");
         let file = File::create(&export_path)?;
         let mut writer = BufWriter::new(file);
         export_petri_net_to_pnml(&pn, &mut writer)?;
-        println!("file:///{}",export_path.to_string_lossy());
+        println!("file:///{}", export_path.to_string_lossy());
         Ok(())
     }
 }

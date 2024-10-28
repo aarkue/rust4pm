@@ -187,49 +187,6 @@ pub fn convert_log_to_dataframe(
     Ok(df)
 }
 
-#[cfg(test)]
-mod df_xes_tests {
-    use std::time::Instant;
-
-    use crate::{
-        event_log::dataframe::convert_log_to_dataframe, import_xes_file,
-        utils::test_utils::get_test_data_path, XESImportOptions,
-    };
-
-    #[test]
-    fn basic_xes() {
-        let now = Instant::now();
-        let now_total = Instant::now();
-        let path = get_test_data_path()
-            .join("xes")
-            .join("Road_Traffic_Fine_Management_Process.xes.gz");
-        let log = import_xes_file(
-            path,
-            XESImportOptions {
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let num_events = log.traces.iter().map(|t| t.events.len()).sum::<usize>();
-        println!(
-            "Got log with {} traces in {:?}",
-            log.traces.len(),
-            now.elapsed()
-        );
-        assert_eq!(log.traces.len(),150_370);
-        assert_eq!(num_events,561_470);
-        let now = Instant::now();
-        let converted_log = convert_log_to_dataframe(&log, true).unwrap();
-        println!(
-            "Converted to DF with shape {:?} in {:?}",
-            converted_log.shape(),
-            now.elapsed()
-        );
-        println!("Total: {:?}\n\n", now_total.elapsed());
-        assert_eq!(converted_log.shape(), (num_events, 16));
-    }
-}
-
 fn any_value_to_attribute_value(from: &AnyValue<'_>) -> AttributeValue {
     match from {
         AnyValue::Null => AttributeValue::None(),
@@ -314,4 +271,47 @@ pub fn convert_dataframe_to_log(df: &DataFrame) -> Result<EventLog, PolarsError>
         .collect();
     log.traces = traces;
     Ok(log)
+}
+
+#[cfg(test)]
+mod df_xes_tests {
+    use std::time::Instant;
+
+    use crate::{
+        event_log::dataframe::convert_log_to_dataframe, import_xes_file,
+        utils::test_utils::get_test_data_path, XESImportOptions,
+    };
+
+    #[test]
+    fn basic_xes() {
+        let now = Instant::now();
+        let now_total = Instant::now();
+        let path = get_test_data_path()
+            .join("xes")
+            .join("Road_Traffic_Fine_Management_Process.xes.gz");
+        let log = import_xes_file(
+            path,
+            XESImportOptions {
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let num_events = log.traces.iter().map(|t| t.events.len()).sum::<usize>();
+        println!(
+            "Got log with {} traces in {:?}",
+            log.traces.len(),
+            now.elapsed()
+        );
+        assert_eq!(log.traces.len(), 150_370);
+        assert_eq!(num_events, 561_470);
+        let now = Instant::now();
+        let converted_log = convert_log_to_dataframe(&log, true).unwrap();
+        println!(
+            "Converted to DF with shape {:?} in {:?}",
+            converted_log.shape(),
+            now.elapsed()
+        );
+        println!("Total: {:?}\n\n", now_total.elapsed());
+        assert_eq!(converted_log.shape(), (num_events, 16));
+    }
 }

@@ -322,9 +322,7 @@ mod sqlite_export_tests {
 
     #[test]
     fn test_sqlite_export_p2p() {
-        let path = get_test_data_path()
-            .join("ocel")
-            .join("ocel2-p2p.sqlite");
+        let path = get_test_data_path().join("ocel").join("ocel2-p2p.sqlite");
 
         let in_con = Connection::open(path).unwrap();
         let ocel = import_ocel_sqlite_from_con(in_con).unwrap();

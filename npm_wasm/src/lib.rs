@@ -1,13 +1,8 @@
 mod utils;
 
+use process_mining::{event_log::ocel::xml_ocel_import::import_ocel_xml_slice, OCEL};
 use utils::set_panic_hook;
 use wasm_bindgen::prelude::*;
-use process_mining::{
-    event_log::
-        ocel::xml_ocel_import::import_ocel_xml_slice
-    ,
-    OCEL,
-};
 
 #[wasm_bindgen]
 extern "C" {

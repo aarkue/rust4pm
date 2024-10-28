@@ -473,7 +473,10 @@ pub struct EventLogClassifier {
 
 impl Default for EventLogClassifier {
     fn default() -> Self {
-        Self { name: "Default".to_string(), keys: vec![ACTIVITY_NAME.to_string()] }
+        Self {
+            name: "Default".to_string(),
+            keys: vec![ACTIVITY_NAME.to_string()],
+        }
     }
 }
 impl EventLogClassifier {

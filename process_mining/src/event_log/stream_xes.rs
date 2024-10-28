@@ -1097,13 +1097,15 @@ mod stream_test {
     use std::{collections::HashSet, time::Instant};
 
     use crate::{
-        event_log::import_xes::build_ignore_attributes, stream_xes_from_path, utils::test_utils::get_test_data_path, XESImportOptions
+        event_log::import_xes::build_ignore_attributes, stream_xes_from_path,
+        utils::test_utils::get_test_data_path, XESImportOptions,
     };
 
     #[test]
     fn test_xes_stream() {
         let path = get_test_data_path().join("xes").join("RepairExample.xes");
-        let (mut stream, _log_data) = stream_xes_from_path(&path, XESImportOptions::default()).unwrap();
+        let (mut stream, _log_data) =
+            stream_xes_from_path(&path, XESImportOptions::default()).unwrap();
         let num_traces = stream.count();
         println!("Num. traces: {}", num_traces);
         assert_eq!(num_traces, 1104);
@@ -1111,7 +1113,9 @@ mod stream_test {
 
     #[test]
     pub fn test_streaming_variants() {
-        let path = get_test_data_path().join("xes").join("Road_Traffic_Fine_Management_Process.xes.gz");
+        let path = get_test_data_path()
+            .join("xes")
+            .join("Road_Traffic_Fine_Management_Process.xes.gz");
         let now = Instant::now();
         let (mut log_stream, log_data) =
             stream_xes_from_path(&path, XESImportOptions::default()).unwrap();
@@ -1161,9 +1165,9 @@ mod stream_test {
 
     #[test]
     pub fn test_stream_ignoring_attributes() {
-        
         let path = get_test_data_path().join("xes").join("nested-attrs.xes");
-        let (mut _log_stream, log_data) = stream_xes_from_path(&path,
+        let (mut _log_stream, log_data) = stream_xes_from_path(
+            &path,
             XESImportOptions {
                 ignore_event_attributes_except: Some(HashSet::new()),
                 ignore_trace_attributes_except: Some(HashSet::new()),

@@ -58,11 +58,7 @@ impl<'a> DirectlyFollowsGraph<'a> {
                 result.add_activity(curr_event_identity.clone(), 1);
 
                 if let Some(last_ev_id) = last_event_identity.take() {
-                    result.add_df_relation(
-                        last_ev_id.into(),
-                        curr_event_identity.clone().into(),
-                        1,
-                    )
+                    result.add_df_relation(last_ev_id.into(), curr_event_identity.clone().into(), 1)
                 } else {
                     result.add_start_activity(curr_event_identity.clone());
                 }
@@ -250,8 +246,6 @@ mod tests {
     ]
 }"#;
 
-    
-
     use super::*;
     #[cfg(feature = "graphviz-export")]
     use crate::dfg::image_export::export_dfg_image_png;
@@ -407,5 +401,4 @@ mod tests {
             export_dfg_image_png(&graph, &path_output).unwrap();
         }
     }
-
 }

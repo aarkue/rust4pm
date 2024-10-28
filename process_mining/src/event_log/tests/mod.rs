@@ -1,6 +1,4 @@
-use crate::{
-    import_xes_file, utils::test_utils::get_test_data_path, XESImportOptions,
-};
+use crate::{import_xes_file, utils::test_utils::get_test_data_path, XESImportOptions};
 
 use super::XESEditableAttribute;
 
