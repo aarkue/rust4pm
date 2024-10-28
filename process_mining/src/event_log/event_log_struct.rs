@@ -470,6 +470,12 @@ pub struct EventLogClassifier {
     ///
     pub keys: Vec<String>,
 }
+
+impl Default for EventLogClassifier {
+    fn default() -> Self {
+        Self { name: "Default".to_string(), keys: vec![ACTIVITY_NAME.to_string()] }
+    }
+}
 impl EventLogClassifier {
     /// Delimiter for combining the values defined by the classifer to form a single class identity string
     pub const DELIMITER: &'static str = "+";

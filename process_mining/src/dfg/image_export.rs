@@ -1,4 +1,4 @@
-use std::{fs::File, io::Write};
+use std::{cmp::Ordering, fs::File, io::Write};
 
 use graphviz_rust::{
     cmd::Format,
@@ -16,7 +16,7 @@ use crate::dfg::dfg_struct::DirectlyFollowsGraph;
 /// Also see [`export_dfg_image_svg`] and [`export_dfg_image_png`]
 ///
 pub fn export_dfg_image<P: AsRef<std::path::Path>>(
-    dfg: &DirectlyFollowsGraph,
+    dfg: &DirectlyFollowsGraph<'_>,
     path: P,
     format: Format,
     dpi_factor: Option<f32>,
@@ -37,10 +37,23 @@ pub fn export_dfg_image<P: AsRef<std::path::Path>>(
 ///
 /// Also see [`export_dfg_image`], as well as [`export_dfg_image_svg`] and [`export_dfg_image_png`]
 ///
-pub fn export_dfg_to_dot_graph(dfg: &DirectlyFollowsGraph, dpi_factor: Option<f32>) -> Graph {
-    let activity_nodes: Vec<Stmt> = dfg
-        .activities
-        .iter()
+pub fn export_dfg_to_dot_graph(dfg: &DirectlyFollowsGraph<'_>, dpi_factor: Option<f32>) -> Graph {
+    let mut sorted_acts: Vec<_> = dfg.activities.iter().collect();
+    sorted_acts.sort_by(|(a_act, _), (b_act, _)| {
+        if dfg.start_activities.contains(*a_act) {
+            Ordering::Less
+        } else if dfg.start_activities.contains(*b_act) {
+            Ordering::Greater
+        } else if dfg.end_activities.contains(*a_act) {
+            Ordering::Greater
+        } else if dfg.end_activities.contains(*b_act) {
+            Ordering::Less
+        } else {
+            Ordering::Equal
+        }
+    });
+    let activity_nodes: Vec<Stmt> = sorted_acts
+        .into_iter()
         .map(|(x, &y)| {
             let mut counted_label = x.to_owned();
             counted_label.push_str(": ".into());
@@ -93,7 +106,7 @@ pub fn graph_to_dot(g: &Graph) -> String {
 ///
 /// Also consider using [`DirectlyFollowsGraph::export_svg`] for convenience.
 pub fn export_dfg_image_svg<P: AsRef<std::path::Path>>(
-    net: &DirectlyFollowsGraph,
+    net: &DirectlyFollowsGraph<'_>,
     path: P,
 ) -> Result<(), std::io::Error> {
     export_dfg_image(net, path, Format::Svg, None)
@@ -104,7 +117,7 @@ pub fn export_dfg_image_svg<P: AsRef<std::path::Path>>(
 ///
 /// Also consider using [`DirectlyFollowsGraph::export_png`] for convenience.
 pub fn export_dfg_image_png<P: AsRef<std::path::Path>>(
-    net: &DirectlyFollowsGraph,
+    net: &DirectlyFollowsGraph<'_>,
     path: P,
 ) -> Result<(), std::io::Error> {
     export_dfg_image(net, path, Format::Png, Some(2.0))
@@ -148,21 +161,21 @@ mod test {
     ]
 }"#;
 
-    use std::fs::remove_file;
     use crate::dfg::dfg_struct::DirectlyFollowsGraph;
+    use std::fs::remove_file;
 
     use super::{export_dfg_image_png, export_dfg_image_svg};
 
     #[test]
     pub fn test_dfg_png_export() {
-        let dfg: DirectlyFollowsGraph = serde_json::from_str(SAMPLE_JSON_DFG).unwrap();
+        let dfg: DirectlyFollowsGraph<'_> = serde_json::from_str(SAMPLE_JSON_DFG).unwrap();
         export_dfg_image_png(&dfg, "/tmp/dfg-export-test.png").unwrap();
         remove_file("/tmp/dfg-export-test.png").unwrap();
     }
 
     #[test]
     pub fn test_dfg_svg_export() {
-        let dfg: DirectlyFollowsGraph = serde_json::from_str(SAMPLE_JSON_DFG).unwrap();
+        let dfg: DirectlyFollowsGraph<'_> = serde_json::from_str(SAMPLE_JSON_DFG).unwrap();
         export_dfg_image_svg(&dfg, "/tmp/dfg-export-test.svg").unwrap();
         remove_file("/tmp/dfg-export-test.svg").unwrap();
     }

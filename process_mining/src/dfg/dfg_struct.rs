@@ -1,8 +1,11 @@
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
-use serde_with::serde_as;
 use crate::event_log::event_log_struct::EventLogClassifier;
 use crate::EventLog;
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+};
 
 /// Activity in a directly-follows graph.
 type Activity = String;
@@ -14,23 +17,25 @@ type Activity = String;
 /// with their frequency.
 #[serde_as]
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DirectlyFollowsGraph {
+pub struct DirectlyFollowsGraph<'a> {
     /// Activities
     pub activities: HashMap<Activity, u32>,
     /// Directly-follows relations
     #[serde_as(as = "Vec<(_, _)>")]
-    pub directly_follows_relations: HashMap<(String, String), u32>,
+    pub directly_follows_relations: HashMap<(Cow<'a, str>, Cow<'a, str>), u32>,
     /// Start activities
     pub start_activities: HashSet<Activity>,
     /// End activities
     pub end_activities: HashSet<Activity>,
 }
 
-impl Default for DirectlyFollowsGraph {
-    fn default() -> Self { Self::new() }
+impl Default for DirectlyFollowsGraph<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-impl DirectlyFollowsGraph {
+impl<'a> DirectlyFollowsGraph<'a> {
     /// Create new [`DirectlyFollowsGraph`] with no activities and directly-follows relations.
     pub fn new() -> Self {
         Self {
@@ -41,19 +46,22 @@ impl DirectlyFollowsGraph {
         }
     }
 
-    pub fn create_from_eventlog(event_log: EventLog, classifier: EventLogClassifier) -> Self {
+    /// Construct a [`DirectlyFollowsGraph`] from an [`EventLog`] using the specified [`EventLogClassifier`] to derive the 'activity' names
+    ///
+    /// If there is no special classifier to be used, the default (`&EventLogClassifier::default()`) can also simply be passed in
+    pub fn create_from_log(event_log: &EventLog, classifier: &EventLogClassifier) -> Self {
         let mut result = Self::new();
 
-        let mut last_event_identity: Option<String> = None;
         event_log.traces.iter().for_each(|t| {
+            let mut last_event_identity: Option<String> = None;
             t.events.iter().for_each(|e| {
                 let curr_event_identity = classifier.get_class_identity(e);
                 result.add_activity(curr_event_identity.clone(), 1);
 
                 if last_event_identity.is_some() {
-                    result.add_directly_follows_relation(
-                        last_event_identity.clone().unwrap(),
-                        curr_event_identity.clone(),
+                    result.add_df_relation(
+                        last_event_identity.clone().unwrap().into(),
+                        curr_event_identity.clone().into(),
                         1,
                     )
                 } else {
@@ -71,7 +79,9 @@ impl DirectlyFollowsGraph {
     }
 
     /// Serialize to JSON string.
-    pub fn to_json(self) -> String { serde_json::to_string(&self).unwrap() }
+    pub fn to_json(self) -> String {
+        serde_json::to_string(&self).unwrap()
+    }
 
     /// Add an activity with a frequency.
     ///
@@ -91,28 +101,28 @@ impl DirectlyFollowsGraph {
     }
 
     /// Checks if an activity is already contained in the directly-follows graph.
-    pub fn contains_activity(&self, activity: &Activity) -> bool {
-        self.activities.contains_key(activity)
+    pub fn contains_activity<S: AsRef<str>>(&self, activity: S) -> bool {
+        self.activities.contains_key(activity.as_ref())
     }
 
     /// Checks if an activity is a start activity in the directly-follows graph.
-    pub fn is_start_activity(&self, activity: &Activity) -> bool {
-        self.start_activities.contains(activity)
+    pub fn is_start_activity<S: AsRef<str>>(&self, activity: S) -> bool {
+        self.start_activities.contains(activity.as_ref())
     }
 
     /// Checks if an activity is an end activity in the directly-follows graph.
-    pub fn is_end_activity(&self, activity: &Activity) -> bool {
-        self.end_activities.contains(activity)
+    pub fn is_end_activity<S: AsRef<str>>(&self, activity: S) -> bool {
+        self.end_activities.contains(activity.as_ref())
     }
 
     /// Removes an activity from the directly-follows graph.
-    pub fn remove_activity(&mut self, activity: &Activity) {
-        let is_present = self.activities.remove(activity).is_some();
+    pub fn remove_activity<S: AsRef<str>>(&mut self, activity: S) {
+        let is_present = self.activities.remove(activity.as_ref()).is_some();
 
         // Removes the activity from the start and end activities if existing
         if is_present {
-            self.start_activities.remove(activity);
-            self.end_activities.remove(activity);
+            self.start_activities.remove(activity.as_ref());
+            self.end_activities.remove(activity.as_ref());
         }
     }
 
@@ -120,68 +130,61 @@ impl DirectlyFollowsGraph {
     ///
     /// If the directly-follows relation already exists, the frequency count is added to the
     /// existing directly-follows relation.
-    pub fn add_directly_follows_relation(&mut self, from: Activity, to: Activity, frequency: u32) {
-        *self.directly_follows_relations.entry((from, to)).or_default() += frequency;
+    pub fn add_df_relation(&mut self, from: Cow<'a, str>, to: Cow<'a, str>, frequency: u32) {
+        *self
+            .directly_follows_relations
+            .entry((from.clone(), to.clone()))
+            .or_default() += frequency;
     }
 
     /// Checks if a directly-follows relation is already contained in the directly-follows graph.
-    pub fn contains_directly_follows_relation(&self, dfr: &(String, String)) -> bool {
-        self.directly_follows_relations.contains_key(dfr)
+    pub fn contains_df_relation<S: Into<Cow<'a, str>>>(&self, (a, b): (S, S)) -> bool {
+        self.directly_follows_relations
+            .contains_key(&(a.into(), b.into()))
     }
 
     /// Returns the ingoing activities of an activity in the directly-follows graph.
-    pub fn ingoing_activities(&self, activity: &Activity) -> HashSet<&Activity> {
+    pub fn ingoing_activities<S: Into<Cow<'a, str>>>(&self, activity: S) -> HashSet<&Cow<'a, str>> {
+        let a = activity.into();
         self.directly_follows_relations
             .keys()
-            .filter_map(|(x, y)| {
-                if activity == y {
-                    Some(x)
-                } else {
-                    None
-                }
-            })
+            .filter_map(|(x, y)| if &a == y { Some(x) } else { None })
             .collect()
     }
 
     /// Returns the outgoing activities of an activity in the directly-follows graph.
-    pub fn outgoing_activities(&self, activity: &Activity) -> HashSet<&Activity> {
+    pub fn outgoing_activities<S: Into<Cow<'a, str>>>(
+        &self,
+        activity: S,
+    ) -> HashSet<&Cow<'a, str>> {
+        let a = activity.into();
         self.directly_follows_relations
             .keys()
-            .filter_map(|(x, y)| {
-                if activity == x {
-                    Some(y)
-                } else {
-                    None
-                }
-            })
+            .filter_map(|(x, y)| if &a == x { Some(y) } else { None })
             .collect()
     }
 
     /// Returns the ingoing directly-follows relations of an activity in the directly-follows graph.
-    pub fn get_ingoing_directly_follows_relations(&self, activity: &Activity) -> HashSet<&(String, String)> {
+    pub fn get_ingoing_df_relations<S: Into<Cow<'a, str>>>(
+        &self,
+        activity: S,
+    ) -> HashSet<&(Cow<'a, str>, Cow<'a, str>)> {
+        let a = activity.into();
         self.directly_follows_relations
             .keys()
-            .filter_map(|arc| {
-                if activity == &arc.1 {
-                    Some(arc)
-                } else {
-                    None
-                }
-            })
+            .filter_map(|arc| if a == arc.1 { Some(arc) } else { None })
             .collect()
     }
 
     /// Returns the outgoing directly-follows relations of an activity in the directly-follows graph.
-    pub fn get_outgoing_directly_follows_relations(&self, activity: &Activity) -> HashSet<&(String, String)> {
+    pub fn get_outgoing_df_relations<S: Into<Cow<'a, str>>>(
+        &self,
+        activity: S,
+    ) -> HashSet<&(Cow<'a, str>, Cow<'a, str>)> {
+        let a = activity.into();
         self.directly_follows_relations
             .keys()
-            .filter_map(|arc| {
-                if activity == &arc.0 {
-                    Some(arc)
-                } else {
-                    None
-                }
-            })
+            .filter_map(|arc| if &a == &arc.0 { Some(arc) } else { None })
             .collect()
     }
 
@@ -248,12 +251,14 @@ mod tests {
     ]
 }"#;
 
+    use std::time::Instant;
+
+    use super::*;
     #[cfg(feature = "graphviz-export")]
     use crate::dfg::image_export::export_dfg_image_png;
-    #[cfg(feature = "graphviz-export")]
-    use crate::dfg::image_export::export_dfg_image_svg;
-    use crate::event_log::import_xes::{import_xes, import_xes_file, XESImportOptions};
-    use super::*;
+
+    use crate::event_log::import_xes::{import_xes_file, XESImportOptions};
+    use crate::utils::test_utils::get_test_data_path;
 
     #[test]
     fn directly_follows_graph() {
@@ -266,12 +271,12 @@ mod tests {
         graph.add_start_activity("Cook".into());
 
         graph.add_activity("Have fun".into(), 9);
-        graph.add_directly_follows_relation("Work".into(), "Have fun".into(), 6);
-        graph.add_directly_follows_relation("Cook".into(), "Have fun".into(), 3);
+        graph.add_df_relation("Work".into(), "Have fun".into(), 6);
+        graph.add_df_relation("Cook".into(), "Have fun".into(), 3);
 
         graph.add_activity("Sleep".into(), 13);
-        graph.add_directly_follows_relation("Work".into(), "Sleep".into(), 4);
-        graph.add_directly_follows_relation("Have fun".into(), "Sleep".into(), 9);
+        graph.add_df_relation("Work".into(), "Sleep".into(), 4);
+        graph.add_df_relation("Have fun".into(), "Sleep".into(), 9);
         graph.add_end_activity("Sleep".into());
 
         let mut test_hashmap = HashMap::new();
@@ -284,7 +289,7 @@ mod tests {
 
     #[test]
     fn deserialize_dfg_test() {
-        let dfg: DirectlyFollowsGraph = serde_json::from_str(SAMPLE_JSON_DFG).unwrap();
+        let dfg: DirectlyFollowsGraph<'_> = serde_json::from_str(SAMPLE_JSON_DFG).unwrap();
         assert!(dfg.activities.len() == 4);
         assert!(dfg.directly_follows_relations.len() == 4);
         assert!(dfg.start_activities.len() == 2);
@@ -292,13 +297,8 @@ mod tests {
     }
 
     #[test]
-    fn reading_dfg_from_event_log_bpi_2018() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src")
-            .join("event_log")
-            .join("tests")
-            .join("test_data")
-            .join("repairExample.xes");
+    fn reading_dfg_from_event_log_repair_example() {
+        let path = get_test_data_path().join("xes").join("RepairExample.xes");
 
         let log: EventLog = import_xes_file(
             path,
@@ -314,20 +314,114 @@ mod tests {
                 ),
                 ..XESImportOptions::default()
             },
-        ).unwrap();
+        )
+        .unwrap();
 
-        let classifier = log.classifiers.clone().unwrap().get(0).unwrap().clone();
+        let classifier = log.classifiers.as_ref().and_then(|c| c.get(0)).unwrap();
 
-        let graph = DirectlyFollowsGraph::create_from_eventlog(log, classifier);
+        let graph = DirectlyFollowsGraph::create_from_log(&log, &classifier);
 
-        let path_output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src")
-            .join("event_log")
-            .join("tests")
-            .join("test_data")
-            .join("repairExample.png");
         #[cfg(feature = "graphviz-export")]
-        export_dfg_image_png(&graph, &path_output).unwrap();
-        std::fs::remove_file(&path_output).unwrap();
+        {
+            let path_output = get_test_data_path()
+                .join("export")
+                .join("RepairExample-DFG.png");
+            export_dfg_image_png(&graph, &path_output).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_dfg_from_sepsis_log() {
+        let path = get_test_data_path()
+            .join("xes")
+            .join("Sepsis Cases - Event Log.xes.gz");
+
+        let log: EventLog = import_xes_file(
+            path,
+            XESImportOptions {
+                ignore_log_attributes_except: Some(HashSet::default()),
+                ignore_trace_attributes_except: Some(
+                    vec!["concept:name".to_string()].into_iter().collect(),
+                ),
+                ignore_event_attributes_except: Some(
+                    vec!["concept:name".to_string(), "time:timestamp".to_string()]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..XESImportOptions::default()
+            },
+        )
+        .unwrap();
+
+        let graph = DirectlyFollowsGraph::create_from_log(&log, &EventLogClassifier::default());
+
+        #[cfg(feature = "graphviz-export")]
+        {
+            let path_output = get_test_data_path().join("export").join("Sepsis-DFG.png");
+            export_dfg_image_png(&graph, &path_output).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_dfg_from_an1_example() {
+        let path = get_test_data_path().join("xes").join("AN1-example.xes");
+
+        let log: EventLog = import_xes_file(
+            path,
+            XESImportOptions {
+                ignore_log_attributes_except: Some(HashSet::default()),
+                ignore_trace_attributes_except: Some(
+                    vec!["concept:name".to_string()].into_iter().collect(),
+                ),
+                ignore_event_attributes_except: Some(
+                    vec!["concept:name".to_string(), "time:timestamp".to_string()]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..XESImportOptions::default()
+            },
+        )
+        .unwrap();
+
+        let graph = DirectlyFollowsGraph::create_from_log(&log, &EventLogClassifier::default());
+
+        assert_eq!(graph.activities.len(), 6);
+        assert_eq!(graph.directly_follows_relations.len(), 16);
+        assert_eq!(graph.get_ingoing_df_relations("a").len(), 0);
+        assert_eq!(graph.get_outgoing_df_relations("a").len(), 3);
+        assert_eq!(
+            graph
+                .outgoing_activities("b")
+                .iter()
+                .map(|a| a.as_ref())
+                .collect::<HashSet<_>>(),
+            vec!["b", "e", "c"].into_iter().collect()
+        );
+        assert!(graph.contains_df_relation(("a", "b")));
+        assert!(graph.contains_df_relation(("b", "b")));
+        assert!(graph.contains_df_relation(("c", "f")));
+        assert!(!graph.contains_df_relation(("f", "c")));
+
+        #[cfg(feature = "graphviz-export")]
+        {
+            let path_output = get_test_data_path().join("export").join("AN1-DFG.png");
+            export_dfg_image_png(&graph, &path_output).unwrap();
+        }
+    }
+
+
+    #[test]
+    fn dfg_test_bpic2018_perf(){
+        println!("Importing Log...");
+        let now =  Instant::now();
+        let log = import_xes_file("/home/aarkue/dow/BPI Challenge 2018.xes.gz", XESImportOptions::default()).unwrap();
+        println!("Imported log in {:?}",now.elapsed());
+        
+        let now =  Instant::now();
+        let dfg = DirectlyFollowsGraph::create_from_log(&log, &EventLogClassifier::default());
+        // dfg.export_svg("bpic2018.svg").unwrap();
+        // dfg.outgoing_activities("activity");
+        println!("{:?}",now.elapsed());
+        println!("{}",dfg.activities.len());
     }
 }
