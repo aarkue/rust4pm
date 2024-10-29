@@ -92,6 +92,28 @@ pub mod dfg {
     pub use crate::dfg::dfg_struct::DirectlyFollowsGraph;
 }
 
+///
+/// Partial Orders
+///
+pub mod partial_orders {
+    /// [`PartialOrderTrace`] and [`PartialOrderEventLog`] struct
+    pub mod partial_event_log_struct;
+    #[cfg(feature = "graphviz-export")]
+    /// Export [`PartialOrderTrace`] to images (SVG, PNG, ...)
+    ///
+    /// __Requires the `graphviz-export` feature to be enabled__
+    ///
+    /// Also requires an active graphviz installation in the PATH.
+    /// See also <https://github.com/besok/graphviz-rust?tab=readme-ov-file#caveats> and <https://graphviz.org/download/>
+    pub mod image_export;
+
+    #[doc(inline)]
+    pub use crate::partial_orders::partial_event_log_struct::PartialOrderTrace;
+
+    #[doc(inline)]
+    pub use crate::partial_orders::partial_event_log_struct::PartialOrderEventLog;
+}
+
 use std::fs::File;
 use std::io::BufReader;
 use std::io::BufWriter;
