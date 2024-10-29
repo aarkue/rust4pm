@@ -186,12 +186,9 @@ impl PetriNet {
             }
         }
         self.transitions.remove(id);
-        self.arcs = self
-            .arcs
-            .clone()
-            .into_iter()
-            .filter(|arc| !arc.from_to.contains(id))
-            .collect();
+        self.arcs.retain(|arc| {
+            !arc.from_to.contains(id)
+        });
     }
 
     /// Remove a Place from the Petri net

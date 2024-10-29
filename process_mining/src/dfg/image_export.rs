@@ -106,10 +106,10 @@ pub fn graph_to_dot(g: &Graph) -> String {
 ///
 /// Also consider using [`DirectlyFollowsGraph::export_svg`] for convenience.
 pub fn export_dfg_image_svg<P: AsRef<std::path::Path>>(
-    net: &DirectlyFollowsGraph<'_>,
+    dfg: &DirectlyFollowsGraph<'_>,
     path: P,
 ) -> Result<(), std::io::Error> {
-    export_dfg_image(net, path, Format::Svg, None)
+    export_dfg_image(dfg, path, Format::Svg, None)
 }
 
 ///
@@ -117,10 +117,10 @@ pub fn export_dfg_image_svg<P: AsRef<std::path::Path>>(
 ///
 /// Also consider using [`DirectlyFollowsGraph::export_png`] for convenience.
 pub fn export_dfg_image_png<P: AsRef<std::path::Path>>(
-    net: &DirectlyFollowsGraph<'_>,
+    dfg: &DirectlyFollowsGraph<'_>,
     path: P,
 ) -> Result<(), std::io::Error> {
-    export_dfg_image(net, path, Format::Png, Some(2.0))
+    export_dfg_image(dfg, path, Format::Png, Some(2.0))
 }
 
 #[cfg(test)]
@@ -161,22 +161,25 @@ mod test {
     ]
 }"#;
 
-    use crate::dfg::dfg_struct::DirectlyFollowsGraph;
-    use std::fs::remove_file;
+    use crate::{dfg::dfg_struct::DirectlyFollowsGraph, utils::test_utils::get_test_data_path};
 
     use super::{export_dfg_image_png, export_dfg_image_svg};
 
     #[test]
     pub fn test_dfg_png_export() {
+        let export_path = get_test_data_path()
+            .join("export")
+            .join("dfg-export-test.png");
         let dfg: DirectlyFollowsGraph<'_> = serde_json::from_str(SAMPLE_JSON_DFG).unwrap();
-        export_dfg_image_png(&dfg, "/tmp/dfg-export-test.png").unwrap();
-        remove_file("/tmp/dfg-export-test.png").unwrap();
+        export_dfg_image_png(&dfg, &export_path).unwrap();
     }
 
     #[test]
     pub fn test_dfg_svg_export() {
+        let export_path = get_test_data_path()
+            .join("export")
+            .join("dfg-export-test.svg");
         let dfg: DirectlyFollowsGraph<'_> = serde_json::from_str(SAMPLE_JSON_DFG).unwrap();
-        export_dfg_image_svg(&dfg, "/tmp/dfg-export-test.svg").unwrap();
-        remove_file("/tmp/dfg-export-test.svg").unwrap();
+        export_dfg_image_svg(&dfg, &export_path).unwrap();
     }
 }

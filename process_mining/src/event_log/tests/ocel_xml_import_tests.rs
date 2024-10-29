@@ -215,11 +215,13 @@ fn test_ocel_order_mangement_log_json() {
     assert_eq!(ocel.objects.len(), 10840);
     assert_eq!(ocel.events.len(), 21008);
 
-    let ocel_export_path = "/tmp/order-management-export.json";
-    let writer = BufWriter::new(File::create(ocel_export_path).unwrap());
+    let ocel_export_path = get_test_data_path()
+    .join("export")
+    .join("order-management-export-EXPORT2.json");
+    let writer = BufWriter::new(File::create(&ocel_export_path).unwrap());
     serde_json::to_writer(writer, &ocel).unwrap();
 
-    let ocel2 = import_ocel_json_from_path(ocel_export_path).unwrap();
+    let ocel2 = import_ocel_json_from_path(&ocel_export_path).unwrap();
 
     assert_eq!(ocel2.objects.len(), 10840);
     assert_eq!(ocel2.events.len(), 21008);
