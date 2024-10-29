@@ -106,10 +106,10 @@ pub fn graph_to_dot(g: &Graph) -> String {
 ///
 /// Also consider using [`DirectlyFollowsGraph::export_svg`] for convenience.
 pub fn export_dfg_image_svg<P: AsRef<std::path::Path>>(
-    net: &DirectlyFollowsGraph<'_>,
+    dfg: &DirectlyFollowsGraph<'_>,
     path: P,
 ) -> Result<(), std::io::Error> {
-    export_dfg_image(net, path, Format::Svg, None)
+    export_dfg_image(dfg, path, Format::Svg, None)
 }
 
 ///
@@ -117,10 +117,10 @@ pub fn export_dfg_image_svg<P: AsRef<std::path::Path>>(
 ///
 /// Also consider using [`DirectlyFollowsGraph::export_png`] for convenience.
 pub fn export_dfg_image_png<P: AsRef<std::path::Path>>(
-    net: &DirectlyFollowsGraph<'_>,
+    dfg: &DirectlyFollowsGraph<'_>,
     path: P,
 ) -> Result<(), std::io::Error> {
-    export_dfg_image(net, path, Format::Png, Some(2.0))
+    export_dfg_image(dfg, path, Format::Png, Some(2.0))
 }
 
 #[cfg(test)]
