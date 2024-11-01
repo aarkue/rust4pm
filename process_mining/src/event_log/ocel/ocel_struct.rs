@@ -44,6 +44,16 @@ pub struct OCELTypeAttribute {
     pub value_type: String,
 }
 
+impl OCELTypeAttribute {
+    /// Construct a type attribute based on a given name and type
+    pub fn new<S: AsRef<str>>(name: S, value_type: &OCELAttributeType) -> Self {
+        Self {
+            name: name.as_ref().to_string(),
+            value_type: value_type.to_type_string(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 /// OCEL Event Attributes
 pub struct OCELEventAttribute {
@@ -71,6 +81,25 @@ pub struct OCELEvent {
     pub relationships: Vec<OCELRelationship>,
 }
 
+impl OCELEvent {
+    /// Construct a new OCEL Event
+    pub fn new<S1: AsRef<str>, S2: AsRef<str>, T: Into<DateTime<FixedOffset>>>(
+        id: S1,
+        event_type: S2,
+        time: T,
+        attributes: Vec<OCELEventAttribute>,
+        relationships: Vec<OCELRelationship>,
+    ) -> Self {
+        Self {
+            id: id.as_ref().to_string(),
+            event_type: event_type.as_ref().to_string(),
+            time: time.into(),
+            attributes,
+            relationships,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 /// OCEL Relationship (qualified; referring back to an [`OCELObject`])
 pub struct OCELRelationship {
@@ -79,6 +108,16 @@ pub struct OCELRelationship {
     pub object_id: String,
     /// Qualifier of relationship
     pub qualifier: String,
+}
+
+impl OCELRelationship {
+    /// Construct a new OCEL Relationship
+    pub fn new<S: AsRef<str>, Q: AsRef<str>>(to_object_id: S, qualifier: Q) -> Self {
+        Self {
+            object_id: to_object_id.as_ref().to_string(),
+            qualifier: qualifier.as_ref().to_string(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -108,6 +147,20 @@ pub struct OCELObjectAttribute {
     pub value: OCELAttributeValue,
     /// Time of attribute value
     pub time: DateTime<FixedOffset>,
+}
+impl OCELObjectAttribute {
+    /// Construct a new object attribute given its name, value, and time
+    pub fn new<S: AsRef<str>, V: Into<OCELAttributeValue>, T: Into<DateTime<FixedOffset>>>(
+        name: S,
+        value: V,
+        time: T,
+    ) -> Self {
+        Self {
+            name: name.as_ref().to_string(),
+            value: value.into(),
+            time: time.into(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -139,6 +192,34 @@ impl Display for OCELAttributeValue {
             OCELAttributeValue::Null => String::default(), //"INVALID_VALUE".to_string(),
         };
         write!(f, "{s}")
+    }
+}
+
+impl From<i64> for OCELAttributeValue {
+    fn from(value: i64) -> Self {
+        Self::Integer(value)
+    }
+}
+impl From<usize> for OCELAttributeValue {
+    fn from(value: usize) -> Self {
+        Self::Integer(value as i64)
+    }
+}
+impl From<String> for OCELAttributeValue {
+    fn from(value: String) -> Self {
+        Self::String(value)
+    }
+}
+
+impl From<&String> for OCELAttributeValue {
+    fn from(value: &String) -> Self {
+        Self::String(value.clone())
+    }
+}
+
+impl From<&str> for OCELAttributeValue {
+    fn from(value: &str) -> Self {
+        Self::String(value.to_string())
     }
 }
 
