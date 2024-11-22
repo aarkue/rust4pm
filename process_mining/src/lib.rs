@@ -49,6 +49,8 @@ pub mod event_log {
 
 /// Util module with smaller helper functions, structs or enums
 pub mod utils;
+pub mod oc_petri_net;
+mod oc_case;
 
 ///
 /// Petri nets
