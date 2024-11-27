@@ -1,7 +1,8 @@
-use std::collections::HashMap;
-
 use chrono::{DateTime, FixedOffset};
+use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use uuid::Uuid;
 
 #[cfg(feature = "dataframes")]
@@ -53,6 +54,30 @@ pub enum AttributeValue {
     /// Used to represent invalid values (e.g., `DateTime` which could not be parsed)
     None(),
 }
+
+///
+/// [`Hash`] trait implementation for [`AttributeValue`]
+///
+impl Hash for AttributeValue {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            AttributeValue::String(value) => { value.hash(state) }
+            AttributeValue::Date(value) => { value.hash(state) }
+            AttributeValue::Int(value) => { value.hash(state) }
+            AttributeValue::Float(value) => { OrderedFloat::from(*value).hash(state) }
+            AttributeValue::Boolean(value) => { value.hash(state) }
+            AttributeValue::ID(value) => { value.hash(state) }
+            AttributeValue::List(value) => { value.hash(state) }
+            AttributeValue::Container(value) => { value.hash(state) }
+            AttributeValue::None() => {}
+        }
+    }
+}
+
+///
+/// [`Eq`] trait implementation for [`AttributeValue`]
+///
+impl Eq for AttributeValue {}
 
 impl AttributeValue {
     ///
@@ -147,7 +172,7 @@ impl AttributeValue {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq)]
 ///
 /// Attribute made up of the key and value
 ///
@@ -348,7 +373,7 @@ pub fn to_attributes(from: HashMap<String, AttributeValue>) -> Attributes {
 ///
 /// An event consists of multiple (event) attributes ([Attributes])
 ///
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq)]
 pub struct Event {
     /// Event attributes
     pub attributes: Attributes,

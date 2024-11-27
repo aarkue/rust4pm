@@ -1,0 +1,35 @@
+name: test_macos
+
+on: [push, pull_request]
+
+jobs:
+  Test:
+    strategy:
+      matrix:
+        os: [macos-latest]
+        rust: [stable]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Downloading test files
+        run: wget -O process_mining/test_data/out.zip https://rwth-aachen.sciebo.de/s/4cvtTU3lLOgtxt1/download
+      - name: Unpacking test files
+        run: 7z x process_mining/test_data/out.zip -oprocess_mining/test_data
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --lib -p process_mining
