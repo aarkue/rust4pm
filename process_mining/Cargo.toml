@@ -26,6 +26,7 @@ graphviz-rust = { git = "https://github.com/aarkue/graphviz-rust.git" , optional
 rusqlite = { version = "0.32.1", features = ["bundled","chrono", "serialize"], optional = true }
 polars = {version = "0.43.1", features = ["dtype-slim","timezones","partition_by"], optional = true}
 hashbag = "0.1.12"
+russcip = { version = "0.4.1", features = ["bundled"] }
 
 [features]
 

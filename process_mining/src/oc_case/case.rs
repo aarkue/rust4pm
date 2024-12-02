@@ -5,16 +5,16 @@ use std::hash::{Hash, Hasher};
 // Define the Event struct
 #[derive(Debug, Clone)]
 pub struct Event {
-    id: usize,
-    event_type: String,
+    pub id: usize,
+    pub event_type: String,
 }
 id_based_impls!(Event);
 
 // Define the Object struct
 #[derive(Debug, Clone)]
 pub struct Object {
-    id: usize,
-    object_type: String,
+    pub id: usize,
+    pub object_type: String,
 }
 id_based_impls!(Object);
 
@@ -60,9 +60,9 @@ pub enum EdgeType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Edge {
     pub id: usize,
-    from: usize,
-    to: usize,
-    edge_type: EdgeType,
+    pub from: usize,
+    pub to: usize,
+    pub edge_type: EdgeType,
     // Additional attributes can be added here
     // For example:
     // weight: f64,
