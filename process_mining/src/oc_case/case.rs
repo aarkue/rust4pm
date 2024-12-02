@@ -26,7 +26,7 @@ pub enum Node {
 }
 
 impl Node {
-    fn id(&self) -> usize {
+    pub fn id(&self) -> usize {
         match self {
             Node::Event(event) => event.id,
             Node::Object(object) => object.id,
@@ -48,61 +48,104 @@ impl Hash for Node {
     }
 }
 
-// Define the Edge enum with associated target node ID
+// Define the EdgeType enum
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Edge {
-    DF(usize),  // Event to Event
-    O2O(usize), // Object to Object
-    E2O(usize), // Event to Object
+pub enum EdgeType {
+    DF,  // Event to Event
+    O2O, // Object to Object
+    E2O, // Event to Object
 }
 
+// Define the Edge struct with additional attributes
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Edge {
+    pub id: usize,
+    from: usize,
+    to: usize,
+    edge_type: EdgeType,
+    // Additional attributes can be added here
+    // For example:
+    // weight: f64,
+    // label: String,
+}
+
+impl Edge {
+    pub fn new(id: usize, from: usize, to: usize, edge_type: EdgeType) -> Self {
+        Edge {
+            id,
+            from,
+            to,
+            edge_type,
+            // Initialize additional attributes here
+        }
+    }
+}
+
+// Define the CaseGraph structure
 #[derive(Debug)]
 pub struct CaseGraph {
-    nodes: Vec<Node>,
-    // Adjacency lists storing Edge enums for each node
-    edges: HashMap<usize, Vec<Edge>>,
-    // Map from ID to node index for fast lookups
-    id_to_index: HashMap<usize, usize>,
+    pub nodes: HashMap<usize, Node>, // Keyed by node ID
+    pub edges: HashMap<usize, Edge>, // Keyed by edge ID
+    adjacency: HashMap<usize, Vec<usize>>, // from node ID -> Vec of edge IDs
+    id_to_index: HashMap<usize, usize>, // Map from node ID to index (if needed)
 }
 
 impl CaseGraph {
-    fn new() -> Self {
+    pub fn new() -> Self {
         CaseGraph {
-            nodes: Vec::new(),
+            nodes: HashMap::new(),
             edges: HashMap::new(),
+            adjacency: HashMap::new(),
             id_to_index: HashMap::new(),
         }
     }
 
     // Add a node to the graph
-    fn add_node(&mut self, node: Node) {
+    pub fn add_node(&mut self, node: Node) {
         let id = node.id();
         self.id_to_index.insert(id, self.nodes.len());
-        self.nodes.push(node);
+        self.nodes.insert(id, node);
     }
 
-    // Add a directed edge to the graph using the Edge enum
-    fn add_edge(&mut self, from: usize, to: usize, edge_type: Edge) {
-        self.edges.entry(from).or_insert_with(Vec::new).push(edge_type);
+    // Add an edge to the graph with additional attributes
+    pub fn add_edge(&mut self, edge: Edge) {
+        let edge_id = edge.id;
+        let from = edge.from;
+        self.edges.insert(edge_id, edge);
+        self.adjacency.entry(from).or_insert_with(Vec::new).push(edge_id);
     }
 
     // Retrieve node by id
-    fn get_node(&self, id: usize) -> Option<&Node> {
-        self.id_to_index.get(&id).map(|&index| &self.nodes[index])
+    pub fn get_node(&self, id: usize) -> Option<&Node> {
+        self.nodes.get(&id)
+    }
+
+    // Retrieve edge by id
+    pub fn get_edge(&self, id: usize) -> Option<&Edge> {
+        self.edges.get(&id)
+    }
+
+    // Retrieve outgoing edges from a node
+    pub fn get_outgoing_edges(&self, from: usize) -> Option<&Vec<usize>> {
+        self.adjacency.get(&from)
     }
 
     // Retrieve neighbors by edge type
-    fn get_neighbors(&self, from: usize, desired_type: Edge) -> Option<Vec<usize>> {
-        self.edges.get(&from).map(|edges| {
-            edges.iter().filter_map(|edge| {
-                match (edge, &desired_type) {
-                    (Edge::DF(target), Edge::DF(_)) => Some(*target),
-                    (Edge::O2O(target), Edge::O2O(_)) => Some(*target),
-                    (Edge::E2O(target), Edge::E2O(_)) => Some(*target),
-                    _ => None,
-                }
-            }).collect()
-        })
+    pub fn get_neighbors_by_edge_type(&self, from: usize, edge_type: EdgeType) -> Vec<usize> {
+        match self.adjacency.get(&from) {
+            Some(edge_ids) => edge_ids.iter()
+                .filter_map(|eid| {
+                    self.edges.get(eid).and_then(|edge| {
+                        if edge.edge_type == edge_type {
+                            Some(edge.to)
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect(),
+            None => Vec::new(),
+        }
     }
 }
 
@@ -135,19 +178,22 @@ mod tests {
         graph.add_node(Node::Object(object1));
         graph.add_node(Node::Object(object2));
         // Add edges
-        graph.add_edge(1, 2, Edge::DF(2)); // Event1 -> Event2
-        graph.add_edge(3, 4, Edge::O2O(4)); // Object1 -> Object2
-        graph.add_edge(2, 3, Edge::E2O(3)); // Event2 -> Object1
+        let edge1 = Edge::new(1, 1, 2, EdgeType::DF); // Event1 -> Event2
+        let edge2 = Edge::new(2, 3, 4, EdgeType::O2O); // Object1 -> Object2
+        let edge3 = Edge::new(3, 2, 3, EdgeType::E2O); // Event2 -> Object1
+        graph.add_edge(edge1);
+        graph.add_edge(edge2);
+        graph.add_edge(edge3);
         // Verify DF edge
-        let df_neighbors = graph.get_neighbors(1, Edge::DF(0)).unwrap();
+        let df_neighbors = graph.get_neighbors_by_edge_type(1, EdgeType::DF);
         assert_eq!(df_neighbors.len(), 1);
         assert_eq!(df_neighbors[0], 2);
         // Verify O2O edge
-        let o2o_neighbors = graph.get_neighbors(3, Edge::O2O(0)).unwrap();
+        let o2o_neighbors = graph.get_neighbors_by_edge_type(3, EdgeType::O2O);
         assert_eq!(o2o_neighbors.len(), 1);
         assert_eq!(o2o_neighbors[0], 4);
         // Verify E2O edge
-        let e2o_neighbors = graph.get_neighbors(2, Edge::E2O(0)).unwrap();
+        let e2o_neighbors = graph.get_neighbors_by_edge_type(2, EdgeType::E2O);
         assert_eq!(e2o_neighbors.len(), 1);
         assert_eq!(e2o_neighbors[0], 3);
     }
@@ -156,9 +202,9 @@ mod tests {
     fn test_get_neighbors_empty() {
         let graph = CaseGraph::new();
         // Attempt to get neighbors from an empty graph
-        assert!(graph.get_neighbors(1, Edge::DF(0)).is_none());
-        assert!(graph.get_neighbors(2, Edge::O2O(0)).is_none());
-        assert!(graph.get_neighbors(3, Edge::E2O(0)).is_none());
+        assert!(graph.get_neighbors_by_edge_type(1, EdgeType::DF).is_empty());
+        assert!(graph.get_neighbors_by_edge_type(2, EdgeType::O2O).is_empty());
+        assert!(graph.get_neighbors_by_edge_type(3, EdgeType::E2O).is_empty());
     }
 
     #[test]
@@ -170,9 +216,11 @@ mod tests {
         graph.add_node(Node::Event(event1));
         graph.add_node(Node::Event(event2));
         // Add duplicate DF edges
-        graph.add_edge(1, 2, Edge::DF(2));
-        graph.add_edge(1, 2, Edge::DF(2));
-        let df_neighbors = graph.get_neighbors(1, Edge::DF(0)).unwrap();
+        let edge1 = Edge::new(1, 1, 2, EdgeType::DF);
+        let edge2 = Edge::new(2, 1, 2, EdgeType::DF);
+        graph.add_edge(edge1);
+        graph.add_edge(edge2);
+        let df_neighbors = graph.get_neighbors_by_edge_type(1, EdgeType::DF);
         assert_eq!(df_neighbors.len(), 2);
         assert_eq!(df_neighbors[0], 2);
         assert_eq!(df_neighbors[1], 2);
@@ -189,18 +237,20 @@ mod tests {
         graph.add_node(Node::Event(event2));
         graph.add_node(Node::Object(object1));
         // Add different types of edges from event1
-        graph.add_edge(1, 2, Edge::DF(2)); // DF edge
-        graph.add_edge(1, 3, Edge::E2O(3)); // E2O edge
+        let edge1 = Edge::new(1, 1, 2, EdgeType::DF); // DF edge
+        let edge2 = Edge::new(2, 1, 3, EdgeType::E2O); // E2O edge
+        graph.add_edge(edge1);
+        graph.add_edge(edge2);
         // Verify DF edge
-        let df_neighbors = graph.get_neighbors(1, Edge::DF(0)).unwrap();
+        let df_neighbors = graph.get_neighbors_by_edge_type(1, EdgeType::DF);
         assert_eq!(df_neighbors.len(), 1);
         assert_eq!(df_neighbors[0], 2);
         // Verify E2O edge
-        let e2o_neighbors = graph.get_neighbors(1, Edge::E2O(0)).unwrap();
+        let e2o_neighbors = graph.get_neighbors_by_edge_type(1, EdgeType::E2O);
         assert_eq!(e2o_neighbors.len(), 1);
         assert_eq!(e2o_neighbors[0], 3);
         // Verify no O2O edges
-        let o2o_neighbors = graph.get_neighbors(1, Edge::O2O(0));
-        assert!(o2o_neighbors.is_none() || o2o_neighbors.unwrap().is_empty());
+        let o2o_neighbors = graph.get_neighbors_by_edge_type(1, EdgeType::O2O);
+        assert!(o2o_neighbors.is_empty());
     }
 }
