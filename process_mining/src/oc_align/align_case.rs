@@ -217,6 +217,24 @@ impl<'a> CaseAlignment<'a> {
             }
             obj_vars.push(var.clone());
             obj_coeffs.push(1.0);
+
+            let mut sum_vars = Vec::new();
+            let mut sum_coeffs = Vec::new();
+            for n1 in c1.nodes.keys() {
+                if let Some(x_var) = x_vars.get(&(*n1, *n2)) {
+                    sum_vars.push(x_var.clone());
+                    sum_coeffs.push(1.0);
+                }
+            }
+            sum_vars.push(var.clone());
+            sum_coeffs.push(1.0);
+            model.add_cons(
+                sum_vars,
+                &sum_coeffs,
+                1.0, // Lower bound
+                1.0, // Upper bound
+                &format!("unused_node_eq_{}", n2),
+            );
         }
 
         // Unused edges in c2
@@ -236,6 +254,24 @@ impl<'a> CaseAlignment<'a> {
             }
             obj_vars.push(var.clone());
             obj_coeffs.push(1.0);
+
+            let mut sum_vars = Vec::new();
+            let mut sum_coeffs = Vec::new();
+            for e1 in c1.edges.keys() {
+                if let Some(y_var) = y_vars.get(&(*e1, *e2)) {
+                    sum_vars.push(y_var.clone());
+                    sum_coeffs.push(1.0);
+                }
+            }
+            sum_vars.push(var.clone());
+            sum_coeffs.push(1.0);
+            model.add_cons(
+                sum_vars,
+                &sum_coeffs,
+                1.0, // Lower bound
+                1.0, // Upper bound
+                &format!("unused_edge_eq_{}", e2),
+            );
         }
 
         //model.set_obj(&obj_vars, &obj_coeffs);
@@ -572,9 +608,9 @@ mod tests {
         c2.add_node(event4);
         c2.add_node(object2);
         c2.add_node(object3);
-        c2.add_edge(Edge::new(3, 4, 5, EdgeType::DF));
-        c2.add_edge(Edge::new(4, 5, 6, EdgeType::E2O));
-        c2.add_edge(Edge::new(5, 5, 7, EdgeType::E2O));
+        c2.add_edge(Edge::new(101, 4, 5, EdgeType::DF));
+        c2.add_edge(Edge::new(102, 5, 6, EdgeType::E2O));
+        c2.add_edge(Edge::new(103, 5, 7, EdgeType::E2O));
 
         // Align using MIP
         let alignment = CaseAlignment::align_mip(&c1, &c2);
