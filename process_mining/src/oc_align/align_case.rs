@@ -10,11 +10,13 @@ trait Mappable {
     fn cost(&self) -> f64;
 }
 
+#[derive(Debug, Clone)]
 enum NodeMapping {
     RealNode(usize, usize), // (c1_node, c2_node)
     VoidNode(usize, usize), // (c1_node, void_node_id)
 }
 
+#[derive(Debug, Clone)]
 enum EdgeMapping {
     RealEdge(usize, usize), // (c1_edge, c2_edge)
     VoidEdge(usize, usize), // (c1_edge, void_edge_id)
@@ -44,13 +46,14 @@ impl Mappable for EdgeMapping {
     }
 }
 
-struct CaseAlignment<'a> {
-    c1: &'a CaseGraph,
-    c2: &'a CaseGraph,
-    void_nodes: HashMap<usize, Node>,          // id -> Node
-    void_edges: HashMap<usize, Edge>,          // id -> Edge
-    node_mapping: HashMap<usize, NodeMapping>, // c1_node_id -> mapping
-    edge_mapping: HashMap<usize, EdgeMapping>, // c1_edge_id -> mapping
+#[derive(Debug, Clone)]
+pub struct CaseAlignment<'a> {
+    pub c1: &'a CaseGraph,
+    pub c2: &'a CaseGraph,
+    pub void_nodes: HashMap<usize, Node>,          // id -> Node
+    pub void_edges: HashMap<usize, Edge>,          // id -> Edge
+    pub node_mapping: HashMap<usize, NodeMapping>, // c1_node_id -> mapping
+    pub edge_mapping: HashMap<usize, EdgeMapping>, // c1_edge_id -> mapping
 }
 
 impl<'a> CaseAlignment<'a> {
@@ -355,7 +358,7 @@ impl<'a> CaseAlignment<'a> {
     /// Returns:
     /// - Ok(total_cost) if the alignment is valid.
     /// - Err(error_message) if the alignment is invalid.
-    fn total_cost(&self) -> Result<f64, String> {
+    pub fn total_cost(&self) -> Result<f64, String> {
         // 1. Validate that all nodes in c1 are mapped
         if self.node_mapping.len() != self.c1.nodes.len() {
             return Err("Not all nodes in c1 are mapped.".to_string());
