@@ -90,11 +90,11 @@ impl Marking {
             .insert(token);
     }
 
-    /// Checks if a transition is enabled in the current marking
-    /// A transition is enabled, if all input places have at least one tokens,
-    /// and for any set of input places of type t, there is at least one token
-    /// of id x in the marking
-    pub fn is_enabled(&self, transition: &Transition) -> bool {
+    /// Returns all possible firing combinations for the given transition.
+    pub fn get_firing_combinations(
+        &self,
+        transition: &Transition,
+    ) -> Vec<Binding> {
         let arcs_to_place: HashMap<Uuid, Vec<&InputArc>> =
             transition
                 .input_arcs
@@ -105,54 +105,83 @@ impl Marking {
                         .push(arc);
                     acc
                 });
-        // Step 2: Process each group to build input_place_map
+
         let default: HashBag<OCToken> = HashBag::new();
-        let input_place_map: HashMap<String, Vec<HashBag<OCToken>>> =
-            arcs_to_place
-                .iter()
-                .fold(HashMap::new(), |mut acc, (place_id, arcs)| {
-                    // Retrieve the place associated with the current place_id
-                    let place = self.petri_net.get_place(place_id).expect("Place not found");
+        let mut input_place_map: HashMap<String, Vec<(&Uuid, HashBag<OCToken>, usize)>> =
+            HashMap::new();
 
-                    let obj_type = place.object_type.clone();
+        // Group input places by object_type along with their required token counts
+        for (place_id, arcs) in arcs_to_place.iter() {
+            let place = self.petri_net.get_place(place_id).expect("Place not found");
+            let obj_type = place.object_type.clone();
+            let consuming_arc_count = arcs.len();
+            let bag = self.assignments.get(place_id).unwrap_or(&default);
 
-                    // Retrieve the assignment bag; default to an empty HashBag if not found
-                    // fixme we can already early exit on default here because the transition
-                    // is not firable. find a clean way for this
-                    let bag = self.assignments.get(place_id).unwrap_or(&default);
+            // Filter the bag to retain only tokens with a count >= consuming_arc_count
+            let mut filtered_bag = bag.clone();
+            filtered_bag.retain(|_, count| {
+                if count >= consuming_arc_count {
+                    return count;
+                }
+                return 0;
+            });
 
-                    // Determine how many arcs are consuming this place
-                    let consuming_arc_count = arcs.len();
-
-                    // Filter the bag to retain only tokens with a count >= consuming_arc_count
-                    let mut filtered_bag = bag.clone();
-                    filtered_bag.retain(|_, count| {
-                        if count >= consuming_arc_count {
-                            return count;
-                        }
-                        return 0;
-                    });
-
-                    // Insert the filtered bag into the input_place_map grouped by object_type
-                    acc.entry(obj_type)
-                        .or_insert_with(Vec::new)
-                        .push(filtered_bag);
-                    acc
-                });
-
-        for (obj_type, bags) in input_place_map {
-            // for each object type, we need to check if there is at least one token of each id
-            if (bags.len() == 0) {
-                return false;
-            }
-            // Collect references to the HashBag<OCToken>
-            let bag_refs: Vec<&HashBag<OCToken>> = bags.iter().collect();
-            let intersection = intersect_hashbags(&*bag_refs);
-            if intersection.set_len() == 0 {
-                return false;
-            }
+            input_place_map
+                .entry(obj_type)
+                .or_insert_with(Vec::new)
+                .push((place_id, filtered_bag, consuming_arc_count));
         }
-        return true;
+        
+        let mut obj_type_tokens: Vec<Vec<Vec<PlaceBindingInfo>>> = Vec::new();
+
+        // For each object type, find tokens that satisfy all input places
+        for (_obj_type, places) in input_place_map.iter() {
+            let common_tokens =
+                intersect_hashbags(&*places.iter().map(|(_, bag, _)| bag).collect::<Vec<_>>());
+
+            // If there are no common tokens, we can't fire the transition
+            if (common_tokens.len() == 0) {
+                return vec![];
+            }
+
+            // TODO add variable arc support
+
+            obj_type_tokens.push(
+                common_tokens
+                    .set_iter()
+                    .map(|(token, _)| {
+                        places
+                            .iter()
+                            .map(|(place_id, _, req)| {
+                                (PlaceBindingInfo {
+                                    consumed: req.clone(),
+                                    token: token.clone(),
+                                    place_id: *place_id.clone(),
+                                })
+                            })
+                            .collect()
+                    })
+                    .collect(),
+            )
+        }
+
+        // Compute cartesian product of tokens across all object types
+        if obj_type_tokens.is_empty() {
+            return vec![];
+        }
+
+        let product = cartesian_product_iter(obj_type_tokens);
+
+        // Convert each product into a firing combination map
+
+        product.into_iter().map(|combination| {
+            Binding::from_combinations(transition.id, combination)
+        }).collect()
+    }
+
+    /// Checks if the transition is enabled by verifying if there is at least one firing combination.
+    pub fn is_enabled(&self, transition: &Transition) -> bool {
+        !self.get_firing_combinations(transition).is_empty()
     }
 
     /*    pub fn compute_possible_firings(&self) -> Vec<Uuid> {
@@ -163,4 +192,60 @@ impl Marking {
             .map(|t| t.id.clone())
             .collect()
     }*/
+}
+
+impl Binding {
+    fn from_combinations(transition_id: Uuid, combinations: Vec<Vec<PlaceBindingInfo>>) -> Self { 
+        Binding {
+            tokens: combinations
+                .iter()
+                .fold(HashMap::new(), |mut acc, bindings| {
+                    bindings.into_iter().for_each(|binding| {
+                        acc.insert(binding.place_id, binding.clone()); // fixme clone
+                    });
+                    acc
+                }),
+            transition_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PlaceBindingInfo {
+    pub place_id: Uuid,
+    pub consumed: usize,
+    pub token: OCToken,
+}
+struct Binding {
+    /// Tokens to take out of the place
+    pub tokens: HashMap<Uuid, PlaceBindingInfo>,
+    pub transition_id: Uuid,
+}
+
+fn cartesian_product<'a, T>(inputs: Vec<Vec<&'a T>>) -> Vec<Vec<&'a T>> {
+    inputs.into_iter().fold(vec![Vec::new()], |acc, pool| {
+        acc.into_iter()
+            .flat_map(|combination| {
+                pool.iter().map(move |&item| {
+                    let mut new_combination = combination.clone();
+                    new_combination.push(item);
+                    new_combination
+                })
+            })
+            .collect()
+    })
+}
+
+fn cartesian_product_iter<T: Clone>(inputs: Vec<Vec<T>>) -> Vec<Vec<T>> {
+    inputs.into_iter().fold(vec![Vec::new()], |acc, pool| {
+        acc.into_iter()
+            .flat_map(|combination| {
+                pool.iter().map(move |item| {
+                    let mut new_combination = combination.clone();
+                    new_combination.push(item.clone());
+                    new_combination
+                })
+            })
+            .collect()
+    })
 }

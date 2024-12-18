@@ -82,7 +82,7 @@ impl Edge {
 }
 
 // Define the CaseGraph structure
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CaseGraph {
     pub nodes: HashMap<usize, Node>, // Keyed by node ID
     pub edges: HashMap<usize, Edge>, // Keyed by edge ID
