@@ -514,6 +514,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8c02a5121d4ea3eb16a80748c74f5549a5665e4c21333c6098f283870fbdea6"
 
 [[package]]
+name = "fixedbitset"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
+
+[[package]]
 name = "flate2"
 version = "1.0.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -569,8 +575,9 @@ checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 
 [[package]]
 name = "graphviz-rust"
-version = "0.9.1"
-source = "git+https://github.com/aarkue/graphviz-rust.git#ea6ff3fc95c5b3d282042855a3ae2a0410b54265"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f7892a4538fc9aa3658ae6962774428487c16e11663c58c594357975377c901"
 dependencies = [
  "dot-generator",
  "dot-structures",
@@ -1039,6 +1046,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ordered-float"
+version = "4.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7bb71e1b3fa6ca1c61f383464aaf2bb0e2f8e772a1f01d486832464de363b951"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1125,6 +1141,16 @@ dependencies = [
  "once_cell",
  "pest",
  "sha2",
+]
+
+[[package]]
+name = "petgraph"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4c5cc86750666a3ed20bdaf5ca2a0344f9c67674cae0515bec2da16fbaa47db"
+dependencies = [
+ "fixedbitset",
+ "indexmap 2.6.0",
 ]
 
 [[package]]
@@ -1674,11 +1700,13 @@ dependencies = [
 
 [[package]]
 name = "process_mining"
-version = "0.3.20"
+version = "0.3.21"
 dependencies = [
  "chrono",
  "flate2",
  "graphviz-rust",
+ "ordered-float",
+ "petgraph",
  "polars",
  "quick-xml",
  "rayon",
