@@ -186,9 +186,7 @@ impl PetriNet {
             }
         }
         self.transitions.remove(id);
-        self.arcs.retain(|arc| {
-            !arc.from_to.contains(id)
-        });
+        self.arcs.retain(|arc| !arc.from_to.contains(id));
     }
 
     /// Remove a Place from the Petri net

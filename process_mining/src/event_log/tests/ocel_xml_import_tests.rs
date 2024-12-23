@@ -216,8 +216,8 @@ fn test_ocel_order_mangement_log_json() {
     assert_eq!(ocel.events.len(), 21008);
 
     let ocel_export_path = get_test_data_path()
-    .join("export")
-    .join("order-management-export-EXPORT2.json");
+        .join("export")
+        .join("order-management-export-EXPORT2.json");
     let writer = BufWriter::new(File::create(&ocel_export_path).unwrap());
     serde_json::to_writer(writer, &ocel).unwrap();
 
