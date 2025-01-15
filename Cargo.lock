@@ -1700,7 +1700,7 @@ dependencies = [
 
 [[package]]
 name = "process_mining"
-version = "0.3.21"
+version = "0.3.22"
 dependencies = [
  "chrono",
  "flate2",
