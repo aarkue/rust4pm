@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-process_mining = {path = "../process_mining", features = ["graphviz-export"]}
+process_mining = {path = "../process_mining", features = ["graphviz-export","ocel-sqlite"]}
 java_bridge = {path = "../java_bridge"}
 serde_json = "1.0.105"
 serde = {version = "1.0.188", features = ["derive"]}

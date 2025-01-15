@@ -25,7 +25,13 @@ pub fn export_ocel_sqlite_to_path<P: AsRef<std::path::Path>>(
     path: P,
 ) -> Result<(), rusqlite::Error> {
     let con = Connection::open(path)?;
-    export_ocel_sqlite_to_con(&con, ocel)
+    export_ocel_sqlite_to_con(&con, ocel).map_err(|e| match e.sqlite_error_code() {
+        Some(rusqlite::ErrorCode::ConstraintViolation) => {
+            eprintln!("Failed to export SQLite. Maybe the destination already contains data?");
+            e
+        },
+        _ => e,
+    })
 }
 
 ///
@@ -61,8 +67,22 @@ pub fn export_ocel_sqlite_to_con(con: &Connection, ocel: &OCEL) -> Result<(), ru
     // E2O (event_object)
     con.execute(&format!(r#"CREATE TABLE IF NOT EXISTS "event_object" ("{OCEL_E2O_EVENT_ID_COLUMN}" TEXT, "{OCEL_E2O_OBJECT_ID_COLUMN}" TEXT, "{OCEL_REL_QUALIFIER_COLUMN}" TEXT, PRIMARY KEY("{OCEL_E2O_EVENT_ID_COLUMN}", "{OCEL_E2O_OBJECT_ID_COLUMN}", "{OCEL_REL_QUALIFIER_COLUMN}"), FOREIGN KEY("{OCEL_E2O_EVENT_ID_COLUMN}") REFERENCES "event"("{OCEL_ID_COLUMN}"), FOREIGN KEY("{OCEL_E2O_OBJECT_ID_COLUMN}") REFERENCES "object"("{OCEL_ID_COLUMN}"))"#), [])?;
 
+    con.execute(
+        &format!("CREATE INDEX IF NOT EXISTS 'event_id' ON 'event' ('{OCEL_ID_COLUMN}' ASC)"),
+        [],
+    )?;
+    con.execute(
+        &format!("CREATE INDEX IF NOT EXISTS 'object_id' ON 'object' ('{OCEL_ID_COLUMN}' ASC)"),
+        [],
+    )?;
+
     con.execute(&format!("CREATE INDEX IF NOT EXISTS 'event_object_source' ON 'event_object' ('{OCEL_E2O_EVENT_ID_COLUMN}' ASC)"),[])?;
+    con.execute(&format!("CREATE INDEX IF NOT EXISTS 'event_object_target' ON 'event_object' ('{OCEL_E2O_OBJECT_ID_COLUMN}' ASC)"),[])?;
+    con.execute(&format!("CREATE INDEX IF NOT EXISTS 'event_object_both' ON 'event_object' ('{OCEL_E2O_EVENT_ID_COLUMN}','{OCEL_E2O_OBJECT_ID_COLUMN}' ASC)"),[])?;
+
     con.execute(&format!("CREATE INDEX IF NOT EXISTS 'object_object_source' ON 'object_object' ('{OCEL_O2O_SOURCE_ID_COLUMN}' ASC)"),[])?;
+    con.execute(&format!("CREATE INDEX IF NOT EXISTS 'object_object_target' ON 'object_object' ('{OCEL_O2O_TARGET_ID_COLUMN}' ASC)"),[])?;
+    con.execute(&format!("CREATE INDEX IF NOT EXISTS 'object_object_both' ON 'object_object' ('{OCEL_O2O_SOURCE_ID_COLUMN}','{OCEL_O2O_TARGET_ID_COLUMN}' ASC)"),[])?;
 
     let mut et_attr_map: HashMap<&String, &Vec<OCELTypeAttribute>> = HashMap::new();
     // Tables for event types
@@ -262,6 +282,27 @@ pub fn export_ocel_sqlite_to_con(con: &Connection, ocel: &OCEL) -> Result<(), ru
                 [],
             )?;
         }
+    }
+
+    for ot in &ocel.object_types {
+        con.execute(
+            &format!(
+                "CREATE INDEX IF NOT EXISTS '{}_obid' ON 'object_{}' ('{OCEL_ID_COLUMN}' ASC)",
+                clean_sql_name(&ot.name),
+                clean_sql_name(&ot.name)
+            ),
+            [],
+        )?;
+    }
+    for et in &ocel.event_types {
+        con.execute(
+            &format!(
+                "CREATE INDEX IF NOT EXISTS '{}_evid' ON 'event_{}' ('{OCEL_ID_COLUMN}' ASC)",
+                clean_sql_name(&et.name),
+                clean_sql_name(&et.name)
+            ),
+            [],
+        )?;
     }
     con.execute("COMMIT", [])?;
 
