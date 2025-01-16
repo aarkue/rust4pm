@@ -279,3 +279,16 @@ impl OCELAttributeType {
         }
     }
 }
+
+impl From<&OCELAttributeValue> for OCELAttributeType {
+    fn from(value: &OCELAttributeValue) -> Self {
+        match value {
+            OCELAttributeValue::Time(_) => OCELAttributeType::Time,
+            OCELAttributeValue::Integer(_) => OCELAttributeType::Integer,
+            OCELAttributeValue::Float(_) => OCELAttributeType::Float,
+            OCELAttributeValue::Boolean(_) => OCELAttributeType::Boolean,
+            OCELAttributeValue::String(_) => OCELAttributeType::String,
+            OCELAttributeValue::Null => OCELAttributeType::Null,
+        }
+    }
+}
