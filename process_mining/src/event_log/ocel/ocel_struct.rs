@@ -200,9 +200,20 @@ impl From<i64> for OCELAttributeValue {
         Self::Integer(value)
     }
 }
+impl From<f64> for OCELAttributeValue {
+    fn from(value: f64) -> Self {
+        Self::Float(value)
+    }
+}
+
 impl From<usize> for OCELAttributeValue {
     fn from(value: usize) -> Self {
         Self::Integer(value as i64)
+    }
+}
+impl From<bool> for OCELAttributeValue {
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
     }
 }
 impl From<String> for OCELAttributeValue {
@@ -220,6 +231,20 @@ impl From<&String> for OCELAttributeValue {
 impl From<&str> for OCELAttributeValue {
     fn from(value: &str) -> Self {
         Self::String(value.to_string())
+    }
+}
+impl From<DateTime<FixedOffset>> for OCELAttributeValue {
+    fn from(value: DateTime<FixedOffset>) -> Self {
+        Self::Time(value)
+    }
+}
+
+impl<T: Into<OCELAttributeValue>> From<Option<T>> for OCELAttributeValue {
+    fn from(value: Option<T>) -> Self {
+        match value {
+            Some(v) => v.into(),
+            None => Self::Null,
+        }
     }
 }
 
