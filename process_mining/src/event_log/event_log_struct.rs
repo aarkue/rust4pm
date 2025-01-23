@@ -61,14 +61,14 @@ pub enum AttributeValue {
 impl Hash for AttributeValue {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
-            AttributeValue::String(value) => { value.hash(state) }
-            AttributeValue::Date(value) => { value.hash(state) }
-            AttributeValue::Int(value) => { value.hash(state) }
-            AttributeValue::Float(value) => { OrderedFloat::from(*value).hash(state) }
-            AttributeValue::Boolean(value) => { value.hash(state) }
-            AttributeValue::ID(value) => { value.hash(state) }
-            AttributeValue::List(value) => { value.hash(state) }
-            AttributeValue::Container(value) => { value.hash(state) }
+            AttributeValue::String(value) => value.hash(state),
+            AttributeValue::Date(value) => value.hash(state),
+            AttributeValue::Int(value) => value.hash(state),
+            AttributeValue::Float(value) => OrderedFloat::from(*value).hash(state),
+            AttributeValue::Boolean(value) => value.hash(state),
+            AttributeValue::ID(value) => value.hash(state),
+            AttributeValue::List(value) => value.hash(state),
+            AttributeValue::Container(value) => value.hash(state),
             AttributeValue::None() => {}
         }
     }

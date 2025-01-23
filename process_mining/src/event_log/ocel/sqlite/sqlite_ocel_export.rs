@@ -29,7 +29,7 @@ pub fn export_ocel_sqlite_to_path<P: AsRef<std::path::Path>>(
         Some(rusqlite::ErrorCode::ConstraintViolation) => {
             eprintln!("Failed to export SQLite. Maybe the destination already contains data?");
             e
-        },
+        }
         _ => e,
     })
 }

@@ -38,19 +38,19 @@ pub fn export_p_trace_image<P: AsRef<std::path::Path>>(
 ///
 /// Also see [`export_p_trace_image`], as well as [`export_p_trace_image_svg`] and [`export_p_trace_image_png`]
 ///
-pub fn export_p_trace_to_dot_graph(p_trace: &PartialOrderTrace, classifier: &EventLogClassifier, dpi_factor: Option<f32>) -> Graph {
+pub fn export_p_trace_to_dot_graph(
+    p_trace: &PartialOrderTrace,
+    classifier: &EventLogClassifier,
+    dpi_factor: Option<f32>,
+) -> Graph {
     let mut event_hash_to_classified_event: HashMap<&EventHash, String> = HashMap::new();
 
-    p_trace.event_map
-        .iter()
-        .for_each(|(event_hash, event)| {
-            event_hash_to_classified_event.insert(event_hash, classifier.get_class_identity(event));
-        });
+    p_trace.event_map.iter().for_each(|(event_hash, event)| {
+        event_hash_to_classified_event.insert(event_hash, classifier.get_class_identity(event));
+    });
 
     let mut sorted_event_hash: Vec<EventHash> = p_trace.event_map.keys().cloned().collect();
-    sorted_event_hash.sort_by_key(|x| {
-        event_hash_to_classified_event.get(x).unwrap()
-    });
+    sorted_event_hash.sort_by_key(|x| event_hash_to_classified_event.get(x).unwrap());
 
     let nodes: Vec<Stmt> = sorted_event_hash
         .iter()
@@ -200,7 +200,7 @@ mod test {
             .join("export")
             .join("p_trace-export-test.png");
 
-        export_p_trace_image_png(&p_trace,&EventLogClassifier::default(), export_path).unwrap();
+        export_p_trace_image_png(&p_trace, &EventLogClassifier::default(), export_path).unwrap();
     }
 
     #[test]
