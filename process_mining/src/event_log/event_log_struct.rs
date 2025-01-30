@@ -61,14 +61,14 @@ pub enum AttributeValue {
 impl Hash for AttributeValue {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
-            AttributeValue::String(value) => { value.hash(state) }
-            AttributeValue::Date(value) => { value.hash(state) }
-            AttributeValue::Int(value) => { value.hash(state) }
-            AttributeValue::Float(value) => { OrderedFloat::from(*value).hash(state) }
-            AttributeValue::Boolean(value) => { value.hash(state) }
-            AttributeValue::ID(value) => { value.hash(state) }
-            AttributeValue::List(value) => { value.hash(state) }
-            AttributeValue::Container(value) => { value.hash(state) }
+            AttributeValue::String(value) => value.hash(state),
+            AttributeValue::Date(value) => value.hash(state),
+            AttributeValue::Int(value) => value.hash(state),
+            AttributeValue::Float(value) => OrderedFloat::from(*value).hash(state),
+            AttributeValue::Boolean(value) => value.hash(state),
+            AttributeValue::ID(value) => value.hash(state),
+            AttributeValue::List(value) => value.hash(state),
+            AttributeValue::Container(value) => value.hash(state),
             AttributeValue::None() => {}
         }
     }
@@ -396,7 +396,7 @@ impl Event {
 ///
 /// A trace consists of a list of events and trace attributes (See also [`Event`] and [`Attributes`])
 ///
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Trace {
     /// Trace-level attributes
     pub attributes: Attributes,
@@ -404,10 +404,28 @@ pub struct Trace {
     pub events: Vec<Event>,
 }
 
+impl Trace {
+    /// Initializes a new trace with no attributes and events
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    ///
+    /// Clones a new `Trace` that contains the same attributes but does initially not contain any
+    /// events.
+    ///
+    pub fn clone_without_events(&self) -> Self {
+        Self {
+            attributes: self.attributes.clone(),
+            events: vec![],
+        }
+    }
+}
+
 ///
 /// Event log consisting of a list of [`Trace`]s and log [`Attributes`]
 ///
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct EventLog {
     /// Top-level attributes
     pub attributes: Attributes,
@@ -424,6 +442,28 @@ pub struct EventLog {
 }
 
 impl EventLog {
+    /// Initializes a new event log with no attributes, an empty trace list, no extensions, no
+    /// classifiers, no global trace attributes, and no global event attributes.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    ///
+    /// Clones a new `EventLog` that contains the same attributes, extensions, classifiers,
+    /// global trace attributes, and global event attributes but does initially not contain any
+    /// traces.
+    ///
+    pub fn clone_without_traces(&self) -> Self {
+        Self {
+            attributes: self.attributes.clone(),
+            traces: vec![],
+            extensions: self.extensions.clone(),
+            classifiers: self.classifiers.clone(),
+            global_trace_attrs: self.global_trace_attrs.clone(),
+            global_event_attrs: self.global_event_attrs.clone(),
+        }
+    }
+
     ///
     /// Try to get the [`EventLogClassifier`] with the associated name
     ///

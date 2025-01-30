@@ -38,19 +38,19 @@ pub fn export_p_trace_image<P: AsRef<std::path::Path>>(
 ///
 /// Also see [`export_p_trace_image`], as well as [`export_p_trace_image_svg`] and [`export_p_trace_image_png`]
 ///
-pub fn export_p_trace_to_dot_graph(p_trace: &PartialOrderTrace, classifier: &EventLogClassifier, dpi_factor: Option<f32>) -> Graph {
+pub fn export_p_trace_to_dot_graph(
+    p_trace: &PartialOrderTrace,
+    classifier: &EventLogClassifier,
+    dpi_factor: Option<f32>,
+) -> Graph {
     let mut event_hash_to_classified_event: HashMap<&EventHash, String> = HashMap::new();
 
-    p_trace.event_map
-        .iter()
-        .for_each(|(event_hash, event)| {
-            event_hash_to_classified_event.insert(event_hash, classifier.get_class_identity(event));
-        });
+    p_trace.event_map.iter().for_each(|(event_hash, event)| {
+        event_hash_to_classified_event.insert(event_hash, classifier.get_class_identity(event));
+    });
 
     let mut sorted_event_hash: Vec<EventHash> = p_trace.event_map.keys().cloned().collect();
-    sorted_event_hash.sort_by_key(|x| {
-        event_hash_to_classified_event.get(x).unwrap()
-    });
+    sorted_event_hash.sort_by_key(|x| event_hash_to_classified_event.get(x).unwrap());
 
     let nodes: Vec<Stmt> = sorted_event_hash
         .iter()
@@ -115,88 +115,75 @@ pub fn export_p_trace_image_png<P: AsRef<std::path::Path>>(
 mod test {
     pub const SAMPLE_JSON_P_TRACE: &str = r#"
 {
+    "attributes":[],
     "event_map":
     {
-        "5747163295916315711":
+        "10110542754164153265":
         {
-            "attributes":[
-                {
-                    "key":"concept:name",
-                    "value":{"type":"String","content":"Make Coffee"},
-                    "own_attributes":null
-                }
-            ]
-        },
-        "6954268098552642400":
-        {
-            "attributes":[
-                {
-                    "key":"concept:name",
-                    "value":{"type":"String","content":"Listen to Podcast"},
-                    "own_attributes":null
-                }
-            ]
-        },
-        "16623231828871474506":
-        {
-            "attributes":[
-                {
-                    "key":"concept:name",
-                    "value":{"type":"String","content":"Breakfast"},
-                    "own_attributes":null
-                }
-            ]
+            "attributes":[{
+                "key":"concept:name",
+                "value":{"type":"String",
+                "content":"Wait for call from Internet provider"},"own_attributes":null
+            }]
         },
         "10135014032808600890":
         {
-            "attributes":[
-                {
-                    "key":"concept:name",
-                    "value":{"type":"String","content":"Wake up"},
-                    "own_attributes":null
-                }
-            ]
+            "attributes":[{
+                "key":"concept:name",
+                "value":{"type":"String","content":"Wake up"},
+                "own_attributes":null
+            }]
+        },
+        "16623231828871474506":
+        {
+            "attributes":[{
+                "key":"concept:name",
+                "value":{"type":"String","content":"Breakfast"},
+                "own_attributes":null
+            }]
+        },
+        "5747163295916315711":
+        {
+            "attributes":[{
+                "key":"concept:name",
+                "value":{"type":"String","content":"Make Coffee"},
+                "own_attributes":null
+            }]
         },
         "18102607635049523792":
         {
-            "attributes":[
-                {
-                    "key":"concept:name",
-                    "value":{"type":"String","content":"Brush teeth"},
-                    "own_attributes":null
-                }
-            ]
+            "attributes":[{
+                "key":"concept:name",
+                "value":{"type":"String","content":"Brush teeth"},
+                "own_attributes":null
+            }]
+        },
+        "6954268098552642400":
+        {
+            "attributes":[{
+                "key":"concept:name",
+                "value":{"type":"String","content":"Listen to Podcast"},
+                "own_attributes":null
+            }]
         },
         "10735273421821633029":
         {
-            "attributes":[
-                {
-                    "key":"concept:name",
-                    "value":{"type":"String","content":"Work"},
-                    "own_attributes":null
-                }
-            ]
-        },
-        "10110542754164153265":
-        {
-            "attributes":[
-                {
-                    "key":"concept:name",
-                    "value":{"type":"String","content":"Wait for call from Internet provider"},
-                    "own_attributes":null
-                }
-            ]
+            "attributes":[{
+                "key":"concept:name",
+                "value":{"type":"String","content":"Work"},
+                "own_attributes":null
+            }]
         }
     },
     "partial_relations":
     [
-        [10135014032808600890,18102607635049523792],
-        [5747163295916315711,16623231828871474506],
-        [16623231828871474506,10735273421821633029],
-        [10135014032808600890,6954268098552642400],
         [10135014032808600890,5747163295916315711],
+        [16623231828871474506,10735273421821633029],
         [6954268098552642400,10735273421821633029],
-        [18102607635049523792,16623231828871474506]
+        [18102607635049523792,16623231828871474506],
+        [5747163295916315711,16623231828871474506],
+        [10135014032808600890,18102607635049523792],
+        [10135014032808600890,6954268098552642400]
     ]
 }"#;
 
@@ -213,7 +200,7 @@ mod test {
             .join("export")
             .join("p_trace-export-test.png");
 
-        export_p_trace_image_png(&p_trace,&EventLogClassifier::default(), export_path).unwrap();
+        export_p_trace_image_png(&p_trace, &EventLogClassifier::default(), export_path).unwrap();
     }
 
     #[test]

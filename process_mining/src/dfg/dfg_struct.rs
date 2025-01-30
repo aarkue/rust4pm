@@ -120,9 +120,7 @@ impl<'a> DirectlyFollowsGraph<'a> {
             self.end_activities.remove(activity.as_ref());
 
             self.directly_follows_relations
-                .retain(|(from, to), _| {
-                    from != activity.as_ref() && to != activity.as_ref()
-                });
+                .retain(|(from, to), _| from != activity.as_ref() && to != activity.as_ref());
         }
     }
 
@@ -313,7 +311,7 @@ mod tests {
                 ..XESImportOptions::default()
             },
         )
-            .unwrap();
+        .unwrap();
 
         let classifier = log.classifiers.as_ref().and_then(|c| c.first()).unwrap();
 
@@ -349,7 +347,7 @@ mod tests {
                 ..XESImportOptions::default()
             },
         )
-            .unwrap();
+        .unwrap();
 
         let graph = DirectlyFollowsGraph::create_from_log(&log, &EventLogClassifier::default());
 
@@ -379,7 +377,7 @@ mod tests {
                 ..XESImportOptions::default()
             },
         )
-            .unwrap();
+        .unwrap();
 
         let graph = DirectlyFollowsGraph::create_from_log(&log, &EventLogClassifier::default());
 

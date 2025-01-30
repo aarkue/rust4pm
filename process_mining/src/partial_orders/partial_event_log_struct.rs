@@ -216,89 +216,75 @@ impl PartialOrderEventLog {
 mod tests {
     pub const SAMPLE_JSON_P_TRACE: &str = r#"
 {
-    "attributes":[]
+    "attributes":[],
     "event_map":
     {
-        "5747163295916315711":
+        "10110542754164153265":
         {
-            "attributes":[
-                {
-                    "key":"concept:name",
-                    "value":{"type":"String","content":"Make Coffee"},
-                    "own_attributes":null
-                }
-            ]
-        },
-        "6954268098552642400":
-        {
-            "attributes":[
-                {
-                    "key":"concept:name",
-                    "value":{"type":"String","content":"Listen to Podcast"},
-                    "own_attributes":null
-                }
-            ]
-        },
-        "16623231828871474506":
-        {
-            "attributes":[
-                {
-                    "key":"concept:name",
-                    "value":{"type":"String","content":"Breakfast"},
-                    "own_attributes":null
-                }
-            ]
+            "attributes":[{
+                "key":"concept:name",
+                "value":{"type":"String",
+                "content":"Wait for call from Internet provider"},"own_attributes":null
+            }]
         },
         "10135014032808600890":
         {
-            "attributes":[
-                {
-                    "key":"concept:name",
-                    "value":{"type":"String","content":"Wake up"},
-                    "own_attributes":null
-                }
-            ]
+            "attributes":[{
+                "key":"concept:name",
+                "value":{"type":"String","content":"Wake up"},
+                "own_attributes":null
+            }]
+        },
+        "16623231828871474506":
+        {
+            "attributes":[{
+                "key":"concept:name",
+                "value":{"type":"String","content":"Breakfast"},
+                "own_attributes":null
+            }]
+        },
+        "5747163295916315711":
+        {
+            "attributes":[{
+                "key":"concept:name",
+                "value":{"type":"String","content":"Make Coffee"},
+                "own_attributes":null
+            }]
         },
         "18102607635049523792":
         {
-            "attributes":[
-                {
-                    "key":"concept:name",
-                    "value":{"type":"String","content":"Brush teeth"},
-                    "own_attributes":null
-                }
-            ]
+            "attributes":[{
+                "key":"concept:name",
+                "value":{"type":"String","content":"Brush teeth"},
+                "own_attributes":null
+            }]
+        },
+        "6954268098552642400":
+        {
+            "attributes":[{
+                "key":"concept:name",
+                "value":{"type":"String","content":"Listen to Podcast"},
+                "own_attributes":null
+            }]
         },
         "10735273421821633029":
         {
-            "attributes":[
-                {
-                    "key":"concept:name",
-                    "value":{"type":"String","content":"Work"},
-                    "own_attributes":null
-                }
-            ]
-        },
-        "10110542754164153265":
-        {
-            "attributes":[
-                {
-                    "key":"concept:name",
-                    "value":{"type":"String","content":"Wait for call from Internet provider"},
-                    "own_attributes":null
-                }
-            ]
+            "attributes":[{
+                "key":"concept:name",
+                "value":{"type":"String","content":"Work"},
+                "own_attributes":null
+            }]
         }
     },
     "partial_relations":
     [
-        [10135014032808600890,18102607635049523792],
-        [5747163295916315711,16623231828871474506],
-        [16623231828871474506,10735273421821633029],
-        [10135014032808600890,6954268098552642400],
         [10135014032808600890,5747163295916315711],
+        [16623231828871474506,10735273421821633029],
         [6954268098552642400,10735273421821633029],
-        [18102607635049523792,16623231828871474506]
+        [18102607635049523792,16623231828871474506],
+        [5747163295916315711,16623231828871474506],
+        [10135014032808600890,18102607635049523792],
+        [10135014032808600890,6954268098552642400]
     ]
 }"#;
 
@@ -357,7 +343,7 @@ mod tests {
         partial_order_iso.add_partial_relation(&event_3, &event_4);
         partial_order_iso.add_partial_relation(&event_5, &event_6);
 
-        assert!(partial_order.is_isomorphic(&partial_order_iso, &Default::default(), &Default::default()))
+        assert!(partial_order.is_isomorphic(&partial_order_iso, &Default::default(), &Default::default()));
     }
 
     #[test]
