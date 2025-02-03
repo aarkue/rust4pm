@@ -72,8 +72,8 @@ impl<'a> From<&'a OCELEvent> for EventID<'a> {
         Self(value.id.as_str())
     }
 }
-struct ReferenceLinkedOCEL<'a> {
-    ocel: &'a OCEL,
+pub struct ReferenceLinkedOCEL<'a> {
+    pub ocel: &'a OCEL,
     events: HashMap<EventID<'a>, &'a OCELEvent>,
     objects: HashMap<ObjectID<'a>, &'a OCELObject>,
     events_per_type: HashMap<&'a str, Vec<&'a OCELEvent>>,
@@ -82,6 +82,13 @@ struct ReferenceLinkedOCEL<'a> {
     o2o_rel: HashMap<ObjectID<'a>, Vec<(&'a str, &'a OCELObject)>>,
     e2o_rel_rev: HashMap<ObjectID<'a>, Vec<(&'a str, &'a OCELEvent)>>,
     o2o_rel_rev: HashMap<ObjectID<'a>, Vec<(&'a str, &'a OCELObject)>>,
+}
+
+
+impl<'a> ReferenceLinkedOCEL<'a> {
+    pub fn from_ocel(ocel: &'a OCEL) -> Self {
+        Self::from(ocel)
+    }
 }
 
 impl<'a> From<&'a OCEL> for ReferenceLinkedOCEL<'a> {
@@ -187,9 +194,22 @@ impl<'a> From<&'a OCEL> for ReferenceLinkedOCEL<'a> {
     }
 }
 
-struct OwnedReferenceLinkedOcel<'a> {
+pub struct OwnedReferenceLinkedOcel<'a> {
     ocel: OCEL,
     pub linked_ocel: ReferenceLinkedOCEL<'a>,
+}
+
+
+impl<'a> OwnedReferenceLinkedOcel<'a> {
+    pub fn from_ocel(ocel: OCEL) -> Self {
+        Self::from(ocel)
+    }
+    pub fn into_inner(self) -> OCEL {
+        self.ocel
+    }
+    pub fn ocel_ref(&'a self) -> &'a OCEL {
+        &self.ocel
+    }
 }
 
 impl<'a> From<OCEL> for OwnedReferenceLinkedOcel<'a> {

@@ -44,6 +44,15 @@ pub struct IndexLinkedOCEL {
     o2o_rel_rev: HashMap<ObjectIndex, Vec<(String, ObjectIndex)>>,
 }
 
+impl IndexLinkedOCEL {
+    pub fn from_ocel(ocel: OCEL) -> Self {
+        Self::from(ocel)
+    }
+    pub fn into_inner(self) -> OCEL {
+        self.ocel
+    }
+}
+
 impl<'a> From<OCEL> for IndexLinkedOCEL {
     fn from(ocel: OCEL) -> Self {
         let event_ids_to_index: HashMap<_, _> = ocel

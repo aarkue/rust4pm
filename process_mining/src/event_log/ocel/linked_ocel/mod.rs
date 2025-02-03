@@ -1,7 +1,8 @@
 use super::ocel_struct::{OCELEvent, OCELObject};
-mod index_linked_ocel;
-mod reference_linked_ocel;
-
+pub mod index_linked_ocel;
+pub mod reference_linked_ocel;
+pub use index_linked_ocel::IndexLinkedOCEL;
+pub use reference_linked_ocel::{ReferenceLinkedOCEL, OwnedReferenceLinkedOcel};
 pub trait LinkedOCELAccess<'a, EvRefType: 'a, ObRefType: 'a, EvRetType: 'a, ObRetType: 'a>
 where
     EvRefType: From<&'a EvRetType>,
