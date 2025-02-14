@@ -12,7 +12,7 @@ impl<'a> LinkedOCELAccess<'a, EventID<'a>, ObjectID<'a>, OCELEvent, OCELObject>
             .get(ev_type)
             .into_iter()
             .flatten()
-            .cloned()
+            .copied()
     }
 
     fn get_obs_of_type(&'a self, ob_type: &'_ str) -> impl Iterator<Item = &'a OCELObject> {
@@ -20,7 +20,7 @@ impl<'a> LinkedOCELAccess<'a, EventID<'a>, ObjectID<'a>, OCELEvent, OCELObject>
             .get(ob_type)
             .into_iter()
             .flatten()
-            .cloned()
+            .copied()
     }
 
     fn get_ev(&'a self, ev_id: &EventID<'a>) -> &'a OCELEvent {
@@ -32,25 +32,41 @@ impl<'a> LinkedOCELAccess<'a, EventID<'a>, ObjectID<'a>, OCELEvent, OCELObject>
     }
 
     fn get_e2o(&'a self, index: &EventID<'a>) -> impl Iterator<Item = (&'a str, &'a OCELObject)> {
-        self.e2o_rel.get(index).into_iter().flatten().cloned()
+        self.e2o_rel.get(index).into_iter().flatten().copied()
     }
 
     fn get_e2o_rev(
         &'a self,
         index: &ObjectID<'a>,
     ) -> impl Iterator<Item = (&'a str, &'a OCELEvent)> {
-        self.e2o_rel_rev.get(index).into_iter().flatten().cloned()
+        self.e2o_rel_rev.get(index).into_iter().flatten().copied()
     }
 
     fn get_o2o(&'a self, index: &ObjectID<'a>) -> impl Iterator<Item = (&'a str, &'a OCELObject)> {
-        self.o2o_rel.get(index).into_iter().flatten().cloned()
+        self.o2o_rel.get(index).into_iter().flatten().copied()
     }
 
     fn get_o2o_rev(
         &'a self,
         index: &ObjectID<'a>,
     ) -> impl Iterator<Item = (&'a str, &'a OCELObject)> {
-        self.o2o_rel_rev.get(index).into_iter().flatten().cloned()
+        self.o2o_rel_rev.get(index).into_iter().flatten().copied()
+    }
+    
+    fn get_ev_types(&'a self) -> impl Iterator<Item = &'a str> {
+        self.events_per_type.keys().into_iter().copied()
+    }
+    
+    fn get_ob_types(&'a self) -> impl Iterator<Item = &'a str> {
+        self.objects_per_type.keys().into_iter().copied()
+    }
+    
+    fn get_all_evs(&'a self) -> impl Iterator<Item = &'a OCELEvent> {
+       self.ocel.events.iter()
+    }
+    
+    fn get_all_obs(&'a self) -> impl Iterator<Item = &'a OCELObject> {
+        self.ocel.objects.iter()
     }
 }
 
@@ -261,5 +277,21 @@ impl<'a> LinkedOCELAccess<'a, EventID<'a>, ObjectID<'a>, OCELEvent, OCELObject>
         index: &ObjectID<'a>,
     ) -> impl Iterator<Item = (&'a str, &'a OCELObject)> {
         self.linked_ocel.get_o2o_rev(index)
+    }
+    
+    fn get_ev_types(&'a self) -> impl Iterator<Item = &'a str> {
+        self.linked_ocel.get_ev_types()
+    }
+    
+    fn get_ob_types(&'a self) -> impl Iterator<Item = &'a str> {
+        self.linked_ocel.get_ob_types()
+    }
+    
+    fn get_all_evs(&'a self) -> impl Iterator<Item = &'a OCELEvent> {
+        self.linked_ocel.get_all_evs()
+    }
+    
+    fn get_all_obs(&'a self) -> impl Iterator<Item = &'a OCELObject> {
+        self.linked_ocel.get_all_obs()
     }
 }

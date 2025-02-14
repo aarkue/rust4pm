@@ -232,4 +232,20 @@ impl<'a> LinkedOCELAccess<'a, EventIndex, ObjectIndex, EventIndex, ObjectIndex>
             .flatten()
             .map(|(q, e)| (q.as_str(), e))
     }
+
+    fn get_ev_types(&'a self) -> impl Iterator<Item = &'a str> {
+        self.events_per_type.keys().map(|k| k.as_str())
+    }
+
+    fn get_ob_types(&'a self) -> impl Iterator<Item = &'a str> {
+        self.objects_per_type.keys().map(|k| k.as_str())
+    }
+
+    fn get_all_evs(&'a self) -> impl Iterator<Item = &'a OCELEvent> {
+        self.ocel.events.iter()
+    }
+
+    fn get_all_obs(&'a self) -> impl Iterator<Item = &'a OCELObject> {
+        self.ocel.objects.iter()
+    }
 }

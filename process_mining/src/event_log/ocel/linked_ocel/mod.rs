@@ -11,6 +11,11 @@ where
     fn get_evs_of_type(&'a self, ev_type: &'_ str) -> impl Iterator<Item = &'a EvRetType>;
     fn get_obs_of_type(&'a self, ob_type: &'_ str) -> impl Iterator<Item = &'a ObRetType>;
 
+    fn get_ev_types(&'a self) -> impl Iterator<Item = &'a str>;
+    fn get_ob_types(&'a self) -> impl Iterator<Item = &'a str>;
+
+    fn get_all_evs(&'a self) -> impl Iterator<Item = &'a OCELEvent>;
+    fn get_all_obs(&'a self) -> impl Iterator<Item = &'a OCELObject>;
     fn get_ev(&'a self, index: &EvRefType) -> &'a OCELEvent;
     fn get_ob(&'a self, index: &ObRefType) -> &'a OCELObject;
 
