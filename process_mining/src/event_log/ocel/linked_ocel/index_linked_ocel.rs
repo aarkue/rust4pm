@@ -1,9 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use crate::{ocel::ocel_struct::{OCELEvent, OCELObject}, OCEL};
+use crate::{
+    ocel::ocel_struct::{OCELEvent, OCELObject},
+    OCEL,
+};
 
 use super::LinkedOCELAccess;
-
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 pub struct EventIndex(usize);
@@ -36,9 +38,11 @@ pub struct IndexLinkedOCEL {
     ocel: OCEL,
     event_ids_to_index: HashMap<String, EventIndex>,
     object_ids_to_index: HashMap<String, ObjectIndex>,
-    events_per_type: HashMap<String, Vec<EventIndex>>,
+    pub events_per_type: HashMap<String, Vec<EventIndex>>,
+    pub e2o_rev_et:  HashMap<String,HashMap<ObjectIndex,HashSet<EventIndex>>>,
     objects_per_type: HashMap<String, Vec<ObjectIndex>>,
     e2o_rel: HashMap<EventIndex, Vec<(String, ObjectIndex)>>,
+    e2o_set: HashMap<EventIndex, HashSet<ObjectIndex>>,
     o2o_rel: HashMap<ObjectIndex, Vec<(String, ObjectIndex)>>,
     e2o_rel_rev: HashMap<ObjectIndex, Vec<(String, EventIndex)>>,
     o2o_rel_rev: HashMap<ObjectIndex, Vec<(String, ObjectIndex)>>,
@@ -50,6 +54,10 @@ impl IndexLinkedOCEL {
     }
     pub fn into_inner(self) -> OCEL {
         self.ocel
+    }
+
+    pub fn get_e2o_set(&self, index: &EventIndex) -> &HashSet<ObjectIndex> {
+        self.e2o_set.get(index).unwrap()
     }
 }
 
@@ -68,6 +76,8 @@ impl<'a> From<OCEL> for IndexLinkedOCEL {
             .map(|(ob_index, o)| (o.id.clone(), ObjectIndex(ob_index)))
             .collect();
         let mut e2o_rel_rev: HashMap<ObjectIndex, Vec<(String, EventIndex)>> = HashMap::new();
+
+        let mut e2o_rev_et : HashMap<String,HashMap<ObjectIndex,HashSet<EventIndex>>> = ocel.event_types.iter().map(|et| (et.name.clone(),HashMap::new())).collect();
         let e2o_rel = ocel
             .events
             .iter()
@@ -81,12 +91,34 @@ impl<'a> From<OCEL> for IndexLinkedOCEL {
                         .flat_map(|rel| {
                             let obj_id = object_ids_to_index.get(&rel.object_id)?.clone();
                             let qualifier = rel.qualifier.clone();
+                            e2o_rev_et.get_mut(&e.event_type).unwrap().entry(obj_id).or_default().insert(e_id.clone());
+                            // ((e.event_type.clone()).or_default().insert(e_id.clone());
                             e2o_rel_rev
                                 .entry(obj_id)
                                 .or_default()
                                 .push((qualifier.clone(), e_id.clone()));
                             // let ob = objects.get(&((&rel.object_id).into()))?;
                             Some((qualifier, obj_id.clone()))
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+
+        let e2o_set: HashMap<EventIndex, HashSet<ObjectIndex>> = ocel
+            .events
+            .iter()
+            .enumerate()
+            .map(|(e_index, e)| {
+                let e_id: EventIndex = EventIndex(e_index);
+                (
+                    e_id.clone(),
+                    e.relationships
+                        .iter()
+                        .flat_map(|rel| {
+                            let obj_id = object_ids_to_index.get(&rel.object_id)?.clone();
+                            // let ob = objects.get(&((&rel.object_id).into()))?;
+                            Some(obj_id.clone())
                         })
                         .collect(),
                 )
@@ -167,14 +199,15 @@ impl<'a> From<OCEL> for IndexLinkedOCEL {
             object_ids_to_index,
             events_per_type,
             objects_per_type,
+            e2o_rev_et,
             e2o_rel,
+            e2o_set,
             o2o_rel,
             e2o_rel_rev,
             o2o_rel_rev,
         }
     }
 }
-
 
 impl<'a> LinkedOCELAccess<'a, EventIndex, ObjectIndex, EventIndex, ObjectIndex>
     for IndexLinkedOCEL
