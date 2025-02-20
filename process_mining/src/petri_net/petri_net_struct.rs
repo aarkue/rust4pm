@@ -487,7 +487,7 @@ mod tests {
         if let PetriNetNodes::Places(p) = pn.postset_of(&t1_id) {
             assert!(p.len() == 1);
         } else {
-            assert!(false);
+            unreachable!();
         }
 
         pn.remove_transition(&p1_id);
@@ -497,7 +497,7 @@ mod tests {
         if let PetriNetNodes::Places(p) = pn.postset_of(&t1_id) {
             assert!(p.is_empty());
         } else {
-            assert!(false);
+            unreachable!();
         }
     }
 }

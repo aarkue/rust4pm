@@ -10,11 +10,15 @@ crate-type = ["cdylib"]
 
 
 [dependencies]
-wasm-bindgen = "0.2"
+wasm-bindgen = "0.2.84"
+uuid = {version = "1.13", features = ["v4", "serde", "js"]}
+getrandom = {version = "0.3", features = ["wasm_js"]}
+getrandom2 = { package = "getrandom", version = "0.2",  features = ["js"] }
+rand ={version  = "0.8.4", features = ["std","small_rng"]}
 process_mining = {path = "../process_mining", features = ["graphviz-export"]}
-serde_json = "1.0.105"
+serde_json = "1.0"
 serde = {version = "1.0.188", features = ["derive"]}
-getrandom = { version = "0.2", features = ["js"] }
 console_error_panic_hook = "0.1.7"
 web-sys = {version = "0.3.68", features = ["console"]}
 serde-wasm-bindgen = "0.6.4"
+

@@ -13,7 +13,7 @@ wasm-pack build --scope aarkue --release --target web
 ```
 
 
-### 🎁 Publish to NPM with `wasm-pack publish`
+### 🎁 Publish to NPM with `wasm-pack publish`~
 
 ```
 wasm-pack publish --access=public

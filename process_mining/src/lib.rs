@@ -4,6 +4,7 @@
     rust_2018_idioms,
     missing_docs
 )]
+
 #![doc = include_str!("../README.md")]
 
 ///
@@ -25,6 +26,9 @@ pub mod event_log {
     pub mod import_xes;
     /// Streaming XES Import
     pub mod stream_xes;
+    /// Splitting an event log into several sub event logs by given activities or randomly
+    #[cfg(feature = "log-splitting")]
+    pub mod event_log_splitter;
     ///
     /// OCEL2.0 (Object-Centric Event Logs)
     ///

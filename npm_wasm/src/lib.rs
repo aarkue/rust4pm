@@ -93,7 +93,7 @@ pub unsafe fn wasm_get_ocel_num_events_from_pointer(addr: usize) -> JsValue {
     let boxed_ocel = Box::from_raw(addr as *mut OCEL);
     let len = boxed_ocel.events.len();
     // Into raw: do not destroy/deallocate OCEL
-    Box::into_raw(boxed_ocel);
+    let _ = Box::into_raw(boxed_ocel);
     len.into()
 }
 

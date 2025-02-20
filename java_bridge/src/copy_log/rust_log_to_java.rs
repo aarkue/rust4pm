@@ -43,7 +43,7 @@ pub unsafe fn getCompleteRustTraceAsString<'local>(
     let all_json: String = serde_json::to_string(&events_json).unwrap();
     // memory of log_pointer should _not_ be destroyed!
     let _log_pointer = Box::into_raw(log_pointer);
-    return _env.new_string(&all_json).unwrap();
+    _env.new_string(&all_json).unwrap()
 }
 
 /// Given the passed reference to a (boxed) [`EventLog`] and the given `index`, retrieve the indicated [`Trace`] as compatible JSON String
@@ -66,7 +66,7 @@ pub unsafe fn getCompleteRustTraceAsStringJsonCompatible<'local>(
     let trace_json: String = serde_json::to_string(&jtrace).unwrap();
     // memory of log_pointer should _not_ be destroyed!
     let _log_pointer = Box::into_raw(log_pointer);
-    return _env.new_string(&trace_json).unwrap();
+    _env.new_string(&trace_json).unwrap()
 }
 
 /// Given the passed reference to a (boxed) [`EventLog`] retrieve the (complete) [`EventLog`] as compatible JSON String
@@ -87,5 +87,5 @@ pub unsafe fn getCompleteRustLogAsStringJsonCompatible<'local>(
     let log_json: String = serde_json::to_string(&log).unwrap();
     // memory of log_pointer should _not_ be destroyed!
     let _log_pointer = Box::into_raw(log_pointer);
-    return _env.new_string(&log_json).unwrap();
+    _env.new_string(&log_json).unwrap()
 }

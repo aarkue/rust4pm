@@ -54,8 +54,8 @@ fn compute_local_fitness(
     let mut num_traces_containg_act = vec![0; log.activities.len()];
     let mut num_fitting_traces_containg_act = vec![0; log.activities.len()];
 
-    let _start_act = log.act_to_index.get(&START_ACTIVITY.to_string()).unwrap();
-    let _end_act = log.act_to_index.get(&END_ACTIVITY.to_string()).unwrap();
+    let _start_act = log.act_to_index.get(START_ACTIVITY).unwrap();
+    let _end_act = log.act_to_index.get(END_ACTIVITY).unwrap();
 
     let num_fitting_traces: i128 = relevant_variants_with_freq
         .iter()

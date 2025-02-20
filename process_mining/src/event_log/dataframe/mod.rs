@@ -45,11 +45,11 @@ fn attribute_value_to_any_value<'a>(from: &AttributeValue) -> AnyValue<'a> {
         AttributeValue::Date(v) => {
             // Fallback for testing:
             // return AnyValue::StringOwned(v.to_string().into());
-            return AnyValue::Datetime(
+            AnyValue::Datetime(
                 v.timestamp_nanos_opt().unwrap(),
                 polars::prelude::TimeUnit::Nanoseconds,
-                &None,
-            );
+                None,
+            )
         }
         AttributeValue::Int(v) => AnyValue::Int64(*v),
         AttributeValue::Float(v) => AnyValue::Float64(*v),
@@ -177,7 +177,12 @@ pub fn convert_log_to_dataframe(
         );
     }
     now = Instant::now();
-    let df = unsafe { DataFrame::new_no_checks(x) };
+    let df = unsafe {
+        DataFrame::new_no_checks(
+            x.first().map(|e| e.len()).unwrap_or_default(),
+            x.into_iter().map(|s| Column::Series(s.into())).collect(),
+        )
+    };
     if print_debug {
         println!(
             "Constructing DF from Attribute Series took {:.2?}",
