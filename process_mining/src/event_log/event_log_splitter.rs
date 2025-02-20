@@ -178,11 +178,11 @@ pub fn random_activity_split<'a>(
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActivityBasedEventLogSplitter<'a> {
-    // The activity sets to split by
+    /// The activity sets to split by
     pub activity_split_sets: &'a Vec<HashSet<&'a str>>,
-    // The number of event logs that we split to
+    /// The number of event logs that we split to
     pub num_split_event_logs: usize,
-    // The input event log to be split
+    /// The input event log to be split
     pub event_log: &'a EventLog,
 }
 

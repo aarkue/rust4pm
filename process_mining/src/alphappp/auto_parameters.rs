@@ -200,7 +200,7 @@ fn score_discovered_pn(pn: &PetriNet, config: &AlphaPPPConfig) -> f32 {
         .filter(|(_, t)| !is_transition_well_connected(pn, t))
         .count();
 
-    return config.fitness_thresh
+    config.fitness_thresh
         * (1.0 - config.balance_thresh)
         * (1.0
             - (num_disconnected_trans as f32
@@ -208,5 +208,5 @@ fn score_discovered_pn(pn: &PetriNet, config: &AlphaPPPConfig) -> f32 {
                     .iter()
                     .filter(|(_, t)| t.label.is_some())
                     .count() as f32))
-            .powf(2.0);
+            .powf(2.0)
 }

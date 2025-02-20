@@ -126,11 +126,11 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
 
     let start_act = log_proj
         .act_to_index
-        .get(&START_ACTIVITY.to_string())
+        .get(START_ACTIVITY)
         .unwrap();
     let end_act = log_proj
         .act_to_index
-        .get(&END_ACTIVITY.to_string())
+        .get(END_ACTIVITY)
         .unwrap();
     println!(
         "Adding start/end acts took: {:.4}s",

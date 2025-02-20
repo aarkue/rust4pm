@@ -9,7 +9,7 @@ pub enum XMLWriterWrapper<'a, W> {
 
 impl<'a, W> XMLWriterWrapper<'a, W> {
     /// Return a mutable reference to a [`quick_xml::Writer`]
-    pub fn to_xml_writer(&'a mut self) -> &mut quick_xml::Writer<W> {
+    pub fn to_xml_writer(&'a mut self) -> &'a mut quick_xml::Writer<W> {
         match self {
             XMLWriterWrapper::Owned(w) => w,
             XMLWriterWrapper::Ref(w) => w,
@@ -17,7 +17,7 @@ impl<'a, W> XMLWriterWrapper<'a, W> {
     }
 }
 
-impl<'a, W: std::io::Write> From<W> for XMLWriterWrapper<'a, W> {
+impl<W: std::io::Write> From<W> for XMLWriterWrapper<'_, W> {
     fn from(w: W) -> Self {
         Self::Owned(quick_xml::Writer::new(w))
     }

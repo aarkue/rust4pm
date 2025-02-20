@@ -93,7 +93,7 @@ pub struct StreamingXESParser<'a> {
     finished: bool,
 }
 
-impl<'a> Debug for StreamingXESParser<'a> {
+impl Debug for StreamingXESParser<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("StreamingXESParser")
             .field("reader", &"[Boxed Reader]")
@@ -123,7 +123,7 @@ pub enum XESNextStreamElement {
     Error(XESParseError),
 }
 
-impl<'a> StreamingXESParser<'a> {
+impl StreamingXESParser<'_> {
     /// Try to parse a next [`XESNextStreamElement`] from the current position
     ///
     /// Returns [`None`] if it encountered an error previously or there are no more traces left
@@ -133,7 +133,6 @@ impl<'a> StreamingXESParser<'a> {
     /// * `XESNextStreamElement:LogData` will be at most emitted once at the beginning (it is emitted before parsing the first trace)
     /// * `XESNextStreamElement:Trace` will be emitted for every trace found in the underlying XES
     /// * `XESNextStreamElement:Error` will be emitted at most once and will end the iterator (i.e., it will only return None afterwards)
-
     pub fn next_trace(&mut self) -> Option<XESNextStreamElement> {
         // Helper function to terminate parsing and set the error fields
         fn terminate_with_error(
@@ -687,7 +686,7 @@ fn test_classifier_parse() {
         vec!["aaa bbb ccc ddd", "eee"]
     );
 }
-impl<'a> StreamingXESParser<'a> {
+impl StreamingXESParser<'_> {
     ///
     /// Add XES attribute from tag to the currently active element (indicated by `current_mode`)
     ///
@@ -790,7 +789,7 @@ pub struct XESParsingTraceStream<'a> {
 /// First component is trace stream lazily parsed, second component provides top-level log information (eagerly parsed at the beginning)
 pub type XESParsingStreamAndLogData<'a> = (XESParsingTraceStream<'a>, XESOuterLogData);
 
-impl<'a> Iterator for &mut XESParsingTraceStream<'a> {
+impl Iterator for &mut XESParsingTraceStream<'_> {
     type Item = Trace;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -812,7 +811,7 @@ impl<'a> Iterator for &mut XESParsingTraceStream<'a> {
     }
 }
 
-impl<'a> FusedIterator for &mut XESParsingTraceStream<'a> {}
+impl FusedIterator for &mut XESParsingTraceStream<'_> {}
 
 impl<'a> XESParsingTraceStream<'a> {
     /// Check if any errors occured

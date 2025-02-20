@@ -219,11 +219,11 @@ pub fn add_artificial_acts_for_loops(
         panic!("No Artificial START/END Activities ")
     }
     let reachable_paths = get_reachable_bf(
-        *log.act_to_index.get(&START_ACTIVITY.to_string()).unwrap(),
+        *log.act_to_index.get(START_ACTIVITY).unwrap(),
         &dfg,
         df_threshold,
     );
-    let end_act = log.act_to_index.get(&END_ACTIVITY.to_string()).unwrap();
+    let end_act = log.act_to_index.get(END_ACTIVITY).unwrap();
     let taus: HashSet<(usize, usize)> = reachable_paths
         .into_iter()
         .filter(|path| path.last().unwrap() != end_act)

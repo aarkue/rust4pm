@@ -124,7 +124,7 @@ impl<'a> From<super::stream_xes::XESParsingTraceStream<'a>> for EventLogActivity
         (&mut value).into()
     }
 }
-impl<'a, 'b> From<&'b mut super::stream_xes::XESParsingTraceStream<'a>>
+impl<'a> From<&mut super::stream_xes::XESParsingTraceStream<'a>>
     for EventLogActivityProjection
 {
     fn from(value: &mut super::stream_xes::XESParsingTraceStream<'a>) -> Self {
@@ -232,7 +232,7 @@ impl EventLogActivityProjection {
 ///
 pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
     let mut should_add_start = true;
-    let start_act = match log.act_to_index.get(&START_ACTIVITY.to_string()) {
+    let start_act = match log.act_to_index.get(START_ACTIVITY) {
         Some(a) => {
             eprintln!("Start activity ({}) already present in activity set! Will skip adding a start activity to every trace, which might not be the desired outcome.", START_ACTIVITY);
             should_add_start = false;
@@ -247,7 +247,7 @@ pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
     };
 
     let mut should_add_end = true;
-    let end_act = match log.act_to_index.get(&END_ACTIVITY.to_string()) {
+    let end_act = match log.act_to_index.get(END_ACTIVITY) {
         Some(a) => {
             eprintln!("End activity ({}) already present in activity set! Still adding an end activity to every trace, which might not be the desired outcome.", END_ACTIVITY);
             should_add_end = false;

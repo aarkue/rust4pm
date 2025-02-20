@@ -170,7 +170,7 @@ impl<'a> DirectlyFollowsGraph<'a> {
         let a = activity.into();
         self.directly_follows_relations
             .keys()
-            .filter_map(|arc| if a == arc.1 { Some(arc) } else { None })
+            .filter(|arc|  a == arc.1 )
             .collect()
     }
 
@@ -182,7 +182,7 @@ impl<'a> DirectlyFollowsGraph<'a> {
         let a = activity.into();
         self.directly_follows_relations
             .keys()
-            .filter_map(|arc| if &a == &arc.0 { Some(arc) } else { None })
+            .filter(|arc|  a == arc.0 )
             .collect()
     }
 

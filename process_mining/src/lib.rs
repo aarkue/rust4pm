@@ -4,6 +4,7 @@
     rust_2018_idioms,
     missing_docs
 )]
+
 #![doc = include_str!("../README.md")]
 
 ///

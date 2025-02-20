@@ -334,7 +334,7 @@ fn new_attribute_value<'a>(
     attr: &Attribute,
 ) -> AutoLocal<'a, JObject<'a>> {
     let j_attr_key = env.auto_local(env.new_string(&attr.key).unwrap());
-    let j_attr_value = env.auto_local(env.new_string(&format!("{:?}", attr.value)).unwrap());
+    let j_attr_value = env.auto_local(env.new_string(format!("{:?}", attr.value)).unwrap());
     let j_attr_str = env
         .new_object(
             attribute_string_class,
@@ -342,7 +342,7 @@ fn new_attribute_value<'a>(
             &[(&j_attr_key).into(), (&j_attr_value).into()],
         )
         .unwrap();
-    return env.auto_local(j_attr_str);
+    env.auto_local(j_attr_str)
 }
 ///
 /// Experimental function for constructing the event log in Java directly

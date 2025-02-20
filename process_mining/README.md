@@ -68,6 +68,7 @@ use process_mining::{
 };
 
 fn main() {
+
     let xes_path = "BPI Challenge 2018.xes.gz";
 
     // Parsing XES

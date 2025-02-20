@@ -35,6 +35,12 @@ pub struct PartialOrderTrace {
     pub partial_relations: HashSet<(EventHash, EventHash)>,
 }
 
+impl Default for PartialOrderTrace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PartialOrderTrace {
     /// Create new [`PartialOrderTrace`] with no events and no partial relations.
     pub fn new() -> Self {
@@ -74,13 +80,13 @@ impl PartialOrderTrace {
 
     /// Adds an [`Event`] to the [`PartialOrderTrace`].
     pub fn add_event(&mut self, event: &Event) {
-        self.event_map.insert(EventHash::new(&event), event.clone());
+        self.event_map.insert(EventHash::new(event), event.clone());
     }
 
     /// Removes an [`Event`] from the [`PartialOrderTrace`] including all partial relations
     /// containing the [`Event`] itself.
     pub fn remove_event(&mut self, event: &Event) {
-        let event_hash = EventHash::new(&event);
+        let event_hash = EventHash::new(event);
         self.event_map.remove(&event_hash);
 
         self.partial_relations
@@ -179,7 +185,7 @@ impl PartialOrderTrace {
     ///
     /// Only available with the `graphviz-export` feature.
     pub fn export_svg<P: AsRef<std::path::Path>>(&self, classifier: &EventLogClassifier, path: P) -> Result<(), std::io::Error> {
-        super::image_export::export_p_trace_image_svg(self, &classifier, path)
+        super::image_export::export_p_trace_image_svg(self, classifier, path)
     }
 }
 
