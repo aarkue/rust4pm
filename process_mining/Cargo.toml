@@ -19,7 +19,7 @@ serde_json = "1.0.105"
 serde = {version = "1.0.188", features = ["derive"]}
 serde_with = "3.11.0"
 chrono = {version = "0.4.34", features = ["serde"] }
-uuid = {version = "1.4.1", features = ["v4", "serde"]}
+uuid = {version = "1.13.2", features = ["v4", "serde"]}
 quick-xml = {version = "0.31.0"}
 flate2 = "1.0"
 graphviz-rust = { version = "0.9.3", optional = true}
