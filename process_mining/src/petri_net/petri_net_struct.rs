@@ -3,13 +3,13 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use super::import_pnml::PNMLParseError;
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Hash, Eq, PartialOrd, Ord)]
 /// Place in a Petri net
 pub struct Place {
     id: Uuid,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Hash, Eq, PartialOrd, Ord)]
 /// Transition in a Petri net
 pub struct Transition {
     /// Transition label (None if this transition is _invisible_)
@@ -29,7 +29,7 @@ pub enum PetriNetNodes {
     Transitions(Vec<TransitionID>),
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(tag = "type", content = "nodes")]
 /// Arc type in a Petri net
 pub enum ArcType {
@@ -57,7 +57,7 @@ impl ArcType {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 /// Arc in a Petri net
 ///
 /// Connecting a transition and a place (or the other way around)
@@ -68,7 +68,7 @@ pub struct Arc {
     pub weight: u32,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Eq, Hash)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Hash, Eq, PartialOrd, Ord)]
 /// Place ID
 pub struct PlaceID(pub Uuid);
 impl PlaceID {
@@ -83,9 +83,10 @@ impl From<&Place> for PlaceID {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Hash, Eq, PartialOrd, Ord)]
 /// Transition ID
 pub struct TransitionID(pub Uuid);
+
 impl From<&Transition> for TransitionID {
     fn from(value: &Transition) -> Self {
         TransitionID(value.id)
