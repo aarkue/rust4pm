@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 
-use crate::{ocel::ocel_struct::{OCELEvent, OCELObject}, OCEL};
+use crate::{
+    ocel::ocel_struct::{OCELEvent, OCELObject},
+    OCEL,
+};
 
 use super::LinkedOCELAccess;
 
 impl<'a> LinkedOCELAccess<'a, EventID<'a>, ObjectID<'a>, OCELEvent, OCELObject>
-    for ReferenceLinkedOCEL<'a>
+    for IDLinkedOCEL<'a>
 {
     fn get_evs_of_type(&'a self, ev_type: &'_ str) -> impl Iterator<Item = &'a OCELEvent> {
         self.events_per_type
@@ -52,26 +55,34 @@ impl<'a> LinkedOCELAccess<'a, EventID<'a>, ObjectID<'a>, OCELEvent, OCELObject>
     ) -> impl Iterator<Item = (&'a str, &'a OCELObject)> {
         self.o2o_rel_rev.get(index).into_iter().flatten().copied()
     }
-    
+
     fn get_ev_types(&'a self) -> impl Iterator<Item = &'a str> {
-        self.events_per_type.keys().into_iter().copied()
+        self.events_per_type.keys().copied()
     }
-    
+
     fn get_ob_types(&'a self) -> impl Iterator<Item = &'a str> {
-        self.objects_per_type.keys().into_iter().copied()
+        self.objects_per_type.keys().copied()
     }
-    
+
     fn get_all_evs(&'a self) -> impl Iterator<Item = &'a OCELEvent> {
-       self.ocel.events.iter()
+        self.ocel.events.iter()
     }
-    
+
     fn get_all_obs(&'a self) -> impl Iterator<Item = &'a OCELObject> {
         self.ocel.objects.iter()
     }
+
+    fn get_all_evs_ref(&'a self) -> impl Iterator<Item = &'a EventID<'a>> {
+        self.events.iter().map(|e| e.0)
+    }
+
+    fn get_all_obs_ref(&'a self) -> impl Iterator<Item = &'a ObjectID<'a>> {
+        self.objects.iter().map(|o| o.0)
+    }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Object identifier in an [`OCEL`]
 pub struct ObjectID<'a>(&'a str);
 
 impl<'a> From<&'a OCELObject> for ObjectID<'a> {
@@ -81,6 +92,7 @@ impl<'a> From<&'a OCELObject> for ObjectID<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Event identifier in an [`OCEL`]
 pub struct EventID<'a>(&'a str);
 
 impl<'a> From<&'a OCELEvent> for EventID<'a> {
@@ -88,7 +100,11 @@ impl<'a> From<&'a OCELEvent> for EventID<'a> {
         Self(value.id.as_str())
     }
 }
-pub struct ReferenceLinkedOCEL<'a> {
+
+#[derive(Debug, Clone)]
+/// A [`OCEL`] linked using event and object IDs (i.e., wrappers around [`String`]s)
+pub struct IDLinkedOCEL<'a> {
+    /// The reference to the inner [`OCEL`], which contains the actual event and object values
     pub ocel: &'a OCEL,
     events: HashMap<EventID<'a>, &'a OCELEvent>,
     objects: HashMap<ObjectID<'a>, &'a OCELObject>,
@@ -100,14 +116,14 @@ pub struct ReferenceLinkedOCEL<'a> {
     o2o_rel_rev: HashMap<ObjectID<'a>, Vec<(&'a str, &'a OCELObject)>>,
 }
 
-
-impl<'a> ReferenceLinkedOCEL<'a> {
+impl<'a> IDLinkedOCEL<'a> {
+    /// Create a ID-linked OCEL from a [`OCEL`] reference
     pub fn from_ocel(ocel: &'a OCEL) -> Self {
         Self::from(ocel)
     }
 }
 
-impl<'a> From<&'a OCEL> for ReferenceLinkedOCEL<'a> {
+impl<'a> From<&'a OCEL> for IDLinkedOCEL<'a> {
     fn from(ocel: &'a OCEL) -> Self {
         let events: HashMap<_, _> = ocel.events.iter().map(|e| (EventID(&e.id), e)).collect();
         let objects: HashMap<_, _> = ocel.objects.iter().map(|o| (ObjectID(&o.id), o)).collect();
@@ -123,7 +139,7 @@ impl<'a> From<&'a OCEL> for ReferenceLinkedOCEL<'a> {
                         .flat_map(|rel| {
                             let obj_id: ObjectID<'_> = ObjectID(&rel.object_id);
                             let qualifier = rel.qualifier.as_str();
-                            e2o_rel_rev.entry(obj_id).or_default().push((qualifier, &e));
+                            e2o_rel_rev.entry(obj_id).or_default().push((qualifier, e));
                             let ob = objects.get(&(ObjectID(&rel.object_id)))?;
                             Some((qualifier, *ob))
                         })
@@ -142,12 +158,9 @@ impl<'a> From<&'a OCEL> for ReferenceLinkedOCEL<'a> {
                     o.relationships
                         .iter()
                         .flat_map(|rel| {
-                            let qualifier = (&rel.qualifier).as_str();
+                            let qualifier = rel.qualifier.as_str();
                             let obj2_id: ObjectID<'_> = ObjectID(&rel.object_id);
-                            o2o_rel_rev
-                                .entry(obj2_id)
-                                .or_default()
-                                .push((qualifier, &o));
+                            o2o_rel_rev.entry(obj2_id).or_default().push((qualifier, o));
                             let ob = objects.get(&ObjectID(&rel.object_id))?;
                             Some((qualifier, *ob))
                         })
@@ -163,14 +176,7 @@ impl<'a> From<&'a OCEL> for ReferenceLinkedOCEL<'a> {
                     et.name.as_str(),
                     ocel.events
                         .iter()
-                        .enumerate()
-                        .filter_map(|(index, e)| {
-                            if e.event_type == et.name {
-                                Some(e)
-                            } else {
-                                None
-                            }
-                        })
+                        .filter(|e| e.event_type == et.name)
                         .collect(),
                 )
             })
@@ -184,14 +190,7 @@ impl<'a> From<&'a OCEL> for ReferenceLinkedOCEL<'a> {
                     et.name.as_str(),
                     ocel.objects
                         .iter()
-                        .enumerate()
-                        .filter_map(|(index, e)| {
-                            if e.object_type == et.name {
-                                Some(e)
-                            } else {
-                                None
-                            }
-                        })
+                        .filter(|e| e.object_type == et.name)
                         .collect(),
                 )
             })
@@ -210,28 +209,37 @@ impl<'a> From<&'a OCEL> for ReferenceLinkedOCEL<'a> {
     }
 }
 
-pub struct OwnedReferenceLinkedOcel<'a> {
+/// A [`IDLinkedOCEL`] that also owns the underlying [`OCEL`]
+///
+/// This is a convenience helper for when the liftetime of the inner [`OCEL`] cannot be guaranteed outside.
+///
+/// If the caller can manage owning the (borrowed) [`OCEL`], a standard [`IDLinkedOCEL`] can be used instead.
+#[derive(Debug, Clone)]
+pub struct OwnedIDLinkedOCEL<'a> {
     ocel: OCEL,
-    pub linked_ocel: ReferenceLinkedOCEL<'a>,
+    /// The inner id-linked OCEL
+    pub linked_ocel: IDLinkedOCEL<'a>,
 }
 
-
-impl<'a> OwnedReferenceLinkedOcel<'a> {
+impl<'a> OwnedIDLinkedOCEL<'a> {
+    /// Create an [`OwnedIDLinkedOCEL`] from an owned [`OCEL`]
     pub fn from_ocel(ocel: OCEL) -> Self {
         Self::from(ocel)
     }
+    /// Get the inner owned [`OCEL`], consuming the [`OwnedIDLinkedOCEL`]
     pub fn into_inner(self) -> OCEL {
         self.ocel
     }
+    /// Get a reference to the inner [`OCEL`]
     pub fn ocel_ref(&'a self) -> &'a OCEL {
         &self.ocel
     }
 }
 
-impl<'a> From<OCEL> for OwnedReferenceLinkedOcel<'a> {
+impl From<OCEL> for OwnedIDLinkedOCEL<'_> {
     fn from(ocel: OCEL) -> Self {
         let ocel_ref = unsafe { &*(&ocel as *const OCEL) };
-        OwnedReferenceLinkedOcel {
+        OwnedIDLinkedOCEL {
             ocel,
             linked_ocel: (ocel_ref).into(),
         }
@@ -239,7 +247,7 @@ impl<'a> From<OCEL> for OwnedReferenceLinkedOcel<'a> {
 }
 
 impl<'a> LinkedOCELAccess<'a, EventID<'a>, ObjectID<'a>, OCELEvent, OCELObject>
-    for OwnedReferenceLinkedOcel<'a>
+    for OwnedIDLinkedOCEL<'a>
 {
     fn get_evs_of_type(&'a self, ev_type: &'_ str) -> impl Iterator<Item = &'a OCELEvent> {
         self.linked_ocel.get_evs_of_type(ev_type)
@@ -278,20 +286,28 @@ impl<'a> LinkedOCELAccess<'a, EventID<'a>, ObjectID<'a>, OCELEvent, OCELObject>
     ) -> impl Iterator<Item = (&'a str, &'a OCELObject)> {
         self.linked_ocel.get_o2o_rev(index)
     }
-    
+
     fn get_ev_types(&'a self) -> impl Iterator<Item = &'a str> {
         self.linked_ocel.get_ev_types()
     }
-    
+
     fn get_ob_types(&'a self) -> impl Iterator<Item = &'a str> {
         self.linked_ocel.get_ob_types()
     }
-    
+
     fn get_all_evs(&'a self) -> impl Iterator<Item = &'a OCELEvent> {
         self.linked_ocel.get_all_evs()
     }
-    
+
     fn get_all_obs(&'a self) -> impl Iterator<Item = &'a OCELObject> {
         self.linked_ocel.get_all_obs()
+    }
+
+    fn get_all_evs_ref(&'a self) -> impl Iterator<Item = &'a EventID<'a>> {
+        self.linked_ocel.get_all_evs_ref()
+    }
+
+    fn get_all_obs_ref(&'a self) -> impl Iterator<Item = &'a ObjectID<'a>> {
+        self.linked_ocel.get_all_obs_ref()
     }
 }

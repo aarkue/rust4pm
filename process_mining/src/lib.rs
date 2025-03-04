@@ -35,8 +35,8 @@ pub mod event_log {
     pub mod ocel {
         /// OCEL 2.0 struct and sub-structs
         pub mod ocel_struct;
-        /// Linked OCEL
-        mod linked_ocel;
+        /// Linked OCEL 2.0, allowing convenient usage of object-centric data
+        pub mod linked_ocel;
         /// `SQLite` OCEL 2.0
         #[cfg(feature = "ocel-sqlite")]
         pub mod sqlite;
