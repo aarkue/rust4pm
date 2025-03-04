@@ -1,4 +1,7 @@
-use std::{collections::HashSet, time::Instant};
+use std::{
+    collections::HashSet,
+    time::Instant,
+};
 
 use crate::{
     event_log::{Attribute, AttributeValue, XESEditableAttribute},
@@ -240,36 +243,40 @@ pub fn convert_dataframe_to_log(df: &DataFrame) -> Result<EventLog, PolarsError>
     let traces: Vec<Trace> = groups
         .par_iter()
         .map(|g| {
-            let mut trace_attributes: Attributes = Attributes::new();
+            let mut trace_attributes: HashSet<Attribute> = HashSet::new();
             let events: Vec<Event> = (0..g.height())
                 .map(|i| {
-                    let mut event_attributes: Attributes = Attributes::new();
+                    let mut event_attributes: HashSet<Attribute> = HashSet::new();
                     columns
                         .iter()
                         .zip(g.get_row(i).unwrap().0.iter())
                         .for_each(|(c, v)| {
-                            if c.starts_with(TRACE_PREFIX) {
-                                // e.g.,
-                                let (_, c) = c.split_once(TRACE_PREFIX).unwrap();
-                                trace_attributes.add_to_attributes(
-                                    c.to_string(),
-                                    any_value_to_attribute_value(v),
-                                );
-                            } else {
-                                event_attributes.add_to_attributes(
-                                    c.to_string(),
-                                    any_value_to_attribute_value(v),
-                                );
+                            let value = any_value_to_attribute_value(v);
+                            match value {
+                                AttributeValue::None() => {
+                                    // Skip!
+                                }
+                                value => {
+                                    if c.starts_with(TRACE_PREFIX) {
+                                        // e.g.,
+                                        let (_, c) = c.split_once(TRACE_PREFIX).unwrap();
+                                        trace_attributes
+                                            .insert(Attribute::new(c.to_string(), value));
+                                    } else {
+                                        event_attributes
+                                            .insert(Attribute::new(c.to_string(), value));
+                                    }
+                                }
                             }
                         });
 
                     Event {
-                        attributes: event_attributes,
+                        attributes: event_attributes.into_iter().collect(),
                     }
                 })
                 .collect();
             Trace {
-                attributes: trace_attributes,
+                attributes: trace_attributes.into_iter().collect(),
                 events,
             }
         })
