@@ -52,7 +52,9 @@ impl PartialOrderTrace {
     }
 
     /// Serialize to JSON string.
-    pub fn to_json(self) -> String { serde_json::to_string(&self).unwrap() }
+    pub fn to_json(self) -> String {
+        serde_json::to_string(&self).unwrap()
+    }
 
     /// Returns all the start events of the [`PartialOrderTrace`], i.e., the events having no
     /// preceding event.
@@ -90,19 +92,19 @@ impl PartialOrderTrace {
         self.event_map.remove(&event_hash);
 
         self.partial_relations
-            .retain(|(from, to)| {
-                from != &event_hash && to != &event_hash
-            });
+            .retain(|(from, to)| from != &event_hash && to != &event_hash);
     }
 
     /// Adds a partial relation by adding two [`EventHash`] values.
     pub fn add_partial_relation(&mut self, from: &Event, to: &Event) {
-        self.partial_relations.insert((EventHash::new(from), EventHash::new(to)));
+        self.partial_relations
+            .insert((EventHash::new(from), EventHash::new(to)));
     }
 
     /// Removes a partial relation identified by two [`EventHash`] values.
     pub fn remove_partial_relation(&mut self, from: &Event, to: &Event) {
-        self.partial_relations.remove(&(EventHash::new(from), EventHash::new(to)));
+        self.partial_relations
+            .remove(&(EventHash::new(from), EventHash::new(to)));
     }
 
     /// Returns all events preceding an [`Event`].
@@ -144,7 +146,9 @@ impl PartialOrderTrace {
         });
         self.partial_relations.iter().for_each(|(from, to)| {
             graph.add_edge(
-                *event_to_node.get(self.event_map.get(from).unwrap()).unwrap(),
+                *event_to_node
+                    .get(self.event_map.get(from).unwrap())
+                    .unwrap(),
                 *event_to_node.get(self.event_map.get(to).unwrap()).unwrap(),
                 "",
             );
@@ -153,11 +157,15 @@ impl PartialOrderTrace {
         graph
     }
 
-
     /// By creating a [`Graph`] for each [`PartialOrderTrace`] and for two given [`EventLogClassifier`]
     /// used for classification in each [`PartialOrderTrace`], the partial order traces are compared
     /// for equality by checking whether their graphs are isomorphic.
-    pub fn is_isomorphic(&self, other: &PartialOrderTrace, classifier: &EventLogClassifier, other_classifier: &EventLogClassifier) -> bool {
+    pub fn is_isomorphic(
+        &self,
+        other: &PartialOrderTrace,
+        classifier: &EventLogClassifier,
+        other_classifier: &EventLogClassifier,
+    ) -> bool {
         let graph = self.to_graph(classifier);
         let other_graph = other.to_graph(other_classifier);
 
@@ -172,7 +180,11 @@ impl PartialOrderTrace {
     /// _Note_: This is an export method for __visualizing__ the directly-follows graph.
     ///
     /// Only available with the `graphviz-export` feature.
-    pub fn export_png<P: AsRef<std::path::Path>>(&self, classifier: &EventLogClassifier, path: P) -> Result<(), std::io::Error> {
+    pub fn export_png<P: AsRef<std::path::Path>>(
+        &self,
+        classifier: &EventLogClassifier,
+        path: P,
+    ) -> Result<(), std::io::Error> {
         super::image_export::export_p_trace_image_png(self, classifier, path)
     }
 
@@ -184,7 +196,11 @@ impl PartialOrderTrace {
     /// _Note_: This is an export method for __visualizing__ the directly-follows graph.
     ///
     /// Only available with the `graphviz-export` feature.
-    pub fn export_svg<P: AsRef<std::path::Path>>(&self, classifier: &EventLogClassifier, path: P) -> Result<(), std::io::Error> {
+    pub fn export_svg<P: AsRef<std::path::Path>>(
+        &self,
+        classifier: &EventLogClassifier,
+        path: P,
+    ) -> Result<(), std::io::Error> {
         super::image_export::export_p_trace_image_svg(self, classifier, path)
     }
 }
@@ -199,7 +215,9 @@ pub struct PartialOrderEventLog {
 }
 
 impl Default for PartialOrderEventLog {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PartialOrderEventLog {
@@ -216,7 +234,6 @@ impl PartialOrderEventLog {
         self.partial_order_traces.push(trace.clone());
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -349,7 +366,11 @@ mod tests {
         partial_order_iso.add_partial_relation(&event_3, &event_4);
         partial_order_iso.add_partial_relation(&event_5, &event_6);
 
-        assert!(partial_order.is_isomorphic(&partial_order_iso, &Default::default(), &Default::default()));
+        assert!(partial_order.is_isomorphic(
+            &partial_order_iso,
+            &Default::default(),
+            &Default::default()
+        ));
     }
 
     #[test]

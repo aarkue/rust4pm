@@ -124,14 +124,8 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
     let dfg_sum: u64 = dfg.edges.values().sum();
     let mean_dfg = dfg_sum as f32 / dfg.edges.len() as f32;
 
-    let start_act = log_proj
-        .act_to_index
-        .get(START_ACTIVITY)
-        .unwrap();
-    let end_act = log_proj
-        .act_to_index
-        .get(END_ACTIVITY)
-        .unwrap();
+    let start_act = log_proj.act_to_index.get(START_ACTIVITY).unwrap();
+    let end_act = log_proj.act_to_index.get(END_ACTIVITY).unwrap();
     println!(
         "Adding start/end acts took: {:.4}s",
         get_time_millis_fn() - start

@@ -379,7 +379,8 @@ impl<'a> RandomEventLogSplitter<'a> {
     ///
     pub fn split(&mut self) -> Vec<EventLog> {
         // Creates a uniform distribution used to randomly choose the event log to assign an event to.
-        let uniform_distribution: Uniform<usize> = Uniform::new(0,self.num_split_event_logs).unwrap();
+        let uniform_distribution: Uniform<usize> =
+            Uniform::new(0, self.num_split_event_logs).unwrap();
 
         // Initializes the result list of sub event logs
         let mut result: Vec<EventLog> = Vec::with_capacity(self.num_split_event_logs);
