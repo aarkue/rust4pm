@@ -190,16 +190,16 @@ impl StreamingXESParser<'_> {
 
         fn parse_classifier(t: &BytesStart<'_>, log_data: &mut XESOuterLogData) {
             log_data.classifiers.push(EventLogClassifier {
-                name: get_attribute_string(t, "name"),
-                keys: parse_classifier_key(get_attribute_string(t, "keys"), log_data),
+                name: get_attribute_string(t, "name").unwrap_or_default(),
+                keys: parse_classifier_key(get_attribute_string(t, "keys").unwrap_or_default(), log_data),
             })
         }
 
         fn parse_extension(t: &BytesStart<'_>, log_data: &mut XESOuterLogData) {
             log_data.extensions.push(EventLogExtension {
-                name: get_attribute_string(t, "name"),
-                prefix: get_attribute_string(t, "prefix"),
-                uri: get_attribute_string(t, "uri"),
+                name: get_attribute_string(t, "name").unwrap_or_default(),
+                prefix: get_attribute_string(t, "prefix").unwrap_or_default(),
+                uri: get_attribute_string(t, "uri").unwrap_or_default(),
             });
         }
 
@@ -279,7 +279,7 @@ impl StreamingXESParser<'_> {
                                 }
                                 {
                                     // Nested attribute!
-                                    let key = get_attribute_string(&t, "key");
+                                    let key = get_attribute_string(&t, "key").unwrap_or_default();
                                     if !should_ignore_attribute(
                                         &self.options,
                                         &self.current_mode,
@@ -698,7 +698,7 @@ impl StreamingXESParser<'_> {
         options: &XESImportOptions,
         t: &BytesStart<'_>,
     ) -> bool {
-        let key = get_attribute_string(t, "key");
+        let key = get_attribute_string(t, "key").unwrap_or_default();
         if should_ignore_attribute(options, current_mode, &key) {
             return true;
         }
@@ -961,15 +961,15 @@ pub fn stream_xes_from_path<'a, P: AsRef<std::path::Path>>(
     }
 }
 
-fn get_attribute_string(t: &BytesStart<'_>, key: &'static str) -> String {
+fn get_attribute_string(t: &BytesStart<'_>, key: &'static str) -> Option<String> {
     if let Ok(Some(attr)) = t.try_get_attribute(key) {
-        return String::from_utf8_lossy(&attr.value).to_string();
+        return Some(String::from_utf8_lossy(&attr.value).to_string());
     }
-    eprintln!(
-        "Did not find expected XML attribute with key {:?}. Will assume empty string as value.",
-        key
-    );
-    String::new()
+    // eprintln!(
+    //     "Did not find expected XML attribute with key {:?}. Will assume empty string as value.",
+    //     key
+    // );
+    None
 }
 
 fn parse_attribute_value_from_tag(
@@ -978,86 +978,88 @@ fn parse_attribute_value_from_tag(
     options: &XESImportOptions,
 ) -> AttributeValue {
     let attribute_val: Option<AttributeValue> = match t.name().as_ref() {
-        b"string" => {
-            let value = get_attribute_string(t, "value");
-            Some(AttributeValue::String(
-                unescape(value.as_str())
-                    .unwrap_or(value.as_str().into())
-                    .into(),
-            ))
-        }
-        b"date" => {
-            let value = get_attribute_string(t, "value");
-            match parse_date_from_str(&value, &options.date_format) {
-                Some(dt) => Some(AttributeValue::Date(dt)),
-                None => {
-                    eprintln!("Failed to parse data from {:?}", value);
-                    None
-                }
-            }
-        }
-        b"int" => {
-            let value = get_attribute_string(t, "value");
-            let parsed_val = match value.parse::<i64>() {
-                Ok(n) => n,
-                Err(e) => {
-                    eprintln!("Could not parse integer {:?}: Error {}", value, e);
-                    i64::default()
-                }
-            };
-            Some(AttributeValue::Int(parsed_val))
-        }
-        b"float" => {
-            let value = get_attribute_string(t, "value");
-            let parsed_val = match value.parse::<f64>() {
-                Ok(n) => n,
-                Err(e) => {
-                    eprintln!("Could not parse float {:?}: Error {}", value, e);
-                    f64::default()
-                }
-            };
-            Some(AttributeValue::Float(parsed_val))
-        }
-        b"boolean" => {
-            let value = get_attribute_string(t, "value");
-            let parsed_val = match value.parse::<bool>() {
-                Ok(n) => n,
-                Err(e) => {
-                    eprintln!("Could not parse boolean {:?}: Error {}", value, e);
-                    bool::default()
-                }
-            };
-            Some(AttributeValue::Boolean(parsed_val))
-        }
-        b"id" => {
-            let value = get_attribute_string(t, "value");
-            let parsed_val = match Uuid::from_str(&value) {
-                Ok(n) => n,
-                Err(e) => {
-                    eprintln!("Could not parse UUID {:?}: Error {}", value, e);
-                    Uuid::default()
-                }
-            };
-
-            Some(AttributeValue::ID(parsed_val))
-        }
         b"container" => Some(AttributeValue::Container(Attributes::new())),
         b"list" => Some(AttributeValue::List(Vec::new())),
-        _ => match mode {
-            Mode::Log => None,
-            m => {
-                let mut name_str = String::new();
-                t.name()
-                    .as_ref()
-                    .read_to_string(&mut name_str)
-                    .unwrap_or_default();
-                eprintln!(
-                    "Attribute type not implemented '{}' in mode {:?}",
-                    name_str, m
-                );
-                None
-            }
-        },
+        _ => {
+            let value = get_attribute_string(t, "value");
+            if let Some(value) = value {
+             match t.name().as_ref() {
+                    b"string" => Some(AttributeValue::String(
+                        unescape(value.as_str())
+                            .unwrap_or(value.as_str().into())
+                            .into(),
+                    )),
+                    b"date" => {
+                        match parse_date_from_str(&value, &options.date_format) {
+                            Some(dt) => Some(AttributeValue::Date(dt)),
+                            None => {
+                                eprintln!("Failed to parse data from {:?}", value);
+                                None
+                            }
+                        }
+                    }
+                    b"int" => {
+                        let parsed_val = match value.parse::<i64>() {
+                            Ok(n) => n,
+                            Err(e) => {
+                                eprintln!("Could not parse integer {:?}: Error {}", value, e);
+                                i64::default()
+                            }
+                        };
+                        Some(AttributeValue::Int(parsed_val))
+                    }
+                    b"float" => {
+                        let parsed_val = match value.parse::<f64>() {
+                            Ok(n) => n,
+                            Err(e) => {
+                                eprintln!("Could not parse float {:?}: Error {}", value, e);
+                                f64::default()
+                            }
+                        };
+                        Some(AttributeValue::Float(parsed_val))
+                    }
+                    b"boolean" => {
+                        let parsed_val = match value.parse::<bool>() {
+                            Ok(n) => n,
+                            Err(e) => {
+                                eprintln!("Could not parse boolean {:?}: Error {}", value, e);
+                                bool::default()
+                            }
+                        };
+                        Some(AttributeValue::Boolean(parsed_val))
+                    }
+                    b"id" => {
+                        let parsed_val = match Uuid::from_str(&value) {
+                            Ok(n) => n,
+                            Err(e) => {
+                                eprintln!("Could not parse UUID {:?}: Error {}", value, e);
+                                Uuid::default()
+                            }
+                        };
+
+                        Some(AttributeValue::ID(parsed_val))
+                    },
+
+                _ => match mode {
+                    Mode::Log => None,
+                    m => {
+                        let mut name_str = String::new();
+                        t.name()
+                            .as_ref()
+                            .read_to_string(&mut name_str)
+                            .unwrap_or_default();
+                        eprintln!(
+                            "Attribute type not implemented '{}' in mode {:?}",
+                            name_str, m
+                        );
+                        None
+                    }
+                },
+                }
+                } else {
+                    None
+                }
+        }
     };
     attribute_val.unwrap_or(AttributeValue::None())
 }
