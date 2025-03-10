@@ -19,6 +19,7 @@ _As this crate is still in very active development, expect larger API changes al
   - OCEL struct
   - OCEL import from all available formats (XML, JSON, and `SQLite`)
   - OCEL export to all available formats (XML, JSON, and `SQLite`)
+  - Linked OCEL, allowing convenient usage of event-to-object and object-to-object relationships (and their reverse)
 - Petri Nets
   - PNML Export
   - PNML Import

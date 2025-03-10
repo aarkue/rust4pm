@@ -5,6 +5,8 @@
     missing_docs
 )]
 
+#![allow(clippy::needless_doctest_main)]
+
 #![doc = include_str!("../README.md")]
 
 ///
@@ -18,6 +20,9 @@ pub mod event_log {
     /// Conversion of XES event data from/to polars `DataFrame`
     #[cfg(feature = "dataframes")]
     pub mod dataframe;
+    /// Splitting an event log into several sub event logs by given activities or randomly
+    #[cfg(feature = "log-splitting")]
+    pub mod event_log_splitter;
     /// [`EventLog`] struct and sub-structs
     pub mod event_log_struct;
     /// XES Export
@@ -26,17 +31,14 @@ pub mod event_log {
     pub mod import_xes;
     /// Streaming XES Import
     pub mod stream_xes;
-    /// Splitting an event log into several sub event logs by given activities or randomly
-    #[cfg(feature = "log-splitting")]
-    pub mod event_log_splitter;
     ///
     /// OCEL2.0 (Object-Centric Event Logs)
     ///
     pub mod ocel {
-        /// OCEL 2.0 struct and sub-structs
-        pub mod ocel_struct;
         /// Linked OCEL 2.0, allowing convenient usage of object-centric data
         pub mod linked_ocel;
+        /// OCEL 2.0 struct and sub-structs
+        pub mod ocel_struct;
         /// `SQLite` OCEL 2.0
         #[cfg(feature = "ocel-sqlite")]
         pub mod sqlite;
@@ -102,8 +104,6 @@ pub mod dfg {
 /// Partial Orders
 ///
 pub mod partial_orders {
-    /// [`PartialOrderTrace`] and [`PartialOrderEventLog`] struct
-    pub mod partial_event_log_struct;
     #[cfg(feature = "graphviz-export")]
     /// Export [`PartialOrderTrace`] to images (SVG, PNG, ...)
     ///
@@ -112,6 +112,8 @@ pub mod partial_orders {
     /// Also requires an active graphviz installation in the PATH.
     /// See also <https://github.com/besok/graphviz-rust?tab=readme-ov-file#caveats> and <https://graphviz.org/download/>
     pub mod image_export;
+    /// [`PartialOrderTrace`] and [`PartialOrderEventLog`] struct
+    pub mod partial_event_log_struct;
 
     #[doc(inline)]
     pub use crate::partial_orders::partial_event_log_struct::PartialOrderTrace;

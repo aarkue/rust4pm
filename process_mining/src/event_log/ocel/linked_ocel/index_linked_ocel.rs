@@ -41,7 +41,7 @@ impl From<usize> for ObjectIndex {
 
 #[derive(Debug, Clone)]
 ///
-/// An OCEL linked through event and object indices
+/// An [`OCEL`] linked through event and object indices
 ///
 /// Provides an easy way to access event-to-object and object-to-object relations, as well as their reverse relations.
 ///

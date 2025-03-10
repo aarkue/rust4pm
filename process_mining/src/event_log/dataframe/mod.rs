@@ -1,7 +1,4 @@
-use std::{
-    collections::HashSet,
-    time::Instant,
-};
+use std::{collections::HashSet, time::Instant};
 
 use crate::{
     event_log::{Attribute, AttributeValue, XESEditableAttribute},

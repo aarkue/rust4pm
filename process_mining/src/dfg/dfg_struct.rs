@@ -8,7 +8,7 @@ use std::{
 };
 
 /// Activity in a directly-follows graph.
-type Activity = String;
+pub type Activity = String;
 
 /// A directly-follows graph of [`Activity`]s.
 /// Graph containing a set of activities, a set of directly-follows relations, a set of start

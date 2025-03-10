@@ -191,7 +191,10 @@ impl StreamingXESParser<'_> {
         fn parse_classifier(t: &BytesStart<'_>, log_data: &mut XESOuterLogData) {
             log_data.classifiers.push(EventLogClassifier {
                 name: get_attribute_string(t, "name").unwrap_or_default(),
-                keys: parse_classifier_key(get_attribute_string(t, "keys").unwrap_or_default(), log_data),
+                keys: parse_classifier_key(
+                    get_attribute_string(t, "keys").unwrap_or_default(),
+                    log_data,
+                ),
             })
         }
 
@@ -983,21 +986,19 @@ fn parse_attribute_value_from_tag(
         _ => {
             let value = get_attribute_string(t, "value");
             if let Some(value) = value {
-             match t.name().as_ref() {
+                match t.name().as_ref() {
                     b"string" => Some(AttributeValue::String(
                         unescape(value.as_str())
                             .unwrap_or(value.as_str().into())
                             .into(),
                     )),
-                    b"date" => {
-                        match parse_date_from_str(&value, &options.date_format) {
-                            Some(dt) => Some(AttributeValue::Date(dt)),
-                            None => {
-                                eprintln!("Failed to parse data from {:?}", value);
-                                None
-                            }
+                    b"date" => match parse_date_from_str(&value, &options.date_format) {
+                        Some(dt) => Some(AttributeValue::Date(dt)),
+                        None => {
+                            eprintln!("Failed to parse data from {:?}", value);
+                            None
                         }
-                    }
+                    },
                     b"int" => {
                         let parsed_val = match value.parse::<i64>() {
                             Ok(n) => n,
@@ -1038,27 +1039,27 @@ fn parse_attribute_value_from_tag(
                         };
 
                         Some(AttributeValue::ID(parsed_val))
-                    },
-
-                _ => match mode {
-                    Mode::Log => None,
-                    m => {
-                        let mut name_str = String::new();
-                        t.name()
-                            .as_ref()
-                            .read_to_string(&mut name_str)
-                            .unwrap_or_default();
-                        eprintln!(
-                            "Attribute type not implemented '{}' in mode {:?}",
-                            name_str, m
-                        );
-                        None
                     }
-                },
+
+                    _ => match mode {
+                        Mode::Log => None,
+                        m => {
+                            let mut name_str = String::new();
+                            t.name()
+                                .as_ref()
+                                .read_to_string(&mut name_str)
+                                .unwrap_or_default();
+                            eprintln!(
+                                "Attribute type not implemented '{}' in mode {:?}",
+                                name_str, m
+                            );
+                            None
+                        }
+                    },
                 }
-                } else {
-                    None
-                }
+            } else {
+                None
+            }
         }
     };
     attribute_val.unwrap_or(AttributeValue::None())

@@ -1,6 +1,10 @@
 use super::ocel_struct::{OCELEvent, OCELObject};
+
+#[allow(unused_imports)]
+use super::ocel_struct::OCEL;
+
 /// An [`OCEL`] linked based on event and object indices
-/// 
+///
 /// The resulting [`IndexLinkedOCEL`] conveniently represents objects or events by their index in the [`OCEL`].
 pub mod index_linked_ocel;
 pub use index_linked_ocel::IndexLinkedOCEL;
@@ -9,7 +13,7 @@ pub mod id_linked_ocel;
 pub use id_linked_ocel::{IDLinkedOCEL, OwnedIDLinkedOCEL};
 
 /// Linked access to an [`OCEL`], making it easy to follow event-to-object and object-to-object relationships, as well as their reverse
-/// 
+///
 /// See also [`IndexLinkedOCEL`] and [`IDLinkedOCEL`].
 pub trait LinkedOCELAccess<'a, EvRefType: 'a, ObRefType: 'a, EvRetType: 'a, ObRetType: 'a>
 where
@@ -27,21 +31,21 @@ where
     fn get_ob_types(&'a self) -> impl Iterator<Item = &'a str>;
 
     /// Get all events
-    /// 
+    ///
     /// Also see [`LinkedOCELAccess::get_all_evs_ref`].
     fn get_all_evs(&'a self) -> impl Iterator<Item = &'a OCELEvent>;
     /// Get all objects
-    /// 
+    ///
     /// Also see [`LinkedOCELAccess::get_all_obs_ref`].
     fn get_all_obs(&'a self) -> impl Iterator<Item = &'a OCELObject>;
-    
+
     /// Get all event references
-    /// 
+    ///
     /// In contrast to [`LinkedOCELAccess::get_all_evs`], this does not necessarily return direct event references (i.e., &[`OCELEvent`]), but the linked-access specific representation of events
     fn get_all_evs_ref(&'a self) -> impl Iterator<Item = &'a EvRefType>;
 
     /// Get all object references
-    /// 
+    ///
     /// In contrast to [`LinkedOCELAccess::get_all_obs`], this does not necessarily return direct object references (i.e., &[`OCELObject`]), but the linked-access specific representation of objects
     fn get_all_obs_ref(&'a self) -> impl Iterator<Item = &'a ObRefType>;
 
