@@ -511,6 +511,34 @@ impl EventLog {
     pub fn to_dataframe(&self) -> Result<DataFrame, PolarsError> {
         convert_log_to_dataframe(self, false)
     }
+
+    ///
+    /// Construct an [`EventLog`] from list of [`Trace`]s and [`super::stream_xes::XESOuterLogData`]
+    ///
+    /// This is useful in combination with streaming XES import when traces are filtered/pre-processed directly
+    ///
+    pub fn from_traces_and_log_data(
+        traces: Vec<Trace>,
+        log_data: super::stream_xes::XESOuterLogData,
+    ) -> Self {
+        EventLog {
+            attributes: log_data.log_attributes,
+            traces,
+            extensions: Some(log_data.extensions),
+            classifiers: Some(log_data.classifiers),
+            // Only put global_trace_attrs / global_event_attrs to log data if it is not empty
+            global_trace_attrs: if log_data.global_trace_attrs.is_empty() {
+                None
+            } else {
+                Some(log_data.global_trace_attrs)
+            },
+            global_event_attrs: if log_data.global_event_attrs.is_empty() {
+                None
+            } else {
+                Some(log_data.global_event_attrs)
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
