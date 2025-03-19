@@ -24,6 +24,7 @@ quick-xml = {version = "0.31.0"}
 flate2 = "1.0"
 graphviz-rust = { version = "0.9.3", optional = true}
 rusqlite = { version = "0.32.1", features = ["bundled","chrono", "serialize"], optional = true }
+duckdb = { version = "1.2.1", optional = true}
 polars = {version = "0.46.0", features = ["dtype-slim","timezones","partition_by"], optional = true}
 petgraph = "0.6.5"
 ordered-float = "4.4.0"
@@ -38,6 +39,7 @@ graphviz-export = ["dep:graphviz-rust"]
 # Enables OCEL 2.0 SQLite import and export functionality
 # Note: this might not work on certain architectures or machines if SQLite is not available/cannot be build
 ocel-sqlite = ["dep:rusqlite"] 
+ocel-duckdb = ["dep:duckdb"]
 
 # Enables polars DataFrame conversion from/to event data structs
 dataframes = ["dep:polars"] 
