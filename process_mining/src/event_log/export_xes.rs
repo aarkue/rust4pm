@@ -1,20 +1,17 @@
-use std::{
-    borrow::Borrow,
-    fs::File,
-    io::{BufWriter, Write},
-};
-
-use flate2::{write::GzEncoder, Compression};
-use quick_xml::{events::BytesDecl, Writer};
-
-use crate::{utils::xml_utils::XMLWriterWrapper, EventLog};
-
 use super::{
     event_log_struct::{EventLogClassifier, EventLogExtension},
     stream_xes::XESOuterLogData,
     Attribute, AttributeValue, Attributes, Trace,
 };
-const OK: Result<(), quick_xml::Error> = Ok::<(), quick_xml::Error>(());
+use crate::{utils::xml_utils::XMLWriterWrapper, EventLog};
+use flate2::{write::GzEncoder, Compression};
+use quick_xml::{events::BytesDecl, Writer};
+use std::{
+    borrow::Borrow,
+    fs::File,
+    io::{BufWriter, Write},
+};
+const OK: Result<(), std::io::Error> = Ok(());
 
 ///
 /// Export XES (from log data and an iterator over traces) to a XML writer
@@ -33,14 +30,12 @@ where
     W: Write + 'b,
 {
     let mut xml_writer = writer.into();
-    let writer: &mut quick_xml::Writer<_> = xml_writer.to_xml_writer();
-    writer
-        .write_event(quick_xml::events::Event::Decl(BytesDecl::new(
-            "1.0",
-            Some("UTF-8"),
-            None,
-        )))
-        .unwrap();
+    let writer: &mut Writer<_> = xml_writer.to_xml_writer();
+    writer.write_event(quick_xml::events::Event::Decl(BytesDecl::new(
+        "1.0",
+        Some("UTF-8"),
+        None,
+    )))?;
     writer
         .create_element("log")
         .with_attributes(vec![
@@ -117,24 +112,23 @@ where
             }
             OK
         })?;
-
-    OK
+    Ok(())
 }
 
-fn write_xes_attribute<T>(w: &mut Writer<T>, a: &Attribute) -> Result<(), quick_xml::Error>
+fn write_xes_attribute<T>(w: &mut Writer<T>, a: &Attribute) -> Result<(), std::io::Error>
 where
     T: Write,
 {
     let (tag_name, value_opt): (&str, Option<String>) = match &a.value {
-        super::AttributeValue::String(s) => ("string", Some(s.clone())),
-        super::AttributeValue::Date(d) => ("date", Some(d.to_rfc3339())),
-        super::AttributeValue::Int(i) => ("int", Some(i.to_string())),
-        super::AttributeValue::Float(f) => ("float", Some(f.to_string())),
-        super::AttributeValue::Boolean(b) => ("boolean", Some(b.to_string())),
-        super::AttributeValue::ID(id) => ("id", Some(id.to_string())),
-        super::AttributeValue::List(_) => ("list", None),
-        super::AttributeValue::Container(_) => ("container", None),
-        super::AttributeValue::None() => ("string", None),
+        AttributeValue::String(s) => ("string", Some(s.clone())),
+        AttributeValue::Date(d) => ("date", Some(d.to_rfc3339())),
+        AttributeValue::Int(i) => ("int", Some(i.to_string())),
+        AttributeValue::Float(f) => ("float", Some(f.to_string())),
+        AttributeValue::Boolean(b) => ("boolean", Some(b.to_string())),
+        AttributeValue::ID(id) => ("id", Some(id.to_string())),
+        AttributeValue::List(_) => ("list", None),
+        AttributeValue::Container(_) => ("container", None),
+        AttributeValue::None() => ("string", None),
     };
     let e = match value_opt {
         Some(value) => w
@@ -317,8 +311,7 @@ mod export_xes_tests {
         let mut buf_writer = BufWriter::new(exported_xes_data);
         export_xes_event_log(&mut buf_writer, &log).unwrap();
         let data = buf_writer.into_inner().unwrap();
-        let log2 =
-            crate::import_xes_slice(&data, false, crate::XESImportOptions::default()).unwrap();
+        let log2 = crate::import_xes_slice(&data, false, XESImportOptions::default()).unwrap();
         assert_eq!(log.traces.len(), log2.traces.len());
         assert_eq!(log.attributes.len(), log2.attributes.len());
         assert_eq!(
