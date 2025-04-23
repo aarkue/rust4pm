@@ -1,8 +1,9 @@
+use super::import_pnml::PNMLParseError;
+use itertools::Itertools;
+use nalgebra::{DMatrix, Dyn, OMatrix};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
-
-use super::import_pnml::PNMLParseError;
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Hash, Eq, PartialOrd, Ord)]
 /// Place in a Petri net
 pub struct Place {
@@ -18,7 +19,6 @@ pub struct Transition {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-
 /// Nodes (Places or Transitions) in a Petri net
 pub enum PetriNetNodes {
     /// None
@@ -290,6 +290,80 @@ impl PetriNet {
                 .any(|m| m.contains_key(p))
     }
 
+    /// Creates a dictionary for the creation of matrices and vectors
+    pub fn create_vector_dictionary(&self) -> HashMap<Uuid, usize> {
+        let mut result: HashMap<Uuid, usize> = HashMap::new();
+
+        self.places
+            .keys()
+            .sorted()
+            .enumerate()
+            .for_each(|(pos, id)| {
+                result.insert(id.clone(), pos);
+            });
+
+        self.transitions
+            .keys()
+            .sorted()
+            .enumerate()
+            .for_each(|(pos, id)| {
+                result.insert(id.clone(), pos);
+            });
+
+        result
+    }
+
+    /// Creates the pre-incidence matrix of the Petri net
+    pub fn create_pre_incidence_matrix(
+        &self,
+        vector_dictionary: &HashMap<Uuid, usize>,
+    ) -> DMatrix<u8> {
+        let mut result: OMatrix<u8, Dyn, Dyn> =
+            DMatrix::zeros(self.places.len(), self.transitions.len());
+
+        self.arcs.iter().for_each(|arc| match arc.from_to {
+            ArcType::PlaceTransition(place_id, transition_id) => {
+                result[(
+                    *vector_dictionary.get(&place_id).unwrap(),
+                    *vector_dictionary.get(&transition_id).unwrap(),
+                )] += 1;
+            }
+            ArcType::TransitionPlace(_, _) => {}
+        });
+
+        result
+    }
+
+    /// Creates the post-incidence matrix of the Petri net
+    pub fn create_post_incidence_matrix(
+        &self,
+        vector_dictionary: &HashMap<Uuid, usize>,
+    ) -> DMatrix<u8> {
+        let mut result: OMatrix<u8, Dyn, Dyn> =
+            DMatrix::zeros(self.places.len(), self.transitions.len());
+
+        self.arcs.iter().for_each(|arc| match arc.from_to {
+            ArcType::PlaceTransition(_, _) => {}
+            ArcType::TransitionPlace(transition_id, place_id) => {
+                result[(
+                    *vector_dictionary.get(&place_id).unwrap(),
+                    *vector_dictionary.get(&transition_id).unwrap(),
+                )] += 1;
+            }
+        });
+
+        result
+    }
+
+    /// Creates the incidence matrix of the Petri net
+    pub fn create_incidence_matrix(&self, vector_dictionary: &HashMap<Uuid, usize>) -> DMatrix<i8> {
+        self.create_post_incidence_matrix(vector_dictionary)
+            .cast::<i8>()
+            - self
+                .create_pre_incidence_matrix(vector_dictionary)
+                .cast::<i8>()
+    }
+
     #[cfg(feature = "graphviz-export")]
     /// Export Petri net as a PNG image
     ///
@@ -478,11 +552,6 @@ mod tests {
     #[test]
     fn remove_nodes_petri_net_test() {
         let mut pn: PetriNet = serde_json::from_str(SAMPLE_JSON_NET).unwrap();
-        let x: HashMap<String, u32> =
-            vec![("Christian".to_string(), 100), ("Chris".to_string(), 50)]
-                .into_iter()
-                .collect();
-        println!("{x:?}");
         let p1_id = Uuid::from_str("f20ded2a-d308-44d7-abb2-6d0acd30e43e").unwrap();
         let t1_id = Uuid::from_str("f18e00b0-e90b-48f6-99b7-9ee526571213").unwrap();
         if let PetriNetNodes::Places(p) = pn.postset_of(&t1_id) {
@@ -500,5 +569,62 @@ mod tests {
         } else {
             unreachable!();
         }
+    }
+
+    #[test]
+    fn create_incidence_matrix_test() {
+        let mut net = PetriNet::new();
+        let p1 = net.add_place(Some(
+            Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe000").unwrap(),
+        ));
+        let p2 = net.add_place(Some(
+            Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe001").unwrap(),
+        ));
+        let p3 = net.add_place(Some(
+            Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe002").unwrap(),
+        ));
+        let t1 = net.add_transition(
+            Some("a".into()),
+            Some(Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe003").unwrap()),
+        );
+        let t2 = net.add_transition(
+            Some("b".into()),
+            Some(Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe004").unwrap()),
+        );
+        let t3 = net.add_transition(
+            Some("c".into()),
+            Some(Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe005").unwrap()),
+        );
+        let t4 = net.add_transition(
+            Some("d".into()),
+            Some(Uuid::parse_str("67e55044-10b1-426f-9247-bb680e5fe006").unwrap()),
+        );
+        net.add_arc(ArcType::place_to_transition(p1, t1), None);
+        net.add_arc(ArcType::place_to_transition(p1, t2), None);
+        net.add_arc(ArcType::transition_to_place(t1, p2), None);
+        net.add_arc(ArcType::transition_to_place(t2, p2), None);
+        net.add_arc(ArcType::place_to_transition(p2, t3), None);
+        net.add_arc(ArcType::transition_to_place(t3, p3), None);
+        net.add_arc(ArcType::transition_to_place(t4, p2), None);
+        net.add_arc(ArcType::place_to_transition(p2, t4), None);
+
+        let vector_dictionary: HashMap<Uuid, usize> = net.create_vector_dictionary();
+        let pre_matrix = net.create_pre_incidence_matrix(&vector_dictionary);
+        let expected_pre_matrix =
+            DMatrix::from_row_slice(3, 4, &[1, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0]);
+
+        assert_eq!(pre_matrix, expected_pre_matrix);
+
+        let post_matrix = net.create_post_incidence_matrix(&vector_dictionary);
+        let expected_post_matrix =
+            DMatrix::from_row_slice(3, 4, &[0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0]);
+
+        assert_eq!(post_matrix, expected_post_matrix);
+
+        let incidence_matrix = net.create_incidence_matrix(&vector_dictionary);
+        let expected_incidence_matrix =
+            DMatrix::from_row_slice(3, 4, &[-1, -1, 0, 0, 1, 1, -1, 0, 0, 0, 1, 0]);
+
+        assert_eq!(incidence_matrix, expected_incidence_matrix);
     }
 }
