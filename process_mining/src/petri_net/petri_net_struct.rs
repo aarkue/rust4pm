@@ -1,4 +1,5 @@
 use super::import_pnml::PNMLParseError;
+#[cfg(feature = "algebra")]
 use itertools::Itertools;
 #[cfg(feature = "algebra")]
 use nalgebra::{DMatrix, Dyn, OMatrix};
