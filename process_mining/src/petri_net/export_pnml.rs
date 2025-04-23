@@ -1,12 +1,8 @@
-use std::{fs::File, io::Write};
-
-use quick_xml::{events::BytesText, Writer};
-use uuid::Uuid;
-
-use crate::utils::xml_utils::XMLWriterWrapper;
-
 use super::petri_net_struct::PetriNet;
-const OK: Result<(), quick_xml::Error> = Ok::<(), quick_xml::Error>(());
+use crate::utils::xml_utils::XMLWriterWrapper;
+use quick_xml::{events::BytesText, Error, Writer};
+use std::{fs::File, io::Write};
+use uuid::Uuid;
 
 ///
 /// Export a [`PetriNet`] to the PNML format and write the result to the provided writer which implements into [`quick_xml::Writer`] / [`std::io::Write`]
@@ -14,7 +10,7 @@ const OK: Result<(), quick_xml::Error> = Ok::<(), quick_xml::Error>(());
 pub fn export_petri_net_to_pnml<'a, W>(
     pn: &PetriNet,
     into_writer: impl Into<XMLWriterWrapper<'a, W>>,
-) -> Result<(), quick_xml::Error>
+) -> Result<(), Error>
 where
     W: Write + 'a,
 {
@@ -51,7 +47,7 @@ where
                                                         id.to_string().as_str(),
                                                     ))
                                                     .unwrap();
-                                                OK
+                                                Ok(())
                                             })
                                             .unwrap();
                                         if let Some(initial_marking) = pn.initial_marking.clone() {
@@ -67,13 +63,13 @@ where
                                                                 tokens.to_string().as_str(),
                                                             ))
                                                             .unwrap();
-                                                        OK
+                                                        Ok(())
                                                     })
                                                     .unwrap();
                                             }
                                         }
 
-                                        OK
+                                        Ok(())
                                     })
                                     .unwrap();
                             });
@@ -95,7 +91,7 @@ where
                                                             .as_str(),
                                                     ))
                                                     .unwrap();
-                                                OK
+                                                Ok(())
                                             })
                                             .unwrap();
                                         if transition.label.is_none() {
@@ -114,7 +110,7 @@ where
                                                 .write_empty()
                                                 .unwrap();
                                         }
-                                        OK
+                                        Ok(())
                                     })
                                     .unwrap();
                             });
@@ -144,14 +140,14 @@ where
                                                         arc.weight.to_string().as_str(),
                                                     ))
                                                     .unwrap();
-                                                OK
+                                                Ok(())
                                             })
                                             .unwrap();
-                                        OK
+                                        Ok(())
                                     })
                                     .unwrap();
                             });
-                            OK
+                            Ok(())
                         })
                         .unwrap();
 
@@ -177,24 +173,24 @@ where
                                                                 tokens.to_string().as_str(),
                                                             ))
                                                             .unwrap();
-                                                        OK
+                                                        Ok(())
                                                     })
                                                     .unwrap();
                                             });
-                                            OK
+                                            Ok(())
                                         })
                                         .unwrap();
                                 });
-                                OK
+                                Ok(())
                             })
                             .unwrap();
                     }
 
                     // </net>
-                    OK
+                    Ok(())
                 })
                 .unwrap();
-            OK
+            Ok(())
         })?;
     Ok(())
 }
@@ -205,22 +201,20 @@ where
 pub fn export_petri_net_to_pnml_path<P: AsRef<std::path::Path>>(
     pn: &PetriNet,
     path: P,
-) -> Result<(), quick_xml::Error> {
-    let file = File::create(path).unwrap();
+) -> Result<(), Error> {
+    let file = File::create(path)?;
     let mut writer = Writer::new_with_indent(file, b' ', 4);
     export_petri_net_to_pnml(pn, &mut writer)
 }
 
 #[cfg(test)]
 mod test {
-    use std::{fs::File, io::BufWriter};
-
+    use super::export_petri_net_to_pnml_path;
     use crate::{
         import_xes_file, petri_net::export_pnml::export_petri_net_to_pnml,
         utils::test_utils::get_test_data_path, XESImportOptions,
     };
-
-    use super::export_petri_net_to_pnml_path;
+    use std::{fs::File, io::BufWriter};
 
     #[test]
     fn test_export_pnml() {

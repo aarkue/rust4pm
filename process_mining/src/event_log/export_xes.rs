@@ -1,20 +1,16 @@
-use std::{
-    borrow::Borrow,
-    fs::File,
-    io::{BufWriter, Write},
-};
-
-use flate2::{write::GzEncoder, Compression};
-use quick_xml::{events::BytesDecl, Writer};
-
-use crate::{utils::xml_utils::XMLWriterWrapper, EventLog};
-
 use super::{
     event_log_struct::{EventLogClassifier, EventLogExtension},
     stream_xes::XESOuterLogData,
     Attribute, AttributeValue, Attributes, Trace,
 };
-const OK: Result<(), quick_xml::Error> = Ok::<(), quick_xml::Error>(());
+use crate::{utils::xml_utils::XMLWriterWrapper, EventLog};
+use flate2::{write::GzEncoder, Compression};
+use quick_xml::{events::BytesDecl, Error, Writer};
+use std::{
+    borrow::Borrow,
+    fs::File,
+    io::{BufWriter, Write},
+};
 
 ///
 /// Export XES (from log data and an iterator over traces) to a XML writer
@@ -27,20 +23,18 @@ pub fn export_xes<'a, 'b, W, T: Borrow<Trace>, I>(
     log_classifiers: &'a Option<&'a Vec<EventLogClassifier>>,
     log_attributes: &'a Attributes,
     traces: I,
-) -> Result<(), quick_xml::Error>
+) -> Result<(), Error>
 where
     I: Iterator<Item = T>,
     W: Write + 'b,
 {
     let mut xml_writer = writer.into();
-    let writer: &mut quick_xml::Writer<_> = xml_writer.to_xml_writer();
-    writer
-        .write_event(quick_xml::events::Event::Decl(BytesDecl::new(
-            "1.0",
-            Some("UTF-8"),
-            None,
-        )))
-        .unwrap();
+    let writer: &mut Writer<_> = xml_writer.to_xml_writer();
+    writer.write_event(quick_xml::events::Event::Decl(BytesDecl::new(
+        "1.0",
+        Some("UTF-8"),
+        None,
+    )))?;
     writer
         .create_element("log")
         .with_attributes(vec![
@@ -70,7 +64,7 @@ where
                         for a in global_trace_attrs.iter() {
                             write_xes_attribute(w, a)?;
                         }
-                        OK
+                        Ok(())
                     })?;
             }
             // Global event attributes
@@ -81,7 +75,7 @@ where
                         for a in global_event_attrs.iter() {
                             write_xes_attribute(w, a)?;
                         }
-                        OK
+                        Ok(())
                     })?;
             }
             // Classifiers
@@ -109,32 +103,32 @@ where
                             for a in &e.attributes {
                                 write_xes_attribute(w, a)?;
                             }
-                            OK
+                            Ok(())
                         })?;
                     }
-                    OK
+                    Ok(())
                 })?;
             }
-            OK
+            Ok(())
         })?;
 
-    OK
+    Ok(())
 }
 
-fn write_xes_attribute<T>(w: &mut Writer<T>, a: &Attribute) -> Result<(), quick_xml::Error>
+fn write_xes_attribute<T>(w: &mut Writer<T>, a: &Attribute) -> Result<(), std::io::Error>
 where
     T: Write,
 {
     let (tag_name, value_opt): (&str, Option<String>) = match &a.value {
-        super::AttributeValue::String(s) => ("string", Some(s.clone())),
-        super::AttributeValue::Date(d) => ("date", Some(d.to_rfc3339())),
-        super::AttributeValue::Int(i) => ("int", Some(i.to_string())),
-        super::AttributeValue::Float(f) => ("float", Some(f.to_string())),
-        super::AttributeValue::Boolean(b) => ("boolean", Some(b.to_string())),
-        super::AttributeValue::ID(id) => ("id", Some(id.to_string())),
-        super::AttributeValue::List(_) => ("list", None),
-        super::AttributeValue::Container(_) => ("container", None),
-        super::AttributeValue::None() => ("string", None),
+        AttributeValue::String(s) => ("string", Some(s.clone())),
+        AttributeValue::Date(d) => ("date", Some(d.to_rfc3339())),
+        AttributeValue::Int(i) => ("int", Some(i.to_string())),
+        AttributeValue::Float(f) => ("float", Some(f.to_string())),
+        AttributeValue::Boolean(b) => ("boolean", Some(b.to_string())),
+        AttributeValue::ID(id) => ("id", Some(id.to_string())),
+        AttributeValue::List(_) => ("list", None),
+        AttributeValue::Container(_) => ("container", None),
+        AttributeValue::None() => ("string", None),
     };
     let e = match value_opt {
         Some(value) => w
@@ -149,27 +143,27 @@ where
             for attr in c {
                 write_xes_attribute(inner_w, attr)?;
             }
-            OK
+            Ok(())
         })?;
     } else if let AttributeValue::Container(c) = &a.value {
         e.write_inner_content(|inner_w| {
             for attr in c {
                 write_xes_attribute(inner_w, attr)?;
             }
-            OK
+            Ok(())
         })?;
     } else if let Some(own_nested_attrs) = &a.own_attributes {
         e.write_inner_content(|inner_w| {
             for own_attr in own_nested_attrs {
                 write_xes_attribute(inner_w, own_attr)?;
             }
-            OK
+            Ok(())
         })?;
     } else {
         e.write_empty()?;
     }
 
-    OK
+    Ok(())
 }
 
 ///
@@ -200,7 +194,7 @@ pub fn export_xes_event_log_to_file(
     log: &EventLog,
     file: File,
     compress_gz: bool,
-) -> Result<(), quick_xml::Error> {
+) -> Result<(), Error> {
     if compress_gz {
         let encoder = GzEncoder::new(BufWriter::new(file), Compression::fast());
         return export_xes_event_log(&mut Writer::new(BufWriter::new(encoder)), log);
@@ -216,7 +210,7 @@ pub fn export_xes_event_log_to_file(
 pub fn export_xes_event_log_to_file_path<P: AsRef<std::path::Path>>(
     log: &EventLog,
     path: P,
-) -> Result<(), quick_xml::Error> {
+) -> Result<(), Error> {
     let is_gz = path
         .as_ref()
         .as_os_str()
@@ -231,7 +225,7 @@ pub fn export_xes_trace_stream<'a, W, T: Borrow<Trace>, I>(
     writer: impl Into<XMLWriterWrapper<'a, W>>,
     trace_stream: I,
     log_data: XESOuterLogData,
-) -> Result<(), quick_xml::Error>
+) -> Result<(), Error>
 where
     W: Write + 'a,
     I: Iterator<Item = T>,
@@ -255,7 +249,7 @@ pub fn export_xes_trace_stream_to_file<T: Borrow<Trace>, I>(
     log_data: XESOuterLogData,
     file: File,
     compress_gz: bool,
-) -> Result<(), quick_xml::Error>
+) -> Result<(), Error>
 where
     I: Iterator<Item = T>,
 {
@@ -317,8 +311,7 @@ mod export_xes_tests {
         let mut buf_writer = BufWriter::new(exported_xes_data);
         export_xes_event_log(&mut buf_writer, &log).unwrap();
         let data = buf_writer.into_inner().unwrap();
-        let log2 =
-            crate::import_xes_slice(&data, false, crate::XESImportOptions::default()).unwrap();
+        let log2 = crate::import_xes_slice(&data, false, XESImportOptions::default()).unwrap();
         assert_eq!(log.traces.len(), log2.traces.len());
         assert_eq!(log.attributes.len(), log2.attributes.len());
         assert_eq!(

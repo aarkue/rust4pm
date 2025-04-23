@@ -1,11 +1,8 @@
-use std::{collections::HashMap, io::BufRead};
-
-use quick_xml::{Error as QuickXMLError, Reader};
-use uuid::Uuid;
-
-use crate::PetriNet;
-
 use super::petri_net_struct::{ArcType, Marking, PlaceID};
+use crate::PetriNet;
+use quick_xml::{Error as QuickXMLError, Reader};
+use std::{collections::HashMap, io::BufRead};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -104,8 +101,8 @@ pub fn import_pnml<T>(reader: &mut Reader<T>) -> Result<PetriNet, PNMLParseError
 where
     T: BufRead,
 {
-    reader.trim_text(true);
-    reader.expand_empty_elements(true);
+    reader.config_mut().trim_text(true);
+    reader.config_mut().expand_empty_elements = true;
     let mut buf: Vec<u8> = Vec::new();
 
     let mut current_mode: Mode = Mode::None;

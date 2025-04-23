@@ -1,3 +1,13 @@
+use super::{
+    event_log_struct::{EventLogClassifier, EventLogExtension},
+    import_xes::XESParseError,
+    Attribute, AttributeValue, Attributes, Event, Trace, XESEditableAttribute,
+};
+use crate::XESImportOptions;
+use chrono::{DateTime, FixedOffset, NaiveDateTime};
+use flate2::read::GzDecoder;
+use quick_xml::{escape::unescape, events::BytesStart, Reader};
+use serde::{Deserialize, Serialize};
 use std::{
     fmt::Debug,
     fs::File,
@@ -5,20 +15,7 @@ use std::{
     iter::FusedIterator,
     str::FromStr,
 };
-
-use chrono::{DateTime, FixedOffset, NaiveDateTime};
-use flate2::read::GzDecoder;
-use quick_xml::{escape::unescape, events::BytesStart, Reader};
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-
-use crate::XESImportOptions;
-
-use super::{
-    event_log_struct::{EventLogClassifier, EventLogExtension},
-    import_xes::XESParseError,
-    Attribute, AttributeValue, Attributes, Event, Trace, XESEditableAttribute,
-};
 
 /// (Global) log data parsed during streaming
 ///
@@ -186,7 +183,7 @@ impl StreamingXESParser<'_> {
         if self.finished {
             return None;
         }
-        self.reader.trim_text(true);
+        self.reader.config_mut().trim_text(true);
 
         fn parse_classifier(t: &BytesStart<'_>, log_data: &mut XESOuterLogData) {
             log_data.classifiers.push(EventLogClassifier {
@@ -254,7 +251,9 @@ impl StreamingXESParser<'_> {
                                 Err(e) => {
                                     return terminate_with_error(
                                         self,
-                                        XESParseError::XMLParsingError(e),
+                                        XESParseError::XMLParsingError(
+                                            quick_xml::Error::InvalidAttr(e),
+                                        ),
                                     );
                                 }
                             },
@@ -1168,7 +1167,7 @@ mod stream_test {
     #[test]
     pub fn test_stream_ignoring_attributes() {
         let path = get_test_data_path().join("xes").join("nested-attrs.xes");
-        let (mut _log_stream, log_data) = stream_xes_from_path(
+        let (_log_stream, log_data) = stream_xes_from_path(
             &path,
             XESImportOptions {
                 ignore_event_attributes_except: Some(HashSet::new()),
