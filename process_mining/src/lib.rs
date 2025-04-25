@@ -82,6 +82,15 @@ pub mod petri_net {
 }
 
 ///
+/// Conformance Checking
+///
+pub mod conformance {
+    /// Token-based replay
+    #[cfg(feature = "algebra")]
+    pub mod token_based_replay;
+}
+
+///
 /// Directly-follows graph
 ///
 pub mod dfg {

@@ -4,7 +4,7 @@ use itertools::Itertools;
 #[cfg(feature = "algebra")]
 use nalgebra::{DMatrix, Dyn, OMatrix};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Hash, Eq, PartialOrd, Ord)]
 /// Place in a Petri net
@@ -290,6 +290,21 @@ impl PetriNet {
                 .unwrap()
                 .iter()
                 .any(|m| m.contains_key(p))
+    }
+
+    /// Checks if the Petri net contains duplicate or silent transitions
+    pub fn contains_duplicate_or_silent_transitions(&self) -> bool {
+        let mut activities = HashSet::new();
+        
+        for transition in self.transitions.values() {
+            if transition.label.is_none() || activities.contains(transition.label.as_ref().unwrap()) {
+                return true;
+            } else {
+                activities.insert(transition.label.as_ref().unwrap().clone());
+            }
+        }
+        
+        false
     }
 
     #[cfg(feature = "algebra")]
