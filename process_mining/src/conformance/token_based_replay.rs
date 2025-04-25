@@ -1,8 +1,7 @@
-use crate::event_log::event_log_struct::EventLogClassifier;
-use crate::petri_net::petri_net_struct::{Marking};
-use crate::{EventLog, PetriNet};
+use crate::petri_net::petri_net_struct::Marking;
+use crate::{EventLogActivityProjection, PetriNet};
 use nalgebra::{DMatrix, DVector};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap};
 use uuid::Uuid;
 
 ///
@@ -73,18 +72,18 @@ impl TokenBasedReplayResult {
 ///
 /// Computes token-based replay for a Petri net that has unique labels and no silent transitions
 ///
-#[cfg(feature = "algebra")]
-pub fn token_based_replay(
+#[cfg(feature = "token_based_replay")]
+pub fn apply_token_based_replay(
     petri_net: &PetriNet,
-    event_log: &EventLog,
+    event_log: &EventLogActivityProjection,
 ) -> Result<TokenBasedReplayResult, TokenBasedReplayError> {
     if petri_net.initial_marking.is_none() {
         return Err(TokenBasedReplayError::NoInitialMarking);
-    } else if petri_net.final_markings.clone().is_none()
-        || petri_net.final_markings.clone().unwrap().len() == 0
+    } else if petri_net.final_markings.as_ref().is_none()
+        || petri_net.final_markings.as_ref().unwrap().len() == 0
     {
         return Err(TokenBasedReplayError::NoFinalMarking);
-    } else if petri_net.final_markings.clone().unwrap().len() > 1 {
+    } else if petri_net.final_markings.as_ref().unwrap().len() > 1 {
         return Err(TokenBasedReplayError::TooManyFinalMarkings);
     } else if petri_net.contains_duplicate_or_silent_transitions() {
         return Err(TokenBasedReplayError::DuplicateLabelOrSilentTransitionError);
@@ -94,76 +93,72 @@ pub fn token_based_replay(
 
     let node_to_pos = petri_net.create_vector_dictionary();
 
-    let pre_matrix = change_matrix_type_to_i64(petri_net.create_pre_incidence_matrix(&node_to_pos));
+    let pre_matrix = change_matrix_type_to_i64(&petri_net.create_pre_incidence_matrix(&node_to_pos));
     let post_matrix =
-        change_matrix_type_to_i64(petri_net.create_post_incidence_matrix(&node_to_pos));
+        change_matrix_type_to_i64(&petri_net.create_post_incidence_matrix(&node_to_pos));
 
-    let name_classifier: EventLogClassifier = EventLogClassifier::default();
-    let mut activities = HashSet::new();
+    let pos_array: Vec<Option<usize>> = event_log
+        .activities
+        .iter()
+        .map(|activity| {
+            let mut pos = None;
 
-    event_log.traces.iter().for_each(|trace| {
-        trace.events.iter().for_each(|event| {
-            activities.insert(name_classifier.get_class_identity(event));
-        });
-    });
-
-    let mut activity_to_pos: HashMap<String, usize> = HashMap::new();
-    for activity in activities.iter() {
-        for (transition_id, transition) in petri_net.transitions.iter() {
-            if transition
-                .label
-                .clone()
-                .is_some_and(|label| label.eq(activity))
-            {
-                activity_to_pos.insert(activity.clone(), *node_to_pos.get(transition_id).unwrap());
+            for (transition_id, transition) in petri_net.transitions.iter() {
+                if transition
+                    .label
+                    .as_ref()
+                    .is_some_and(|label| label.eq(activity))
+                {
+                    pos = Some(*node_to_pos.get(transition_id).unwrap());
+                    break;
+                }
             }
-        }
-    }
+
+            pos
+        })
+        .collect();
 
     let m_init = marking_to_vector(
-        petri_net.initial_marking.clone().unwrap(),
+        petri_net.initial_marking.as_ref().unwrap(),
         &node_to_pos,
         petri_net.places.len(),
     );
 
     let m_final = marking_to_vector(
-        petri_net
-            .final_markings
-            .clone()
-            .unwrap()
-            .get(0)
-            .unwrap()
-            .clone(),
+        petri_net.final_markings.as_ref().unwrap().get(0).unwrap(),
         &node_to_pos,
         petri_net.places.len(),
     );
 
-    result.produced += (m_init.sum() * event_log.traces.len() as i64) as u64;
-    result.consumed += (m_final.sum() * event_log.traces.len() as i64) as u64;
 
-    event_log.traces.iter().for_each(|trace| {
+    event_log.traces.iter().for_each(|(trace, freq)| {
+        result.produced += (m_init.sum() * (*freq as i64)) as u64;
+        result.consumed += (m_final.sum() * (*freq as i64)) as u64;
+        
         let mut marking: DVector<i64> = DVector::zeros(petri_net.places.len());
-        marking += m_init.clone();
+        marking += &m_init * (*freq as i64);
 
-        trace.events.iter().for_each(|event| {
-            let activity = name_classifier.get_class_identity(event);
-            let pos = activity_to_pos.get(&activity).unwrap();
+        trace.iter().for_each(|event| {
+            let pos_option: &Option<usize> = pos_array.get(*event).unwrap();
+            if pos_option.is_some() {
+                let pos = pos_option.unwrap();
 
-            let t_in = pre_matrix.column(*pos);
-            let t_out = post_matrix.column(*pos);
+                let t_in = pre_matrix.column(pos);
+                let t_out = post_matrix.column(pos);
 
-            marking -= t_in;
-            result.consumed += t_in.sum() as u64;
+                marking -= t_in;
+                result.consumed += (t_in.sum() * (*freq as i64)) as u64;
 
-            result.missing += count_missing(&mut marking);
+                result.missing += count_missing(&mut marking) * freq;
 
-            marking += t_out;
-            result.produced += t_out.sum() as u64;
+                marking += t_out;
+                result.produced += (t_out.sum() * (*freq as i64)) as u64;
+            }
         });
 
-        marking -= m_final.clone();
-        result.missing += count_missing(&mut marking);
-        result.remaining += marking.sum() as u64;
+        marking -= &m_final * (*freq as i64);
+        result.missing += count_missing(&mut marking) * freq;
+        result.remaining += (marking.sum() * (*freq as i64)) as u64;
     });
 
     Ok(result)
@@ -172,23 +167,15 @@ pub fn token_based_replay(
 ///
 /// Changes the [`DMatrix`]'s data type to be [`i64`] from [`u8`]
 ///
-pub fn change_matrix_type_to_i64(input: DMatrix<u8>) -> DMatrix<i64> {
-    let mut post_matrix: DMatrix<i64> = DMatrix::zeros(input.nrows(), input.ncols());
-
-    for i in 0..input.nrows() {
-        for j in 0..input.ncols() {
-            post_matrix[(i, j)] = input[(i, j)] as i64;
-        }
-    }
-
-    post_matrix
+fn change_matrix_type_to_i64(input: &DMatrix<u8>) -> DMatrix<i64> {
+    DMatrix::from_column_slice(input.nrows(), input.ncols(), input.map(|row| row as i64).as_slice())
 }
 
 ///
 /// Changes the [`Marking`] object into a [`DVector<i64>`]
 ///
 pub fn marking_to_vector(
-    marking: Marking,
+    marking: &Marking,
     node_to_pos: &HashMap<Uuid, usize>,
     vector_len: usize,
 ) -> DVector<i64> {
@@ -209,8 +196,8 @@ pub fn count_missing(marking: &mut DVector<i64>) -> u64 {
 
     marking.iter_mut().for_each(|place_tokens| {
         if *place_tokens < 0 {
+            result += place_tokens.abs() as u64;
             *place_tokens = 0;
-            result += 1;
         }
     });
 
@@ -221,7 +208,8 @@ pub fn count_missing(marking: &mut DVector<i64>) -> u64 {
 mod tests {
     use super::*;
     use crate::event_log::{Event, Trace};
-    use crate::petri_net::petri_net_struct::{ArcType};
+    use crate::EventLog;
+    use crate::petri_net::petri_net_struct::ArcType;
 
     #[test]
     fn token_based_replay_test() {
@@ -262,7 +250,8 @@ mod tests {
         let mut event_log = EventLog::new();
         event_log.traces.push(trace_1);
 
-        let tbr_result = token_based_replay(&net, &event_log);
+        let event_log_abstraction = EventLogActivityProjection::from(&event_log);
+        let tbr_result = apply_token_based_replay(&net, &event_log_abstraction);
 
         println!("After replaying trace 1, the result is: {:?}", tbr_result);
         assert!(tbr_result.is_ok());
@@ -280,7 +269,8 @@ mod tests {
 
         event_log.traces.push(trace_2);
 
-        let tbr_result_2 = token_based_replay(&net, &event_log);
+        let event_log_abstraction_2 = EventLogActivityProjection::from(&event_log);
+        let tbr_result_2 = apply_token_based_replay(&net, &event_log_abstraction_2);
 
         println!(
             "After replaying trace 1 and trace 2, the result is: {:?}",

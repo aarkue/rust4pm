@@ -86,7 +86,7 @@ pub mod petri_net {
 ///
 pub mod conformance {
     /// Token-based replay
-    #[cfg(feature = "algebra")]
+    #[cfg(feature = "token_based_replay")]
     pub mod token_based_replay;
 }
 

@@ -1,7 +1,7 @@
 use super::import_pnml::PNMLParseError;
-#[cfg(feature = "algebra")]
+#[cfg(feature = "token_based_replay")]
 use itertools::Itertools;
-#[cfg(feature = "algebra")]
+#[cfg(feature = "token_based_replay")]
 use nalgebra::{DMatrix, Dyn, OMatrix};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -307,7 +307,7 @@ impl PetriNet {
         false
     }
 
-    #[cfg(feature = "algebra")]
+    #[cfg(feature = "token_based_replay")]
     /// Creates a dictionary for the creation of matrices and vectors
     pub fn create_vector_dictionary(&self) -> HashMap<Uuid, usize> {
         let mut result: HashMap<Uuid, usize> = HashMap::new();
@@ -331,7 +331,7 @@ impl PetriNet {
         result
     }
 
-    #[cfg(feature = "algebra")]
+    #[cfg(feature = "token_based_replay")]
     /// Creates the pre-incidence matrix of the Petri net
     pub fn create_pre_incidence_matrix(
         &self,
@@ -353,7 +353,7 @@ impl PetriNet {
         result
     }
 
-    #[cfg(feature = "algebra")]
+    #[cfg(feature = "token_based_replay")]
     /// Creates the post-incidence matrix of the Petri net
     pub fn create_post_incidence_matrix(
         &self,
@@ -375,7 +375,7 @@ impl PetriNet {
         result
     }
 
-    #[cfg(feature = "algebra")]
+    #[cfg(feature = "token_based_replay")]
     /// Creates the incidence matrix of the Petri net
     pub fn create_incidence_matrix(&self, vector_dictionary: &HashMap<Uuid, usize>) -> DMatrix<i8> {
         self.create_post_incidence_matrix(vector_dictionary)
@@ -592,7 +592,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "algebra")]
+    #[cfg(feature = "token_based_replay")]
     #[test]
     fn create_incidence_matrix_test() {
         let mut net = PetriNet::new();
