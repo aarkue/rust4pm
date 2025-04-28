@@ -137,7 +137,7 @@ pub fn apply_token_based_replay(
         result.consumed += m_final.sum() as u64 * *freq;
 
         let mut marking: DVector<i64> = DVector::zeros(petri_net.places.len());
-        marking += &m_init * (*freq as i64);
+        marking += &m_init;
 
         trace.iter().for_each(|event| {
             let pos_option: &Option<usize> = pos_array.get(*event).unwrap();
@@ -157,7 +157,7 @@ pub fn apply_token_based_replay(
             }
         });
 
-        marking -= &m_final * (*freq as i64);
+        marking -= &m_final;
         result.missing += count_missing(&mut marking) * freq;
         result.remaining += marking.sum() as u64 * *freq;
     });
