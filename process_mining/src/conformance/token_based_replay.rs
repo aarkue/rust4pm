@@ -1,7 +1,7 @@
 use crate::petri_net::petri_net_struct::Marking;
 use crate::{EventLogActivityProjection, PetriNet};
 use nalgebra::{DMatrix, DVector};
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 ///
@@ -93,7 +93,8 @@ pub fn apply_token_based_replay(
 
     let node_to_pos = petri_net.create_vector_dictionary();
 
-    let pre_matrix = change_matrix_type_to_i64(&petri_net.create_pre_incidence_matrix(&node_to_pos));
+    let pre_matrix =
+        change_matrix_type_to_i64(&petri_net.create_pre_incidence_matrix(&node_to_pos));
     let post_matrix =
         change_matrix_type_to_i64(&petri_net.create_post_incidence_matrix(&node_to_pos));
 
@@ -101,19 +102,20 @@ pub fn apply_token_based_replay(
         .activities
         .iter()
         .map(|activity| {
-            let mut pos = None;
+            let pos;
 
-            for (transition_id, transition) in petri_net.transitions.iter() {
-                if transition
-                    .label
-                    .as_ref()
-                    .is_some_and(|label| label.eq(activity))
-                {
-                    pos = Some(*node_to_pos.get(transition_id).unwrap());
-                    break;
-                }
-            }
-
+            if let Some((transition_id, _)) =
+                petri_net.transitions.iter().find(|(_, transition)| {
+                    transition
+                        .label
+                        .as_ref()
+                        .is_some_and(|label| label.eq(activity))
+                })
+            {
+                pos = Some(*node_to_pos.get(transition_id).unwrap());
+            } else {
+                pos = None;
+            };
             pos
         })
         .collect();
@@ -130,11 +132,10 @@ pub fn apply_token_based_replay(
         petri_net.places.len(),
     );
 
-
     event_log.traces.iter().for_each(|(trace, freq)| {
-        result.produced += (m_init.sum() * (*freq as i64)) as u64;
-        result.consumed += (m_final.sum() * (*freq as i64)) as u64;
-        
+        result.produced += m_init.sum() as u64 * *freq;
+        result.consumed += m_final.sum() as u64 * *freq;
+
         let mut marking: DVector<i64> = DVector::zeros(petri_net.places.len());
         marking += &m_init * (*freq as i64);
 
@@ -147,18 +148,18 @@ pub fn apply_token_based_replay(
                 let t_out = post_matrix.column(pos);
 
                 marking -= t_in;
-                result.consumed += (t_in.sum() * (*freq as i64)) as u64;
+                result.consumed += t_in.sum() as u64 * *freq;
 
                 result.missing += count_missing(&mut marking) * freq;
 
                 marking += t_out;
-                result.produced += (t_out.sum() * (*freq as i64)) as u64;
+                result.produced += t_out.sum() as u64 * *freq;
             }
         });
 
         marking -= &m_final * (*freq as i64);
         result.missing += count_missing(&mut marking) * freq;
-        result.remaining += (marking.sum() * (*freq as i64)) as u64;
+        result.remaining += marking.sum() as u64 * *freq;
     });
 
     Ok(result)
@@ -168,7 +169,7 @@ pub fn apply_token_based_replay(
 /// Changes the [`DMatrix`]'s data type to be [`i64`] from [`u8`]
 ///
 fn change_matrix_type_to_i64(input: &DMatrix<u8>) -> DMatrix<i64> {
-    DMatrix::from_column_slice(input.nrows(), input.ncols(), input.map(|row| row as i64).as_slice())
+    input.map(|e| e as i64)
 }
 
 ///
@@ -208,8 +209,8 @@ pub fn count_missing(marking: &mut DVector<i64>) -> u64 {
 mod tests {
     use super::*;
     use crate::event_log::{Event, Trace};
-    use crate::EventLog;
     use crate::petri_net::petri_net_struct::ArcType;
+    use crate::EventLog;
 
     #[test]
     fn token_based_replay_test() {
