@@ -39,14 +39,16 @@ pub mod event_log {
         pub mod linked_ocel;
         /// OCEL 2.0 struct and sub-structs
         pub mod ocel_struct;
-        /// `SQLite` OCEL 2.0
-        #[cfg(feature = "ocel-sqlite")]
-        pub mod sqlite;
+        /// `SQL` OCEL 2.0 (SQLite and DuckDB)
+        ///
+        #[cfg(not(all(not(feature = "ocel-duckdb"), not(feature = "ocel-sqlite"))))]
+        pub mod sql;
         /// XML Export for OCEL 2.0
         pub mod xml_ocel_export;
         #[allow(clippy::single_match)]
         /// Parser for the OCEL 2.0 XML format
         pub mod xml_ocel_import;
+        pub(crate) mod flatten;
     }
     pub use event_log_struct::{
         Attribute, AttributeValue, Attributes, Event, EventLog, Trace, XESEditableAttribute,
@@ -189,15 +191,19 @@ pub use event_log::ocel::xml_ocel_export::export_ocel_xml;
 
 #[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
-pub use event_log::ocel::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_path;
+pub use event_log::ocel::sql::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_path;
 
 #[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
-pub use event_log::ocel::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_con;
+pub use event_log::ocel::sql::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_con;
 
 #[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
-pub use event_log::ocel::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_slice;
+pub use event_log::ocel::sql::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_slice;
+
+#[doc(inline)]
+#[cfg(not(all(not(feature = "ocel-duckdb"), not(feature = "ocel-sqlite"))))]
+pub use event_log::ocel::sql::export::export_ocel_to_sql_con;
 
 #[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]

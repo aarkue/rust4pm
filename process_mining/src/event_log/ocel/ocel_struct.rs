@@ -146,8 +146,50 @@ pub struct OCELObjectAttribute {
     /// Value of attribute
     pub value: OCELAttributeValue,
     /// Time of attribute value
+    #[serde(deserialize_with = "robust_timestamp_parsing")]
     pub time: DateTime<FixedOffset>,
 }
+
+fn robust_timestamp_parsing<'de, D>(deserializer: D) -> Result<DateTime<FixedOffset>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let time: String = Deserialize::deserialize(deserializer)?;
+    if let Ok(dt) = DateTime::parse_from_rfc3339(&time) {
+        return Ok(dt);
+    }
+    if let Ok(dt) = DateTime::parse_from_rfc2822(&time) {
+        return Ok(dt);
+    }
+    // eprintln!("Encountered weird datetime format: {:?}", time);
+
+    // Some logs have this date: "2023-10-06 09:30:21.890421"
+    // Assuming that this is UTC
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&time, "%F %T%.f") {
+        return Ok(dt.and_utc().into());
+    }
+
+    // Also handle "2024-10-02T07:55:15.348555" as well as "2022-01-09T15:00:00"
+    // Assuming UTC time zone
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&time, "%FT%T%.f") {
+        return Ok(dt.and_utc().into());
+    }
+
+    // export_path
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&time, "%F %T UTC") {
+        return Ok(dt.and_utc().into());
+    }
+
+    // Who made me do this? 🫣
+    // Some logs have this date: "Mon Apr 03 2023 12:08:18 GMT+0200 (Mitteleuropäische Sommerzeit)"
+    // Below ignores the first "Mon " part (%Z) parses the rest (only if "GMT") and then parses the timezone (+0200)
+    // The rest of the input is ignored
+    if let Ok((dt, _)) = DateTime::parse_and_remainder(&time, "%Z %b %d %Y %T GMT%z") {
+        return Ok(dt);
+    }
+    Err(serde::de::Error::custom("Unexpected Date Format"))
+}
+
 impl OCELObjectAttribute {
     /// Construct a new object attribute given its name, value, and time
     pub fn new<S: AsRef<str>, V: Into<OCELAttributeValue>, T: Into<DateTime<FixedOffset>>>(
