@@ -248,13 +248,14 @@ fn clean_sql_name(type_name: &str) -> String {
 
 #[cfg(test)]
 mod test {
-    use std::fs::{remove_file, File};
+    use std::fs::remove_file;
 
     use crate::{import_ocel_json_from_path, utils::test_utils};
 
     use super::export_ocel_to_sql_con;
 
     #[test]
+    #[cfg(feature = "ocel-duckdb")]
     fn test_duckdb_ocel_export_order() {
         let path = test_utils::get_test_data_path();
         let ocel =
@@ -266,6 +267,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "ocel-sqlite")]
     fn test_sqlite_ocel_export_order() {
         let path: std::path::PathBuf = test_utils::get_test_data_path();
         let ocel =
