@@ -4,9 +4,7 @@
     rust_2018_idioms,
     missing_docs
 )]
-
 #![allow(clippy::needless_doctest_main)]
-
 #![doc = include_str!("../README.md")]
 
 ///
@@ -207,14 +205,11 @@ pub use event_log::ocel::sql::export::export_ocel_to_sql_con;
 
 #[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
-pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_con;
-#[cfg(feature = "ocel-sqlite")]
-#[doc(inline)]
-pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_path;
+pub use event_log::ocel::sql::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_path;
 
 #[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
-pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_vec;
+pub use event_log::ocel::sql::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_vec;
 
 #[cfg(feature = "dataframes")]
 #[doc(inline)]
