@@ -48,7 +48,7 @@ dataframes = ["dep:polars"]
 log-splitting = ["dep:rand"]
 
 # Enables algebraic functionality
-algebra = ["dep:nalgebra"]
+token_based_replay = ["dep:nalgebra"]
 
 [package.metadata.docs.rs]
 all-features = true
