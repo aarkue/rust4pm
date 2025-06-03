@@ -27,7 +27,7 @@ impl From<usize> for EventIndex {
 /// An Object Index
 ///
 /// Points to an object in the context of a given OCEL
-pub struct ObjectIndex(usize);
+pub struct ObjectIndex(pub usize);
 impl From<&ObjectIndex> for ObjectIndex {
     fn from(value: &ObjectIndex) -> Self {
         *value
