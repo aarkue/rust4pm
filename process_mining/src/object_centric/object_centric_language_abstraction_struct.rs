@@ -242,7 +242,7 @@ impl OCLanguageAbstraction {
                         ),
                     }
                 }
-                
+
                 OCProcessTreeNode::Leaf(leaf) => match &leaf.activity_label {
                     OCLeafLabel::TreeActivity(label) => {
                         let (
@@ -741,8 +741,13 @@ pub fn compute_fitness_precision(
         .map(|&ev_type| (ev_type, 0.0))
         .collect::<HashMap<_, _>>();
     let mut prec_per_ev_type = fit_per_ev_type.clone();
+    let mut valid_fit_ev_type_count = 1.0;
+    let mut valid_prec_ev_type_count = 1.0;
 
     all_ev_types.iter().for_each(|&ev_type| {
+        let mut fit_pattern_matching = 0.0;
+        let mut prec_pattern_matching = 0.0;
+
         pattern
             .iter()
             .for_each(|&(log_ev_type_per_ob_type, model_ev_type_per_ob_type)| {
@@ -776,24 +781,32 @@ pub fn compute_fitness_precision(
                         .get_mut(ev_type)
                         .unwrap()
                         .add_assign(matches_log_model / matches_log);
+                    fit_pattern_matching += 1.0;
                 }
-                
+
                 if matches_model != 0.0 {
                     prec_per_ev_type
                         .get_mut(ev_type)
                         .unwrap()
                         .add_assign(matches_log_model / matches_model);
+                    prec_pattern_matching += 1.0;
                 }
             });
-        
-        fit_per_ev_type
-            .get_mut(ev_type)
-            .unwrap()
-            .div_assign(pattern.len() as f64);
-        prec_per_ev_type
-            .get_mut(ev_type)
-            .unwrap()
-            .div_assign(pattern.len() as f64);
+
+        if fit_pattern_matching != 0.0 {
+            fit_per_ev_type
+                .get_mut(ev_type)
+                .unwrap()
+                .div_assign(fit_pattern_matching);
+            valid_fit_ev_type_count += 1.0;
+        }
+        if prec_pattern_matching != 0.0 {
+            prec_per_ev_type
+                .get_mut(ev_type)
+                .unwrap()
+                .div_assign(prec_pattern_matching);
+            valid_prec_ev_type_count += 1.0;
+        }
     });
 
     let mut fit_per_dfr = all_ev_types
@@ -807,6 +820,8 @@ pub fn compute_fitness_precision(
         .collect::<HashMap<_, _>>();
     let mut prec_per_dfr = fit_per_dfr.clone();
 
+    let mut dfr_matches_fit = 0.0;
+    let mut dfr_matches_prec = 0.0;
     all_ev_types.iter().for_each(|&from| {
         all_ev_types.iter().for_each(|&to| {
             let mut matches_log = 0.0;
@@ -841,13 +856,15 @@ pub fn compute_fitness_precision(
                     .get_mut(&(from, to))
                     .unwrap()
                     .add_assign(matches_log_model / matches_log);
+                dfr_matches_fit += 1.0;
             }
             if matches_model != 0.0 {
                 prec_per_dfr
                     .get_mut(&(from, to))
                     .unwrap()
                     .add_assign(matches_log_model / matches_model);
-            } 
+                dfr_matches_prec += 1.0;
+            }
         })
     });
 
@@ -855,25 +872,33 @@ pub fn compute_fitness_precision(
     fit_per_ev_type.iter().for_each(|(_, fit)| {
         fitness_weighted_ev_types += fit;
     });
-    fitness_weighted_ev_types /= all_ev_types.len() as f64;
+    if valid_fit_ev_type_count > 0.0 {
+        fitness_weighted_ev_types /= valid_fit_ev_type_count;
+    }
 
     let mut fitness_weighted_dfr = 0.0;
     fit_per_dfr.iter().for_each(|(_, fit)| {
         fitness_weighted_dfr += fit;
     });
-    fitness_weighted_dfr /= (all_ev_types.len() * all_ev_types.len()) as f64;
+    if dfr_matches_fit > 0.0 {
+        fitness_weighted_dfr /= dfr_matches_fit;
+    }
 
     let mut precision_weighted_ev_types = 0.0;
     prec_per_ev_type.iter().for_each(|(_, prec)| {
         precision_weighted_ev_types += prec;
     });
-    precision_weighted_ev_types /= all_ev_types.len() as f64;
+    if valid_prec_ev_type_count > 0.0 {
+        precision_weighted_ev_types /= valid_prec_ev_type_count;
+    }
 
     let mut precision_weighted_dfr = 0.0;
     prec_per_dfr.iter().for_each(|(_, prec)| {
         precision_weighted_dfr += prec;
     });
-    precision_weighted_dfr /= (all_ev_types.len() * all_ev_types.len()) as f64;
+    if dfr_matches_prec > 0.0 {
+        precision_weighted_dfr /= dfr_matches_prec;
+    }
 
     (
         (fitness_weighted_ev_types + fitness_weighted_dfr) / 2.0,
