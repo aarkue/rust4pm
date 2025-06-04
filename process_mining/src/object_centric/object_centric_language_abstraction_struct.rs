@@ -776,18 +776,16 @@ pub fn compute_fitness_precision(
                         .get_mut(ev_type)
                         .unwrap()
                         .add_assign(matches_log_model / matches_log);
-                } else {
-                    fit_per_ev_type.get_mut(ev_type).unwrap().add_assign(1.0);
                 }
+                
                 if matches_model != 0.0 {
                     prec_per_ev_type
                         .get_mut(ev_type)
                         .unwrap()
                         .add_assign(matches_log_model / matches_model);
-                } else {
-                    prec_per_ev_type.get_mut(ev_type).unwrap().add_assign(1.0);
                 }
             });
+        
         fit_per_ev_type
             .get_mut(ev_type)
             .unwrap()
@@ -843,17 +841,13 @@ pub fn compute_fitness_precision(
                     .get_mut(&(from, to))
                     .unwrap()
                     .add_assign(matches_log_model / matches_log);
-            } else {
-                fit_per_dfr.get_mut(&(from, to)).unwrap().add_assign(1.0);
             }
             if matches_model != 0.0 {
                 prec_per_dfr
                     .get_mut(&(from, to))
                     .unwrap()
                     .add_assign(matches_log_model / matches_model);
-            } else {
-                prec_per_dfr.get_mut(&(from, to)).unwrap().add_assign(1.0);
-            }
+            } 
         })
     });
 

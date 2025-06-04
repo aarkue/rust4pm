@@ -1,4 +1,3 @@
-use crate::event_log::AttributeValue::Boolean;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -104,18 +103,35 @@ impl OCProcessTreeNode {
         rel_ob_types_per_node: &HashMap<Uuid, HashMap<&EventType, HashSet<&ObjectType>>>,
         div_ob_types_per_node: &HashMap<Uuid, HashMap<&EventType, HashSet<&ObjectType>>>,
     ) -> bool {
-        rel_ob_types_per_node
+        let mut result = true;
+        let childs_rel_ob_types_per_ev_type = rel_ob_types_per_node
             .get(self.get_uuid())
-            .unwrap()
+            .unwrap();
+        let childs_div_ob_types_per_ev_type = div_ob_types_per_node
+            .get(self.get_uuid())
+            .unwrap();
+        
+        childs_rel_ob_types_per_ev_type
             .iter()
-            .find(|&(_, ob_types)| ob_types.contains(ob_type))
-            .is_none()
-            || div_ob_types_per_node
-                .get(self.get_uuid())
-                .unwrap()
-                .iter()
-                .find(|&(_, ob_types)| ob_types.contains(ob_type))
-                .is_some()
+            .for_each(|(&ev_type, ob_types)| {
+                if ob_types.contains(ob_type) {
+                    if !childs_div_ob_types_per_ev_type
+                        .get(ev_type)
+                        .unwrap()
+                        .contains(ob_type)
+                    {
+                        result = false;
+                    }
+                }
+            });
+        result
+        // .is_none()
+        // || div_ob_types_per_node
+        //     .get(self.get_uuid())
+        //     .unwrap()
+        //     .iter()
+        //     .find(|&(_, ob_types)| ob_types.contains(ob_type))
+        //     .is_some()
     }
 }
 
@@ -346,12 +362,20 @@ impl OCProcessTreeOperator {
                         skippable &= skip_child;
 
                         if is_unrelated_or_divergent {
+                            let div_ob_types_per_ev_type =
+                                div_ob_types_per_node.get(&child.get_uuid()).unwrap();
+
                             let curr_div_or_unrel_evs = rel_ob_types_per_node
                                 .get(&child.get_uuid())
                                 .unwrap()
                                 .iter()
                                 .filter_map(|(&ev_type, ob_types)| {
-                                    if ob_types.contains(ob_type) {
+                                    if ob_types.contains(ob_type)
+                                        && div_ob_types_per_ev_type
+                                            .get(ev_type)
+                                            .unwrap()
+                                            .contains(ob_type)
+                                    {
                                         Some(ev_type)
                                     } else {
                                         None
@@ -362,6 +386,7 @@ impl OCProcessTreeOperator {
                             kept_div_or_unrel_evs.iter().for_each(|&kept_ev| {
                                 curr_div_or_unrel_evs.iter().for_each(|&curr_ev| {
                                     directly_follow_ev_types.insert((kept_ev, curr_ev));
+                                    directly_follow_ev_types.insert((curr_ev, kept_ev));
                                 })
                             });
 
@@ -369,7 +394,6 @@ impl OCProcessTreeOperator {
                         } else {
                             kept_div_or_unrel_evs = HashSet::new();
                         }
-                        
                     },
                 );
 
@@ -428,15 +452,19 @@ impl OCProcessTreeOperator {
                                         .get(child_1.get_uuid())
                                         .unwrap()
                                         .iter()
-                                        .for_each(|(ev_type1, _)| {
-                                            rel_ob_types_per_node
-                                                .get(child_2.get_uuid())
-                                                .unwrap()
-                                                .iter()
-                                                .for_each(|(ev_type2, _)| {
-                                                    directly_follow_ev_types
-                                                        .insert((ev_type1, ev_type2));
-                                                });
+                                        .for_each(|(ev_type1, ob_types1)| {
+                                            if ob_types1.contains(ob_type) {
+                                                rel_ob_types_per_node
+                                                    .get(child_2.get_uuid())
+                                                    .unwrap()
+                                                    .iter()
+                                                    .for_each(|(ev_type2, ob_types2)| {
+                                                        if ob_types2.contains(ob_type) {
+                                                            directly_follow_ev_types
+                                                                .insert((ev_type1, ev_type2));
+                                                        }
+                                                    });
+                                            }
                                         });
                                 }
                             })
@@ -445,22 +473,34 @@ impl OCProcessTreeOperator {
             OCOperatorType::Concurrency => {
                 skippable = true;
 
-                let mut child_alphabets: Vec<HashSet<&EventType>> = Vec::new();
+                let mut child_alphabets: Vec<HashSet<&EventType>> = self
+                    .children
+                    .iter()
+                    .map(|child| {
+                        rel_ob_types_per_node
+                            .get(child.get_uuid())
+                            .unwrap()
+                            .iter()
+                            .filter_map(|(&ev_type, ob_types)| {
+                                if ob_types.contains(ob_type) {
+                                    Some(ev_type)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<HashSet<&EventType>>()
+                    })
+                    .collect::<Vec<HashSet<&EventType>>>();
 
-                children_dfr.iter().for_each(|(start_evs_child, end_evs_child, dfr_evs_child, skip_child)| {
-                    start_ev_types.extend(start_evs_child);
-                    end_ev_types.extend(end_evs_child);
-                    directly_follow_ev_types.extend(dfr_evs_child);
-                                        
-                    let mut child_alphabet: HashSet<&EventType> = HashSet::new();
-                    dfr_evs_child.iter().for_each(|&(from, to)| {
-                        child_alphabet.insert(from);
-                        child_alphabet.insert(to);
-                    });
-                    child_alphabets.push(child_alphabet);
+                children_dfr.iter().for_each(
+                    |(start_evs_child, end_evs_child, dfr_evs_child, skip_child)| {
+                        start_ev_types.extend(start_evs_child);
+                        end_ev_types.extend(end_evs_child);
+                        directly_follow_ev_types.extend(dfr_evs_child);
 
-                    skippable &= skip_child;
-                });
+                        skippable &= skip_child;
+                    },
+                );
 
                 let concurrent_dfrs: HashSet<_> = (0..child_alphabets.len())
                     .flat_map(|i| Self::create_dfr_concurrent_alphabets(&child_alphabets, i))
@@ -472,7 +512,7 @@ impl OCProcessTreeOperator {
                 children_dfr.iter().for_each(|(_, _, dfr_child, _)| {
                     directly_follow_ev_types.extend(dfr_child);
                 });
-                
+
                 skippable = children_dfr.get(0).unwrap().3;
                 let other_skippable = children_dfr
                     .iter()
@@ -481,21 +521,24 @@ impl OCProcessTreeOperator {
                     .is_some();
 
                 children_dfr.get(0).unwrap().1.iter().for_each(|&end_ev| {
-                    children_dfr.iter().skip(1).for_each(|(start_evs, _, _ ,_ )| {
-                        start_evs.iter().for_each(|&start_ev| {
-                            directly_follow_ev_types.insert((end_ev, start_ev));
+                    children_dfr
+                        .iter()
+                        .skip(1)
+                        .for_each(|(start_evs, _, _, _)| {
+                            start_evs.iter().for_each(|&start_ev| {
+                                directly_follow_ev_types.insert((end_ev, start_ev));
+                            })
                         })
-                    })
                 });
 
                 children_dfr.get(0).unwrap().0.iter().for_each(|&start_ev| {
-                    children_dfr.iter().skip(1).for_each(|(end_evs, _, _ ,_ )| {
+                    children_dfr.iter().skip(1).for_each(|(end_evs, _, _, _)| {
                         end_evs.iter().for_each(|&end_ev| {
                             directly_follow_ev_types.insert((end_ev, start_ev));
                         })
                     })
                 });
-                
+
                 if skippable {
                     children_dfr.iter().skip(1).for_each(
                         |(start_evs_child, end_evs_child, _, _)| {
@@ -503,14 +546,14 @@ impl OCProcessTreeOperator {
                             end_ev_types.extend(end_evs_child);
                         },
                     );
-                    
+
                     start_ev_types.iter().for_each(|(&start_ev)| {
                         end_ev_types.iter().for_each(|(&end_ev)| {
                             directly_follow_ev_types.insert((end_ev, start_ev));
                         })
                     })
                 }
-                
+
                 start_ev_types.extend(&children_dfr.get(0).unwrap().0);
                 end_ev_types.extend(&children_dfr.get(0).unwrap().1);
 
