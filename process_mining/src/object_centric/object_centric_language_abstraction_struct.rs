@@ -519,13 +519,6 @@ impl OCLanguageAbstraction {
                     .collect::<HashSet<_>>()
                     .len();
 
-                if ev_type.to_string().eq("Create Purchase Requisition")
-                    && ob_type.to_string().eq("material")
-                {
-                    println!("{}", num_of_obj_with_ob_type);
-                    println!("{}", num_of_obj_with_ob_and_ev_type);
-                }
-
                 if num_of_obj_with_ob_type > num_of_obj_with_ob_and_ev_type
                     && related_ev_type_per_ob_type
                         .get(ob_type)
@@ -638,41 +631,6 @@ impl OCLanguageAbstraction {
             }
         }
         false
-
-        // ev_ob_type_e2o_relations
-        //     .iter()
-        //     .for_each(|&(ev_index, ob_index)| {
-        //         object_index_to_event_indices
-        //             .entry(ev_index)
-        //             .or_insert_with(HashSet::new)
-        //             .insert(ob_index);
-        //     });
-        //
-        // for (_, ev_indices) in object_index_to_event_indices {
-        //     if ev_indices.len() > 1 {
-        //         let ob_indices_of_ev_indices = ev_indices
-        //             .iter()
-        //             .map(|&ev_index| {
-        //                 locel
-        //                     .get_e2o_set(ev_index)
-        //                     .iter()
-        //                     .filter(|&ob_index| !locel.get_ob(ob_index).object_type.eq(ob_type))
-        //                     .collect::<HashSet<&ObjectIndex>>()
-        //             })
-        //             .collect::<Vec<_>>();
-        //
-        //         let mut ob_indices_of_ev_indices_iter = ob_indices_of_ev_indices.into_iter();
-        //         let reference_set = ob_indices_of_ev_indices_iter.next().unwrap();
-        //
-        //         for curr_set in ob_indices_of_ev_indices_iter {
-        //             if !reference_set.eq(&curr_set) {
-        //                 return true;
-        //             }
-        //         }
-        //     }
-        // }
-        //
-        // false
     }
 }
 pub fn compute_fitness_precision(

@@ -104,13 +104,9 @@ impl OCProcessTreeNode {
         div_ob_types_per_node: &HashMap<Uuid, HashMap<&EventType, HashSet<&ObjectType>>>,
     ) -> bool {
         let mut result = true;
-        let childs_rel_ob_types_per_ev_type = rel_ob_types_per_node
-            .get(self.get_uuid())
-            .unwrap();
-        let childs_div_ob_types_per_ev_type = div_ob_types_per_node
-            .get(self.get_uuid())
-            .unwrap();
-        
+        let childs_rel_ob_types_per_ev_type = rel_ob_types_per_node.get(self.get_uuid()).unwrap();
+        let childs_div_ob_types_per_ev_type = div_ob_types_per_node.get(self.get_uuid()).unwrap();
+
         childs_rel_ob_types_per_ev_type
             .iter()
             .for_each(|(&ev_type, ob_types)| {
@@ -125,13 +121,6 @@ impl OCProcessTreeNode {
                 }
             });
         result
-        // .is_none()
-        // || div_ob_types_per_node
-        //     .get(self.get_uuid())
-        //     .unwrap()
-        //     .iter()
-        //     .find(|&(_, ob_types)| ob_types.contains(ob_type))
-        //     .is_some()
     }
 }
 
@@ -720,63 +709,6 @@ impl OCProcessTreeOperator {
                     rel_ob_types_per_node,
                     ancestor_is_exclusive_choice,
                 );
-
-                // let result: HashMap<&EventType, HashSet<&ObjectType>> = self
-                //     .children
-                //     .iter()
-                //     .flat_map(|child| {
-                //         opt_ob_types_per_node
-                //             .get(&child.get_uuid())
-                //             .unwrap()
-                //             .clone()
-                //     })
-                //     .collect();
-
-                // match self.operator_type {
-                //     OCOperatorType::ExclusiveChoice => {
-                //         let mut children_iter = self.children.iter();
-                //         let mut ob_types_in_all_children: HashMap<&EventType, HashSet<&ObjectType>> =
-                //             rel_ob_types_per_node
-                //                 .get(children_iter.next().unwrap().get_uuid())
-                //                 .unwrap()
-                //                 .clone();
-                //
-                //         children_iter.for_each(|child| {
-                //             rel_ob_types_per_node
-                //                 .get(child.get_uuid())
-                //                 .unwrap()
-                //                 .iter()
-                //                 .for_each(|(&ev_type, rel_ob_type)| {
-                //                     let ob_type_union_for_ev_type = ob_types_in_all_children
-                //                         .entry(ev_type)
-                //                         .or_insert(Default::default())
-                //                         .union(&rel_ob_type)
-                //                         .copied()
-                //                         .collect::<HashSet<&ObjectType>>();
-                //                     ob_types_in_all_children.insert(ev_type, ob_type_union_for_ev_type);
-                //                 });
-                //         });
-                //
-                //         self.children.iter().for_each(|child| {
-                //             rel_ob_types_per_node
-                //                 .get(&child.get_uuid())
-                //                 .unwrap()
-                //                 .iter()
-                //                 .for_each(|(&ev_type, ob_types)| {
-                //                     result.entry(ev_type).or_insert(Default::default()).extend(
-                //                         ob_types.difference(
-                //                             ob_types_in_all_children
-                //                                 .get(&ev_type)
-                //                                 .unwrap_or(&Default::default()),
-                //                         ),
-                //                     );
-                //                 })
-                //         })
-                //     }
-                //     _ => {}
-                // }
-
-                // opt_ob_types_per_node.insert(self.uuid, result);
             }
             OCProcessTreeNode::Leaf(leaf) => match &leaf.activity_label {
                 OCLeafLabel::TreeActivity(leaf_label) => {
@@ -1053,87 +985,6 @@ impl OCProcessTreeOperator {
         result
     }
 
-    // pub fn compute_def<'a>(
-    //     &'a self,
-    //     rel_ob_types_per_node: &HashMap<Uuid, HashMap<&'a EventType, HashSet<&'a ObjectType>>>,
-    //     opt_ob_types_per_node: &HashMap<Uuid, HashMap<&'a EventType, HashSet<&'a ObjectType>>>,
-    //     leaf_def_ob_types: &HashMap<&'a EventType, HashSet<&'a ObjectType>>,
-    //     leaf_conv_ob_types: &HashMap<&'a EventType, HashSet<&'a ObjectType>>,
-    // ) -> HashMap<&'a EventType, HashSet<&'a ObjectType>> {
-    //     let mut result: HashMap<&EventType, HashSet<&ObjectType>> = HashMap::new();
-    //     let mut candidates: HashSet<(&EventType, &ObjectType)> = HashSet::new();
-    //
-    //     rel_ob_types_per_node
-    //         .get(&self.uuid)
-    //         .unwrap()
-    //         .iter()
-    //         .for_each(|(&ev_type, rel_ob_types)| {
-    //             rel_ob_types.iter().for_each(|rel_ob_type| {
-    //                 if leaf_conv_ob_types
-    //                     .get(rel_ob_type)
-    //                     .unwrap_or(&Default::default())
-    //                     .contains(rel_ob_type)
-    //                 {
-    //                     result
-    //                         .entry(ev_type)
-    //                         .or_insert(Default::default())
-    //                         .insert(rel_ob_type);
-    //                 } else if !leaf_def_ob_types
-    //                     .get(rel_ob_type)
-    //                     .unwrap_or(&Default::default())
-    //                     .contains(rel_ob_type)
-    //                 {
-    //                     candidates.insert((ev_type, rel_ob_type));
-    //                 }
-    //             })
-    //         });
-    //
-    //     'outer_loop: for (ev_type, cand_ob_type) in candidates {
-    //         let mut competitors: HashSet<&ObjectType> = rel_ob_types_per_node
-    //             .get(&self.uuid)
-    //             .unwrap()
-    //             .get(ev_type)
-    //             .unwrap_or(&Default::default())
-    //             .clone();
-    //         competitors = competitors
-    //             .difference(
-    //                 leaf_def_ob_types
-    //                     .get(&ev_type)
-    //                     .unwrap_or(&Default::default()),
-    //             )
-    //             .copied()
-    //             .collect();
-    //         competitors = competitors
-    //             .difference(
-    //                 opt_ob_types_per_node
-    //                     .get(&self.uuid)
-    //                     .unwrap()
-    //                     .get(&ev_type)
-    //                     .unwrap_or(&Default::default()),
-    //             )
-    //             .copied()
-    //             .collect();
-    //
-    //         for comp_ob_type in competitors {
-    //             if !self.check_def_subroutine_for_competitor(
-    //                 ev_type,
-    //                 cand_ob_type,
-    //                 comp_ob_type,
-    //                 opt_ob_types_per_node,
-    //             ) {
-    //                 continue 'outer_loop;
-    //             }
-    //         }
-    //
-    //         result
-    //             .entry(ev_type)
-    //             .or_insert(Default::default())
-    //             .insert(cand_ob_type);
-    //     }
-    //
-    //     result
-    // }
-
     pub fn check_conv_subroutine_for_competitor(
         &self,
         cand_ob_type: &ObjectType,
@@ -1217,51 +1068,6 @@ impl OCProcessTreeOperator {
             ),
         }
     }
-    //     pub fn check_def_subroutine_for_competitor(
-    //         &self,
-    //         ev_type: &EventType,
-    //         cand_ob_type: &ObjectType,
-    //         comp_ob_type: &ObjectType,
-    //         opt_ob_types_per_node: &HashMap<Uuid, HashMap<&EventType, HashSet<&ObjectType>>>,
-    //     ) -> bool {
-    //         match self.operator_type {
-    //             OCOperatorType::Sequence | OCOperatorType::Concurrency => {
-    //                 for child in self.children.iter() {
-    //                     if !check_def_subroutine_for_competitor(
-    //                         child,
-    //                         ev_type,
-    //                         cand_ob_type,
-    //                         comp_ob_type,
-    //                         opt_ob_types_per_node,
-    //                     ) {
-    //                         return false;
-    //                     }
-    //                 }
-    //                 true
-    //             }
-    //             OCOperatorType::ExclusiveChoice => {
-    //                 for child in self.children.iter() {
-    //                     if check_def_subroutine_for_competitor(
-    //                         child,
-    //                         ev_type,
-    //                         cand_ob_type,
-    //                         comp_ob_type,
-    //                         opt_ob_types_per_node,
-    //                     ) {
-    //                         return true;
-    //                     }
-    //                 }
-    //                 false
-    //             }
-    //             OCOperatorType::Loop(_) => check_def_subroutine_for_competitor(
-    //                 self.children.get(0).unwrap(),
-    //                 ev_type,
-    //                 cand_ob_type,
-    //                 comp_ob_type,
-    //                 opt_ob_types_per_node,
-    //             ),
-    //         }
-    //     }
 }
 
 pub fn check_conv_subroutine_for_competitor(
@@ -1295,29 +1101,6 @@ pub fn check_def_subroutine_for_competitor(
         }
     }
 }
-
-// pub fn check_def_subroutine_for_competitor(
-//     tree_node: &OCProcessTreeNode,
-//     ev_type: &EventType,
-//     cand_ob_type: &ObjectType,
-//     comp_ob_type: &ObjectType,
-//     opt_ob_types_per_node: &HashMap<Uuid, HashMap<&EventType, HashSet<&ObjectType>>>,
-// ) -> bool {
-//     match tree_node {
-//         OCProcessTreeNode::Operator(op) => op.check_def_subroutine_for_competitor(
-//             ev_type,
-//             cand_ob_type,
-//             comp_ob_type,
-//             opt_ob_types_per_node,
-//         ),
-//         OCProcessTreeNode::Leaf(leaf) => leaf.check_def_subroutine_for_competitor(
-//             ev_type,
-//             cand_ob_type,
-//             comp_ob_type,
-//             opt_ob_types_per_node,
-//         ),
-//     }
-// }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OCProcessTreeLeaf {
@@ -1393,31 +1176,6 @@ impl OCProcessTreeLeaf {
             }
         }
     }
-
-    // pub fn check_def_subroutine_for_competitor(
-    //     &self,
-    //     ev_type: &EventType,
-    //     cand_ob_type: &ObjectType,
-    //     comp_ob_type: &ObjectType,
-    //     opt_ob_types_per_node: &HashMap<Uuid, HashMap<&EventType, HashSet<&ObjectType>>>,
-    // ) -> bool {
-    //     match &self.activity_label {
-    //         OCLeafLabel::TreeTau => true,
-    //         OCLeafLabel::TreeActivity(leaf_label) => {
-    //             leaf_label.is_empty()
-    //                 || (opt_ob_types_per_node
-    //                     .get(&self.uuid)
-    //                     .unwrap()
-    //                     .get(ev_type)
-    //                     .unwrap_or(&HashSet::new())
-    //                     .contains(comp_ob_type))
-    //                 || (leaf_label.eq(ev_type) && self.convergent_ob_types.contains(comp_ob_type))
-    //                 || (leaf_label.eq(ev_type)
-    //                     && (self.deficient_ob_types.contains(cand_ob_type)
-    //                         && self.deficient_ob_types.contains(cand_ob_type)))
-    //         }
-    //     }
-    // }
 
     pub fn get_directly_follows_relations(
         &self,
