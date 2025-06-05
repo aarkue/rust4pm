@@ -526,7 +526,12 @@ impl OCLanguageAbstraction {
                     println!("{}", num_of_obj_with_ob_and_ev_type);
                 }
 
-                if num_of_obj_with_ob_type > num_of_obj_with_ob_and_ev_type {
+                if num_of_obj_with_ob_type > num_of_obj_with_ob_and_ev_type
+                    && related_ev_type_per_ob_type
+                        .get(ob_type)
+                        .unwrap()
+                        .contains(&ev_type.to_string())
+                {
                     optional_ev_type_per_ob_type
                         .get_mut(ob_type)
                         .unwrap()
