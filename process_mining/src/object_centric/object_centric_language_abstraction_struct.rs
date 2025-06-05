@@ -871,14 +871,16 @@ pub fn compute_fitness_precision(
 
 #[cfg(test)]
 mod tests {
-    use crate::import_ocel_json_from_slice;
     use crate::object_centric::object_centric_language_abstraction_struct::{
         compute_fitness_precision, OCLanguageAbstraction,
     };
     use crate::object_centric::object_centric_process_tree_struct::{
         OCOperatorType, OCProcessTree, OCProcessTreeNode,
     };
+    use crate::ocel::ocel_struct::{OCELEvent, OCELObject, OCELRelationship, OCELType};
     use crate::utils::test_utils::get_test_data_path;
+    use crate::{import_ocel_json_from_slice, OCEL};
+    use chrono::{TimeZone, Utc};
     use std::fs::File;
     use std::io::Read;
     use std::time::Instant;
@@ -1011,7 +1013,7 @@ mod tests {
         OCProcessTree::new(root_op)
     }
 
-    fn create_test_tree2() -> OCProcessTree {
+    fn create_example_tree() -> OCProcessTree {
         let mut root_op = OCProcessTreeNode::new_operator(OCOperatorType::Sequence);
 
         let mut place: OCProcessTreeNode = OCProcessTreeNode::new_leaf(Some("place".to_string()));
@@ -1071,15 +1073,284 @@ mod tests {
         OCProcessTree::new(root_op)
     }
 
-    #[test]
-    fn test_tree_abstraction() {
-        let tree = create_test_tree2();
+    fn create_example_ocel() -> OCEL {
+        let place_ev_type = OCELType {
+            name: "place".to_string(),
+            attributes: Vec::default(),
+        };
+        let pickup_ev_type = OCELType {
+            name: "pickup".to_string(),
+            attributes: Vec::default(),
+        };
+        let pack_ev_type = OCELType {
+            name: "pack".to_string(),
+            attributes: Vec::default(),
+        };
+        let pay_ev_type = OCELType {
+            name: "pay".to_string(),
+            attributes: Vec::default(),
+        };
+        let refund_ev_type = OCELType {
+            name: "refund".to_string(),
+            attributes: Vec::default(),
+        };
 
-        let time_start = Instant::now();
-        let result = OCLanguageAbstraction::create_from_oc_process_tree(&tree);
-        let time_elapsed = time_start.elapsed().as_nanos();
-        println!("Time elapsed is {}ms", time_elapsed);
-        println!("{:?}", result);
+        let customer_ob_type = OCELType {
+            name: "c".to_string(),
+            attributes: Vec::default(),
+        };
+        let employee_ob_type = OCELType {
+            name: "e".to_string(),
+            attributes: Vec::default(),
+        };
+        let order_ob_type = OCELType {
+            name: "o".to_string(),
+            attributes: Vec::default(),
+        };
+        let item_ob_type = OCELType {
+            name: "i".to_string(),
+            attributes: Vec::default(),
+        };
+
+        let rel_1 = OCELRelationship::new("c1".to_string(), "c".to_string());
+        let rel_2 = OCELRelationship::new("o1".to_string(), "o".to_string());
+        let rel_3 = OCELRelationship::new("i1".to_string(), "i".to_string());
+        let rel_4 = OCELRelationship::new("i2".to_string(), "i".to_string());
+        let ev_1 = OCELEvent::new(
+            "ev1".to_string(),
+            "place".to_string(),
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+            Vec::default(),
+            vec![rel_1, rel_2, rel_3, rel_4],
+        );
+        let rel_1 = OCELRelationship::new("o1".to_string(), "o".to_string());
+        let rel_2 = OCELRelationship::new("i2".to_string(), "i".to_string());
+        let rel_3 = OCELRelationship::new("e1".to_string(), "e".to_string());
+        let ev_2 = OCELEvent::new(
+            "ev2".to_string(),
+            "pack".to_string(),
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 1, 0).unwrap(),
+            Vec::default(),
+            vec![rel_1, rel_2, rel_3],
+        );
+        let rel_1 = OCELRelationship::new("c1".to_string(), "c".to_string());
+        let rel_2 = OCELRelationship::new("o2".to_string(), "o".to_string());
+        let rel_3 = OCELRelationship::new("i3".to_string(), "i".to_string());
+        let rel_4 = OCELRelationship::new("i4".to_string(), "i".to_string());
+        let ev_3 = OCELEvent::new(
+            "ev3".to_string(),
+            "place".to_string(),
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 2, 0).unwrap(),
+            Vec::default(),
+            vec![rel_1, rel_2, rel_3, rel_4],
+        );
+        let rel_1 = OCELRelationship::new("c1".to_string(), "c".to_string());
+        let rel_2 = OCELRelationship::new("o1".to_string(), "o".to_string());
+        let rel_3 = OCELRelationship::new("i1".to_string(), "i".to_string());
+        let rel_4 = OCELRelationship::new("i2".to_string(), "i".to_string());
+        let ev_4 = OCELEvent::new(
+            "ev4".to_string(),
+            "pay".to_string(),
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 3, 0).unwrap(),
+            Vec::default(),
+            vec![rel_1, rel_2, rel_3, rel_4],
+        );
+        let rel_1 = OCELRelationship::new("c1".to_string(), "c".to_string());
+        let rel_2 = OCELRelationship::new("o1".to_string(), "o".to_string());
+        let rel_3 = OCELRelationship::new("i2".to_string(), "i".to_string());
+        let rel_4 = OCELRelationship::new("e1".to_string(), "e".to_string());
+        let ev_5 = OCELEvent::new(
+            "ev5".to_string(),
+            "pickup".to_string(),
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 4, 0).unwrap(),
+            Vec::default(),
+            vec![rel_1, rel_2, rel_3, rel_4],
+        );
+        let rel_1 = OCELRelationship::new("c1".to_string(), "c".to_string());
+        let rel_2 = OCELRelationship::new("o2".to_string(), "o".to_string());
+        let rel_3 = OCELRelationship::new("i3".to_string(), "i".to_string());
+        let rel_4 = OCELRelationship::new("i4".to_string(), "i".to_string());
+        let ev_6 = OCELEvent::new(
+            "ev6".to_string(),
+            "pay".to_string(),
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 5, 0).unwrap(),
+            Vec::default(),
+            vec![rel_1, rel_2, rel_3, rel_4],
+        );
+        let rel_1 = OCELRelationship::new("o1".to_string(), "o".to_string());
+        let rel_2 = OCELRelationship::new("o2".to_string(), "o".to_string());
+        let rel_3 = OCELRelationship::new("i1".to_string(), "i".to_string());
+        let rel_4 = OCELRelationship::new("i3".to_string(), "i".to_string());
+        let rel_5 = OCELRelationship::new("e1".to_string(), "e".to_string());
+        let ev_7 = OCELEvent::new(
+            "ev7".to_string(),
+            "pack".to_string(),
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 6, 0).unwrap(),
+            Vec::default(),
+            vec![rel_1, rel_2, rel_3, rel_4, rel_5],
+        );
+        let rel_1 = OCELRelationship::new("c1".to_string(), "c".to_string());
+        let rel_2 = OCELRelationship::new("o3".to_string(), "o".to_string());
+        let rel_3 = OCELRelationship::new("i5".to_string(), "i".to_string());
+        let ev_8 = OCELEvent::new(
+            "ev8".to_string(),
+            "place".to_string(),
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 7, 0).unwrap(),
+            Vec::default(),
+            vec![rel_1, rel_2, rel_3],
+        );
+        let rel_1 = OCELRelationship::new("o2".to_string(), "o".to_string());
+        let rel_2 = OCELRelationship::new("i4".to_string(), "i".to_string());
+        let rel_3 = OCELRelationship::new("e1".to_string(), "e".to_string());
+        let rel_4 = OCELRelationship::new("e2".to_string(), "e".to_string());
+        let ev_9 = OCELEvent::new(
+            "ev9".to_string(),
+            "pack".to_string(),
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 8, 0).unwrap(),
+            Vec::default(),
+            vec![rel_1, rel_2, rel_3, rel_4],
+        );
+        let rel_1 = OCELRelationship::new("c1".to_string(), "c".to_string());
+        let rel_2 = OCELRelationship::new("o2".to_string(), "o".to_string());
+        let rel_3 = OCELRelationship::new("i4".to_string(), "i".to_string());
+        let rel_4 = OCELRelationship::new("e1".to_string(), "e".to_string());
+        let ev_10 = OCELEvent::new(
+            "ev10".to_string(),
+            "pickup".to_string(),
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 9, 0).unwrap(),
+            Vec::default(),
+            vec![rel_1, rel_2, rel_3, rel_4],
+        );
+        let rel_1 = OCELRelationship::new("c1".to_string(), "c".to_string());
+        let rel_2 = OCELRelationship::new("o3".to_string(), "o".to_string());
+        let rel_3 = OCELRelationship::new("i5".to_string(), "i".to_string());
+        let ev_11 = OCELEvent::new(
+            "ev11".to_string(),
+            "pay".to_string(),
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 10, 0).unwrap(),
+            Vec::default(),
+            vec![rel_1, rel_2, rel_3],
+        );
+        let rel_1 = OCELRelationship::new("o3".to_string(), "o".to_string());
+        let rel_2 = OCELRelationship::new("i5".to_string(), "i".to_string());
+        let rel_3 = OCELRelationship::new("e1".to_string(), "e".to_string());
+        let ev_12 = OCELEvent::new(
+            "ev12".to_string(),
+            "pack".to_string(),
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 11, 0).unwrap(),
+            Vec::default(),
+            vec![rel_1, rel_2, rel_3],
+        );
+        let rel_1 = OCELRelationship::new("c1".to_string(), "c".to_string());
+        let rel_2 = OCELRelationship::new("o1".to_string(), "o".to_string());
+        let rel_3 = OCELRelationship::new("o2".to_string(), "o".to_string());
+        let rel_4 = OCELRelationship::new("i1".to_string(), "i".to_string());
+        let rel_5 = OCELRelationship::new("i3".to_string(), "i".to_string());
+        let ev_13 = OCELEvent::new(
+            "ev13".to_string(),
+            "pickup".to_string(),
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 12, 0).unwrap(),
+            Vec::default(),
+            vec![rel_1, rel_2, rel_3, rel_4, rel_5],
+        );
+        let rel_1 = OCELRelationship::new("o3".to_string(), "o".to_string());
+        let rel_2 = OCELRelationship::new("i5".to_string(), "i".to_string());
+        let rel_3 = OCELRelationship::new("e1".to_string(), "e".to_string());
+        let ev_14 = OCELEvent::new(
+            "ev14".to_string(),
+            "refund".to_string(),
+            Utc.with_ymd_and_hms(2020, 1, 1, 0, 13, 0).unwrap(),
+            Vec::default(),
+            vec![rel_1, rel_2, rel_3],
+        );
+
+        let c_1 = OCELObject {
+            id: "c1".to_string(),
+            object_type: "c".to_string(),
+            attributes: Vec::default(),
+            relationships: Vec::default(),
+        };
+        let o_1 = OCELObject {
+            id: "o1".to_string(),
+            object_type: "o".to_string(),
+            attributes: Vec::default(),
+            relationships: Vec::default(),
+        };
+        let o_2 = OCELObject {
+            id: "o2".to_string(),
+            object_type: "o".to_string(),
+            attributes: Vec::default(),
+            relationships: Vec::default(),
+        };
+        let o_3 = OCELObject {
+            id: "o3".to_string(),
+            object_type: "o".to_string(),
+            attributes: Vec::default(),
+            relationships: Vec::default(),
+        };
+        let i_1 = OCELObject {
+            id: "i1".to_string(),
+            object_type: "i".to_string(),
+            attributes: Vec::default(),
+            relationships: Vec::default(),
+        };
+        let i_2 = OCELObject {
+            id: "i2".to_string(),
+            object_type: "i".to_string(),
+            attributes: Vec::default(),
+            relationships: Vec::default(),
+        };
+        let i_3 = OCELObject {
+            id: "i3".to_string(),
+            object_type: "i".to_string(),
+            attributes: Vec::default(),
+            relationships: Vec::default(),
+        };
+        let i_4 = OCELObject {
+            id: "i4".to_string(),
+            object_type: "i".to_string(),
+            attributes: Vec::default(),
+            relationships: Vec::default(),
+        };
+        let i_5 = OCELObject {
+            id: "i5".to_string(),
+            object_type: "i".to_string(),
+            attributes: Vec::default(),
+            relationships: Vec::default(),
+        };
+        let e_1 = OCELObject {
+            id: "e1".to_string(),
+            object_type: "e".to_string(),
+            attributes: Vec::default(),
+            relationships: Vec::default(),
+        };
+        let e_2 = OCELObject {
+            id: "e2".to_string(),
+            object_type: "e".to_string(),
+            attributes: Vec::default(),
+            relationships: Vec::default(),
+        };
+
+        OCEL {
+            event_types: vec![
+                pickup_ev_type,
+                pack_ev_type,
+                pay_ev_type,
+                refund_ev_type,
+                place_ev_type,
+            ],
+            object_types: vec![
+                customer_ob_type,
+                employee_ob_type,
+                order_ob_type,
+                item_ob_type,
+            ],
+            events: vec![
+                ev_1, ev_2, ev_3, ev_4, ev_5, ev_6, ev_7, ev_8, ev_9, ev_10, ev_11, ev_12, ev_13,
+                ev_14,
+            ],
+            objects: vec![i_1, i_2, i_3, i_4, i_5, e_1, e_2, c_1, o_1, o_2, o_3],
+        }
     }
 
     #[test]
@@ -1100,6 +1371,22 @@ mod tests {
         let time_start = Instant::now();
         let abstraction_log = OCLanguageAbstraction::create_from_ocel(&ocel.unwrap());
         let abstraction_tree = OCLanguageAbstraction::create_from_oc_process_tree(&tree);
+
+        let (fitness, precision) = compute_fitness_precision(&abstraction_log, &abstraction_tree);
+        let time_elapsed = time_start.elapsed().as_millis();
+        println!("Time elapsed is {}ms", time_elapsed);
+        println!("Fitness: {}", fitness);
+        println!("Precision: {}", precision);
+    }
+    
+    #[test]
+    fn compute_example_fitness_precision() {
+        let tree = create_example_tree();
+        let ocel = create_example_ocel();
+
+        let time_start = Instant::now();
+        let abstraction_tree = OCLanguageAbstraction::create_from_oc_process_tree(&tree);
+        let abstraction_log = OCLanguageAbstraction::create_from_ocel(&ocel);
 
         let (fitness, precision) = compute_fitness_precision(&abstraction_log, &abstraction_tree);
         let time_elapsed = time_start.elapsed().as_millis();
