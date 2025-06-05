@@ -48,6 +48,8 @@ pub mod event_log {
         #[allow(clippy::single_match)]
         /// Parser for the OCEL 2.0 XML format
         pub mod xml_ocel_import;
+        /// Macros for the creation of [`OCEL`]
+        pub mod macros;
     }
     pub use event_log_struct::{
         Attribute, AttributeValue, Attributes, Event, EventLog, Trace, XESEditableAttribute,
