@@ -1,24 +1,36 @@
+use crate::object_centric::{
+    add_all_dfr_from_to_alphabets, compute_shuffle_dfr_language, EventType, ObjectType,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
-type NumberOfRepetitions = Option<u32>;
-pub type ObjectType = String;
-pub type EventType = String;
-
+///
+/// Leaf in an object-centric process tree
+///
 #[derive(Debug, Serialize, Deserialize, Hash, Eq, PartialEq)]
 pub enum OCLeafLabel {
+    /// Non-silent activity leaf
     TreeActivity(EventType),
+    /// Silent activity leaf
     TreeTau,
 }
 
+///
+/// Node in an object-centric process tree
+///
 #[derive(Debug, Serialize, Deserialize)]
 pub enum OCProcessTreeNode {
-    Operator(OCProcessTreeOperator),
+    /// Operator node of an object-centric process tree
+    Operator(OCProcessTreeOperatorNode),
+    /// Leaf node of an object-centric process tree
     Leaf(OCProcessTreeLeaf),
 }
 
 impl OCProcessTreeNode {
+    ///
+    /// Returns the identifier of a node in an object-centric process tree
+    ///
     pub fn get_uuid(&self) -> &Uuid {
         match self {
             OCProcessTreeNode::Operator(op) => &op.uuid,
@@ -26,14 +38,23 @@ impl OCProcessTreeNode {
         }
     }
 
+    ///
+    /// Creates a new operator with the given operator type
+    ///
     pub fn new_operator(op_type: OCOperatorType) -> Self {
-        OCProcessTreeNode::Operator(OCProcessTreeOperator::new(op_type))
+        OCProcessTreeNode::Operator(OCProcessTreeOperatorNode::new(op_type))
     }
 
+    ///
+    /// Creates a new (non-silent) leaf
+    ///
     pub fn new_leaf(leaf_label: Option<EventType>) -> Self {
         OCProcessTreeNode::Leaf(OCProcessTreeLeaf::new(leaf_label))
     }
 
+    ///
+    /// Adds a node as child if the node is an operator node
+    ///
     pub fn add_child(&mut self, child: OCProcessTreeNode) {
         match self {
             OCProcessTreeNode::Operator(op) => {
@@ -45,12 +66,31 @@ impl OCProcessTreeNode {
         }
     }
 
+    ///
+    /// Returns `true` if a loop operator has at least two children or if all other operators
+    /// have at least one child.
+    ///
+    pub fn check_children_valid(&self) -> bool {
+        match self {
+            OCProcessTreeNode::Operator(op) => match op.operator_type {
+                OCOperatorType::Loop(_) => op.children.len() >= 2,
+                _ => !op.children.is_empty(),
+            },
+            OCProcessTreeNode::Leaf(_) => true,
+        }
+    }
+
+    ///
+    /// Adds an object type to be convergent.
+    /// If the node is a leaf, it gets directly added.
+    /// If it as an operator, it is propagated to its descendants.
+    ///
     pub fn add_convergent_ob_type(&mut self, ob_type: &ObjectType) {
         match self {
             OCProcessTreeNode::Operator(op) => {
                 op.children
                     .iter_mut()
-                    .for_each(|mut child| child.add_convergent_ob_type(ob_type));
+                    .for_each(|child| child.add_convergent_ob_type(ob_type));
             }
             OCProcessTreeNode::Leaf(ref mut leaf) => {
                 leaf.convergent_ob_types.insert(ob_type.to_string());
@@ -58,12 +98,17 @@ impl OCProcessTreeNode {
         }
     }
 
+    ///
+    /// Adds an object type to be deficient.
+    /// If the node is a leaf, it gets directly added.
+    /// If it as an operator, it is propagated to its descendants.
+    ///
     pub fn add_deficient_ob_type(&mut self, ob_type: &ObjectType) {
         match self {
             OCProcessTreeNode::Operator(op) => {
                 op.children
                     .iter_mut()
-                    .for_each(|mut child| child.add_deficient_ob_type(ob_type));
+                    .for_each(|child| child.add_deficient_ob_type(ob_type));
             }
             OCProcessTreeNode::Leaf(ref mut leaf) => {
                 leaf.deficient_ob_types.insert(ob_type.to_string());
@@ -71,12 +116,17 @@ impl OCProcessTreeNode {
         }
     }
 
+    ///
+    /// Adds an object type to be divergent.
+    /// If the node is a leaf, it gets directly added.
+    /// If it as an operator, it is propagated to its descendants.
+    ///
     pub fn add_divergent_ob_type(&mut self, ob_type: &ObjectType) {
         match self {
             OCProcessTreeNode::Operator(op) => {
                 op.children
                     .iter_mut()
-                    .for_each(|mut child| child.add_divergent_ob_type(ob_type));
+                    .for_each(|child| child.add_divergent_ob_type(ob_type));
             }
             OCProcessTreeNode::Leaf(ref mut leaf) => {
                 leaf.divergent_ob_types.insert(ob_type.to_string());
@@ -84,12 +134,17 @@ impl OCProcessTreeNode {
         }
     }
 
+    ///
+    /// Adds an object type to be related.
+    /// If the node is a leaf, it gets directly added.
+    /// If it as an operator, it is propagated to its descendants.
+    ///
     pub fn add_related_ob_type(&mut self, ob_type: &ObjectType) {
         match self {
             OCProcessTreeNode::Operator(op) => {
                 op.children
                     .iter_mut()
-                    .for_each(|mut child| child.add_related_ob_type(ob_type));
+                    .for_each(|child| child.add_related_ob_type(ob_type));
             }
             OCProcessTreeNode::Leaf(ref mut leaf) => {
                 leaf.related_ob_types.insert(ob_type.to_string());
@@ -97,21 +152,28 @@ impl OCProcessTreeNode {
         }
     }
 
+    ///
+    /// Returns `true` if all event types for the given object type are either unrelated or divergent
+    ///
     fn check_unrelated_or_divergent(
         &self,
         ob_type: &ObjectType,
         rel_ob_types_per_node: &HashMap<Uuid, HashMap<&EventType, HashSet<&ObjectType>>>,
         div_ob_types_per_node: &HashMap<Uuid, HashMap<&EventType, HashSet<&ObjectType>>>,
     ) -> bool {
-        let mut result = true;
-        let childs_rel_ob_types_per_ev_type = rel_ob_types_per_node.get(self.get_uuid()).unwrap();
-        let childs_div_ob_types_per_ev_type = div_ob_types_per_node.get(self.get_uuid()).unwrap();
+        // Retrieve the related and diverging object types per event type
+        let rel_ob_types_per_ev_type = rel_ob_types_per_node.get(self.get_uuid()).unwrap();
+        let div_ob_types_per_ev_type = div_ob_types_per_node.get(self.get_uuid()).unwrap();
 
-        childs_rel_ob_types_per_ev_type
+        let mut result = true;
+
+        // For all related event types, check if all are divergent.
+        // Otherwise, change the result value to be false.
+        rel_ob_types_per_ev_type
             .iter()
             .for_each(|(&ev_type, ob_types)| {
                 if ob_types.contains(ob_type) {
-                    if !childs_div_ob_types_per_ev_type
+                    if !div_ob_types_per_ev_type
                         .get(ev_type)
                         .unwrap()
                         .contains(ob_type)
@@ -120,91 +182,109 @@ impl OCProcessTreeNode {
                     }
                 }
             });
+
         result
     }
 }
 
+///
+/// Operator type enum for [`OCProcessTreeOperatorNode`]
+///
 #[derive(Debug, Serialize, Deserialize)]
 pub enum OCOperatorType {
+    /// Sequence operator
     Sequence,
+    /// Exclusive choice operator
     ExclusiveChoice,
+    /// Concurrency operator
     Concurrency,
-    Loop(NumberOfRepetitions),
+    /// Loop operator that, if given, restricts a given number of repetitions
+    Loop(Option<u32>),
 }
 
+///
+/// Object-centric process tree struct that contains [`OCProcessTreeNode`] as root
+///
 #[derive(Debug, Serialize)]
 pub struct OCProcessTree {
+    /// The root of the object-centric process tree
     pub root: OCProcessTreeNode,
 }
 
 impl OCProcessTree {
+    ///
+    /// Initializes the object-centric process tree with the given node as root
+    ///
     pub fn new(root: OCProcessTreeNode) -> Self {
         Self { root }
     }
 
+    ///
+    /// Returns `true` if all nodes have the right number of children, if all operators have
+    /// eventually descendants that are leaves, and if the tree is acyclic.
+    ///
     pub fn is_valid(&self) -> bool {
+        if !self.root.check_children_valid() {
+            return false;
+        }
+        // Setup the iteration through the object-centric process tree
         let mut prev_ocpt_node_ids: HashSet<Uuid> = HashSet::new();
+        let mut curr_ocpt_node_ids: HashSet<Uuid> = HashSet::new();
+        curr_ocpt_node_ids.insert(*self.root.get_uuid());
 
-        let mut ocpt_node_ids: HashSet<Uuid> = HashSet::new();
-        ocpt_node_ids.insert(*self.root.get_uuid());
-        let mut children_count: usize = 1;
-
-        let mut curr_operators: Vec<&OCProcessTreeOperator> = Vec::new();
+        let mut curr_operators: Vec<&OCProcessTreeOperatorNode> = Vec::new();
         match &self.root {
             OCProcessTreeNode::Operator(op) => {
                 curr_operators.push(op);
-                match op.operator_type {
-                    OCOperatorType::Loop(_) => {
-                        if op.children.len() < 2 {
-                            return false;
-                        }
-                    }
-                    _ => {
-                        if op.children.is_empty() {
-                            return false;
-                        }
-                    }
-                }
             }
             OCProcessTreeNode::Leaf(_) => {}
         };
 
-        let mut next_operators = Vec::new();
+        // A child counter to check the tree to be acyclic
+        let mut children_count: usize = 1;
 
-        while !prev_ocpt_node_ids.eq(&ocpt_node_ids) {
+        // Checking all nodes to have the right number of children
+        let mut all_op_nodes_valid = true;
+
+        // Iterate through the tree to count up the children, if a node is the child of many
+        // operator nodes, the count computed here and the number of nodes in the process tree
+        // disagree
+        let mut next_operators = Vec::new();
+        while !prev_ocpt_node_ids.eq(&curr_ocpt_node_ids) {
             curr_operators.iter().for_each(|op| {
                 op.children.iter().for_each(|child| match child {
                     OCProcessTreeNode::Operator(op) => {
+                        all_op_nodes_valid &= child.check_children_valid();
+
                         next_operators.push(op);
                         children_count += 1;
-                        ocpt_node_ids.insert(op.uuid);
+                        curr_ocpt_node_ids.insert(op.uuid);
                     }
                     OCProcessTreeNode::Leaf(leaf) => {
                         children_count += 1;
-                        ocpt_node_ids.insert(leaf.uuid);
+                        curr_ocpt_node_ids.insert(leaf.uuid);
                     }
                 })
             });
 
             curr_operators = next_operators;
             next_operators = Vec::new();
-            prev_ocpt_node_ids = ocpt_node_ids.clone();
+            prev_ocpt_node_ids = curr_ocpt_node_ids.clone();
         }
 
-        children_count == ocpt_node_ids.len()
+        all_op_nodes_valid && (children_count == curr_ocpt_node_ids.len())
     }
 
+    ///
+    /// Returns all descendant [`OCProcessTreeLeaf`]
+    ///
     pub fn find_all_leaves(&self) -> Vec<&OCProcessTreeLeaf> {
         let mut result: Vec<&OCProcessTreeLeaf> = Vec::new();
 
-        let mut curr_operators: Vec<&OCProcessTreeOperator> = Vec::new();
+        let mut curr_operators: Vec<&OCProcessTreeOperatorNode> = Vec::new();
         match &self.root {
-            OCProcessTreeNode::Operator(op) => {
-                curr_operators.push(op);
-            }
-            OCProcessTreeNode::Leaf(leaf) => {
-                result.push(leaf);
-            }
+            OCProcessTreeNode::Operator(op) => curr_operators.push(op),
+            OCProcessTreeNode::Leaf(leaf) => result.push(leaf),
         };
 
         let mut next_operators = Vec::new();
@@ -224,10 +304,13 @@ impl OCProcessTree {
         result
     }
 
+    ///
+    /// Returns all `Uuid` of all [`OCProcessTreeOperatorNode`] in the tree
+    ///
     pub fn find_all_node_uuids(&self) -> Vec<&Uuid> {
         let mut result: Vec<&Uuid> = Vec::new();
 
-        let mut curr_operators: Vec<&OCProcessTreeOperator> = Vec::new();
+        let mut curr_operators: Vec<&OCProcessTreeOperatorNode> = Vec::new();
         match &self.root {
             OCProcessTreeNode::Operator(op) => {
                 curr_operators.push(op);
@@ -259,14 +342,24 @@ impl OCProcessTree {
     }
 }
 
+///
+/// An operator node in an object-centric process tree
+///
 #[derive(Debug, Serialize, Deserialize)]
-pub struct OCProcessTreeOperator {
+pub struct OCProcessTreeOperatorNode {
+    /// The node ID
     pub uuid: Uuid,
+    /// The [`OCOperatorType`] of the tree itself
     pub operator_type: OCOperatorType,
+    /// The children nodes of the operator node
     pub children: Vec<OCProcessTreeNode>,
 }
 
-impl OCProcessTreeOperator {
+impl OCProcessTreeOperatorNode {
+    ///
+    /// A constructor for the struct that intializes with the given [`OCOperatorType`] and
+    /// otherwise a fresh [`Uuid`] and an empty list of children
+    ///
     pub fn new(operator_type: OCOperatorType) -> Self {
         Self {
             uuid: Uuid::new_v4(),
@@ -275,6 +368,14 @@ impl OCProcessTreeOperator {
         }
     }
 
+    ///
+    /// Recursively, finds the directly follows relations of an object-centric (sub)tree towards
+    /// a given object type. Therefore, divergence and unrelatedness are considered to identify
+    /// parts of the object-centric process tree that can be skipped.
+    ///
+    /// Returns all start [`EventType`],  all end [`EventType`], and each directly follows relation
+    /// of type ([`EventType`], [`EventType`]) as `HashSet`s for the given [`ObjectType`]
+    ///
     pub fn get_directly_follows_relations<'a>(
         &'a self,
         ob_type: &ObjectType,
@@ -286,10 +387,13 @@ impl OCProcessTreeOperator {
         HashSet<(&'a EventType, &'a EventType)>,
         bool,
     ) {
+        // Initializes the result sets
         let mut start_ev_types = HashSet::new();
         let mut end_ev_types = HashSet::new();
         let mut skippable: bool;
 
+        // For the current node, identify the start and end event types and the directly-follows
+        // relations by calling the method recursively
         let children_dfr: Vec<(
             HashSet<&EventType>,
             HashSet<&EventType>,
@@ -308,11 +412,14 @@ impl OCProcessTreeOperator {
             })
             .collect();
 
+        // All children's directly-follows relations are directly added
         let mut directly_follow_ev_types: HashSet<_> = children_dfr
             .iter()
             .flat_map(|(_, _, dfr_evs_child, _)| dfr_evs_child.to_owned())
             .collect();
 
+        // For each operator type, start and end event types and directly-follows relation are
+        // identified accordingly
         match self.operator_type {
             OCOperatorType::Sequence => {
                 skippable = true;
@@ -321,35 +428,44 @@ impl OCProcessTreeOperator {
                 let mut skip_forward = true;
                 let mut kept_div_or_unrel_evs: HashSet<&EventType> = HashSet::new();
 
-                // Iterate forward
+                // Iterate forward to identify all start event types and to compute the
+                // directly-follows relations by considering unrelatedness or divergence for
+                // individual children, thus, making them skippable
                 children_dfr.iter().zip(&self.children).for_each(
-                    |((start_evs_child, end_evs_child, dfr_evs_child, skip_child), child)| {
-                        directly_follow_ev_types.extend(dfr_evs_child);
-
+                    |((start_evs_child, end_evs_child, _, skip_child), child)| {
+                        // Iterate foward and skip as many children to identify all possible start
+                        // event types
                         if skip_forward {
                             start_ev_types.extend(start_evs_child);
                         }
                         skip_forward &= skip_child;
 
-                        kept_end_evs.iter().for_each(|&previous_end_ev| {
-                            start_evs_child.iter().for_each(|&curr_start_ev| {
-                                directly_follow_ev_types.insert((previous_end_ev, curr_start_ev));
-                            });
-                        });
+                        // For all previous skippable children, they are tracked, and every new
+                        // child has ingoing directly-follows relations from their alphabets
+                        add_all_dfr_from_to_alphabets(
+                            &mut directly_follow_ev_types,
+                            &kept_end_evs,
+                            start_evs_child,
+                        );
 
+                        // Update the skippable sets
                         if *skip_child {
                             kept_end_evs.extend(end_evs_child);
                         } else {
                             kept_end_evs = end_evs_child.clone();
                         }
+                        skippable &= skip_child;
 
+                        // Check if a child is skippable due to unrelatedness or divergence towards
+                        // the given object type
                         let is_unrelated_or_divergent = child.check_unrelated_or_divergent(
                             ob_type,
                             rel_ob_types_per_node,
                             div_ob_types_per_node,
                         );
-                        skippable &= skip_child;
 
+                        // If diverging or unrelated, add directly-follows relation as if the
+                        // children are skippable
                         if is_unrelated_or_divergent {
                             let div_ob_types_per_ev_type =
                                 div_ob_types_per_node.get(&child.get_uuid()).unwrap();
@@ -386,15 +502,18 @@ impl OCProcessTreeOperator {
                     },
                 );
 
+                // Iterate backward and skip as many children to identify all possible end event
+                // types
                 let mut skip_backward = true;
-                children_dfr.iter().zip(&self.children).rev().for_each(
-                    |((_, end_evs_child, _, skip_child), child)| {
+                children_dfr
+                    .iter()
+                    .rev()
+                    .for_each(|(_, end_evs_child, _, skip_child)| {
                         if skip_backward {
                             end_ev_types.extend(end_evs_child);
                             skip_backward &= skip_child;
                         }
-                    },
-                );
+                    });
             }
             OCOperatorType::ExclusiveChoice => {
                 skippable = false;
@@ -462,7 +581,7 @@ impl OCProcessTreeOperator {
             OCOperatorType::Concurrency => {
                 skippable = true;
 
-                let mut child_alphabets: Vec<HashSet<&EventType>> = self
+                let child_alphabets: Vec<HashSet<&EventType>> = self
                     .children
                     .iter()
                     .map(|child| {
@@ -491,9 +610,7 @@ impl OCProcessTreeOperator {
                     },
                 );
 
-                let concurrent_dfrs: HashSet<_> = (0..child_alphabets.len())
-                    .flat_map(|i| Self::create_dfr_concurrent_alphabets(&child_alphabets, i))
-                    .collect();
+                let concurrent_dfrs: HashSet<_> = compute_shuffle_dfr_language(&child_alphabets);
 
                 directly_follow_ev_types.extend(concurrent_dfrs);
             }
@@ -536,8 +653,8 @@ impl OCProcessTreeOperator {
                         },
                     );
 
-                    start_ev_types.iter().for_each(|(&start_ev)| {
-                        end_ev_types.iter().for_each(|(&end_ev)| {
+                    start_ev_types.iter().for_each(|&start_ev| {
+                        end_ev_types.iter().for_each(|&end_ev| {
                             directly_follow_ev_types.insert((end_ev, start_ev));
                         })
                     })
@@ -562,33 +679,6 @@ impl OCProcessTreeOperator {
             directly_follow_ev_types,
             skippable,
         )
-    }
-
-    pub fn create_dfr_concurrent_alphabets<'a>(
-        alphabets: &Vec<HashSet<&'a EventType>>,
-        basis_pos: usize,
-    ) -> HashSet<(&'a EventType, &'a EventType)> {
-        let basis_alphabet: &HashSet<&EventType> = alphabets.get(basis_pos).unwrap();
-        let remainder_alphabet: HashSet<&EventType> = alphabets
-            .iter()
-            .enumerate()
-            .flat_map(|(i, alphabet)| {
-                if i != basis_pos {
-                    alphabet.clone()
-                } else {
-                    HashSet::new()
-                }
-            })
-            .collect();
-
-        let mut result = HashSet::new();
-        basis_alphabet.iter().for_each(|&from| {
-            remainder_alphabet.iter().for_each(|&to| {
-                result.insert((from, to));
-            })
-        });
-
-        result
     }
 
     pub fn compute_related<'a>(

@@ -1,6 +1,6 @@
 use crate::object_centric::object_centric_dfg_struct::OCDirectlyFollowsGraph;
 use crate::object_centric::object_centric_process_tree_struct::{
-    EventType, OCLeafLabel, OCProcessTree, OCProcessTreeNode, ObjectType,
+    OCLeafLabel, OCProcessTree, OCProcessTreeNode,
 };
 use crate::ocel::linked_ocel::index_linked_ocel::{EventIndex, ObjectIndex};
 use crate::ocel::linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess};
@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::ops::{AddAssign, DivAssign};
 use uuid::Uuid;
+use crate::object_centric::{EventType, ObjectType};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OCLanguageAbstraction {
@@ -119,7 +120,7 @@ impl OCLanguageAbstraction {
                             &leaf_conv_ob_types_per_node.get(&op.uuid).unwrap(),
                         );
 
-                    let mut deficient_ev_type_per_ob_type: HashMap<
+                    let deficient_ev_type_per_ob_type: HashMap<
                         &EventType,
                         HashSet<&ObjectType>,
                     > = op.compute_def(
@@ -405,7 +406,7 @@ impl OCLanguageAbstraction {
 
         let locel = IndexLinkedOCEL::from(underlying_ocel.clone());
 
-        let directly_follows_graph: OCDirectlyFollowsGraph =
+        let directly_follows_graph: OCDirectlyFollowsGraph<'_> =
             OCDirectlyFollowsGraph::create_from_locel(&locel);
 
         let mut start_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>> = HashMap::new();
@@ -872,156 +873,24 @@ pub fn compute_fitness_precision(
 #[cfg(test)]
 mod tests {
     use crate::{
-        object_centric::object_centric_language_abstraction_struct::HashSet,
         object_centric::object_centric_language_abstraction_struct::compute_fitness_precision,
+        object_centric::object_centric_language_abstraction_struct::HashSet,
         object_centric::object_centric_language_abstraction_struct::OCLanguageAbstraction,
         object_centric::object_centric_process_tree_struct::OCOperatorType,
         object_centric::object_centric_process_tree_struct::OCProcessTree,
         object_centric::object_centric_process_tree_struct::OCProcessTreeNode,
+        ocel,
         ocel::ocel_struct::OCELEvent,
         ocel::ocel_struct::OCELObject,
         ocel::ocel_struct::OCELRelationship,
         ocel::ocel_struct::OCELType,
-        utils::test_utils::get_test_data_path,
-        import_ocel_json_from_slice,
-        ocel,
         OCEL
     };
     use chrono::{TimeDelta, TimeZone, Utc};
-    use std::fs::File;
-    use std::io::Read;
     use std::ops::AddAssign;
     use std::time::Instant;
 
-    #[test]
-    fn test_log_abstraction() {
-        let time_start_2 = Instant::now();
-        let path = get_test_data_path()
-            .join("ocel")
-            .join("01_ocel_standard_p2p.json");
-        let mut log_bytes = Vec::new();
-        File::open(&path)
-            .unwrap()
-            .read_to_end(&mut log_bytes)
-            .unwrap();
-
-        let ocel = import_ocel_json_from_slice(&log_bytes);
-
-        let time_start = Instant::now();
-        let abstraction = OCLanguageAbstraction::create_from_ocel(&ocel.unwrap());
-        let time_elapsed = time_start.elapsed().as_nanos();
-        println!("Time elapsed is {}ns", time_elapsed);
-        let time_elapsed_2 = time_start_2.elapsed().as_nanos();
-        println!("Time elapsed is {}ns", time_elapsed_2);
-
-        println!("{:?}", abstraction);
-        println!("{:?}", abstraction);
-    }
-
     fn create_test_tree() -> OCProcessTree {
-        let mut root_op = OCProcessTreeNode::new_operator(OCOperatorType::Sequence);
-
-        let mut leaf_1: OCProcessTreeNode =
-            OCProcessTreeNode::new_leaf(Some("Create Purchase Requisition".to_string()));
-        leaf_1.add_convergent_ob_type(&"material".to_string());
-        leaf_1.add_related_ob_type(&"material".to_string());
-        leaf_1.add_related_ob_type(&"purchase_requisition".to_string());
-        root_op.add_child(leaf_1);
-
-        let mut operator_2 = OCProcessTreeNode::new_operator(OCOperatorType::ExclusiveChoice);
-
-        let mut leaf_2_1 =
-            OCProcessTreeNode::new_leaf(Some("Approve Purchase Requisition".to_string()));
-        leaf_2_1.add_convergent_ob_type(&"material".to_string());
-        leaf_2_1.add_related_ob_type(&"material".to_string());
-        leaf_2_1.add_related_ob_type(&"purchase_requisition".to_string());
-        operator_2.add_child(leaf_2_1);
-
-        let mut leaf_2_2 =
-            OCProcessTreeNode::new_leaf(Some("Delegate Purchase Requisition Approval".to_string()));
-        leaf_2_2.add_convergent_ob_type(&"material".to_string());
-        leaf_2_2.add_related_ob_type(&"material".to_string());
-        leaf_2_2.add_related_ob_type(&"purchase_requisition".to_string());
-        operator_2.add_child(leaf_2_2);
-        root_op.add_child(operator_2);
-
-        let mut leaf_3 =
-            OCProcessTreeNode::new_leaf(Some("Create Request for Quotation".to_string()));
-        leaf_3.add_related_ob_type(&"purchase_requisition".to_string());
-        leaf_3.add_related_ob_type(&"quotation".to_string());
-        root_op.add_child(leaf_3);
-
-        let mut leaf_4 = OCProcessTreeNode::new_leaf(Some("Create Purchase Order".to_string()));
-        leaf_4.add_divergent_ob_type(&"quotation".to_string());
-        leaf_4.add_related_ob_type(&"purchase_order".to_string());
-        leaf_4.add_related_ob_type(&"quotation".to_string());
-        root_op.add_child(leaf_4);
-
-        let mut leaf_5 = OCProcessTreeNode::new_leaf(Some("Approve Purchase Order".to_string()));
-        leaf_5.add_divergent_ob_type(&"quotation".to_string());
-        leaf_5.add_related_ob_type(&"purchase_order".to_string());
-        leaf_5.add_related_ob_type(&"quotation".to_string());
-        root_op.add_child(leaf_5);
-
-        let mut operator_6 = OCProcessTreeNode::new_operator(OCOperatorType::Loop(None));
-        let mut operator_6_1 = OCProcessTreeNode::new_operator(OCOperatorType::ExclusiveChoice);
-
-        let mut leaf_6_1_1 = OCProcessTreeNode::new_leaf(Some("Execute Payment".to_string()));
-        leaf_6_1_1.add_convergent_ob_type(&"goods receipt".to_string());
-        leaf_6_1_1.add_convergent_ob_type(&"purchase_order".to_string());
-        leaf_6_1_1.add_related_ob_type(&"goods receipt".to_string());
-        leaf_6_1_1.add_related_ob_type(&"purchase_order".to_string());
-        leaf_6_1_1.add_related_ob_type(&"payment".to_string());
-        leaf_6_1_1.add_related_ob_type(&"invoice receipt".to_string());
-        operator_6_1.add_child(leaf_6_1_1);
-
-        let mut leaf_6_1_2 =
-            OCProcessTreeNode::new_leaf(Some("Create Invoice Receipt".to_string()));
-        leaf_6_1_2.add_divergent_ob_type(&"invoice receipt".to_string());
-        leaf_6_1_2.add_related_ob_type(&"goods receipt".to_string());
-        leaf_6_1_2.add_related_ob_type(&"invoice receipt".to_string());
-        operator_6_1.add_child(leaf_6_1_2);
-
-        let mut leaf_6_1_3 = OCProcessTreeNode::new_leaf(Some("Create Goods Receipt".to_string()));
-        leaf_6_1_3.add_divergent_ob_type(&"goods receipt".to_string());
-        leaf_6_1_3.add_divergent_ob_type(&"purchase_order".to_string());
-        leaf_6_1_3.add_related_ob_type(&"goods receipt".to_string());
-        leaf_6_1_3.add_related_ob_type(&"purchase_order".to_string());
-        operator_6_1.add_child(leaf_6_1_3);
-
-        let mut leaf_6_1_4 = OCProcessTreeNode::new_leaf(Some("Perform Two-Way Match".to_string()));
-        leaf_6_1_4.add_divergent_ob_type(&"invoice receipt".to_string());
-        leaf_6_1_4.add_related_ob_type(&"goods receipt".to_string());
-        leaf_6_1_4.add_related_ob_type(&"invoice receipt".to_string());
-        operator_6_1.add_child(leaf_6_1_4);
-
-        operator_6.add_child(operator_6_1);
-
-        let all_ob_types = vec![
-            "goods receipt",
-            "invoice receipt",
-            "material",
-            "payment",
-            "purchase_order",
-            "purchase_requisition",
-            "quotation",
-        ];
-        let mut leaf_6_2 = OCProcessTreeNode::new_leaf(None);
-        all_ob_types.iter().for_each(|ob_type| {
-            leaf_6_2.add_convergent_ob_type(&ob_type.to_string());
-            leaf_6_2.add_deficient_ob_type(&ob_type.to_string());
-            leaf_6_2.add_divergent_ob_type(&ob_type.to_string());
-            leaf_6_2.add_related_ob_type(&ob_type.to_string());
-        });
-
-        operator_6.add_child(leaf_6_2);
-
-        root_op.add_child(operator_6);
-
-        OCProcessTree::new(root_op)
-    }
-
-    fn create_example_tree() -> OCProcessTree {
         let mut root_op = OCProcessTreeNode::new_operator(OCOperatorType::Sequence);
 
         let mut place: OCProcessTreeNode = OCProcessTreeNode::new_leaf(Some("place".to_string()));
@@ -1081,7 +950,7 @@ mod tests {
         OCProcessTree::new(root_op)
     }
 
-    fn create_example_ocel() -> OCEL {
+    fn create_test_ocel() -> OCEL {
         ocel!(
             ("place", ["c:1", "o:1", "i:1", "i:2"]),
             ("pack", ["o:1", "i:2", "e:1"]),
@@ -1101,35 +970,9 @@ mod tests {
     }
 
     #[test]
-    fn test_tree_score_computation() {
+    fn test_fitness_precision_computation() {
         let tree = create_test_tree();
-
-        let path = get_test_data_path()
-            .join("ocel")
-            .join("01_ocel_standard_p2p.json");
-        let mut log_bytes = Vec::new();
-        File::open(&path)
-            .unwrap()
-            .read_to_end(&mut log_bytes)
-            .unwrap();
-
-        let ocel = import_ocel_json_from_slice(&log_bytes);
-
-        let time_start = Instant::now();
-        let abstraction_log = OCLanguageAbstraction::create_from_ocel(&ocel.unwrap());
-        let abstraction_tree = OCLanguageAbstraction::create_from_oc_process_tree(&tree);
-
-        let (fitness, precision) = compute_fitness_precision(&abstraction_log, &abstraction_tree);
-        let time_elapsed = time_start.elapsed().as_millis();
-        println!("Time elapsed is {}ms", time_elapsed);
-        println!("Fitness: {}", fitness);
-        println!("Precision: {}", precision);
-    }
-
-    #[test]
-    fn compute_example_fitness_precision() {
-        let tree = create_example_tree();
-        let ocel = create_example_ocel();
+        let ocel = create_test_ocel();
 
         let time_start = Instant::now();
         let abstraction_tree = OCLanguageAbstraction::create_from_oc_process_tree(&tree);

@@ -39,6 +39,7 @@ pub mod event_log {
         pub mod linked_ocel;
         /// OCEL 2.0 struct and sub-structs
         pub mod ocel_struct;
+        /// Functionality to flatten OCEL on an object type
         pub mod flatten;
         /// `SQLite` OCEL 2.0
         #[cfg(feature = "ocel-sqlite")]
@@ -58,11 +59,8 @@ pub mod event_log {
     mod tests;
 }
 
-pub mod object_centric {
-    pub mod object_centric_dfg_struct;
-    pub mod object_centric_process_tree_struct;
-    pub mod object_centric_language_abstraction_struct;
-}
+/// Object-centric discovery and conformance checking
+pub mod object_centric;
 
 /// Util module with smaller helper functions, structs or enums
 pub mod utils;
