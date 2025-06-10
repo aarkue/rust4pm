@@ -1,6 +1,6 @@
 use crate::object_centric::object_centric_dfg_struct::OCDirectlyFollowsGraph;
 use crate::object_centric::object_centric_process_tree_struct::{
-    OCLeafLabel, OCProcessTree, OCProcessTreeNode,
+    OCPTLeafLabel, OCPT, OCPTNode,
 };
 use crate::ocel::linked_ocel::index_linked_ocel::{EventIndex, ObjectIndex};
 use crate::ocel::linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess};
@@ -56,12 +56,12 @@ pub fn compute_rel_ob_types(
 }
 
 impl OCLanguageAbstraction {
-    pub fn create_from_oc_process_tree(ocpt: &OCProcessTree) -> Self {
+    pub fn create_from_oc_process_tree(ocpt: &OCPT) -> Self {
         if ocpt.is_valid() {
             let node_uuids = ocpt.find_all_node_uuids();
 
             match &ocpt.root {
-                OCProcessTreeNode::Operator(op) => {
+                OCPTNode::Operator(op) => {
                     let mut related_ev_type_per_ob_type: HashMap<
                         Uuid,
                         HashMap<&EventType, HashSet<&ObjectType>>,
@@ -108,7 +108,6 @@ impl OCLanguageAbstraction {
                     op.compute_opt(
                         &mut optional_ev_type_per_ob_type,
                         &related_ev_type_per_ob_type,
-                        false,
                     );
 
                     let convergent_ev_type_per_ob_type: HashMap<&EventType, HashSet<&ObjectType>> =
@@ -244,8 +243,8 @@ impl OCLanguageAbstraction {
                     }
                 }
 
-                OCProcessTreeNode::Leaf(leaf) => match &leaf.activity_label {
-                    OCLeafLabel::TreeActivity(label) => {
+                OCPTNode::Leaf(leaf) => match &leaf.activity_label {
+                    OCPTLeafLabel::Activity(label) => {
                         let (
                             start_ev_type_per_ob_type,
                             end_ev_type_per_ob_type,
@@ -336,7 +335,7 @@ impl OCLanguageAbstraction {
                             optional_ev_type_per_ob_type,
                         }
                     }
-                    OCLeafLabel::TreeTau => Self {
+                    OCPTLeafLabel::Tau => Self {
                         start_ev_type_per_ob_type: HashMap::new(),
                         end_ev_type_per_ob_type: HashMap::new(),
                         directly_follows_ev_types_per_ob_type: HashMap::new(),
@@ -876,9 +875,9 @@ mod tests {
         object_centric::object_centric_language_abstraction_struct::compute_fitness_precision,
         object_centric::object_centric_language_abstraction_struct::HashSet,
         object_centric::object_centric_language_abstraction_struct::OCLanguageAbstraction,
-        object_centric::object_centric_process_tree_struct::OCOperatorType,
-        object_centric::object_centric_process_tree_struct::OCProcessTree,
-        object_centric::object_centric_process_tree_struct::OCProcessTreeNode,
+        object_centric::object_centric_process_tree_struct::OCPTOperatorType,
+        object_centric::object_centric_process_tree_struct::OCPT,
+        object_centric::object_centric_process_tree_struct::OCPTNode,
         ocel,
         ocel::ocel_struct::OCELEvent,
         ocel::ocel_struct::OCELObject,
@@ -890,10 +889,10 @@ mod tests {
     use std::ops::AddAssign;
     use std::time::Instant;
 
-    fn create_test_tree() -> OCProcessTree {
-        let mut root_op = OCProcessTreeNode::new_operator(OCOperatorType::Sequence);
+    fn create_test_tree() -> OCPT {
+        let mut root_op = OCPTNode::new_operator(OCPTOperatorType::Sequence);
 
-        let mut place: OCProcessTreeNode = OCProcessTreeNode::new_leaf(Some("place".to_string()));
+        let mut place: OCPTNode = OCPTNode::new_leaf(Some("place".to_string()));
         place.add_convergent_ob_type(&"i".to_string());
         place.add_divergent_ob_type(&"c".to_string());
         place.add_related_ob_type(&"c".to_string());
@@ -901,9 +900,9 @@ mod tests {
         place.add_related_ob_type(&"i".to_string());
         root_op.add_child(place);
 
-        let mut pay_pack_operator = OCProcessTreeNode::new_operator(OCOperatorType::Concurrency);
+        let mut pay_pack_operator = OCPTNode::new_operator(OCPTOperatorType::Concurrency);
 
-        let mut pay: OCProcessTreeNode = OCProcessTreeNode::new_leaf(Some("pay".to_string()));
+        let mut pay: OCPTNode = OCPTNode::new_leaf(Some("pay".to_string()));
         pay.add_convergent_ob_type(&"i".to_string());
         pay.add_divergent_ob_type(&"c".to_string());
         pay.add_related_ob_type(&"c".to_string());
@@ -911,7 +910,7 @@ mod tests {
         pay.add_related_ob_type(&"i".to_string());
         pay_pack_operator.add_child(pay);
 
-        let mut pack: OCProcessTreeNode = OCProcessTreeNode::new_leaf(Some("pack".to_string()));
+        let mut pack: OCPTNode = OCPTNode::new_leaf(Some("pack".to_string()));
         pack.add_convergent_ob_type(&"i".to_string());
         pack.add_divergent_ob_type(&"o".to_string());
         pack.add_divergent_ob_type(&"e".to_string());
@@ -923,9 +922,9 @@ mod tests {
         root_op.add_child(pay_pack_operator);
 
         let mut refund_pickup_operator =
-            OCProcessTreeNode::new_operator(OCOperatorType::ExclusiveChoice);
+            OCPTNode::new_operator(OCPTOperatorType::ExclusiveChoice);
 
-        let mut refund: OCProcessTreeNode = OCProcessTreeNode::new_leaf(Some("refund".to_string()));
+        let mut refund: OCPTNode = OCPTNode::new_leaf(Some("refund".to_string()));
         refund.add_convergent_ob_type(&"i".to_string());
         refund.add_divergent_ob_type(&"o".to_string());
         refund.add_divergent_ob_type(&"e".to_string());
@@ -934,7 +933,7 @@ mod tests {
         refund.add_related_ob_type(&"e".to_string());
         refund_pickup_operator.add_child(refund);
 
-        let mut pickup: OCProcessTreeNode = OCProcessTreeNode::new_leaf(Some("pickup".to_string()));
+        let mut pickup: OCPTNode = OCPTNode::new_leaf(Some("pickup".to_string()));
         pickup.add_convergent_ob_type(&"i".to_string());
         pickup.add_deficient_ob_type(&"e".to_string());
         pickup.add_divergent_ob_type(&"c".to_string());
@@ -947,7 +946,7 @@ mod tests {
 
         root_op.add_child(refund_pickup_operator);
 
-        OCProcessTree::new(root_op)
+        OCPT::new(root_op)
     }
 
     fn create_test_ocel() -> OCEL {
