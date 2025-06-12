@@ -1,7 +1,6 @@
 use crate::object_centric::object_centric_dfg_struct::OCDirectlyFollowsGraph;
-use crate::object_centric::object_centric_process_tree_struct::{
-    OCPTLeafLabel, OCPT, OCPTNode,
-};
+use crate::object_centric::object_centric_process_tree_struct::{OCPTLeafLabel, OCPTNode, OCPT};
+use crate::object_centric::{EventType, ObjectType};
 use crate::ocel::linked_ocel::index_linked_ocel::{EventIndex, ObjectIndex};
 use crate::ocel::linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess};
 use crate::OCEL;
@@ -9,98 +8,90 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::ops::{AddAssign, DivAssign};
 use uuid::Uuid;
-use crate::object_centric::{EventType, ObjectType};
 
-#[derive(Debug, Serialize, Deserialize)]
+///
+/// An abstraction of either an [`OCEL`] or an [`OCPT`] that is based on:
+/// - the start event types,
+/// - the end event types,
+/// - the directly-follows event types,
+/// - related event types,
+/// - divergent event types,
+/// - convergent event types,
+/// - deficient event types,
+/// - and optional event types per object type.
+///
+/// Conformance can be checked between two [`OCLanguageAbstraction`] in a footprint-based manner.
+///
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct OCLanguageAbstraction {
+    /// The start event types per object type
     start_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
+    /// The end event types per object type
     end_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
+    /// The directly-following event types per object type
     directly_follows_ev_types_per_ob_type: HashMap<ObjectType, HashSet<(EventType, EventType)>>,
+    /// The related event types per object type
     related_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
+    /// The divergent event types per object type
     divergent_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
+    /// The convergent event types per object type
     convergent_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
+    /// The deficient event types per object type
     deficient_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
+    /// The optional event types per object type
     optional_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
 }
 
-pub fn change_ob_type_as_key(
-    ob_type_per_ev_type_mapping: HashMap<EventType, HashSet<ObjectType>>,
-    ob_types: &HashSet<ObjectType>,
-) -> HashMap<ObjectType, HashSet<EventType>> {
-    let mut result: HashMap<ObjectType, HashSet<EventType>> = ob_types
-        .iter()
-        .map(|ob_type| (ob_type.clone(), HashSet::new()))
-        .collect();
-
-    ob_type_per_ev_type_mapping
-        .iter()
-        .for_each(|(ev_type, ob_types)| {
-            ob_types.iter().for_each(|ob_type| {
-                result
-                    .entry(ob_type.clone())
-                    .or_insert(HashSet::new())
-                    .insert(ev_type.clone());
-            })
-        });
-
-    result
-}
-
-pub fn compute_rel_ob_types(
-    related_ob_type_per_ev_type: &HashMap<EventType, HashSet<ObjectType>>,
-) -> HashSet<ObjectType> {
-    related_ob_type_per_ev_type
-        .iter()
-        .flat_map(|(_, ob_types)| ob_types.clone())
-        .collect()
-}
-
 impl OCLanguageAbstraction {
+    ///
+    /// Creates an [`OCLanguageAbstraction`] from an [`OCPT`]
+    ///
     pub fn create_from_oc_process_tree(ocpt: &OCPT) -> Self {
+        // Returns an empty abstraction if the tree is invalid
         if ocpt.is_valid() {
             let node_uuids = ocpt.find_all_node_uuids();
 
             match &ocpt.root {
                 OCPTNode::Operator(op) => {
+                    // Information is stored per node
+                    let node_map: HashMap<Uuid, HashMap<&EventType, HashSet<&ObjectType>>> =
+                        node_uuids
+                            .iter()
+                            .map(|&uuid| (uuid.clone(), HashMap::new()))
+                            .collect();
+
+                    // Recursively compute relatedness
                     let mut related_ev_type_per_ob_type: HashMap<
                         Uuid,
                         HashMap<&EventType, HashSet<&ObjectType>>,
-                    > = node_uuids
-                        .iter()
-                        .map(|&uuid| (uuid.clone(), HashMap::new()))
-                        .collect();
+                    > = node_map.clone();
                     op.compute_related(&mut related_ev_type_per_ob_type);
 
+                    // Recursively compute divergence
                     let mut divergent_ev_type_per_ob_type: HashMap<
                         Uuid,
                         HashMap<&EventType, HashSet<&ObjectType>>,
-                    > = node_uuids
-                        .iter()
-                        .map(|&uuid| (uuid.clone(), HashMap::new()))
-                        .collect();
+                    > = node_map.clone();
                     op.compute_div(
                         &mut divergent_ev_type_per_ob_type,
                         &related_ev_type_per_ob_type,
                     );
 
+                    // Recursively compute leaf convergence
                     let mut leaf_conv_ob_types_per_node: HashMap<
                         Uuid,
                         HashMap<&EventType, HashSet<&ObjectType>>,
-                    > = node_uuids
-                        .iter()
-                        .map(|&uuid| (uuid.clone(), HashMap::new()))
-                        .collect();
+                    > = node_map.clone();
                     op.compute_leaf_conv(&mut leaf_conv_ob_types_per_node);
 
+                    // Recursively compute leaf deficiency
                     let mut leaf_def_ob_types_per_node: HashMap<
                         Uuid,
                         HashMap<&EventType, HashSet<&ObjectType>>,
-                    > = node_uuids
-                        .iter()
-                        .map(|&uuid| (uuid.clone(), HashMap::new()))
-                        .collect();
+                    > = node_map.clone();
                     op.compute_leaf_def(&mut leaf_def_ob_types_per_node);
 
+                    // Recursively compute optionality
                     let mut optional_ev_type_per_ob_type: HashMap<
                         Uuid,
                         HashMap<&EventType, HashSet<&ObjectType>>,
@@ -110,6 +101,7 @@ impl OCLanguageAbstraction {
                         &related_ev_type_per_ob_type,
                     );
 
+                    // Extend convergence information
                     let convergent_ev_type_per_ob_type: HashMap<&EventType, HashSet<&ObjectType>> =
                         op.compute_conv(
                             &related_ev_type_per_ob_type.get(&op.uuid).unwrap(),
@@ -119,17 +111,17 @@ impl OCLanguageAbstraction {
                             &leaf_conv_ob_types_per_node.get(&op.uuid).unwrap(),
                         );
 
-                    let deficient_ev_type_per_ob_type: HashMap<
-                        &EventType,
-                        HashSet<&ObjectType>,
-                    > = op.compute_def(
-                        &related_ev_type_per_ob_type.get(&op.uuid).unwrap(),
-                        &optional_ev_type_per_ob_type.get(&op.uuid).unwrap(),
-                        &leaf_conv_ob_types_per_node.get(&op.uuid).unwrap(),
-                        &divergent_ev_type_per_ob_type.get(&op.uuid).unwrap(),
-                        &leaf_def_ob_types_per_node.get(&op.uuid).unwrap(),
-                    );
+                    // Extend deficiency information
+                    let deficient_ev_type_per_ob_type: HashMap<&EventType, HashSet<&ObjectType>> =
+                        op.compute_def(
+                            &related_ev_type_per_ob_type.get(&op.uuid).unwrap(),
+                            &optional_ev_type_per_ob_type.get(&op.uuid).unwrap(),
+                            &leaf_conv_ob_types_per_node.get(&op.uuid).unwrap(),
+                            &divergent_ev_type_per_ob_type.get(&op.uuid).unwrap(),
+                            &leaf_def_ob_types_per_node.get(&op.uuid).unwrap(),
+                        );
 
+                    // Compute directly-follows information
                     let dfg_per_ob_type = related_ev_type_per_ob_type
                         .get(&op.uuid)
                         .unwrap()
@@ -160,6 +152,7 @@ impl OCLanguageAbstraction {
                         HashSet<(EventType, EventType)>,
                     > = HashMap::new();
 
+                    // Extract directly-follows information
                     dfg_per_ob_type
                         .iter()
                         .for_each(|(&ob_type, (start_evs, end_evs, dfr, _))| {
@@ -335,32 +328,17 @@ impl OCLanguageAbstraction {
                             optional_ev_type_per_ob_type,
                         }
                     }
-                    OCPTLeafLabel::Tau => Self {
-                        start_ev_type_per_ob_type: HashMap::new(),
-                        end_ev_type_per_ob_type: HashMap::new(),
-                        directly_follows_ev_types_per_ob_type: HashMap::new(),
-                        related_ev_type_per_ob_type: HashMap::new(),
-                        divergent_ev_type_per_ob_type: HashMap::new(),
-                        convergent_ev_type_per_ob_type: HashMap::new(),
-                        deficient_ev_type_per_ob_type: HashMap::new(),
-                        optional_ev_type_per_ob_type: HashMap::new(),
-                    },
+                    OCPTLeafLabel::Tau => Self::default(),
                 },
             }
         } else {
-            Self {
-                start_ev_type_per_ob_type: HashMap::new(),
-                end_ev_type_per_ob_type: HashMap::new(),
-                directly_follows_ev_types_per_ob_type: HashMap::new(),
-                related_ev_type_per_ob_type: HashMap::new(),
-                divergent_ev_type_per_ob_type: HashMap::new(),
-                convergent_ev_type_per_ob_type: HashMap::new(),
-                deficient_ev_type_per_ob_type: HashMap::new(),
-                optional_ev_type_per_ob_type: HashMap::new(),
-            }
+            Self::default()
         }
     }
 
+    ///
+    /// For a given node ID clone the stored information
+    ///
     pub fn unpack_root_ev_type_per_ob_type(
         root_uuid: &Uuid,
         ev_type_per_ob_type: HashMap<Uuid, HashMap<&ObjectType, HashSet<&EventType>>>,
@@ -378,11 +356,13 @@ impl OCLanguageAbstraction {
             .collect()
     }
 
+    ///
+    /// Creates an abstraction from an [`OCEL`]
+    ///
     pub fn create_from_ocel(ocel: &OCEL) -> Self {
         let mut locel: IndexLinkedOCEL = IndexLinkedOCEL::from(ocel.clone());
 
-        // Todo: Filter objects without e2o
-
+        // Filters objects without e2o relation
         let objects_with_e2o = locel
             .e2o_rev_et
             .iter()
@@ -405,9 +385,11 @@ impl OCLanguageAbstraction {
 
         let locel = IndexLinkedOCEL::from(underlying_ocel.clone());
 
+        // Computes the directly-follows graphs for all object types
         let directly_follows_graph: OCDirectlyFollowsGraph<'_> =
             OCDirectlyFollowsGraph::create_from_locel(&locel);
 
+        // Sets up the result hashmaps
         let mut start_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>> = HashMap::new();
         let mut end_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>> = HashMap::new();
         let mut directly_follows_ev_types_per_ob_type: HashMap<
@@ -425,6 +407,7 @@ impl OCLanguageAbstraction {
         let mut optional_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>> =
             HashMap::new();
 
+        // Extracts the DFG information
         locel.get_ob_types().for_each(|ob_type| {
             let ev_type_dfg = directly_follows_graph
                 .object_type_to_dfg
@@ -479,12 +462,6 @@ impl OCLanguageAbstraction {
                     ob_type_e2o_relations
                         .intersection(&ev_type_e2o_relations)
                         .collect::<HashSet<_>>();
-
-                // let ev_ob_type_e2o_relations = ev_type_e2o_relations
-                //     .iter()
-                //     .filter(|&(ev_index, ob_index)| {
-                //         locel.get_ob(ob_index).object_type.eq(&ob_type.to_string())
-                //     }).collect::<HashSet<_>>();
 
                 let unique_ev_count_e2o = ev_type_e2o_relations
                     .iter()
@@ -547,18 +524,6 @@ impl OCLanguageAbstraction {
             });
         });
 
-        let mut debug: HashMap<EventType, HashSet<ObjectType>> = HashMap::new();
-        optional_ev_type_per_ob_type
-            .iter()
-            .for_each(|(ob_type, ev_types)| {
-                ev_types.iter().for_each(|ev_type| {
-                    debug
-                        .entry(ev_type.to_string())
-                        .or_insert_with(HashSet::new)
-                        .insert(ob_type.to_string());
-                });
-            });
-
         Self {
             start_ev_type_per_ob_type,
             end_ev_type_per_ob_type,
@@ -571,6 +536,33 @@ impl OCLanguageAbstraction {
         }
     }
 
+    ///
+    /// Finds an object type to be convergent if there is an event that has an e2o relation to two
+    /// objects with the same object type
+    ///
+    pub fn is_convergent_locel(
+        locel: &IndexLinkedOCEL,
+        ev_ob_type_e2o_relations: &HashSet<&(&EventIndex, &ObjectIndex)>,
+        ob_type: &str,
+    ) -> bool {
+        let mut object_index_to_event_indices = HashSet::new();
+
+        for &&(ev_index, ob_index) in ev_ob_type_e2o_relations {
+            if locel.get_ob(ob_index).object_type.eq(ob_type) {
+                if object_index_to_event_indices.contains(&ev_index) {
+                    return true;
+                }
+
+                object_index_to_event_indices.insert(ev_index);
+            }
+        }
+        false
+    }
+
+    ///
+    /// An object type is checked to be divergent if an object of the given type is related to
+    /// multiple events
+    ///
     pub fn is_divergent_locel(
         locel: &IndexLinkedOCEL,
         ev_ob_type_e2o_relations: &HashSet<&(&EventIndex, &ObjectIndex)>,
@@ -580,7 +572,7 @@ impl OCLanguageAbstraction {
 
         ev_ob_type_e2o_relations
             .iter()
-            .for_each(|&(ev_index, ob_index)| {
+            .for_each(|&&(ev_index, ob_index)| {
                 object_index_to_event_indices
                     .entry(ob_index)
                     .or_insert_with(HashSet::new)
@@ -613,26 +605,51 @@ impl OCLanguageAbstraction {
 
         false
     }
-
-    pub fn is_convergent_locel(
-        locel: &IndexLinkedOCEL,
-        ev_ob_type_e2o_relations: &HashSet<&(&EventIndex, &ObjectIndex)>,
-        ob_type: &str,
-    ) -> bool {
-        let mut object_index_to_event_indices = HashSet::new();
-
-        for &&(ev_index, ob_index) in ev_ob_type_e2o_relations {
-            if locel.get_ob(ob_index).object_type.eq(ob_type) {
-                if object_index_to_event_indices.contains(&ev_index) {
-                    return true;
-                }
-
-                object_index_to_event_indices.insert(ev_index);
-            }
-        }
-        false
-    }
 }
+
+///
+/// Reverses a `HashMap<EventType, HashSet<ObjectType>>` to `HashMap<ObjectType, HashSet<EventType>>`
+/// and inserts missing object types given in `ob_types`
+///
+pub fn change_ob_type_as_key(
+    ob_type_per_ev_type_mapping: HashMap<EventType, HashSet<ObjectType>>,
+    ob_types: &HashSet<ObjectType>,
+) -> HashMap<ObjectType, HashSet<EventType>> {
+    let mut result: HashMap<ObjectType, HashSet<EventType>> = ob_types
+        .iter()
+        .map(|ob_type| (ob_type.clone(), HashSet::new()))
+        .collect();
+
+    ob_type_per_ev_type_mapping
+        .iter()
+        .for_each(|(ev_type, ob_types)| {
+            ob_types.iter().for_each(|ob_type| {
+                result
+                    .entry(ob_type.clone())
+                    .or_insert(HashSet::new())
+                    .insert(ev_type.clone());
+            })
+        });
+
+    result
+}
+
+///
+/// Finds all object types that are related to at least one event type
+///
+pub fn compute_rel_ob_types(
+    related_ob_type_per_ev_type: &HashMap<EventType, HashSet<ObjectType>>,
+) -> HashSet<ObjectType> {
+    related_ob_type_per_ev_type
+        .iter()
+        .flat_map(|(_, ob_types)| ob_types.clone())
+        .collect()
+}
+
+///
+/// Computes fitness and precision by comparing the abstractions in a footprint-based manner,
+/// weighting the conformance of directly-follows relations and all other properties equally
+///
 pub fn compute_fitness_precision(
     log_abstraction: &OCLanguageAbstraction,
     model_abstraction: &OCLanguageAbstraction,
@@ -875,15 +892,11 @@ mod tests {
         object_centric::object_centric_language_abstraction_struct::compute_fitness_precision,
         object_centric::object_centric_language_abstraction_struct::HashSet,
         object_centric::object_centric_language_abstraction_struct::OCLanguageAbstraction,
-        object_centric::object_centric_process_tree_struct::OCPTOperatorType,
-        object_centric::object_centric_process_tree_struct::OCPT,
         object_centric::object_centric_process_tree_struct::OCPTNode,
-        ocel,
-        ocel::ocel_struct::OCELEvent,
-        ocel::ocel_struct::OCELObject,
-        ocel::ocel_struct::OCELRelationship,
-        ocel::ocel_struct::OCELType,
-        OCEL
+        object_centric::object_centric_process_tree_struct::OCPTOperatorType,
+        object_centric::object_centric_process_tree_struct::OCPT, ocel,
+        ocel::ocel_struct::OCELEvent, ocel::ocel_struct::OCELObject,
+        ocel::ocel_struct::OCELRelationship, ocel::ocel_struct::OCELType, OCEL,
     };
     use chrono::{TimeDelta, TimeZone, Utc};
     use std::ops::AddAssign;
@@ -921,8 +934,7 @@ mod tests {
 
         root_op.add_child(pay_pack_operator);
 
-        let mut refund_pickup_operator =
-            OCPTNode::new_operator(OCPTOperatorType::ExclusiveChoice);
+        let mut refund_pickup_operator = OCPTNode::new_operator(OCPTOperatorType::ExclusiveChoice);
 
         let mut refund: OCPTNode = OCPTNode::new_leaf(Some("refund".to_string()));
         refund.add_convergent_ob_type(&"i".to_string());
