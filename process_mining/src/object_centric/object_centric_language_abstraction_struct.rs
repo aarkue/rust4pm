@@ -890,6 +890,7 @@ pub fn compute_fitness_precision(
 mod tests {
     use crate::{
         object_centric::object_centric_language_abstraction_struct::compute_fitness_precision,
+        object_centric::object_centric_language_abstraction_struct::HashMap,
         object_centric::object_centric_language_abstraction_struct::HashSet,
         object_centric::object_centric_language_abstraction_struct::OCLanguageAbstraction,
         object_centric::object_centric_process_tree_struct::OCPTNode,
@@ -963,6 +964,7 @@ mod tests {
 
     fn create_test_ocel() -> OCEL {
         ocel!(
+            events:
             ("place", ["c:1", "o:1", "i:1", "i:2"]),
             ("pack", ["o:1", "i:2", "e:1"]),
             ("place", ["c:1", "o:2", "i:3", "i:4"]),
@@ -976,7 +978,8 @@ mod tests {
             ("pay", ["c:1", "o:3", "i:5"]),
             ("pack", ["o:3", "i:5", "e:1"]),
             ("pickup", ["c:1", "o:1", "o:2", "i:1", "i:3"]),
-            ("refund", ["o:3", "i:5", "e:1"])
+            ("refund", ["o:3", "i:5", "e:1"]),
+            o2o:
         )
     }
 

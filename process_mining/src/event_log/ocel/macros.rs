@@ -14,15 +14,18 @@
 /// use process_mining::ocel;
 /// 
 /// let object_centric_event_log = ocel![
+///     events:
 ///     ("place", ["c:1", "o:1", "i:1", "i:2"]),
-///     ("pack", ["o:1", "i:2", "e:1"])
+///     ("pack", ["o:1", "i:2", "e:1"]),
+///     o2o: 
+///     ("o:1", "i:1")
 /// ];
 /// ```
 /// 
 /// [`OCEL`]: crate::OCEL
 #[macro_export]
 macro_rules! ocel {
-    ($(($ev_type:expr, [$($object:expr), *])), *) => {{
+    (events: $(($ev_type:expr, [$($object:expr), *])), *, o2o: $(($from_ob:expr, $to_ob:expr)), *) => {{
         // Adding all event types, object types, and objects exactly once
         // There can be multiple events that can be identical
         let mut event_types_set = HashSet::new();
@@ -81,18 +84,44 @@ macro_rules! ocel {
                 attributes: Vec::new(),
             }
         }).collect::<Vec<_>>();
+        
+        #[allow(unused_mut)]
+        let mut object_id_to_object = object_set.into_iter().map(|(ob_id, ob_type)| {
+            (
+                ob_id.clone(),
+                OCELObject {
+                    id: ob_id,
+                    object_type: ob_type,
+                    attributes: Vec::new(),
+                    relationships: Vec::new(),
+                }
+            )
+        }).collect::<HashMap<_, _>>();
+        
+        // Adds o2o relations
+        $(
+            let object_type = $to_ob.to_string().split(":").next().unwrap().to_string();
+            let o2o_relation = OCELRelationship::new($to_ob.to_string(), object_type.to_string());
+            
+            if object_id_to_object.contains_key(&$from_ob.to_string()) {
+                object_id_to_object.get_mut(&$from_ob.to_string()).unwrap().relationships.push(o2o_relation);
+            } else {
+                object_types_set.insert(object_type.clone());
+                object_id_to_object.insert($from_ob.to_string(), 
+                    OCELObject{
+                        id: $from_ob.to_string(),
+                        object_type: object_type,
+                        attributes: Vec::new(),
+                        relationships: vec![o2o_relation]
+                    }
+                );
+            }
+        )*
+        
         let object_types = object_types_set.into_iter().map(|ob_type| {
             OCELType{
                 name: ob_type,
                 attributes: Vec::new(),
-            }
-        }).collect::<Vec<_>>();
-        let objects = object_set.into_iter().map(|(ob_id, ob_type)| {
-            OCELObject {
-                id: ob_id,
-                object_type: ob_type,
-                attributes: Vec::new(),
-                relationships: Vec::new(),
             }
         }).collect::<Vec<_>>();
 
@@ -100,7 +129,7 @@ macro_rules! ocel {
             event_types,
             object_types,
             events,
-            objects,
+            objects: object_id_to_object.iter().map(|(_, object)| object.to_owned()).collect(),
         }
     }};
 }
