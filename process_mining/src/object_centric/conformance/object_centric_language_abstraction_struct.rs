@@ -1,9 +1,10 @@
 use crate::object_centric::object_centric_dfg_struct::OCDirectlyFollowsGraph;
-use crate::object_centric::object_centric_process_tree_struct::{OCPTLeafLabel, OCPTNode, OCPT};
-use crate::object_centric::{EventType, ObjectType};
+use crate::object_centric::ocpt::object_centric_process_tree_struct::{
+    OCPTLeafLabel, OCPTNode, OCPT,
+};
+use crate::object_centric::ocpt::{EventType, ObjectType};
 use crate::ocel::linked_ocel::index_linked_ocel::{EventIndex, ObjectIndex};
 use crate::ocel::linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess};
-use crate::OCEL;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::ops::{AddAssign, DivAssign};
@@ -126,7 +127,7 @@ impl OCLanguageAbstraction {
                         .get(&op.uuid)
                         .unwrap()
                         .values()
-                        .flat_map(|ob_types| ob_types)
+                        .flatten()
                         .collect::<HashSet<_>>()
                         .iter()
                         .map(|&&ob_type| {
@@ -254,21 +255,12 @@ impl OCLanguageAbstraction {
                                 let (start_evs, end_evs, dfr, _) =
                                     leaf.get_directly_follows_relations(ob_type);
                                 (
+                                    (ob_type.clone(), start_evs.into_iter().cloned().collect()),
+                                    (ob_type.clone(), end_evs.into_iter().cloned().collect()),
                                     (
                                         ob_type.clone(),
-                                        start_evs
-                                            .iter()
-                                            .map(|&start_ev| start_ev.clone())
-                                            .collect(),
-                                    ),
-                                    (
-                                        ob_type.clone(),
-                                        end_evs.iter().map(|&end_ev| end_ev.clone()).collect(),
-                                    ),
-                                    (
-                                        ob_type.clone(),
-                                        dfr.iter()
-                                            .map(|&(from, to)| (from.clone(), to.clone()))
+                                        dfr.into_iter()
+                                            .map(|(from, to)| (from.clone(), to.clone()))
                                             .collect(),
                                     ),
                                     (ob_type.clone(), HashSet::from([label.clone()])),
@@ -306,16 +298,7 @@ impl OCLanguageAbstraction {
                                     ),
                                 )
                             })
-                            .collect::<(
-                                HashMap<_, _>,
-                                HashMap<_, _>,
-                                HashMap<_, _>,
-                                HashMap<_, _>,
-                                HashMap<_, _>,
-                                HashMap<_, _>,
-                                HashMap<_, _>,
-                                HashMap<_, _>,
-                            )>();
+                            .collect();
 
                         Self {
                             start_ev_type_per_ob_type,
@@ -348,46 +331,21 @@ impl OCLanguageAbstraction {
             .unwrap()
             .iter()
             .map(|(&ob_type, ev_types)| {
-                (
-                    ob_type.clone(),
-                    ev_types.iter().map(|&ev_type| ev_type.clone()).collect(),
-                )
+                (ob_type.clone(), ev_types.iter().cloned().cloned().collect())
             })
             .collect()
     }
 
     ///
-    /// Creates an abstraction from an [`OCEL`]
+    /// Creates an abstraction from an [`OCEL`].
+    /// 
+    /// Expects the input [`IndexLinkedOCEL`] to have all orphan [`OCELObject`]s to be removed, i.e.,
+    /// they should not be contained if they do not have any e2o relation.
     ///
-    pub fn create_from_ocel(ocel: &OCEL) -> Self {
-        let mut locel: IndexLinkedOCEL = IndexLinkedOCEL::from(ocel.clone());
-
-        // Filters objects without e2o relation
-        let objects_with_e2o = locel
-            .e2o_rev_et
-            .iter()
-            .flat_map(|(_, o2e_set)| o2e_set.keys().cloned())
-            .collect::<HashSet<_>>();
-
-        let underlying_ocel = locel.get_ocel_mut();
-
-        underlying_ocel.objects = underlying_ocel
-            .objects
-            .iter()
-            .enumerate()
-            .filter_map(
-                |(index, obj)| match objects_with_e2o.contains(&ObjectIndex(index)) {
-                    true => Some(obj.clone()),
-                    false => None,
-                },
-            )
-            .collect::<Vec<_>>();
-
-        let locel = IndexLinkedOCEL::from(underlying_ocel.clone());
-
+    pub fn create_from_ocel(locel: &IndexLinkedOCEL) -> Self {
         // Computes the directly-follows graphs for all object types
         let directly_follows_graph: OCDirectlyFollowsGraph<'_> =
-            OCDirectlyFollowsGraph::create_from_locel(&locel);
+            OCDirectlyFollowsGraph::create_from_locel(locel);
 
         // Sets up the result hashmaps
         let mut start_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>> = HashMap::new();
@@ -664,7 +622,7 @@ pub fn compute_fitness_precision(
                 .keys()
                 .collect::<HashSet<_>>(),
         )
-        .map(|&ob_type| ob_type)
+        .cloned()
         .collect::<HashSet<_>>();
 
     let all_ev_types: HashSet<&EventType> = log_abstraction
@@ -888,20 +846,15 @@ pub fn compute_fitness_precision(
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        object_centric::object_centric_language_abstraction_struct::compute_fitness_precision,
-        object_centric::object_centric_language_abstraction_struct::HashMap,
-        object_centric::object_centric_language_abstraction_struct::HashSet,
-        object_centric::object_centric_language_abstraction_struct::OCLanguageAbstraction,
-        object_centric::object_centric_process_tree_struct::OCPTNode,
-        object_centric::object_centric_process_tree_struct::OCPTOperatorType,
-        object_centric::object_centric_process_tree_struct::OCPT, ocel,
-        ocel::ocel_struct::OCELEvent, ocel::ocel_struct::OCELObject,
-        ocel::ocel_struct::OCELRelationship, ocel::ocel_struct::OCELType, OCEL,
+    use crate::object_centric::conformance::object_centric_language_abstraction_struct::{
+        compute_fitness_precision, OCLanguageAbstraction,
     };
-    use chrono::{TimeDelta, TimeZone, Utc};
-    use std::ops::AddAssign;
+    use crate::object_centric::ocpt::object_centric_process_tree_struct::{
+        OCPTNode, OCPTOperatorType, OCPT,
+    };
+    use crate::{ocel, OCEL};
     use std::time::Instant;
+    use crate::ocel::linked_ocel::IndexLinkedOCEL;
 
     fn create_test_tree() -> OCPT {
         let mut root_op = OCPTNode::new_operator(OCPTOperatorType::Sequence);
@@ -987,10 +940,12 @@ mod tests {
     fn test_fitness_precision_computation() {
         let tree = create_test_tree();
         let ocel = create_test_ocel();
+        let preprocessed_ocel = ocel.remove_orphan_objects();
+        let locel = IndexLinkedOCEL::from_ocel(preprocessed_ocel);
 
         let time_start = Instant::now();
         let abstraction_tree = OCLanguageAbstraction::create_from_oc_process_tree(&tree);
-        let abstraction_log = OCLanguageAbstraction::create_from_ocel(&ocel);
+        let abstraction_log = OCLanguageAbstraction::create_from_ocel(&locel);
 
         let (fitness, precision) = compute_fitness_precision(&abstraction_log, &abstraction_tree);
         let time_elapsed = time_start.elapsed().as_millis();

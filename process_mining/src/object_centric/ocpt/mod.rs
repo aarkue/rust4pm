@@ -1,9 +1,4 @@
 use std::collections::HashSet;
-
-/// Object-centric directly-follows graphs
-pub mod object_centric_dfg_struct;
-/// Object-centric OCEL and OCPT abstraction and conformance checking
-pub mod object_centric_language_abstraction_struct;
 /// Object-centric process trees (OCPT)
 pub mod object_centric_process_tree_struct;
 

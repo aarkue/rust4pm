@@ -10,16 +10,10 @@ use std::collections::HashMap;
 /// An object-centric directly-follows graph containing a [`DirectlyFollowsGraph`] for each object
 /// type involved.
 /// 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct OCDirectlyFollowsGraph<'a> {
     /// The DFG per object type
     pub object_type_to_dfg: HashMap<String, DirectlyFollowsGraph<'a>>,
-}
-
-impl Default for OCDirectlyFollowsGraph<'_> {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl<'a> OCDirectlyFollowsGraph<'a> {

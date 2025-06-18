@@ -26,6 +26,14 @@
 #[macro_export]
 macro_rules! ocel {
     (events: $(($ev_type:expr, [$($object:expr), *])), *, o2o: $(($from_ob:expr, $to_ob:expr)), *) => {{
+        use ::std::collections::{HashSet, HashMap};
+        use chrono::{TimeDelta, TimeZone, Utc};
+        use crate::{
+            ocel::ocel_struct::OCELEvent, ocel::ocel_struct::OCELObject,
+            ocel::ocel_struct::OCELRelationship, ocel::ocel_struct::OCELType,
+        };
+        use std::ops::AddAssign;
+    
         // Adding all event types, object types, and objects exactly once
         // There can be multiple events that can be identical
         let mut event_types_set = HashSet::new();

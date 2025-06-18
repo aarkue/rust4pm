@@ -60,7 +60,11 @@ pub mod event_log {
 }
 
 /// Object-centric discovery and conformance checking
-pub mod object_centric;
+pub mod object_centric {
+    pub mod conformance;
+    pub mod ocpt;
+    pub mod object_centric_dfg_struct;
+}
 
 /// Util module with smaller helper functions, structs or enums
 pub mod utils;

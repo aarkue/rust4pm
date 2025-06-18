@@ -1,4 +1,4 @@
-use crate::object_centric::{
+use crate::object_centric::ocpt::{
     add_all_dfr_from_to_alphabets, compute_shuffle_dfr_language, EventType, ObjectType,
 };
 use serde::{Deserialize, Serialize};
@@ -742,7 +742,6 @@ impl OCPTOperator {
                             leaf_label,
                             leaf.related_ob_types
                                 .iter()
-                                .map(|rel_ob_type| rel_ob_type)
                                 .collect(),
                         );
                 }
@@ -836,7 +835,6 @@ impl OCPTOperator {
                                     leaf_label,
                                     leaf.divergent_ob_types
                                         .iter()
-                                        .map(|div_ob_type| div_ob_type)
                                         .collect(),
                                 );
                         }
@@ -921,7 +919,6 @@ impl OCPTOperator {
                             leaf_label,
                             leaf.convergent_ob_types
                                 .iter()
-                                .map(|ob_type| ob_type)
                                 .collect(),
                         );
                 }
@@ -958,7 +955,6 @@ impl OCPTOperator {
                             leaf_label,
                             leaf.deficient_ob_types
                                 .iter()
-                                .map(|ob_type| ob_type)
                                 .collect(),
                         );
                 }
@@ -1241,7 +1237,6 @@ impl OCPTOperator {
         }
     }
 }
-
 
 ///
 /// Resolves the deficiency subroutine usage for an [`OCPTNode`] by calling the routine of an
