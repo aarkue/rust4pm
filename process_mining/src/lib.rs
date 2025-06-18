@@ -39,6 +39,8 @@ pub mod event_log {
         pub mod linked_ocel;
         /// OCEL 2.0 struct and sub-structs
         pub mod ocel_struct;
+        /// Functionality to flatten OCEL on an object type
+        pub mod flatten;
         /// `SQLite` OCEL 2.0
         #[cfg(feature = "ocel-sqlite")]
         pub mod sqlite;
@@ -47,12 +49,21 @@ pub mod event_log {
         #[allow(clippy::single_match)]
         /// Parser for the OCEL 2.0 XML format
         pub mod xml_ocel_import;
+        /// Macros for the creation of [`OCEL`]
+        pub mod macros;
     }
     pub use event_log_struct::{
         Attribute, AttributeValue, Attributes, Event, EventLog, Trace, XESEditableAttribute,
     };
     #[cfg(test)]
     mod tests;
+}
+
+/// Object-centric discovery and conformance checking
+pub mod object_centric {
+    pub mod conformance;
+    pub mod ocpt;
+    pub mod object_centric_dfg_struct;
 }
 
 /// Util module with smaller helper functions, structs or enums
