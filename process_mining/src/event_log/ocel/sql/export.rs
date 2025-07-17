@@ -103,121 +103,83 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
     }
 
     con.execute_no_params("BEGIN TRANSACTION")?;
-    for o in &ocel.objects {
-        con.execute(
-            &format!(r#"INSERT INTO "object" VALUES (?, ?)"#,),
-            [&o.id, &o.object_type],
-        )?;
-        // Table for object type with initial attribute values
-        let mut attr_vals = ot_attr_map
-            .get(&o.object_type)
-            .unwrap()
-            .iter()
-            .map(|a| {
-                let initial_val = o
-                    .attributes
-                    .iter()
-                    .find(|oa| oa.name == a.name && oa.time == DateTime::UNIX_EPOCH);
-                if let Some(val) = initial_val {
-                    format!("'{}'", val.value)
-                } else {
-                    "NULL".to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        if !attr_vals.is_empty() {
-            attr_vals.insert_str(0, ", ");
-        }
-        con.execute(
-            &format!(
-                r#"INSERT INTO "object_{}" VALUES (?,?, NULL{})"#,
-                clean_sql_name(&o.object_type),
-                attr_vals
-            ),
-            [&o.id, &DateTime::UNIX_EPOCH.to_rfc3339()],
-        )?;
+    con.add_objects("object", ocel.objects.iter())?;
+    // con.append_values(
+    //     "object",
+    //     ocel.objects.iter().map(|o| [&o.id, &o.object_type]),
+    //     2,
+    // )?;
 
-        // Object attributes changes
-        for attr in &o.attributes {
-            if attr.time != DateTime::UNIX_EPOCH {
-                let mut attr_vals = ot_attr_map
-                    .get(&o.object_type)
-                    .unwrap()
-                    .iter()
-                    .map(|a| {
-                        if a.name == attr.name {
-                            format!("'{}'", attr.value)
-                        } else {
-                            "NULL".to_string()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                if !attr_vals.is_empty() {
-                    attr_vals.insert_str(0, ", ");
-                }
-                con.execute(
-                    &format!(
-                        r#"INSERT INTO "object_{}" VALUES (?,?, ?{})"#,
-                        clean_sql_name(&o.object_type),
-                        attr_vals
-                    ),
-                    [&o.id, &attr.time.to_rfc3339(), &clean_sql_name(&attr.name)],
-                )?;
-            }
-        }
-    }
-    // Do O2O AFTER so that the referenced objects already exist
-    for o in &ocel.objects {
-        // O2O Relationships
-        for rel in &o.relationships {
-            con.execute(
-                &format!(r#"INSERT INTO "object_object" VALUES (?, ?, ?)"#,),
-                [&o.id, &rel.object_id, &rel.qualifier],
-            )?;
-        }
+    for ot in &ocel.object_types {
+        let obs = ocel
+            .objects
+            .iter()
+            .filter(|ob| ob.object_type == ot.name);
+
+        con.add_object_changes_for_type(
+            &clean_sql_name(&format!("object_{}", ot.name)),
+            ot,
+            obs,
+        )?;
     }
 
-    for e in &ocel.events {
-        con.execute(
-            &format!(r#"INSERT INTO "event" VALUES (?, ?)"#,),
-            [&e.id, &e.event_type],
-        )?;
-        // Table for event type with attribute values
-        let mut attr_vals = et_attr_map
-            .get(&e.event_type)
-            .unwrap()
+    con.add_o2o_relationships("object_object",ocel.objects.iter())?;
+
+    con.add_events("event",ocel.events.iter())?;
+    
+    for et in &ocel.event_types {
+        let evs = ocel
+            .events
             .iter()
-            .map(|a| {
-                let value = e.attributes.iter().find(|oa| oa.name == a.name);
-                if let Some(val) = value {
-                    format!("'{}'", val.value)
-                } else {
-                    "NULL".to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        if !attr_vals.is_empty() {
-            attr_vals.insert_str(0, ", ");
-        }
-        con.execute(
-            &format!(
-                r#"INSERT INTO "event_{}" VALUES (?, ? {})"#,
-                clean_sql_name(&e.event_type),
-                attr_vals
-            ),
-            [&e.id, &e.time.to_rfc3339()],
+            .filter(|ob| ob.event_type == et.name);
+
+        con.add_event_attributes_for_type(
+            &clean_sql_name(&format!("event_{}", et.name)),
+            et,
+            evs,
         )?;
-        // E2O Relationships
-        for rel in &e.relationships {
-            con.execute(
-                &format!(r#"INSERT INTO "event_object" VALUES (?, ?, ?)"#,),
-                [&e.id, &rel.object_id, &rel.qualifier],
-            )?;
-        }
     }
+    con.add_e2o_relationships("event_object",ocel.events.iter())?;
+
+    // for e in &ocel.events {
+    //     con.execute(
+    //         &format!(r#"INSERT INTO "event" VALUES (?, ?)"#,),
+    //         [&e.id, &e.event_type],
+    //     )?;
+    //     // Table for event type with attribute values
+    //     let mut attr_vals = et_attr_map
+    //         .get(&e.event_type)
+    //         .unwrap()
+    //         .iter()
+    //         .map(|a| {
+    //             let value = e.attributes.iter().find(|oa| oa.name == a.name);
+    //             if let Some(val) = value {
+    //                 format!("'{}'", val.value)
+    //             } else {
+    //                 "NULL".to_string()
+    //             }
+    //         })
+    //         .collect::<Vec<_>>()
+    //         .join(", ");
+    //     if !attr_vals.is_empty() {
+    //         attr_vals.insert_str(0, ", ");
+    //     }
+    //     con.execute(
+    //         &format!(
+    //             r#"INSERT INTO "event_{}" VALUES (?, ? {})"#,
+    //             clean_sql_name(&e.event_type),
+    //             attr_vals
+    //         ),
+    //         [&e.id, &e.time.to_rfc3339()],
+    //     )?;
+    //     // E2O Relationships
+    //     for rel in &e.relationships {
+    //         con.execute(
+    //             &format!(r#"INSERT INTO "event_object" VALUES (?, ?, ?)"#,),
+    //             [&e.id, &rel.object_id, &rel.qualifier],
+    //         )?;
+    //     }
+    // }
 
     for ot in &ocel.object_types {
         con.execute_no_params(&format!(
@@ -241,7 +203,13 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
 fn clean_sql_name(type_name: &str) -> String {
     type_name
         .chars()
-        .map(|c| if c != '\'' && c != '\\' { c } else { '-' })
+        .map(|c| {
+            if c != '\'' && c != '\\' && c != ' ' {
+                c
+            } else {
+                '_'
+            }
+        })
         // .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect()
 }
