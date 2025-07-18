@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use chrono::DateTime;
-
 use crate::{ocel::ocel_struct::OCELTypeAttribute, OCEL};
 
 use super::*;
@@ -104,11 +102,6 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
 
     con.execute_no_params("BEGIN TRANSACTION")?;
     con.add_objects("object", ocel.objects.iter())?;
-    // con.append_values(
-    //     "object",
-    //     ocel.objects.iter().map(|o| [&o.id, &o.object_type]),
-    //     2,
-    // )?;
 
     for ot in &ocel.object_types {
         let obs = ocel
@@ -141,45 +134,6 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
     }
     con.add_e2o_relationships("event_object",ocel.events.iter())?;
 
-    // for e in &ocel.events {
-    //     con.execute(
-    //         &format!(r#"INSERT INTO "event" VALUES (?, ?)"#,),
-    //         [&e.id, &e.event_type],
-    //     )?;
-    //     // Table for event type with attribute values
-    //     let mut attr_vals = et_attr_map
-    //         .get(&e.event_type)
-    //         .unwrap()
-    //         .iter()
-    //         .map(|a| {
-    //             let value = e.attributes.iter().find(|oa| oa.name == a.name);
-    //             if let Some(val) = value {
-    //                 format!("'{}'", val.value)
-    //             } else {
-    //                 "NULL".to_string()
-    //             }
-    //         })
-    //         .collect::<Vec<_>>()
-    //         .join(", ");
-    //     if !attr_vals.is_empty() {
-    //         attr_vals.insert_str(0, ", ");
-    //     }
-    //     con.execute(
-    //         &format!(
-    //             r#"INSERT INTO "event_{}" VALUES (?, ? {})"#,
-    //             clean_sql_name(&e.event_type),
-    //             attr_vals
-    //         ),
-    //         [&e.id, &e.time.to_rfc3339()],
-    //     )?;
-    //     // E2O Relationships
-    //     for rel in &e.relationships {
-    //         con.execute(
-    //             &format!(r#"INSERT INTO "event_object" VALUES (?, ?, ?)"#,),
-    //             [&e.id, &rel.object_id, &rel.qualifier],
-    //         )?;
-    //     }
-    // }
 
     for ot in &ocel.object_types {
         con.execute_no_params(&format!(
@@ -210,7 +164,6 @@ fn clean_sql_name(type_name: &str) -> String {
                 '_'
             }
         })
-        // .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect()
 }
 

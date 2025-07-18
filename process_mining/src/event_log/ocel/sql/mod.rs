@@ -16,9 +16,24 @@ pub(crate) const OCEL_E2O_EVENT_ID_COLUMN: &str = "ocel_event_id";
 pub(crate) const OCEL_E2O_OBJECT_ID_COLUMN: &str = "ocel_object_id";
 pub(crate) const OCEL_REL_QUALIFIER_COLUMN: &str = "ocel_qualifier";
 
-pub mod duckdb;
+#[cfg(feature = "ocel-duckdb")]
+pub(crate) mod duckdb;
 pub(crate) mod export;
+#[cfg(feature = "ocel-sqlite")]
 pub(crate) mod sqlite;
+
+pub use duckdb::duckdb_ocel_export::export_ocel_duckdb_to_path;
+
+pub use duckdb::duckdb_ocel_import::import_ocel_duckdb_from_con;
+pub use duckdb::duckdb_ocel_import::import_ocel_duckdb_from_path;
+
+pub use sqlite::sqlite_ocel_export::export_ocel_sqlite_to_path;
+pub use sqlite::sqlite_ocel_export::export_ocel_sqlite_to_vec;
+
+pub use sqlite::sqlite_ocel_import::import_ocel_sqlite_from_con;
+pub use sqlite::sqlite_ocel_import::import_ocel_sqlite_from_path;
+pub use sqlite::sqlite_ocel_import::import_ocel_sqlite_from_slice;
+
 
 pub(crate) fn sql_type_to_ocel(s: &str) -> OCELAttributeType {
     match s {

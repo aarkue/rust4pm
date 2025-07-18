@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ffi::CString, time::UNIX_EPOCH};
+use std::{collections::HashMap, time::UNIX_EPOCH};
 
 use super::super::*;
 use crate::{
@@ -55,11 +55,11 @@ fn get_row_attribute_value(
     }
 }
 
-/// Import [`OCEL`] log from `SQLite` connection
+/// Import [`OCEL`] log from `DuckDB` connection
 ///
-/// If you want to import from a filepath, see [`import_ocel_sqlite_from_path`] instead.
+/// If you want to import from a filepath, see [`import_ocel_duckdb_from_path`] instead.
 ///
-/// Note: This function is only available if the `ocel-sqlite` feature is enabled.
+/// Note: This function is only available if the `ocel-duckdb` feature is enabled.
 ///
 pub fn import_ocel_duckdb_from_con(con: Connection) -> Result<OCEL, ::duckdb::Error> {
     let mut ocel = OCEL {
@@ -318,125 +318,4 @@ pub fn import_ocel_duckdb_from_path<P: AsRef<std::path::Path>>(
 ) -> Result<OCEL, ::duckdb::Error> {
     let con = Connection::open(path)?;
     import_ocel_duckdb_from_con(con)
-}
-
-// ///
-// /// Import an [`OCEL`] `SQLite` file from the given byte slice
-// ///
-// /// Note: This function is only available if the `ocel-sqlite` feature is enabled.
-// pub fn import_ocel_sqlite_from_slice(bytes: &[u8]) -> Result<OCEL, ::duckdb::Error> {
-//     let mut con = Connection::open_in_memory()?;
-//     deserialize_sqlite_slice(&mut con, bytes, false)?;
-//     import_ocel_sqlite_from_con(con)
-// }
-
-// fn deserialize_sqlite_slice(
-//     con: &mut Connection,
-//     data: &[u8],
-//     read_only: bool,
-// ) -> Result<(), ::duckdb::Error> {
-//     let schema = CString::new("main")?;
-//     let sz = data.len().try_into().unwrap();
-//     let flags = if read_only {
-//         ::duckdb::ffi
-//     } else {
-//         ::duckdb::ffi::SQLITE_DESERIALIZE_RESIZEABLE
-//     };
-//     let _rc = unsafe {
-//         ::duckdb::ffi::deserialize(
-//             con.handle(),
-//             schema.as_ptr(),
-//             data.as_ptr() as *mut u8,
-//             sz,
-//             sz,
-//             flags,
-//         )
-//     };
-//     Ok(())
-// }
-#[cfg(test)]
-mod sqlite_tests {
-    use std::collections::HashSet;
-
-    use chrono::DateTime;
-    use ::duckdb::Connection;
-
-    use crate::{
-        ocel::{ocel_struct::{OCELAttributeValue, OCELObjectAttribute, OCELRelationship}, sql::duckdb::duckdb_ocel_import::import_ocel_duckdb_from_con},
-        utils::test_utils::get_test_data_path,
-    };
-
-    #[test]
-    fn test_sqlite_ocel() -> Result<(), ::duckdb::Error> {
-        let path = get_test_data_path()
-            .join("ocel")
-            .join("order-management.sqlite");
-
-        let con = Connection::open(path).unwrap();
-        let ocel = import_ocel_duckdb_from_con(con)?;
-
-        assert_eq!(ocel.objects.len(), 10840);
-        assert_eq!(ocel.events.len(), 21008);
-
-        assert_eq!(ocel.event_types.len(), 11);
-        assert_eq!(ocel.object_types.len(), 6);
-
-        let po_1337 = ocel.events.iter().find(|e| e.id == "pay_o-991337").unwrap();
-        assert_eq!(
-            po_1337.time,
-            DateTime::parse_from_rfc3339("2023-12-13T10:31:50+00:00").unwrap()
-        );
-        assert_eq!(
-            po_1337
-                .relationships
-                .clone()
-                .into_iter()
-                .collect::<HashSet<_>>(),
-            vec![
-                ("Echo", "product"),
-                ("iPad", "product"),
-                ("iPad Pro", "product"),
-                ("o-991337", "order"),
-                ("i-885283", "item"),
-                ("i-885284", "item"),
-                ("i-885285", "item"),
-            ]
-            .into_iter()
-            .map(|(o_id, q)| OCELRelationship {
-                object_id: o_id.to_string(),
-                qualifier: q.to_string()
-            })
-            .collect::<HashSet<_>>()
-        );
-
-        let o_1337 = ocel.objects.iter().find(|o| o.id == "o-991337").unwrap();
-        assert_eq!(
-            o_1337.attributes,
-            vec![OCELObjectAttribute {
-                name: "price".to_string(),
-                value: OCELAttributeValue::Float(1909.04),
-                time: DateTime::UNIX_EPOCH.into()
-            }]
-        );
-        assert_eq!(
-            o_1337
-                .relationships
-                .clone()
-                .into_iter()
-                .collect::<HashSet<_>>(),
-            vec![
-                ("i-885283", "comprises"),
-                ("i-885284", "comprises"),
-                ("i-885285", "comprises"),
-            ]
-            .into_iter()
-            .map(|(o_id, q)| OCELRelationship {
-                object_id: o_id.to_string(),
-                qualifier: q.to_string()
-            })
-            .collect::<HashSet<_>>()
-        );
-
-        Ok(())
-    }
 }
