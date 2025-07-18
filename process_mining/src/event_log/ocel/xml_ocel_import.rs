@@ -547,7 +547,7 @@ where
                             attribute.value = parse_attribute_value(
                                 object_attribute_types
                                     .get(&(o.object_type.clone(), attribute.name.clone()))
-                                    .unwrap(),
+                                    .unwrap_or(&OCELAttributeType::String),
                                 str_val,
                                 &options,
                             );
@@ -560,7 +560,7 @@ where
                             attribute.value = parse_attribute_value(
                                 event_attribute_types
                                     .get(&(e.event_type.clone(), attribute.name.clone()))
-                                    .unwrap(),
+                                    .unwrap_or(&OCELAttributeType::String),
                                 str_val,
                                 &options,
                             );
