@@ -170,7 +170,7 @@ pub fn import_ocel_xml<T>(reader: &mut Reader<T>, options: OCELImportOptions) ->
 where
     T: BufRead,
 {
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
     let mut buf: Vec<u8> = Vec::new();
 
     let mut current_mode: Mode = Mode::None;

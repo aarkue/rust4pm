@@ -37,6 +37,8 @@ pub mod event_log {
         pub mod linked_ocel;
         /// OCEL 2.0 struct and sub-structs
         pub mod ocel_struct;
+        /// Functionality to flatten OCEL on an object type
+        pub mod flatten;
         /// `SQL` OCEL 2.0 (SQLite and DuckDB)
         ///
         #[cfg(not(all(not(feature = "ocel-duckdb"), not(feature = "ocel-sqlite"))))]
@@ -46,13 +48,24 @@ pub mod event_log {
         #[allow(clippy::single_match)]
         /// Parser for the OCEL 2.0 XML format
         pub mod xml_ocel_import;
-        pub(crate) mod flatten;
+        /// Macros for the creation of [`OCEL`]
+        pub mod macros;
     }
     pub use event_log_struct::{
         Attribute, AttributeValue, Attributes, Event, EventLog, Trace, XESEditableAttribute,
     };
     #[cfg(test)]
     mod tests;
+}
+
+/// Object-centric discovery and conformance checking
+pub mod object_centric {
+    /// Object-centric conformance checking
+    pub mod conformance;
+    /// Object-centric process trees [`OCPT`]
+    pub mod ocpt;
+    /// Object-centric directly-follows graphs
+    pub mod object_centric_dfg_struct;
 }
 
 /// Util module with smaller helper functions, structs or enums
@@ -79,6 +92,15 @@ pub mod petri_net {
 
     #[doc(inline)]
     pub use petri_net_struct::PetriNet;
+}
+
+///
+/// Conformance Checking
+///
+pub mod conformance {
+    /// Token-based replay
+    #[cfg(feature = "token_based_replay")]
+    pub mod token_based_replay;
 }
 
 ///

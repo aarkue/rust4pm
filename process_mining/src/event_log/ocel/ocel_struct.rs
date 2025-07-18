@@ -1,5 +1,8 @@
+use std::collections::HashSet;
 use std::fmt::Display;
 
+use crate::ocel::linked_ocel::index_linked_ocel::ObjectIndex;
+use crate::ocel::linked_ocel::IndexLinkedOCEL;
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +25,37 @@ pub struct OCEL {
     /// Objects contained in OCEL
     #[serde(default)]
     pub objects: Vec<OCELObject>,
+}
+
+impl OCEL {
+    ///
+    /// Removes all [`OCELObject`] that do not have an e2o relation
+    ///
+    pub fn remove_orphan_objects(self) -> OCEL {
+        let locel: IndexLinkedOCEL = IndexLinkedOCEL::from(self);
+
+        let objects_with_e2o = locel
+            .e2o_rev_et
+            .iter()
+            .flat_map(|(_, o2e_set)| o2e_set.keys().cloned())
+            .collect::<HashSet<_>>();
+
+        let mut underlying_ocel = locel.into_inner();
+        
+        underlying_ocel.objects = underlying_ocel
+            .objects
+            .iter()
+            .enumerate()
+            .filter_map(
+                |(index, obj)| match objects_with_e2o.contains(&ObjectIndex::from(index)) {
+                    true => Some(obj.clone()),
+                    false => None,
+                },
+            )
+            .collect::<Vec<_>>();
+
+        underlying_ocel
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
