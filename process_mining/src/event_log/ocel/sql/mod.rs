@@ -1,5 +1,4 @@
 use chrono::DateTime;
-use rusqlite::ToSql;
 
 use crate::ocel::ocel_struct::{OCELAttributeType, OCELType};
 
@@ -22,18 +21,24 @@ pub(crate) mod export;
 #[cfg(feature = "ocel-sqlite")]
 pub(crate) mod sqlite;
 
+#[cfg(feature = "ocel-duckdb")]
 pub use duckdb::duckdb_ocel_export::export_ocel_duckdb_to_path;
-
+#[cfg(feature = "ocel-duckdb")]
 pub use duckdb::duckdb_ocel_import::import_ocel_duckdb_from_con;
+#[cfg(feature = "ocel-duckdb")]
 pub use duckdb::duckdb_ocel_import::import_ocel_duckdb_from_path;
 
+#[cfg(feature = "ocel-sqlite")]
 pub use sqlite::sqlite_ocel_export::export_ocel_sqlite_to_path;
+#[cfg(feature = "ocel-sqlite")]
 pub use sqlite::sqlite_ocel_export::export_ocel_sqlite_to_vec;
 
+#[cfg(feature = "ocel-sqlite")]
 pub use sqlite::sqlite_ocel_import::import_ocel_sqlite_from_con;
+#[cfg(feature = "ocel-sqlite")]
 pub use sqlite::sqlite_ocel_import::import_ocel_sqlite_from_path;
+#[cfg(feature = "ocel-sqlite")]
 pub use sqlite::sqlite_ocel_import::import_ocel_sqlite_from_slice;
-
 
 pub(crate) fn sql_type_to_ocel(s: &str) -> OCELAttributeType {
     match s {
@@ -170,6 +175,7 @@ impl<'a> DatabaseConnection<'a> {
     {
         let object_values = objects.into_iter().map(|o| [&o.id, &o.object_type]);
         match self {
+            #[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => {
                 for ov in object_values {
                     connection
@@ -177,6 +183,7 @@ impl<'a> DatabaseConnection<'a> {
                 }
                 Ok(())
             }
+            #[cfg(feature = "ocel-duckdb")]
             DatabaseConnection::DUCKDB(connection) => {
                 let mut ap = connection.appender(table_name)?;
                 Ok(ap.append_rows(object_values)?)
@@ -190,6 +197,7 @@ impl<'a> DatabaseConnection<'a> {
     {
         let event_values = events.into_iter().map(|o| [&o.id, &o.event_type]);
         match self {
+            #[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => {
                 for ov in event_values {
                     connection
@@ -197,6 +205,7 @@ impl<'a> DatabaseConnection<'a> {
                 }
                 Ok(())
             }
+            #[cfg(feature = "ocel-duckdb")]
             DatabaseConnection::DUCKDB(connection) => {
                 let mut ap = connection.appender(table_name)?;
                 Ok(ap.append_rows(event_values)?)
@@ -262,6 +271,7 @@ impl<'a> DatabaseConnection<'a> {
             )
         });
         match self {
+            #[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => {
                 for (o_id, changed_field, time, values) in object_values {
                     let values: Vec<_> = values
@@ -285,6 +295,7 @@ impl<'a> DatabaseConnection<'a> {
                 }
                 Ok(())
             }
+            #[cfg(feature = "ocel-duckdb")]
             DatabaseConnection::DUCKDB(connection) => {
                 let mut ap = connection.appender(table_name)?;
                 let object_values: Vec<_> = object_values.collect();
@@ -305,7 +316,7 @@ impl<'a> DatabaseConnection<'a> {
         }
     }
 
-     pub(crate) fn add_event_attributes_for_type<I>(
+    pub(crate) fn add_event_attributes_for_type<I>(
         &self,
         table_name: &str,
         event_type: &OCELType,
@@ -319,24 +330,20 @@ impl<'a> DatabaseConnection<'a> {
                 .attributes
                 .iter()
                 .map(|a| {
-                    let val = o
-                        .attributes
-                        .iter()
-                        .find(|oa| oa.name == a.name);
+                    let val = o.attributes.iter().find(|oa| oa.name == a.name);
                     val.map(|v| v.value.to_string())
                 })
                 .collect();
             // let v = if initial_vals.is_empty() {
             //     Vec::default()
             // } else {
-          
-                (o.id.clone(),o.time.to_rfc3339(),
-                values,
-            )
+
+            (o.id.clone(), o.time.to_rfc3339(), values)
         });
         match self {
+            #[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => {
-                for (e_id,time, values) in event_values {
+                for (e_id, time, values) in event_values {
                     let values: Vec<_> = values
                         .into_iter()
                         .map(|v| v.map(|v| format!("'{v}'")).unwrap_or("NULL".to_string()))
@@ -346,26 +353,23 @@ impl<'a> DatabaseConnection<'a> {
                         attr_vals.insert_str(0, ", ");
                     }
                     connection.execute(
-                        &format!(
-                            r#"INSERT INTO "{table_name}" VALUES (?,?{})"#,
-                            attr_vals
-                        ),
-                        [&e_id,&time],
+                        &format!(r#"INSERT INTO "{table_name}" VALUES (?,?{})"#, attr_vals),
+                        [&e_id, &time],
                     )?;
                 }
                 Ok(())
             }
+
+            #[cfg(feature = "ocel-duckdb")]
             DatabaseConnection::DUCKDB(connection) => {
                 let mut ap = connection.appender(table_name)?;
                 let event_values: Vec<_> = event_values.collect();
                 let x = event_values.iter().map(|ov| {
-                    let chained: Vec<_> = vec![
-                        &ov.0 as &dyn ::duckdb::ToSql,
-                        &ov.1 as &dyn ::duckdb::ToSql,
-                    ]
-                    .into_iter()
-                    .chain(ov.2.iter().map(|v| v as &dyn ::duckdb::ToSql))
-                    .collect();
+                    let chained: Vec<_> =
+                        vec![&ov.0 as &dyn ::duckdb::ToSql, &ov.1 as &dyn ::duckdb::ToSql]
+                            .into_iter()
+                            .chain(ov.2.iter().map(|v| v as &dyn ::duckdb::ToSql))
+                            .collect();
                     let x = ::duckdb::appender_params_from_iter(chained);
                     x
                 });
@@ -389,6 +393,7 @@ impl<'a> DatabaseConnection<'a> {
                 .map(|r| [&o.id, &r.object_id, &r.qualifier])
         });
         match self {
+            #[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => {
                 for ov in object_values {
                     connection
@@ -396,13 +401,13 @@ impl<'a> DatabaseConnection<'a> {
                 }
                 Ok(())
             }
+            #[cfg(feature = "ocel-duckdb")]
             DatabaseConnection::DUCKDB(connection) => {
                 let mut ap = connection.appender(table_name)?;
                 Ok(ap.append_rows(object_values)?)
             }
         }
     }
-
 
     /// Add rows for all OCEL objects to specified database table
     pub(crate) fn add_e2o_relationships<I>(
@@ -419,6 +424,7 @@ impl<'a> DatabaseConnection<'a> {
                 .map(|r| [&o.id, &r.object_id, &r.qualifier])
         });
         match self {
+#[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => {
                 for ov in event_values {
                     connection
@@ -426,47 +432,10 @@ impl<'a> DatabaseConnection<'a> {
                 }
                 Ok(())
             }
+#[cfg(feature = "ocel-duckdb")]
             DatabaseConnection::DUCKDB(connection) => {
                 let mut ap = connection.appender(table_name)?;
                 Ok(ap.append_rows(event_values)?)
-            }
-        }
-    }
-
-    /// Appends specified rows of values to table
-    pub fn append_values<P, I, V>(
-        &self,
-        table_name: &str,
-        rows: I,
-        values_per_row: usize,
-    ) -> Result<(), DatabaseError>
-    where
-        I: IntoIterator<Item = V>,
-        V: IntoIterator<Item = P>,
-        P: rusqlite::ToSql + ::duckdb::ToSql,
-    {
-        match self {
-            #[cfg(feature = "ocel-sqlite")]
-            DatabaseConnection::SQLITE(connection) => {
-                let placeholders = std::iter::repeat("?")
-                    .take(values_per_row)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                for row in rows {
-                    connection.execute(
-                        &format!(r#"INSERT INTO "{table_name}" VALUES ({placeholders})"#),
-                        rusqlite::params_from_iter(row.into_iter()),
-                    )?;
-                }
-                Ok(())
-            }
-            #[cfg(feature = "ocel-duckdb")]
-            DatabaseConnection::DUCKDB(connection) => {
-                let mut app = connection.appender(table_name)?;
-                Ok(app.append_rows(
-                    rows.into_iter()
-                        .map(|r| ::duckdb::appender_params_from_iter(r)),
-                )?)
             }
         }
     }
