@@ -5,6 +5,7 @@ use crate::object_centric::ocpt::object_centric_process_tree_struct::{
 use crate::object_centric::ocpt::{EventType, ObjectType};
 use crate::ocel::linked_ocel::index_linked_ocel::{EventIndex, ObjectIndex};
 use crate::ocel::linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess};
+use itertools::MultiUnzip;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::ops::{AddAssign, DivAssign};
@@ -298,7 +299,7 @@ impl OCLanguageAbstraction {
                                     ),
                                 )
                             })
-                            .collect();
+                            .multiunzip();
 
                         Self {
                             start_ev_type_per_ob_type,
