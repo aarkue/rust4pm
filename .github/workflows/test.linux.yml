@@ -27,6 +27,8 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Install DuckDB
         run: curl https://install.duckdb.org | sh
+      - name: Add DuckDB to PATH
+        run: export PATH='/home/runner/.duckdb/cli/latest':$PATH
       - name: Downloading test files
         run: wget -O process_mining/test_data/out.zip https://rwth-aachen.sciebo.de/s/4cvtTU3lLOgtxt1/download
       - name: Unpacking test files
