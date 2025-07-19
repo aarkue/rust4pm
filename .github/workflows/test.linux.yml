@@ -25,10 +25,21 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - name: Install DuckDB
-        run: curl https://install.duckdb.org | sh
-      - name: Add DuckDB to PATH
-        run: export PATH='/home/runner/.duckdb/cli/latest':$PATH
+
+      - uses: robinraju/release-downloader@v1.4
+        name: Download duckdb
+        with:
+          repository: "duckdb/duckdb"
+          tag: "v1.3.2"
+          fileName: libduckdb-linux-amd64.zip
+          out-file-path: .
+      - name: Linux extract duckdb
+        if: matrix.os == 'ubuntu-latest'
+        uses: ihiroky/extract-action@v1
+        with:
+          file_path: ${{ github.workspace }}/libduckdb-linux-amd64.zip
+          extract_dir: libduckdb
+          
       - name: Downloading test files
         run: wget -O process_mining/test_data/out.zip https://rwth-aachen.sciebo.de/s/4cvtTU3lLOgtxt1/download
       - name: Unpacking test files
@@ -37,3 +48,7 @@ jobs:
         with:
           command: test
           args: --lib -p process_mining --all-features
+        env:
+          DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
+          DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
+          LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
