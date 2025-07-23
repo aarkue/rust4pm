@@ -60,6 +60,7 @@ pub struct IndexLinkedOCEL {
     ///
     /// First level: event type, second level: reverse e2o (object index to set of event indices)
     pub e2o_rev_et: HashMap<String, HashMap<ObjectIndex, HashSet<EventIndex>>>,
+    /// List of object indices per object type
     pub objects_per_type: HashMap<String, Vec<ObjectIndex>>,
     e2o_rel: Vec<Vec<(String, ObjectIndex)>>,
     e2o_set: Vec<HashSet<ObjectIndex>>,

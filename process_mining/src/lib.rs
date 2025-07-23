@@ -32,25 +32,7 @@ pub mod event_log {
     ///
     /// OCEL2.0 (Object-Centric Event Logs)
     ///
-    pub mod ocel {
-        /// Linked OCEL 2.0, allowing convenient usage of object-centric data
-        pub mod linked_ocel;
-        /// OCEL 2.0 struct and sub-structs
-        pub mod ocel_struct;
-        /// Functionality to flatten OCEL on an object type
-        pub mod flatten;
-        /// `SQL` OCEL 2.0 (SQLite and DuckDB)
-        ///
-        #[cfg(not(all(not(feature = "ocel-duckdb"), not(feature = "ocel-sqlite"))))]
-        pub mod sql;
-        /// XML Export for OCEL 2.0
-        pub mod xml_ocel_export;
-        #[allow(clippy::single_match)]
-        /// Parser for the OCEL 2.0 XML format
-        pub mod xml_ocel_import;
-        /// Macros for the creation of [`OCEL`]
-        pub mod macros;
-    }
+    pub mod ocel;
     pub use event_log_struct::{
         Attribute, AttributeValue, Attributes, Event, EventLog, Trace, XESEditableAttribute,
     };
@@ -59,14 +41,7 @@ pub mod event_log {
 }
 
 /// Object-centric discovery and conformance checking
-pub mod object_centric {
-    /// Object-centric conformance checking
-    pub mod conformance;
-    /// Object-centric process trees [`OCPT`]
-    pub mod ocpt;
-    /// Object-centric directly-follows graphs
-    pub mod object_centric_dfg_struct;
-}
+pub mod object_centric;
 
 /// Util module with smaller helper functions, structs or enums
 pub mod utils;
