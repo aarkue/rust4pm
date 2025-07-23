@@ -25,12 +25,8 @@ jobs:
         tag: "v1.3.2"
         fileName: libduckdb-linux-amd64.zip
         out-file-path: .
-    - name: Linux extract duckdb
-      if: matrix.os == 'ubuntu-latest'
-      uses: ihiroky/extract-action@v1
-      with:
-        file_path: ${{ github.workspace }}/libduckdb-linux-amd64.zip
-        extract_dir: libduckdb
+    - name: Unpacking duckdb
+      run: 7z x  ${{ github.workspace }}/libduckdb-linux-amd64.zip -o${{ github.workspace }}/libduckdb
     - name: Downloading test files
       run: wget -O process_mining/test_data/out.zip https://rwth-aachen.sciebo.de/s/4cvtTU3lLOgtxt1/download
     - name: Unpacking test files
