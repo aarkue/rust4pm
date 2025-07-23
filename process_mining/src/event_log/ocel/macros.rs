@@ -3,15 +3,15 @@
 /// `ocel!` allows `OCEL`s to be defined with a list of events and their e2o relations.
 /// Each event is a tuple that contains as first entry the event type and as second entry the
 /// related objects as a list of object identifier. Object identifiers have to be 
-/// denoted 'ob_type':'ob_id'.
+/// denoted '`ob_type`':'`ob_id`'.
 /// 
 /// See the example below, containing two events: ev:1 and ev:2 with event types "place" and "pack",
-/// respectively. 'ev:1' has as e2o relations ('ev_1', 'c:1'), ('ev_1', 'o:1'), ('ev_1', 'i:1'), 
-/// ('ev_1', 'i:1'), where 'c:1' has object type 'c' (e.g., customer), 'o:1' has object 
+/// respectively. 'ev:1' has as e2o relations ('`ev_1`', 'c:1'), ('`ev_1`', 'o:1'), ('`ev_1`', 'i:1'), 
+/// ('`ev_1`', 'i:1'), where 'c:1' has object type 'c' (e.g., customer), 'o:1' has object 
 /// type 'o' (e.g., order), and 'i:1', 'i:2' have object type 'i' (e.g., item).
 ///
 /// ```
-/// use process_mining::ocel;
+/// use process_mining::{ocel, OCEL};
 /// 
 /// let object_centric_event_log = ocel![
 ///     events:
@@ -28,7 +28,7 @@ macro_rules! ocel {
     (events: $(($ev_type:expr, [$($object:expr), *])), *, o2o: $(($from_ob:expr, $to_ob:expr)), *) => {{
         use ::std::collections::{HashSet, HashMap};
         use chrono::{TimeDelta, TimeZone, Utc};
-        use crate::{
+        use $crate::{
             ocel::ocel_struct::OCELEvent, ocel::ocel_struct::OCELObject,
             ocel::ocel_struct::OCELRelationship, ocel::ocel_struct::OCELType,
         };
