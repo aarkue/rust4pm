@@ -16,10 +16,11 @@ _As this crate is still in very active development, expect larger API changes al
   - XES Export (also with streaming support)
     - See [`export_xes_event_log_to_file_path`] or [`export_xes_trace_stream_to_file`]
 - Object-Centric Event Logs (OCEL 2.0)
-  - OCEL struct
+  - [`OCEL`] struct
   - OCEL import from all available formats (XML, JSON, and `SQLite`)
   - OCEL export to all available formats (XML, JSON, and `SQLite`)
   - Linked OCEL, allowing convenient usage of event-to-object and object-to-object relationships (and their reverse)
+  - `DuckDB` support for exporting/importing OCEL
 - Petri Nets
   - PNML Export
   - PNML Import

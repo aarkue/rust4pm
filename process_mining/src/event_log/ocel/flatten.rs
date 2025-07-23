@@ -8,7 +8,7 @@ use super::{
     ocel_struct::OCELAttributeValue,
 };
 
-pub(crate) fn flatten_ocel_on(locel: &IndexLinkedOCEL, object_type: &String) -> EventLog {
+pub(crate) fn flatten_ocel_on(locel: &IndexLinkedOCEL, object_type: &str) -> EventLog {
     let mut traces: Vec<_> = locel
         .get_obs_of_type(object_type)
         .map(|ob| {

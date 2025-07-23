@@ -393,9 +393,9 @@ impl<'a> RandomEventLogSplitter<'a> {
         // Randomly assigns for each trace the events to the sub event logs
         for trace in &self.event_log.traces {
             // Create the empty trace for all event logs that holds the same trace attributes
-            for i in 0..self.num_split_event_logs {
+            for res in &mut result {
                 let new_trace = trace.clone_without_events();
-                result[i].traces.push(new_trace);
+                res.traces.push(new_trace);
             }
 
             // Randomly distribute the events

@@ -1,5 +1,5 @@
-pub(crate) mod duckdb_ocel_import;
 pub(crate) mod duckdb_ocel_export;
+pub(crate) mod duckdb_ocel_import;
 
 #[cfg(test)]
 mod duckdb_tests {
@@ -8,7 +8,15 @@ mod duckdb_tests {
     use chrono::DateTime;
 
     use crate::{
-        import_ocel_xml_file, ocel::{ocel_struct::{OCELAttributeValue, OCELRelationship}, sql::duckdb::{duckdb_ocel_export::export_ocel_duckdb_to_path, duckdb_ocel_import::import_ocel_duckdb_from_path}}, utils::test_utils::get_test_data_path
+        import_ocel_xml_file,
+        ocel::{
+            ocel_struct::{OCELAttributeValue, OCELRelationship},
+            sql::duckdb::{
+                duckdb_ocel_export::export_ocel_duckdb_to_path,
+                duckdb_ocel_import::import_ocel_duckdb_from_path,
+            },
+        },
+        utils::test_utils::get_test_data_path,
     };
 
     #[test]
@@ -24,13 +32,17 @@ mod duckdb_tests {
         export_ocel_duckdb_to_path(&ocel, &export_path).unwrap();
         let ocel2 = import_ocel_duckdb_from_path(&export_path).unwrap();
 
-        assert_eq!(ocel.events.len(),ocel2.events.len());
-        assert_eq!(ocel.objects.len(),ocel2.objects.len());
-        assert_eq!(ocel.event_types.len(),ocel2.event_types.len());
-        assert_eq!(ocel.object_types.len(),ocel2.object_types.len());
+        assert_eq!(ocel.events.len(), ocel2.events.len());
+        assert_eq!(ocel.objects.len(), ocel2.objects.len());
+        assert_eq!(ocel.event_types.len(), ocel2.event_types.len());
+        assert_eq!(ocel.object_types.len(), ocel2.object_types.len());
         drop(ocel);
 
-        let po_1337 = ocel2.events.iter().find(|e| e.id == "pay_o-991337").unwrap();
+        let po_1337 = ocel2
+            .events
+            .iter()
+            .find(|e| e.id == "pay_o-991337")
+            .unwrap();
         assert_eq!(
             po_1337.time,
             DateTime::parse_from_rfc3339("2023-12-13T09:31:50+00:00").unwrap()
@@ -59,18 +71,17 @@ mod duckdb_tests {
         );
 
         let o_1337 = ocel2.objects.iter().find(|o| o.id == "o-991337").unwrap();
-        assert_eq!(
-            o_1337.attributes.len(),1
-        );
-        assert_eq!(o_1337.attributes.first().unwrap().name,"price");
+        assert_eq!(o_1337.attributes.len(), 1);
+        assert_eq!(o_1337.attributes.first().unwrap().name, "price");
         if let OCELAttributeValue::Float(f) = o_1337.attributes.first().unwrap().value {
             let diff = (f - 1909.04).abs();
             assert!(diff < 0.001);
-        }else{
-            assert!(false);
+        } else {
+            panic!("Larger float difference")
         }
-        
-            assert_eq!(o_1337
+
+        assert_eq!(
+            o_1337
                 .relationships
                 .clone()
                 .into_iter()

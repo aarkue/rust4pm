@@ -172,14 +172,13 @@ impl OCPTNode {
         rel_ob_types_per_ev_type
             .iter()
             .for_each(|(&ev_type, ob_types)| {
-                if ob_types.contains(ob_type) {
-                    if !div_ob_types_per_ev_type
+                if ob_types.contains(ob_type)
+                    && !div_ob_types_per_ev_type
                         .get(ev_type)
                         .unwrap()
                         .contains(ob_type)
-                    {
-                        result = false;
-                    }
+                {
+                    result = false;
                 }
             });
 
@@ -397,6 +396,7 @@ impl OCPTOperator {
     /// Returns all start [`EventType`], all end [`EventType`], and each directly follows relation
     /// of the type ([`EventType`], [`EventType`]) as `HashSet`s for the given [`ObjectType`]
     ///
+    #[allow(clippy::type_complexity)]
     pub fn get_directly_follows_relations<'a>(
         &'a self,
         ob_type: &ObjectType,
@@ -415,6 +415,7 @@ impl OCPTOperator {
 
         // For the current node, identify the start and end event types and the directly-follows
         // relations by calling the method recursively
+        #[allow(clippy::type_complexity)]
         let children_dfr: Vec<(
             HashSet<&EventType>,
             HashSet<&EventType>,
@@ -492,10 +493,10 @@ impl OCPTOperator {
                         // children are skippable
                         if is_unrelated_or_divergent {
                             let div_ob_types_per_ev_type =
-                                div_ob_types_per_node.get(&child.get_uuid()).unwrap();
+                                div_ob_types_per_node.get(child.get_uuid()).unwrap();
 
                             let curr_div_or_unrelated_evs = rel_ob_types_per_node
-                                .get(&child.get_uuid())
+                                .get(child.get_uuid())
                                 .unwrap()
                                 .iter()
                                 .filter_map(|(&ev_type, ob_types)| {
@@ -640,14 +641,13 @@ impl OCPTOperator {
             }
             OCPTOperatorType::Loop(_) => {
                 // The node is skippable if the first child is skippable
-                skippable = children_dfr.get(0).unwrap().3;
+                skippable = children_dfr.first().unwrap().3;
 
                 // Check if any other child is skippable that is a redo child
                 let other_skippable = children_dfr
                     .iter()
                     .skip(1)
-                    .find(|(_, _, _, skip_child)| *skip_child)
-                    .is_some();
+                    .any(|(_, _, _, skip_child)| *skip_child);
 
                 // Adds relations from the end event types of the first child to the start event
                 // types of all other children
@@ -657,7 +657,7 @@ impl OCPTOperator {
                     .for_each(|(start_evs, _, _, _)| {
                         add_all_dfr_from_to_alphabets(
                             &mut directly_follow_ev_types,
-                            &children_dfr.get(0).unwrap().1,
+                            &children_dfr.first().unwrap().1,
                             start_evs,
                         );
                     });
@@ -667,8 +667,8 @@ impl OCPTOperator {
                 children_dfr.iter().skip(1).for_each(|(_, end_evs, _, _)| {
                     add_all_dfr_from_to_alphabets(
                         &mut directly_follow_ev_types,
-                        &end_evs,
-                        &children_dfr.get(0).unwrap().0,
+                        end_evs,
+                        &children_dfr.first().unwrap().0,
                     );
                 });
 
@@ -692,14 +692,14 @@ impl OCPTOperator {
                 }
 
                 // Adds the start event types and the end event types of the first child
-                start_ev_types.extend(&children_dfr.get(0).unwrap().0);
-                end_ev_types.extend(&children_dfr.get(0).unwrap().1);
+                start_ev_types.extend(&children_dfr.first().unwrap().0);
+                end_ev_types.extend(&children_dfr.first().unwrap().1);
 
                 // If a redo child is skippable, add relation from end event types of the first
                 // child to the start event types of the first child
                 if other_skippable {
-                    children_dfr.get(0).unwrap().0.iter().for_each(|start_ev| {
-                        children_dfr.get(0).unwrap().1.iter().for_each(|end_ev| {
+                    children_dfr.first().unwrap().0.iter().for_each(|start_ev| {
+                        children_dfr.first().unwrap().1.iter().for_each(|end_ev| {
                             directly_follow_ev_types.insert((start_ev, end_ev));
                         });
                     })
@@ -737,13 +737,8 @@ impl OCPTOperator {
                 OCPTLeafLabel::Activity(leaf_label) => {
                     rel_ob_types_per_node_ot
                         .entry(leaf.uuid)
-                        .or_insert(Default::default())
-                        .insert(
-                            leaf_label,
-                            leaf.related_ob_types
-                                .iter()
-                                .collect(),
-                        );
+                        .or_default()
+                        .insert(leaf_label, leaf.related_ob_types.iter().collect());
                 }
                 OCPTLeafLabel::Tau => {}
             },
@@ -799,7 +794,7 @@ impl OCPTOperator {
     ) -> HashMap<&'a EventType, HashSet<&'a ObjectType>> {
         self.children
             .iter()
-            .flat_map(|child| ob_types_per_node.get(&child.get_uuid()).unwrap().clone())
+            .flat_map(|child| ob_types_per_node.get(child.get_uuid()).unwrap().clone())
             .collect::<HashMap<_, _>>()
     }
 
@@ -830,13 +825,8 @@ impl OCPTOperator {
                         OCPTLeafLabel::Activity(leaf_label) => {
                             div_ob_types_per_node
                                 .entry(leaf.uuid)
-                                .or_insert(Default::default())
-                                .insert(
-                                    leaf_label,
-                                    leaf.divergent_ob_types
-                                        .iter()
-                                        .collect(),
-                                );
+                                .or_default()
+                                .insert(leaf_label, leaf.divergent_ob_types.iter().collect());
                         }
                         OCPTLeafLabel::Tau => {}
                     },
@@ -867,11 +857,10 @@ impl OCPTOperator {
             }
             // Otherwise identify optionality from divergence
             _ => {
-                self.children.iter().for_each(|child| match child {
-                    OCPTNode::Operator(op) => {
+                self.children.iter().for_each(|child| {
+                    if let OCPTNode::Operator(op) = child {
                         op.compute_opt(opt_ob_types_per_node, rel_ob_types_per_node);
                     }
-                    _ => {}
                 });
             }
         }
@@ -882,14 +871,11 @@ impl OCPTOperator {
         // Adds all object types as divergent that are additionally identified
         self.children.iter().for_each(|child| {
             opt_ob_types_per_node
-                .get(&child.get_uuid())
+                .get(child.get_uuid())
                 .unwrap()
                 .iter()
                 .for_each(|(&ev_type, ob_types)| {
-                    result
-                        .entry(ev_type)
-                        .or_insert(HashSet::default())
-                        .extend(ob_types);
+                    result.entry(ev_type).or_default().extend(ob_types);
                 })
         });
         opt_ob_types_per_node.insert(self.uuid, result);
@@ -914,13 +900,8 @@ impl OCPTOperator {
                 OCPTLeafLabel::Activity(leaf_label) => {
                     leaf_conv_ob_types_per_node
                         .entry(leaf.uuid)
-                        .or_insert(Default::default())
-                        .insert(
-                            leaf_label,
-                            leaf.convergent_ob_types
-                                .iter()
-                                .collect(),
-                        );
+                        .or_default()
+                        .insert(leaf_label, leaf.convergent_ob_types.iter().collect());
                 }
                 OCPTLeafLabel::Tau => {}
             },
@@ -950,13 +931,8 @@ impl OCPTOperator {
                 OCPTLeafLabel::Activity(leaf_label) => {
                     leaf_def_ob_types_per_node
                         .entry(leaf.uuid)
-                        .or_insert(Default::default())
-                        .insert(
-                            leaf_label,
-                            leaf.deficient_ob_types
-                                .iter()
-                                .collect(),
-                        );
+                        .or_default()
+                        .insert(leaf_label, leaf.deficient_ob_types.iter().collect());
                 }
                 OCPTLeafLabel::Tau => {}
             },
@@ -975,7 +951,7 @@ impl OCPTOperator {
     ///     ii. If an object type is convergent for any leaf of a choice operator
     ///     iii. If the object type is convergent for the first child of loop operator
     /// 3. Checks for a leaf whether the object type is converging or optional, or if all other
-    /// object types, which are related to the leaf, are either divergent or deficient
+    ///     object types, which are related to the leaf, are either divergent or deficient
     ///
     pub fn compute_conv<'a>(
         &'a self,
@@ -1005,10 +981,7 @@ impl OCPTOperator {
                             .unwrap_or(&Default::default())
                             .contains(leaf_conv_ob_type)
                     {
-                        result
-                            .entry(ev_type)
-                            .or_insert(Default::default())
-                            .insert(leaf_conv_ob_type);
+                        result.entry(ev_type).or_default().insert(leaf_conv_ob_type);
                     } else {
                         candidates.insert((ev_type, leaf_conv_ob_type));
                     }
@@ -1048,10 +1021,7 @@ impl OCPTOperator {
                 }
             }
 
-            result
-                .entry(ev_type)
-                .or_insert(Default::default())
-                .insert(candidate_ob_type);
+            result.entry(ev_type).or_default().insert(candidate_ob_type);
         }
 
         result
@@ -1094,7 +1064,7 @@ impl OCPTOperator {
                 false
             }
             OCPTOperatorType::Loop(_) => check_conv_subroutine_for_competitor(
-                self.children.get(0).unwrap(),
+                self.children.first().unwrap(),
                 candidate_ob_type,
                 competitor_ob_type,
                 root_opt_ob_types,
@@ -1110,7 +1080,7 @@ impl OCPTOperator {
     ///     ii. If an object type is divergent for any leaf of a choice operator
     ///     iii. If the object type is divergent for the first child of loop operator
     /// 3. Checks for a leaf whether the object type is divergent or deficient, or if all other
-    /// object types, which are related to the leaf, are either converging or optional
+    ///         object types, which are related to the leaf, are either converging or optional
     ///
     pub fn compute_def<'a>(
         &'a self,
@@ -1140,10 +1110,7 @@ impl OCPTOperator {
                             .unwrap_or(&Default::default())
                             .contains(leaf_conv_ob_type)
                     {
-                        result
-                            .entry(ev_type)
-                            .or_insert(Default::default())
-                            .insert(leaf_conv_ob_type);
+                        result.entry(ev_type).or_default().insert(leaf_conv_ob_type);
                     } else {
                         candidates.insert((ev_type, leaf_conv_ob_type));
                     }
@@ -1183,10 +1150,7 @@ impl OCPTOperator {
                 }
             }
 
-            result
-                .entry(ev_type)
-                .or_insert(Default::default())
-                .insert(candidate_ob_type);
+            result.entry(ev_type).or_default().insert(candidate_ob_type);
         }
 
         result
@@ -1229,7 +1193,7 @@ impl OCPTOperator {
                 false
             }
             OCPTOperatorType::Loop(_) => check_def_subroutine_for_competitor(
-                self.children.get(0).unwrap(),
+                self.children.first().unwrap(),
                 candidate_ob_type,
                 competitor_ob_type,
                 root_opt_ob_types,
@@ -1311,10 +1275,10 @@ impl OCPTLeaf {
     /// is missing
     ///
     pub fn new(leaf_label: Option<EventType>) -> Self {
-        if leaf_label.is_some() {
+        if let Some(leaf_label) = leaf_label {
             Self {
                 uuid: Uuid::new_v4(),
-                activity_label: OCPTLeafLabel::Activity(leaf_label.unwrap().to_string()),
+                activity_label: OCPTLeafLabel::Activity(leaf_label.to_string()),
                 related_ob_types: HashSet::new(),
                 divergent_ob_types: HashSet::new(),
                 convergent_ob_types: HashSet::new(),
@@ -1386,6 +1350,7 @@ impl OCPTLeaf {
     /// A leaf is skippable if it is unrelated or silent.
     /// If an object type is divergent for an event type, the event type can repeat itself.
     ///
+    #[allow(clippy::type_complexity)]
     pub fn get_directly_follows_relations(
         &self,
         ob_type: &str,

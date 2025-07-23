@@ -66,7 +66,7 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
         con.execute_no_params(&format!(r#"CREATE TABLE IF NOT EXISTS "event_{}" ("{OCEL_ID_COLUMN}"	TEXT, "{OCEL_TIME_COLUMN}"	TIMESTAMP,{attr_cols} PRIMARY KEY("{OCEL_ID_COLUMN}"))"#,clean_sql_name(&et.name)))?;
 
         con.execute(
-            &format!(r#"INSERT INTO "event_map_type" VALUES (?, ?)"#,),
+            r#"INSERT INTO "event_map_type" VALUES (?, ?)"#,
             [&et.name, &clean_sql_name(&et.name)],
         )?;
     }
@@ -95,7 +95,7 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
         con.execute_no_params(&format!(r#"CREATE TABLE IF NOT EXISTS "object_{}" ("{OCEL_ID_COLUMN}"	TEXT, "{OCEL_TIME_COLUMN}" TIMESTAMP, {OCEL_CHANGED_FIELD} TEXT{attr_cols})"#,clean_sql_name(&ot.name)))?;
 
         con.execute(
-            &format!(r#"INSERT INTO "object_map_type" VALUES (?, ?)"#,),
+            r#"INSERT INTO "object_map_type" VALUES (?, ?)"#,
             [&ot.name, &clean_sql_name(&ot.name)],
         )?;
     }
@@ -104,36 +104,21 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
     con.add_objects("object", ocel.objects.iter())?;
 
     for ot in &ocel.object_types {
-        let obs = ocel
-            .objects
-            .iter()
-            .filter(|ob| ob.object_type == ot.name);
+        let obs = ocel.objects.iter().filter(|ob| ob.object_type == ot.name);
 
-        con.add_object_changes_for_type(
-            &clean_sql_name(&format!("object_{}", ot.name)),
-            ot,
-            obs,
-        )?;
+        con.add_object_changes_for_type(&clean_sql_name(&format!("object_{}", ot.name)), ot, obs)?;
     }
 
-    con.add_o2o_relationships("object_object",ocel.objects.iter())?;
+    con.add_o2o_relationships("object_object", ocel.objects.iter())?;
 
-    con.add_events("event",ocel.events.iter())?;
-    
+    con.add_events("event", ocel.events.iter())?;
+
     for et in &ocel.event_types {
-        let evs = ocel
-            .events
-            .iter()
-            .filter(|ob| ob.event_type == et.name);
+        let evs = ocel.events.iter().filter(|ob| ob.event_type == et.name);
 
-        con.add_event_attributes_for_type(
-            &clean_sql_name(&format!("event_{}", et.name)),
-            et,
-            evs,
-        )?;
+        con.add_event_attributes_for_type(&clean_sql_name(&format!("event_{}", et.name)), et, evs)?;
     }
-    con.add_e2o_relationships("event_object",ocel.events.iter())?;
-
+    con.add_e2o_relationships("event_object", ocel.events.iter())?;
 
     for ot in &ocel.object_types {
         con.execute_no_params(&format!(

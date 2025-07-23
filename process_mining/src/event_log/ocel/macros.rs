@@ -2,26 +2,26 @@
 ///
 /// `ocel!` allows `OCEL`s to be defined with a list of events and their e2o relations.
 /// Each event is a tuple that contains as first entry the event type and as second entry the
-/// related objects as a list of object identifier. Object identifiers have to be 
+/// related objects as a list of object identifier. Object identifiers have to be
 /// denoted '`ob_type`':'`ob_id`'.
-/// 
+///
 /// See the example below, containing two events: ev:1 and ev:2 with event types "place" and "pack",
-/// respectively. 'ev:1' has as e2o relations ('`ev_1`', 'c:1'), ('`ev_1`', 'o:1'), ('`ev_1`', 'i:1'), 
-/// ('`ev_1`', 'i:1'), where 'c:1' has object type 'c' (e.g., customer), 'o:1' has object 
+/// respectively. 'ev:1' has as e2o relations ('`ev_1`', 'c:1'), ('`ev_1`', 'o:1'), ('`ev_1`', 'i:1'),
+/// ('`ev_1`', 'i:1'), where 'c:1' has object type 'c' (e.g., customer), 'o:1' has object
 /// type 'o' (e.g., order), and 'i:1', 'i:2' have object type 'i' (e.g., item).
 ///
 /// ```
 /// use process_mining::{ocel, OCEL};
-/// 
+///
 /// let object_centric_event_log = ocel![
 ///     events:
 ///     ("place", ["c:1", "o:1", "i:1", "i:2"]),
 ///     ("pack", ["o:1", "i:2", "e:1"]),
-///     o2o: 
+///     o2o:
 ///     ("o:1", "i:1")
 /// ];
 /// ```
-/// 
+///
 /// [`OCEL`]: crate::OCEL
 #[macro_export]
 macro_rules! ocel {
@@ -33,7 +33,7 @@ macro_rules! ocel {
             ocel::ocel_struct::OCELRelationship, ocel::ocel_struct::OCELType,
         };
         use std::ops::AddAssign;
-    
+
         // Adding all event types, object types, and objects exactly once
         // There can be multiple events that can be identical
         let mut event_types_set = HashSet::new();
@@ -92,7 +92,7 @@ macro_rules! ocel {
                 attributes: Vec::new(),
             }
         }).collect::<Vec<_>>();
-        
+
         #[allow(unused_mut)]
         let mut object_id_to_object = object_set.into_iter().map(|(ob_id, ob_type)| {
             (
@@ -105,17 +105,17 @@ macro_rules! ocel {
                 }
             )
         }).collect::<HashMap<_, _>>();
-        
+
         // Adds o2o relations
         $(
             let object_type = $to_ob.to_string().split(":").next().unwrap().to_string();
             let o2o_relation = OCELRelationship::new($to_ob.to_string(), object_type.to_string());
-            
+
             if object_id_to_object.contains_key(&$from_ob.to_string()) {
                 object_id_to_object.get_mut(&$from_ob.to_string()).unwrap().relationships.push(o2o_relation);
             } else {
                 object_types_set.insert(object_type.clone());
-                object_id_to_object.insert($from_ob.to_string(), 
+                object_id_to_object.insert($from_ob.to_string(),
                     OCELObject{
                         id: $from_ob.to_string(),
                         object_type: object_type,
@@ -125,7 +125,7 @@ macro_rules! ocel {
                 );
             }
         )*
-        
+
         let object_types = object_types_set.into_iter().map(|ob_type| {
             OCELType{
                 name: ob_type,

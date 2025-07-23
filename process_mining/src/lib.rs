@@ -27,12 +27,12 @@ pub mod event_log {
     pub mod export_xes;
     /// XES Import
     pub mod import_xes;
-    /// Streaming XES Import
-    pub mod stream_xes;
     ///
     /// OCEL2.0 (Object-Centric Event Logs)
     ///
     pub mod ocel;
+    /// Streaming XES Import
+    pub mod stream_xes;
     pub use event_log_struct::{
         Attribute, AttributeValue, Attributes, Event, EventLog, Trace, XESEditableAttribute,
     };

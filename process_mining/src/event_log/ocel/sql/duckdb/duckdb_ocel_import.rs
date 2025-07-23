@@ -11,8 +11,8 @@ use crate::{
     },
     OCEL,
 };
-use chrono::{DateTime, FixedOffset};
 use ::duckdb::{Connection, Params, Row, Rows, Statement};
+use chrono::{DateTime, FixedOffset};
 
 use crate::ocel::ocel_struct::{OCELAttributeType, OCELAttributeValue, OCELRelationship};
 
@@ -22,10 +22,10 @@ fn try_get_column_date_val(
 ) -> Result<DateTime<FixedOffset>, ::duckdb::Error> {
     // let dt = r.get::<_, DateTime<chrono::Local>>(column_name);
     // dt.or_else(|_e| {
-        r.get::<_, String>(column_name).and_then(|dt_str| {
-            parse_date(&dt_str, &OCELImportOptions::default())
-                .map_err(|_e| ::duckdb::Error::InvalidQuery)
-        })
+    r.get::<_, String>(column_name).and_then(|dt_str| {
+        parse_date(&dt_str, &OCELImportOptions::default())
+            .map_err(|_e| ::duckdb::Error::InvalidQuery)
+    })
     // })
 }
 
@@ -162,7 +162,8 @@ pub fn import_ocel_duckdb_from_con(con: Connection) -> Result<OCEL, ::duckdb::Er
                 .iter()
                 .find(|at| at.name == changed_field)
                 .ok_or(::duckdb::Error::InvalidQuery)
-                .and_then(|attr| get_row_attribute_value(attr, x)).unwrap();
+                .and_then(|attr| get_row_attribute_value(attr, x))
+                .unwrap();
             Ok::<(String, _, String, OCELAttributeValue), ::duckdb::Error>((
                 x.get(OCEL_ID_COLUMN)?,
                 try_get_column_date_val(x, OCEL_TIME_COLUMN)?,

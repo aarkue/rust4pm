@@ -42,9 +42,7 @@ pub fn export_dfg_to_dot_graph(dfg: &DirectlyFollowsGraph<'_>, dpi_factor: Optio
     sorted_acts.sort_by(|(a_act, _), (b_act, _)| {
         if dfg.start_activities.contains(*a_act) {
             Ordering::Less
-        } else if dfg.start_activities.contains(*b_act) {
-            Ordering::Greater
-        } else if dfg.end_activities.contains(*a_act) {
+        } else if dfg.start_activities.contains(*b_act) || dfg.end_activities.contains(*a_act) {
             Ordering::Greater
         } else if dfg.end_activities.contains(*b_act) {
             Ordering::Less

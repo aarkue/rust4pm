@@ -59,7 +59,7 @@ impl OCLanguageAbstraction {
                     let node_map: HashMap<Uuid, HashMap<&EventType, HashSet<&ObjectType>>> =
                         node_uuids
                             .iter()
-                            .map(|&uuid| (uuid.clone(), HashMap::new()))
+                            .map(|&uuid| (*uuid, HashMap::new()))
                             .collect();
 
                     // Recursively compute relatedness
@@ -106,21 +106,21 @@ impl OCLanguageAbstraction {
                     // Extend convergence information
                     let convergent_ev_type_per_ob_type: HashMap<&EventType, HashSet<&ObjectType>> =
                         op.compute_conv(
-                            &related_ev_type_per_ob_type.get(&op.uuid).unwrap(),
-                            &optional_ev_type_per_ob_type.get(&op.uuid).unwrap(),
-                            &leaf_def_ob_types_per_node.get(&op.uuid).unwrap(),
-                            &divergent_ev_type_per_ob_type.get(&op.uuid).unwrap(),
-                            &leaf_conv_ob_types_per_node.get(&op.uuid).unwrap(),
+                            related_ev_type_per_ob_type.get(&op.uuid).unwrap(),
+                            optional_ev_type_per_ob_type.get(&op.uuid).unwrap(),
+                            leaf_def_ob_types_per_node.get(&op.uuid).unwrap(),
+                            divergent_ev_type_per_ob_type.get(&op.uuid).unwrap(),
+                            leaf_conv_ob_types_per_node.get(&op.uuid).unwrap(),
                         );
 
                     // Extend deficiency information
                     let deficient_ev_type_per_ob_type: HashMap<&EventType, HashSet<&ObjectType>> =
                         op.compute_def(
-                            &related_ev_type_per_ob_type.get(&op.uuid).unwrap(),
-                            &optional_ev_type_per_ob_type.get(&op.uuid).unwrap(),
-                            &leaf_conv_ob_types_per_node.get(&op.uuid).unwrap(),
-                            &divergent_ev_type_per_ob_type.get(&op.uuid).unwrap(),
-                            &leaf_def_ob_types_per_node.get(&op.uuid).unwrap(),
+                            related_ev_type_per_ob_type.get(&op.uuid).unwrap(),
+                            optional_ev_type_per_ob_type.get(&op.uuid).unwrap(),
+                            leaf_conv_ob_types_per_node.get(&op.uuid).unwrap(),
+                            divergent_ev_type_per_ob_type.get(&op.uuid).unwrap(),
+                            leaf_def_ob_types_per_node.get(&op.uuid).unwrap(),
                         );
 
                     // Compute directly-follows information
@@ -339,7 +339,7 @@ impl OCLanguageAbstraction {
 
     ///
     /// Creates an abstraction from an [`OCEL`].
-    /// 
+    ///
     /// Expects the input [`IndexLinkedOCEL`] to have all orphan [`OCELObject`]s to be removed, i.e.,
     /// they should not be contained if they do not have any e2o relation.
     ///
@@ -467,14 +467,14 @@ impl OCLanguageAbstraction {
                         .insert(ev_type.to_string());
                 }
 
-                if Self::is_convergent_locel(&locel, &ev_ob_type_e2o_relations, ob_type) {
+                if Self::is_convergent_locel(locel, &ev_ob_type_e2o_relations, ob_type) {
                     convergent_ev_type_per_ob_type
                         .get_mut(ob_type)
                         .unwrap()
                         .insert(ev_type.to_string());
                 }
 
-                if Self::is_divergent_locel(&locel, &ev_ob_type_e2o_relations, ob_type) {
+                if Self::is_divergent_locel(locel, &ev_ob_type_e2o_relations, ob_type) {
                     divergent_ev_type_per_ob_type
                         .get_mut(ob_type)
                         .unwrap()
@@ -585,7 +585,7 @@ pub fn change_ob_type_as_key(
             ob_types.iter().for_each(|ob_type| {
                 result
                     .entry(ob_type.clone())
-                    .or_insert(HashSet::new())
+                    .or_default()
                     .insert(ev_type.clone());
             })
         });
@@ -640,7 +640,7 @@ pub fn compute_fitness_precision(
             dfr_ev_types
         })
         .collect::<HashSet<_>>();
-
+    #[allow(clippy::type_complexity)]
     let pattern: Vec<(
         &HashMap<ObjectType, HashSet<EventType>>,
         &HashMap<ObjectType, HashSet<EventType>>,
@@ -853,9 +853,9 @@ mod tests {
     use crate::object_centric::ocpt::object_centric_process_tree_struct::{
         OCPTNode, OCPTOperatorType, OCPT,
     };
+    use crate::ocel::linked_ocel::IndexLinkedOCEL;
     use crate::{ocel, OCEL};
     use std::time::Instant;
-    use crate::ocel::linked_ocel::IndexLinkedOCEL;
 
     fn create_test_tree() -> OCPT {
         let mut root_op = OCPTNode::new_operator(OCPTOperatorType::Sequence);

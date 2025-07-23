@@ -44,12 +44,12 @@ pub struct OCELDataFrames {
 
 impl OCELDataFrames {
     /// Export the objects `DataFrame` as a CSV file in the given path
-    /// 
+    ///
     /// The column names that should be exported can also be specified.
     /// If the passed slice is empty, all columns are exported.
-    /// 
+    ///
     /// Example
-    /// 
+    ///
     /// ```
     /// use process_mining::{ocel, OCEL};
     /// use process_mining::event_log::ocel::dataframe::*;
@@ -58,7 +58,7 @@ impl OCELDataFrames {
     ///     events:
     ///     ("place", ["c:1", "o:1", "i:1", "i:2"]),
     ///     ("pack", ["o:1", "i:2", "e:1"]),
-    ///     o2o: 
+    ///     o2o:
     ///     ("o:1", "i:1")
     /// ];
     /// let mut ocel_dfs = ocel_to_dataframes(&ocel);
@@ -68,8 +68,7 @@ impl OCELDataFrames {
         &mut self,
         export_path: P,
         columns_to_include: &[&str],
-    ) -> PolarsResult<()>
-    {
+    ) -> PolarsResult<()> {
         let f = File::create(export_path)?;
         let mut csvw = CsvWriter::new(f);
         let df = &mut self.objects;
@@ -81,14 +80,13 @@ impl OCELDataFrames {
         Ok(())
     }
 
-
     /// Export the events `DataFrame` as a CSV file in the given path
-    /// 
+    ///
     /// The column names that should be exported can also be specified.
     /// If the passed slice is empty, all columns are exported.
-    /// 
+    ///
     /// Example
-    /// 
+    ///
     /// ```
     /// use process_mining::{ocel, OCEL};
     /// use process_mining::event_log::ocel::dataframe::*;
@@ -97,7 +95,7 @@ impl OCELDataFrames {
     ///     events:
     ///     ("place", ["c:1", "o:1", "i:1", "i:2"]),
     ///     ("pack", ["o:1", "i:2", "e:1"]),
-    ///     o2o: 
+    ///     o2o:
     ///     ("o:1", "i:1")
     /// ];
     /// let mut ocel_dfs = ocel_to_dataframes(&ocel);
@@ -107,8 +105,7 @@ impl OCELDataFrames {
         &mut self,
         export_path: P,
         columns_to_include: &[&str],
-    ) -> PolarsResult<()>
-    {
+    ) -> PolarsResult<()> {
         let f = File::create(export_path)?;
         let mut csvw = CsvWriter::new(f);
         let df = &mut self.events;
@@ -120,14 +117,13 @@ impl OCELDataFrames {
         Ok(())
     }
 
-
     /// Export the event-to-object (E2O) `DataFrame` as a CSV file in the given path
-    /// 
+    ///
     /// The column names that should be exported can also be specified.
     /// If the passed slice is empty, all columns are exported.
-    /// 
+    ///
     /// Example
-    /// 
+    ///
     /// ```
     /// use process_mining::{ocel, OCEL};
     /// use process_mining::event_log::ocel::dataframe::*;
@@ -136,7 +132,7 @@ impl OCELDataFrames {
     ///     events:
     ///     ("place", ["c:1", "o:1", "i:1", "i:2"]),
     ///     ("pack", ["o:1", "i:2", "e:1"]),
-    ///     o2o: 
+    ///     o2o:
     ///     ("o:1", "i:1")
     /// ];
     /// let mut ocel_dfs = ocel_to_dataframes(&ocel);
@@ -146,8 +142,7 @@ impl OCELDataFrames {
         &mut self,
         export_path: P,
         columns_to_include: &[&str],
-    ) -> PolarsResult<()>
-    {
+    ) -> PolarsResult<()> {
         let f = File::create(export_path)?;
         let mut csvw = CsvWriter::new(f);
         let df = &mut self.e2o;
@@ -159,14 +154,13 @@ impl OCELDataFrames {
         Ok(())
     }
 
-
     /// Export the object-to-object (O2O) `DataFrame` as a CSV file in the given path
-    /// 
+    ///
     /// The column names that should be exported can also be specified.
     /// If the passed slice is empty, all columns are exported.
-    /// 
+    ///
     /// Example
-    /// 
+    ///
     /// ```
     /// use process_mining::{ocel, OCEL};
     /// use process_mining::event_log::ocel::dataframe::*;
@@ -175,7 +169,7 @@ impl OCELDataFrames {
     ///     events:
     ///     ("place", ["c:1", "o:1", "i:1", "i:2"]),
     ///     ("pack", ["o:1", "i:2", "e:1"]),
-    ///     o2o: 
+    ///     o2o:
     ///     ("o:1", "i:1")
     /// ];
     /// let mut ocel_dfs = ocel_to_dataframes(&ocel);
@@ -185,8 +179,7 @@ impl OCELDataFrames {
         &mut self,
         export_path: P,
         columns_to_include: &[&str],
-    ) -> PolarsResult<()>
-    {
+    ) -> PolarsResult<()> {
         let f = File::create(export_path)?;
         let mut csvw = CsvWriter::new(f);
         let df = &mut self.o2o;
@@ -199,12 +192,12 @@ impl OCELDataFrames {
     }
 
     /// Export the object attribute changes `DataFrame` as a CSV file in the given path
-    /// 
+    ///
     /// The column names that should be exported can also be specified.
     /// If the passed slice is empty, all columns are exported.
-    /// 
+    ///
     /// Example
-    /// 
+    ///
     /// ```
     /// use process_mining::{ocel, OCEL};
     /// use process_mining::event_log::ocel::dataframe::*;
@@ -213,7 +206,7 @@ impl OCELDataFrames {
     ///     events:
     ///     ("place", ["c:1", "o:1", "i:1", "i:2"]),
     ///     ("pack", ["o:1", "i:2", "e:1"]),
-    ///     o2o: 
+    ///     o2o:
     ///     ("o:1", "i:1")
     /// ];
     /// let mut ocel_dfs = ocel_to_dataframes(&ocel);
@@ -223,8 +216,7 @@ impl OCELDataFrames {
         &mut self,
         export_path: P,
         columns_to_include: &[&str],
-    ) -> PolarsResult<()>
-    {
+    ) -> PolarsResult<()> {
         let f = File::create(export_path)?;
         let mut csvw = CsvWriter::new(f);
         let df = &mut self.object_changes;
@@ -236,7 +228,7 @@ impl OCELDataFrames {
         Ok(())
     }
 }
-    
+
 fn ocel_attribute_val_to_any_value(val: &OCELAttributeValue) -> AnyValue<'_> {
     match val {
         OCELAttributeValue::String(s) => AnyValue::StringOwned(s.into()),
@@ -269,8 +261,8 @@ pub const OCEL_QUALIFIER_KEY: &str = "ocel:qualifier";
 pub const OCEL_CHANGED_FIELD_KEY: &str = "ocel:field";
 
 /// Convert an [`OCEL`] to a set of [`DataFrame`]s ([`OCELDataFrames`])
-/// 
-/// See [`OCELDataFrames`] for the structure of the Dataframes 
+///
+/// See [`OCELDataFrames`] for the structure of the Dataframes
 pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
     let object_attributes: HashSet<String> = ocel
         .object_types

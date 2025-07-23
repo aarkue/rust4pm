@@ -66,14 +66,14 @@ pub(crate) fn ocel_type_to_sql(attr: &OCELAttributeType) -> &'static str {
 
 /// SQL Database Connection
 ///
-/// Used to abstract away from actual implementation (currently SQLite or DuckDB)
+/// Used to abstract away from actual implementation (currently `SQLite` or `DuckDB`)
 #[derive(Debug)]
 pub enum DatabaseConnection<'a> {
     #[cfg(feature = "ocel-sqlite")]
-    /// SQLite Database Connection
+    /// `SQLite` Database Connection
     SQLITE(&'a rusqlite::Connection),
     #[cfg(feature = "ocel-duckdb")]
-    /// DuckDB Database Connection
+    /// `DuckDB` Database Connection
     DUCKDB(&'a ::duckdb::Connection),
 }
 
@@ -94,13 +94,13 @@ impl<'a> From<&'a ::duckdb::Connection> for DatabaseConnection<'a> {
 
 /// SQL Database Error
 ///
-/// Used to abstract away from actual implementation (currently SQLite or DuckDB)
+/// Used to abstract away from actual implementation (currently `SQLite` or `DuckDB`)
 pub enum DatabaseError {
     #[cfg(feature = "ocel-sqlite")]
-    /// SQLite Database Error
+    /// `SQLite` Database Error
     SQLITE(rusqlite::Error),
     #[cfg(feature = "ocel-duckdb")]
-    /// DuckDB Database Error
+    /// `DuckDB` Database Error
     DUCKDB(::duckdb::Error),
 }
 
@@ -152,9 +152,9 @@ impl<'a> DatabaseConnection<'a> {
     pub fn execute<P: Params>(&self, query: &str, p: P) -> Result<usize, DatabaseError> {
         match self {
             #[cfg(feature = "ocel-sqlite")]
-            DatabaseConnection::SQLITE(connection) => Ok(connection.execute(&query, p)?),
+            DatabaseConnection::SQLITE(connection) => Ok(connection.execute(query, p)?),
             #[cfg(feature = "ocel-duckdb")]
-            DatabaseConnection::DUCKDB(connection) => Ok(connection.execute(&query, p)?),
+            DatabaseConnection::DUCKDB(connection) => Ok(connection.execute(query, p)?),
         }
     }
 
@@ -162,9 +162,9 @@ impl<'a> DatabaseConnection<'a> {
     pub fn execute_no_params(&self, query: &str) -> Result<usize, DatabaseError> {
         match self {
             #[cfg(feature = "ocel-sqlite")]
-            DatabaseConnection::SQLITE(connection) => Ok(connection.execute(&query, [])?),
+            DatabaseConnection::SQLITE(connection) => Ok(connection.execute(query, [])?),
             #[cfg(feature = "ocel-duckdb")]
-            DatabaseConnection::DUCKDB(connection) => Ok(connection.execute(&query, [])?),
+            DatabaseConnection::DUCKDB(connection) => Ok(connection.execute(query, [])?),
         }
     }
 
@@ -308,10 +308,11 @@ impl<'a> DatabaseConnection<'a> {
                     .into_iter()
                     .chain(ov.3.iter().map(|v| v as &dyn ::duckdb::ToSql))
                     .collect();
-                    let x = ::duckdb::appender_params_from_iter(chained);
-                    x
+
+                    ::duckdb::appender_params_from_iter(chained)
                 });
-                Ok(ap.append_rows(x).unwrap())
+                ap.append_rows(x).unwrap();
+                Ok(())
             }
         }
     }
@@ -370,10 +371,11 @@ impl<'a> DatabaseConnection<'a> {
                             .into_iter()
                             .chain(ov.2.iter().map(|v| v as &dyn ::duckdb::ToSql))
                             .collect();
-                    let x = ::duckdb::appender_params_from_iter(chained);
-                    x
+
+                    ::duckdb::appender_params_from_iter(chained)
                 });
-                Ok(ap.append_rows(x).unwrap())
+                ap.append_rows(x).unwrap();
+                Ok(())
             }
         }
     }
@@ -424,7 +426,7 @@ impl<'a> DatabaseConnection<'a> {
                 .map(|r| [&o.id, &r.object_id, &r.qualifier])
         });
         match self {
-#[cfg(feature = "ocel-sqlite")]
+            #[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => {
                 for ov in event_values {
                     connection
@@ -432,7 +434,7 @@ impl<'a> DatabaseConnection<'a> {
                 }
                 Ok(())
             }
-#[cfg(feature = "ocel-duckdb")]
+            #[cfg(feature = "ocel-duckdb")]
             DatabaseConnection::DUCKDB(connection) => {
                 let mut ap = connection.appender(table_name)?;
                 Ok(ap.append_rows(event_values)?)

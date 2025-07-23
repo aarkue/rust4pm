@@ -41,7 +41,7 @@ impl OCEL {
             .collect::<HashSet<_>>();
 
         let mut underlying_ocel = locel.into_inner();
-        
+
         underlying_ocel.objects = underlying_ocel
             .objects
             .iter()
