@@ -1,0 +1,65 @@
+name: 
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Graphviz
+      run: sudo apt-get install graphviz 
+    - uses: robinraju/release-downloader@v1.4
+      name: Download duckdb
+      with:
+        repository: "duckdb/duckdb"
+        tag: "v1.3.2"
+        fileName: libduckdb-linux-amd64.zip
+        out-file-path: .
+    - name: Linux extract duckdb
+      if: matrix.os == 'ubuntu-latest'
+      uses: ihiroky/extract-action@v1
+      with:
+        file_path: ${{ github.workspace }}/libduckdb-linux-amd64.zip
+        extract_dir: libduckdb
+    - name: Downloading test files
+      run: wget -O process_mining/test_data/out.zip https://rwth-aachen.sciebo.de/s/4cvtTU3lLOgtxt1/download
+    - name: Unpacking test files
+      run: 7z x process_mining/test_data/out.zip -oprocess_mining/test_data
+    - name: Build
+      run: cargo build --verbose --all-features
+      working-directory: ./process_mining
+      env:
+        DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
+        DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
+        LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
+    - name: Run tests
+      run: cargo test --verbose --all-features
+      working-directory: ./process_mining
+      env:
+        DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
+        DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
+        LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
+    - name: Clippy
+      working-directory: ./process_mining
+      run: cargo clippy --all-features -- -D warnings
+      env:
+        DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
+        DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
+        LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
+    - name: Check formatting
+      working-directory: ./process_mining
+      run: cargo fmt --all --check
+      env:
+        DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
+        DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
+        LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
