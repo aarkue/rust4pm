@@ -1,4 +1,4 @@
-name: 
+name: Test on Linux (incl. all features, linting, formatting)
 
 on:
   push:
@@ -10,7 +10,7 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  Test:
 
     runs-on: ubuntu-latest
 
@@ -39,13 +39,6 @@ jobs:
         DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
         DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
         LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
-    - name: Run tests
-      run: source "$HOME/.cargo/env" && cargo test --verbose --all-features
-      working-directory: ./process_mining
-      env:
-        DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
-        DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
-        LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
     - name: Clippy
       working-directory: ./process_mining
       run: source "$HOME/.cargo/env" && cargo clippy --all-targets --all-features -- -D warnings
@@ -56,6 +49,13 @@ jobs:
     - name: Check formatting
       working-directory: ./process_mining
       run: source "$HOME/.cargo/env" && cargo fmt --all --check
+      env:
+        DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
+        DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
+        LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
+    - name: Run tests
+      run: source "$HOME/.cargo/env" && cargo test --verbose --all-features
+      working-directory: ./process_mining
       env:
         DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
         DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
