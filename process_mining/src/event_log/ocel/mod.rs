@@ -22,6 +22,5 @@ pub mod xml_ocel_export;
 /// Parser for the OCEL 2.0 XML format
 pub mod xml_ocel_import;
 
-
 /// Graph Database OCEL Features (e.g., Export/Import)
 pub mod graph_db;
