@@ -1043,9 +1043,7 @@ fn parse_attribute_value_from_tag(
                                 .as_ref()
                                 .read_to_string(&mut name_str)
                                 .unwrap_or_default();
-                            eprintln!(
-                                "Attribute type not implemented '{name_str}' in mode {m:?}"
-                            );
+                            eprintln!("Attribute type not implemented '{name_str}' in mode {m:?}");
                             None
                         }
                     },

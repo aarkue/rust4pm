@@ -1,55 +1,62 @@
-name: test_linux
+name: 
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  Test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-        rust: [stable, beta]
+  build:
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ matrix.rust }}
-          override: true
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - name: Install Graphviz
-        run: sudo apt-get install graphviz 
-      - uses: robinraju/release-downloader@v1.4
-        name: Download duckdb
-        with:
-          repository: "duckdb/duckdb"
-          tag: "v1.3.2"
-          fileName: libduckdb-linux-amd64.zip
-          out-file-path: .
-      - name: Linux extract duckdb
-        if: matrix.os == 'ubuntu-latest'
-        uses: ihiroky/extract-action@v1
-        with:
-          file_path: ${{ github.workspace }}/libduckdb-linux-amd64.zip
-          extract_dir: libduckdb
-          
-      - name: Downloading test files
-        run: wget -O process_mining/test_data/out.zip https://rwth-aachen.sciebo.de/s/4cvtTU3lLOgtxt1/download
-      - name: Unpacking test files
-        run: 7z x process_mining/test_data/out.zip -oprocess_mining/test_data
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --lib -p process_mining --all-features
-        env:
-          DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
-          DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
-          LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
+    - uses: actions/checkout@v4
+    - name: Install Rust
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        source "$HOME/.cargo/env"  
+    - name: Install Graphviz
+      run: sudo apt-get update && sudo apt-get -y install graphviz p7zip-full
+    - name: Download DuckDB
+      run: wget -O libduckdb-linux-amd64.zip https://github.com/duckdb/duckdb/releases/download/$DUCKDB_VERSION/libduckdb-linux-amd64.zip
+      env:
+          DUCKDB_VERSION: v1.3.2
+    - name: Unpacking duckdb
+      run: 7z x  ${{ github.workspace }}/libduckdb-linux-amd64.zip -o${{ github.workspace }}/libduckdb
+    - name: Downloading test files
+      run: wget -O process_mining/test_data/out.zip https://rwth-aachen.sciebo.de/s/4cvtTU3lLOgtxt1/download
+    - name: Unpacking test files
+      run: 7z x process_mining/test_data/out.zip -oprocess_mining/test_data
+    - name: Build
+      run: source "$HOME/.cargo/env" && cargo build --verbose --all-features
+      working-directory: ./process_mining
+      env:
+        DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
+        DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
+        LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
+    - name: Run tests
+      run: source "$HOME/.cargo/env" && cargo test --verbose --all-features
+      working-directory: ./process_mining
+      env:
+        DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
+        DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
+        LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
+    - name: Clippy
+      working-directory: ./process_mining
+      run: source "$HOME/.cargo/env" && cargo clippy --all-targets --all-features -- -D warnings
+      env:
+        DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
+        DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
+        LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
+    - name: Check formatting
+      working-directory: ./process_mining
+      run: source "$HOME/.cargo/env" && cargo fmt --all --check
+      env:
+        DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
+        DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
+        LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb

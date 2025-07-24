@@ -128,9 +128,7 @@ pub fn alphappp_discover_with_auto_parameters(
         }
     }
     let (best_config, best_score, best_pn) = best.unwrap();
-    println!(
-        "Best score: {best_score:.2} with config {best_config:?}"
-    );
+    println!("Best score: {best_score:.2} with config {best_config:?}");
     println!(
         "Resulting net has {} arcs, {} transitions and {} places",
         best_pn.arcs.len(),
