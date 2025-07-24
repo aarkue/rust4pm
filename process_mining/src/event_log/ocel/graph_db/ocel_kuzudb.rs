@@ -14,7 +14,7 @@ pub enum KuzuDBExportError {
     /// General IO Error (e.g., when creating the database file)
     IOError(std::io::Error),
     #[cfg(feature = "dataframes")]
-    /// Error originiating in Polars (for DataFrame conversion used as an intermediate step)
+    /// Error originiating in Polars (for `DataFrame` conversion used as an intermediate step)
     PolarsError(polars::prelude::PolarsError)
 }
 
