@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ffi::CString, time::UNIX_EPOCH};
+use std::{collections::HashMap, ffi::CString};
 
 use super::super::*;
 use crate::{
@@ -133,7 +133,7 @@ pub fn import_ocel_sqlite_from_con(con: Connection) -> Result<OCEL, rusqlite::Er
             };
             // Technically time should probably be set to UNIX epoch (1970-01-01 00:00 UTC) for these "initial" attribute values
             // however there are some OCEL logs for which this does not hold?
-            if UNIX_EPOCH != time.into() {
+            if DateTime::UNIX_EPOCH.fixed_offset() != time {
                 // eprintln!("Expected initial object attribute value to have UNIX epoch as time. Instead got {time:?}. Overwriting to UNIX epoch.");
                 time = DateTime::UNIX_EPOCH.into();
             }
