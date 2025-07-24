@@ -253,7 +253,7 @@ mod tests {
         let event_log_abstraction = EventLogActivityProjection::from(&event_log);
         let tbr_result = apply_token_based_replay(&net, &event_log_abstraction);
 
-        println!("After replaying trace 1, the result is: {:?}", tbr_result);
+        println!("After replaying trace 1, the result is: {tbr_result:?}");
         assert!(tbr_result.is_ok());
         let result = tbr_result.unwrap();
         assert_eq!(result.produced, 6);
@@ -273,8 +273,7 @@ mod tests {
         let tbr_result_2 = apply_token_based_replay(&net, &event_log_abstraction_2);
 
         println!(
-            "After replaying trace 1 and trace 2, the result is: {:?}",
-            tbr_result_2
+            "After replaying trace 1 and trace 2, the result is: {tbr_result_2:?}"
         );
         assert!(tbr_result_2.is_ok());
         let result_2 = tbr_result_2.unwrap();

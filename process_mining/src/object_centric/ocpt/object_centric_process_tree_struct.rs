@@ -947,11 +947,11 @@ impl OCPTOperator {
     /// Computes convergence by:
     /// 1. Checking whether object types are deficient in the leaves or divergent
     /// 2. Recursively checks for a given event type and object type whether:
-    ///     i. If an object type is convergent for all leaves of a sequence or parallel operator
-    ///     ii. If an object type is convergent for any leaf of a choice operator
-    ///     iii. If the object type is convergent for the first child of loop operator
+    ///    i. If an object type is convergent for all leaves of a sequence or parallel operator
+    ///    ii. If an object type is convergent for any leaf of a choice operator
+    ///    iii. If the object type is convergent for the first child of loop operator
     /// 3. Checks for a leaf whether the object type is converging or optional, or if all other
-    ///     object types, which are related to the leaf, are either divergent or deficient
+    ///    object types, which are related to the leaf, are either divergent or deficient
     ///
     pub fn compute_conv<'a>(
         &'a self,
@@ -1076,11 +1076,11 @@ impl OCPTOperator {
     /// Computes deficiency by:
     /// 1. Checking whether object types are convergent in the leaves or optional
     /// 2. Recursively checks for a given event type and object type whether:
-    ///     i. If an object type is divergent for all leaves of a sequence or parallel operator
-    ///     ii. If an object type is divergent for any leaf of a choice operator
-    ///     iii. If the object type is divergent for the first child of loop operator
+    ///    i. If an object type is divergent for all leaves of a sequence or parallel operator
+    ///    ii. If an object type is divergent for any leaf of a choice operator
+    ///    iii. If the object type is divergent for the first child of loop operator
     /// 3. Checks for a leaf whether the object type is divergent or deficient, or if all other
-    ///         object types, which are related to the leaf, are either converging or optional
+    ///    object types, which are related to the leaf, are either converging or optional
     ///
     pub fn compute_def<'a>(
         &'a self,

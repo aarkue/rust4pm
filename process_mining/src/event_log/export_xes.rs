@@ -273,7 +273,7 @@ fn serialize_classifier(classifier_keys: &[String]) -> String {
     if should_quote {
         classifier_keys
             .iter()
-            .map(|k| format!("'{}'", k))
+            .map(|k| format!("'{k}'"))
             .collect::<Vec<String>>()
             .join(" ")
     } else {

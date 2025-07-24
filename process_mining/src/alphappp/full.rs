@@ -157,7 +157,7 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
             act_count[*act] += *w as i128;
         })
     });
-    println!("Act count: {:?}", act_count);
+    println!("Act count: {act_count:?}");
     println!(
         "Acts: {:?}",
         log_proj

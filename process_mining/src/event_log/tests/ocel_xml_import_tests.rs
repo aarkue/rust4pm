@@ -22,7 +22,7 @@ fn test_ocel_xml_import() {
     let now = Instant::now();
     let ocel = import_ocel_xml_slice(log_bytes);
     let obj = ocel.objects.first().unwrap();
-    println!("{:?}", obj);
+    println!("{obj:?}");
     println!(
         "Imported OCEL with {} objects and {} events in {:#?}",
         ocel.objects.len(),
@@ -43,7 +43,7 @@ fn test_order_ocel_json_import() {
     let now = Instant::now();
     let ocel = import_ocel_json_from_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
-    println!("{:?}", obj);
+    println!("{obj:?}");
     println!(
         "Imported OCEL with {} objects and {} events in {:#?}",
         ocel.objects.len(),
@@ -60,7 +60,7 @@ fn test_ocel_p2p_xml_import() {
     let now = Instant::now();
     let ocel = import_ocel_xml_slice(log_bytes);
     let obj = ocel.objects.first().unwrap();
-    println!("{:?}", obj);
+    println!("{obj:?}");
     println!(
         "Imported OCEL with {} objects and {} events in {:#?}",
         ocel.objects.len(),
@@ -77,7 +77,7 @@ fn test_ocel_p2p_json_import() {
     let now = Instant::now();
     let ocel = import_ocel_json_from_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
-    println!("{:?}", obj);
+    println!("{obj:?}");
     println!(
         "Imported OCEL with {} objects and {} events in {:#?}",
         ocel.objects.len(),
@@ -94,7 +94,7 @@ fn test_ocel_logistics_xml_import() {
     let now = Instant::now();
     let ocel = import_ocel_xml_slice(log_bytes);
     let obj = ocel.objects.first().unwrap();
-    println!("{:?}", obj);
+    println!("{obj:?}");
     println!(
         "Imported OCEL with {} objects and {} events in {:#?}",
         ocel.objects.len(),
@@ -115,7 +115,7 @@ fn test_ocel_logistics_json_import() {
     let now = Instant::now();
     let ocel = import_ocel_json_from_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
-    println!("{:?}", obj);
+    println!("{obj:?}");
     println!(
         "Imported OCEL with {} objects and {} events in {:#?}",
         ocel.objects.len(),
@@ -175,7 +175,7 @@ fn test_ocel_pm4py_log() {
     let now = Instant::now();
     let ocel = import_ocel_xml_slice(log_bytes);
     let obj = ocel.objects.first().unwrap();
-    println!("{:?}", obj);
+    println!("{obj:?}");
     println!(
         "Imported OCEL with {} objects and {} events in {:#?}",
         ocel.objects.len(),
@@ -190,7 +190,7 @@ fn test_ocel_pm4py_log_json() {
     let log_bytes = &get_ocel_file_bytes("pm4py-ocel20_example.jsonocel");
     let ocel = import_ocel_json_from_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
-    println!("{:?}", obj);
+    println!("{obj:?}");
     println!(
         "Imported OCEL with {} objects and {} events in {:#?}",
         ocel.objects.len(),
@@ -205,7 +205,7 @@ fn test_ocel_order_mangement_log_json() {
     let log_bytes = &get_ocel_file_bytes("order-management.json");
     let ocel = import_ocel_json_from_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
-    println!("{:?}", obj);
+    println!("{obj:?}");
     println!(
         "Imported OCEL with {} objects and {} events in {:#?}",
         ocel.objects.len(),
@@ -235,7 +235,7 @@ fn test_ocel_failing_xml() {
     let now = Instant::now();
     let ocel = import_ocel_xml_slice(log_bytes);
     let obj = ocel.objects.first().unwrap();
-    println!("{:?}", obj);
+    println!("{obj:?}");
     println!(
         "Imported OCEL with {} objects and {} events in {:#?}",
         ocel.objects.len(),

@@ -173,7 +173,7 @@ mod ocel_xml_export_test {
         let mut now = Instant::now();
         let ocel = import_ocel_xml_file(&path);
         let obj = ocel.objects.first().unwrap();
-        println!("{:?}", obj);
+        println!("{obj:?}");
         println!(
             "Imported OCEL with {} objects and {} events in {:#?}",
             ocel.objects.len(),
@@ -219,7 +219,7 @@ mod ocel_xml_export_test {
         let mut now = Instant::now();
         let ocel = import_ocel_xml_file(&path);
         let obj = ocel.objects.first().unwrap();
-        println!("{:?}", obj);
+        println!("{obj:?}");
         println!(
             "Imported OCEL with {} objects and {} events in {:#?}",
             ocel.objects.len(),

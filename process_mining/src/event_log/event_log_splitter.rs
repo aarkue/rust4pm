@@ -195,7 +195,7 @@ impl<'a> ActivityBasedEventLogSplitter<'a> {
     ///
     /// * `event_log`: An event log to be split into several sub event logs.
     /// * `activity_split_sets`: A distribution of activities among different sets which should be
-    ///    disjunct.
+    ///   disjunct.
     ///
     /// Returns: A new `ActivityBasedEventLogSplitter`
     ///

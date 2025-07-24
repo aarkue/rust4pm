@@ -950,8 +950,8 @@ mod tests {
 
         let (fitness, precision) = compute_fitness_precision(&abstraction_log, &abstraction_tree);
         let time_elapsed = time_start.elapsed().as_millis();
-        println!("Time elapsed is {}ms", time_elapsed);
-        println!("Fitness: {}", fitness);
-        println!("Precision: {}", precision);
+        println!("Time elapsed is {time_elapsed}ms");
+        println!("Fitness: {fitness}");
+        println!("Precision: {precision}");
     }
 }

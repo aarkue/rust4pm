@@ -46,7 +46,7 @@ pub enum PNMLParseError {
 
 impl std::fmt::Display for PNMLParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Failed to parse PNML: {:?}", self)
+        write!(f, "Failed to parse PNML: {self:?}")
     }
 }
 
@@ -397,7 +397,7 @@ mod test {
         assert!(pn.initial_marking.is_some());
         assert!(pn.final_markings.is_some());
         assert!(pn.arcs.iter().any(|arc| arc.weight == 1337));
-        println!("{:#?}", pn);
+        println!("{pn:#?}");
         #[cfg(feature = "graphviz-export")]
         {
             let svg_export_path = get_test_data_path().join("export").join("pn.svg");

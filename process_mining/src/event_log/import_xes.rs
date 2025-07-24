@@ -42,7 +42,7 @@ pub enum XESParseError {
 
 impl std::fmt::Display for XESParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Failed to parse XES: {:?}", self)
+        write!(f, "Failed to parse XES: {self:?}")
     }
 }
 

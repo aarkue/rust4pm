@@ -354,7 +354,7 @@ impl<'a> DatabaseConnection<'a> {
                         attr_vals.insert_str(0, ", ");
                     }
                     connection.execute(
-                        &format!(r#"INSERT INTO "{table_name}" VALUES (?,?{})"#, attr_vals),
+                        &format!(r#"INSERT INTO "{table_name}" VALUES (?,?{attr_vals})"#),
                         [&e_id, &time],
                     )?;
                 }
