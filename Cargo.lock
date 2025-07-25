@@ -346,7 +346,6 @@ name = "binary"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "duckdb",
  "java_bridge",
  "process_mining",
  "quick-xml 0.31.0",
