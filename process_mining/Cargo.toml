@@ -19,6 +19,7 @@ duckdb = { version = "1.2.1", optional = true, features = ["chrono"]}
 flate2 = "1.1.1"
 graphviz-rust = { version = "0.9.3", optional = true }
 itertools = { version = "0.14.0" }
+kuzu = {version = "0.11.0", optional = true}
 nalgebra = { version = "0.33.2", optional = true }
 ordered-float = "5.0.0"
 petgraph = "0.8.1"
@@ -30,6 +31,7 @@ rusqlite = { version = "0.32.1", features = ["bundled","chrono", "serialize"], o
 serde_json = "1.0.105"
 serde = {version = "1.0.188", features = ["derive"]}
 serde_with = "3.11.0"
+tempfile = "3"
 uuid = {version = "1.16.0", features = ["v4", "serde"]}
 
 [features]
@@ -45,6 +47,9 @@ ocel-duckdb = ["dep:duckdb"]
 
 # Enables polars DataFrame conversion from/to event data structs
 dataframes = ["dep:polars"]
+
+# Enables kuzudb features for OCEL (e.g., exporting OCEL to kuzudb database)
+kuzudb = ["dep:kuzu"]
 
 # Enables event log splitting (+rand dependency)
 log-splitting = ["dep:rand"]
