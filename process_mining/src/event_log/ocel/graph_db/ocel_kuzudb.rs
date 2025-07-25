@@ -131,12 +131,15 @@ mod tests {
 
     #[test]
     fn test_kuzudb_export() {
+        let export_path = get_test_data_path()
+            .join("export")
+            .join("order-management-ocel.kuzu");
+        let _er = remove_file(&export_path);
         let ocel = import_ocel_xml_file(
             get_test_data_path()
                 .join("ocel")
                 .join("order-management.xml"),
         );
-        let _er = remove_file("./kuzudb-test123.kuzu");
-        export_ocel_to_kuzudb_generic("./kuzudb-test123.kuzu", &ocel).unwrap();
+        export_ocel_to_kuzudb_generic(export_path, &ocel).unwrap();
     }
 }
