@@ -78,7 +78,7 @@ pub fn export_ocel_to_kuzudb_generic<P: AsRef<Path>>(
 
     use crate::ocel::dataframe::{
         ocel_to_dataframes, OCEL_EVENT_ID_KEY, OCEL_EVENT_TIMESTAMP_KEY, OCEL_EVENT_TYPE_KEY,
-        OCEL_OBJECT_ID_KEY, OCEL_OBJECT_TYPE_KEY, OCEL_QUALIFIER_KEY,
+        OCEL_OBJECT_ID_2_KEY, OCEL_OBJECT_ID_KEY, OCEL_OBJECT_TYPE_KEY, OCEL_QUALIFIER_KEY,
     };
 
     let db = Database::new(db_path, SystemConfig::default())?;
@@ -102,9 +102,14 @@ pub fn export_ocel_to_kuzudb_generic<P: AsRef<Path>>(
         path.join("e2o.csv"),
         &[OCEL_EVENT_ID_KEY, OCEL_OBJECT_ID_KEY, OCEL_QUALIFIER_KEY],
     )?;
+    df.export_o2o_csv(
+        path.join("o2o.csv"),
+        &[OCEL_OBJECT_ID_KEY, OCEL_OBJECT_ID_2_KEY, OCEL_QUALIFIER_KEY],
+    )?;
     conn.query("CREATE NODE TABLE Event(id STRING PRIMARY KEY, type STRING, time TIMESTAMP);")?;
     conn.query("CREATE NODE TABLE Object(id STRING PRIMARY KEY, type STRING);")?;
     conn.query("CREATE REL TABLE E2O(FROM Event to Object, qualifier STRING);")?;
+    conn.query("CREATE REL TABLE O2O(FROM Object to Object, qualifier STRING);")?;
     conn.query(&format!(
         "COPY Event FROM '{}' (header=true);",
         path.join("events.csv").to_string_lossy()
@@ -116,6 +121,10 @@ pub fn export_ocel_to_kuzudb_generic<P: AsRef<Path>>(
     conn.query(&format!(
         "COPY E2O FROM '{}' (header=true)",
         path.join("e2o.csv").to_string_lossy()
+    ))?;
+    conn.query(&format!(
+        "COPY O2O FROM '{}' (header=true)",
+        path.join("o2o.csv").to_string_lossy()
     ))?;
     Ok(())
 }
