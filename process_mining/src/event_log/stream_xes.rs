@@ -711,8 +711,7 @@ impl StreamingXESParser<'_> {
                 }
                 None => {
                     eprintln!(
-                        "No current trace when parsing trace attribute: Key {:?}, Value {:?}",
-                        key, val
+                        "No current trace when parsing trace attribute: Key {key:?}, Value {val:?}"
                     );
                 }
             },
@@ -723,15 +722,13 @@ impl StreamingXESParser<'_> {
                     }
                     None => {
                         eprintln!(
-                            "No current event when parsing event attribute: Key {:?}, Value {:?}",
-                            key, val
+                            "No current event when parsing event attribute: Key {key:?}, Value {val:?}"
                         )
                     }
                 },
                 None => {
                     eprintln!(
-                        "No current trace when parsing event attribute: Key {:?}, Value {:?}",
-                        key, val
+                        "No current trace when parsing event attribute: Key {key:?}, Value {val:?}"
                     );
                 }
             },
@@ -992,7 +989,7 @@ fn parse_attribute_value_from_tag(
                     b"date" => match parse_date_from_str(&value, &options.date_format) {
                         Some(dt) => Some(AttributeValue::Date(dt)),
                         None => {
-                            eprintln!("Failed to parse data from {:?}", value);
+                            eprintln!("Failed to parse data from {value:?}");
                             None
                         }
                     },
@@ -1000,7 +997,7 @@ fn parse_attribute_value_from_tag(
                         let parsed_val = match value.parse::<i64>() {
                             Ok(n) => n,
                             Err(e) => {
-                                eprintln!("Could not parse integer {:?}: Error {}", value, e);
+                                eprintln!("Could not parse integer {value:?}: Error {e}");
                                 i64::default()
                             }
                         };
@@ -1010,7 +1007,7 @@ fn parse_attribute_value_from_tag(
                         let parsed_val = match value.parse::<f64>() {
                             Ok(n) => n,
                             Err(e) => {
-                                eprintln!("Could not parse float {:?}: Error {}", value, e);
+                                eprintln!("Could not parse float {value:?}: Error {e}");
                                 f64::default()
                             }
                         };
@@ -1020,7 +1017,7 @@ fn parse_attribute_value_from_tag(
                         let parsed_val = match value.parse::<bool>() {
                             Ok(n) => n,
                             Err(e) => {
-                                eprintln!("Could not parse boolean {:?}: Error {}", value, e);
+                                eprintln!("Could not parse boolean {value:?}: Error {e}");
                                 bool::default()
                             }
                         };
@@ -1030,7 +1027,7 @@ fn parse_attribute_value_from_tag(
                         let parsed_val = match Uuid::from_str(&value) {
                             Ok(n) => n,
                             Err(e) => {
-                                eprintln!("Could not parse UUID {:?}: Error {}", value, e);
+                                eprintln!("Could not parse UUID {value:?}: Error {e}");
                                 Uuid::default()
                             }
                         };
@@ -1046,10 +1043,7 @@ fn parse_attribute_value_from_tag(
                                 .as_ref()
                                 .read_to_string(&mut name_str)
                                 .unwrap_or_default();
-                            eprintln!(
-                                "Attribute type not implemented '{}' in mode {:?}",
-                                name_str, m
-                            );
+                            eprintln!("Attribute type not implemented '{name_str}' in mode {m:?}");
                             None
                         }
                     },
@@ -1106,7 +1100,7 @@ mod stream_test {
         let (mut stream, _log_data) =
             stream_xes_from_path(&path, XESImportOptions::default()).unwrap();
         let num_traces = stream.count();
-        println!("Num. traces: {}", num_traces);
+        println!("Num. traces: {num_traces}");
         assert_eq!(num_traces, 1104);
     }
 

@@ -315,6 +315,7 @@ mod tests {
 
         let classifier = log.classifiers.as_ref().and_then(|c| c.first()).unwrap();
 
+        #[allow(unused_variables)]
         let graph = DirectlyFollowsGraph::create_from_log(&log, classifier);
 
         #[cfg(feature = "graphviz-export")]
@@ -349,6 +350,7 @@ mod tests {
         )
         .unwrap();
 
+        #[allow(unused_variables)]
         let graph = DirectlyFollowsGraph::create_from_log(&log, &EventLogClassifier::default());
 
         #[cfg(feature = "graphviz-export")]

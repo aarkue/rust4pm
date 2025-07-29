@@ -80,7 +80,7 @@ pub fn apply_token_based_replay(
     if petri_net.initial_marking.is_none() {
         return Err(TokenBasedReplayError::NoInitialMarking);
     } else if petri_net.final_markings.as_ref().is_none()
-        || petri_net.final_markings.as_ref().unwrap().len() == 0
+        || petri_net.final_markings.as_ref().unwrap().is_empty()
     {
         return Err(TokenBasedReplayError::NoFinalMarking);
     } else if petri_net.final_markings.as_ref().unwrap().len() > 1 {
@@ -127,7 +127,7 @@ pub fn apply_token_based_replay(
     );
 
     let m_final = marking_to_vector(
-        petri_net.final_markings.as_ref().unwrap().get(0).unwrap(),
+        petri_net.final_markings.as_ref().unwrap().first().unwrap(),
         &node_to_pos,
         petri_net.places.len(),
     );
@@ -197,7 +197,7 @@ pub fn count_missing(marking: &mut DVector<i64>) -> u64 {
 
     marking.iter_mut().for_each(|place_tokens| {
         if *place_tokens < 0 {
-            result += place_tokens.abs() as u64;
+            result += place_tokens.unsigned_abs();
             *place_tokens = 0;
         }
     });
@@ -237,8 +237,7 @@ mod tests {
 
         let mut final_marking = Marking::new();
         final_marking.insert(p3, 1);
-        let mut final_markings = Vec::new();
-        final_markings.push(final_marking);
+        let final_markings = vec![final_marking];
         net.final_markings = Some(final_markings);
 
         let mut trace_1 = Trace::new();
@@ -254,7 +253,7 @@ mod tests {
         let event_log_abstraction = EventLogActivityProjection::from(&event_log);
         let tbr_result = apply_token_based_replay(&net, &event_log_abstraction);
 
-        println!("After replaying trace 1, the result is: {:?}", tbr_result);
+        println!("After replaying trace 1, the result is: {tbr_result:?}");
         assert!(tbr_result.is_ok());
         let result = tbr_result.unwrap();
         assert_eq!(result.produced, 6);
@@ -273,10 +272,7 @@ mod tests {
         let event_log_abstraction_2 = EventLogActivityProjection::from(&event_log);
         let tbr_result_2 = apply_token_based_replay(&net, &event_log_abstraction_2);
 
-        println!(
-            "After replaying trace 1 and trace 2, the result is: {:?}",
-            tbr_result_2
-        );
+        println!("After replaying trace 1 and trace 2, the result is: {tbr_result_2:?}");
         assert!(tbr_result_2.is_ok());
         let result_2 = tbr_result_2.unwrap();
         assert_eq!(result_2.produced, 6 + 5);

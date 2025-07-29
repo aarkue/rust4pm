@@ -59,8 +59,8 @@ fn attribute_value_to_any_value<'a>(from: &AttributeValue) -> AnyValue<'a> {
             AnyValue::StringOwned(s.into())
         }
         // TODO: Add proper List/Container support
-        AttributeValue::List(l) => AnyValue::StringOwned(format!("{:?}", l).into()),
-        AttributeValue::Container(c) => AnyValue::StringOwned(format!("{:?}", c).into()),
+        AttributeValue::List(l) => AnyValue::StringOwned(format!("{l:?}").into()),
+        AttributeValue::Container(c) => AnyValue::StringOwned(format!("{c:?}").into()),
         AttributeValue::None() => AnyValue::Null,
     }
 }
@@ -141,8 +141,7 @@ pub fn convert_log_to_dataframe(
             unique_dtypes.remove(&DataType::Null);
             if unique_dtypes.len() > 1 {
                 eprintln!(
-                    "Warning: Attribute {} contains values of different dtypes ({:?})",
-                    k, unique_dtypes
+                    "Warning: Attribute {k} contains values of different dtypes ({unique_dtypes:?})"
                 );
                 if unique_dtypes
                     == vec![DataType::Float64, DataType::Int64]
@@ -215,7 +214,7 @@ fn any_value_to_attribute_value(from: &AnyValue<'_>) -> AttributeValue {
                 .fixed_offset();
             AttributeValue::Date(d)
         }
-        x => AttributeValue::String(format!("{:?}", x)),
+        x => AttributeValue::String(format!("{x:?}")),
     }
 }
 

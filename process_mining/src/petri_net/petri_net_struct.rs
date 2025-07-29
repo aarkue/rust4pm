@@ -295,15 +295,16 @@ impl PetriNet {
     /// Checks if the Petri net contains duplicate or silent transitions
     pub fn contains_duplicate_or_silent_transitions(&self) -> bool {
         let mut activities = HashSet::new();
-        
+
         for transition in self.transitions.values() {
-            if transition.label.is_none() || activities.contains(transition.label.as_ref().unwrap()) {
+            if transition.label.is_none() || activities.contains(transition.label.as_ref().unwrap())
+            {
                 return true;
             } else {
                 activities.insert(transition.label.as_ref().unwrap().clone());
             }
         }
-        
+
         false
     }
 
@@ -317,7 +318,7 @@ impl PetriNet {
             .sorted()
             .enumerate()
             .for_each(|(pos, id)| {
-                result.insert(id.clone(), pos);
+                result.insert(*id, pos);
             });
 
         self.transitions
@@ -325,7 +326,7 @@ impl PetriNet {
             .sorted()
             .enumerate()
             .for_each(|(pos, id)| {
-                result.insert(id.clone(), pos);
+                result.insert(*id, pos);
             });
 
         result

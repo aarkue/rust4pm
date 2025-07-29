@@ -42,7 +42,7 @@ fn test_xes_gz_import() {
         .value
         .try_as_date()
         .unwrap();
-    println!("{:?}", case_a_first_ev_time);
+    println!("{case_a_first_ev_time:?}");
     assert_eq!(
         case_a_first_ev_time,
         &DateTime::parse_from_rfc3339("2014-10-22T11:15:41.000+02:00")

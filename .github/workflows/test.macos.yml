@@ -1,6 +1,10 @@
-name: test_macos
+name: Test on macOS
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   Test:

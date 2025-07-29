@@ -1,5 +1,5 @@
 <div align="center">
-<h1>Rust4PM: A Rust Bridge for Process Mining</h1>
+<h1>Rust4PM</h1>
   <p><strong><code>process_mining</code></pre> Rust Crate</strong></p>
   <p>
     <a href="https://crates.io/crates/process_mining">
@@ -12,11 +12,19 @@
 </div>
   
 This repository is a mono-repo containing the following parts:
-- `process_mining/` Process Mining library in Rust (See also https://crates.io/crates/process_mining)
+- **`process_mining/` Process Mining library in Rust** (See also https://crates.io/crates/process_mining)
 - `python_bridge/` Python Bindings
 - `java_bridge/` Java Bindings
 - `pm_wasm/` WASM / JavaScript Bindings PoC
 - `binary/` Rust Binary Executable
+
+
+**For more information on the `process_mining` Rust library, see [process_mining/README.md](./process_mining/README.md).**
+\
+Further information is also available at https://crates.io/crates/process_mining and https://docs.rs/process_mining.
+
+---
+## Setup and Project Structure
 
 The Java, Python and JavaScript bindings make use of the main `process_mining` library, which is written in Rust.
 Thus, complex algorithms or logic can be __implemented only once in Rust__. This implementation can then be exposed and used from Java, Python or JavaScript, in different enviroments.

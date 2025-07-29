@@ -75,7 +75,7 @@ fn parse_attribute_value(
         OCELAttributeType::String => Ok(OCELAttributeValue::String(value.clone())),
         OCELAttributeType::Integer => value
             .parse::<i64>()
-            .map_err(|e| format!("{}", e))
+            .map_err(|e| format!("{e}"))
             .map(OCELAttributeValue::Integer),
         OCELAttributeType::Float => value
             .parse::<f64>()
@@ -86,11 +86,11 @@ fn parse_attribute_value(
                     Err(e)
                 }
             })
-            .map_err(|e| format!("{}", e))
+            .map_err(|e| format!("{e}"))
             .map(OCELAttributeValue::Float),
         OCELAttributeType::Boolean => value
             .parse::<bool>()
-            .map_err(|e| format!("{}", e))
+            .map_err(|e| format!("{e}"))
             .map(OCELAttributeValue::Boolean),
         OCELAttributeType::Null => Ok(OCELAttributeValue::Null),
         OCELAttributeType::Time => parse_date(&value, options)
@@ -102,8 +102,7 @@ fn parse_attribute_value(
         Err(e) => {
             if options.verbose {
                 eprintln!(
-                    "Failed to parse attribute value {:?} with supposed type {:?}\n{}",
-                    value, attribute_type, e
+                    "Failed to parse attribute value {value:?} with supposed type {attribute_type:?}\n{e}"
                 );
             }
             OCELAttributeValue::Null
@@ -273,7 +272,7 @@ where
                                     }
                                     Err(e) => {
                                         if options.verbose {
-                                            eprintln!("Failed to parse time value of attribute: {}. Will skip this attribute completely for now.",e);
+                                            eprintln!("Failed to parse time value of attribute: {e}. Will skip this attribute completely for now.");
                                         }
                                     }
                                 }
@@ -449,7 +448,7 @@ where
                                     }
                                     Err(e) => {
                                         if options.verbose {
-                                            eprintln!("Failed to parse time value of attribute: {}. Will skip this attribute completely for now.",e);
+                                            eprintln!("Failed to parse time value of attribute: {e}. Will skip this attribute completely for now.");
                                         }
                                     }
                                 }
@@ -547,7 +546,7 @@ where
                             attribute.value = parse_attribute_value(
                                 object_attribute_types
                                     .get(&(o.object_type.clone(), attribute.name.clone()))
-                                    .unwrap(),
+                                    .unwrap_or(&OCELAttributeType::String),
                                 str_val,
                                 &options,
                             );
@@ -560,13 +559,13 @@ where
                             attribute.value = parse_attribute_value(
                                 event_attribute_types
                                     .get(&(e.event_type.clone(), attribute.name.clone()))
-                                    .unwrap(),
+                                    .unwrap_or(&OCELAttributeType::String),
                                 str_val,
                                 &options,
                             );
                         }
                         _ => {
-                            println!("Got text in unexpected mode {:?}", current_mode);
+                            println!("Got text in unexpected mode {current_mode:?}");
                         }
                     },
                     quick_xml::events::Event::Eof => break,
@@ -575,7 +574,7 @@ where
             }
             Err(err) => {
                 if options.verbose {
-                    eprintln!("Error: {:?}", err)
+                    eprintln!("Error: {err:?}")
                 }
             }
         }

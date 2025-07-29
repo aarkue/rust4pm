@@ -1,6 +1,10 @@
-name: test_windows
+name: Test on Windows
 
-on: [ push, pull_request ]
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   Test:
@@ -31,7 +35,9 @@ jobs:
           wget.exe -O process_mining/test_data/out.zip https://rwth-aachen.sciebo.de/s/4cvtTU3lLOgtxt1/download
       - name: Unpacking test files
         run: 7z.exe x process_mining/test_data/out.zip -oprocess_mining/test_data
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --lib -p process_mining
+      - name: Build
+        run: cargo build --verbose
+        working-directory: ./process_mining
+      - name: Run tests
+        run: cargo test --verbose
+        working-directory: ./process_mining

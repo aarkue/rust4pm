@@ -4,9 +4,7 @@
     rust_2018_idioms,
     missing_docs
 )]
-
 #![allow(clippy::needless_doctest_main)]
-
 #![doc = include_str!("../README.md")]
 
 ///
@@ -29,29 +27,12 @@ pub mod event_log {
     pub mod export_xes;
     /// XES Import
     pub mod import_xes;
-    /// Streaming XES Import
-    pub mod stream_xes;
     ///
     /// OCEL2.0 (Object-Centric Event Logs)
     ///
-    pub mod ocel {
-        /// Linked OCEL 2.0, allowing convenient usage of object-centric data
-        pub mod linked_ocel;
-        /// OCEL 2.0 struct and sub-structs
-        pub mod ocel_struct;
-        /// Functionality to flatten OCEL on an object type
-        pub mod flatten;
-        /// `SQLite` OCEL 2.0
-        #[cfg(feature = "ocel-sqlite")]
-        pub mod sqlite;
-        /// XML Export for OCEL 2.0
-        pub mod xml_ocel_export;
-        #[allow(clippy::single_match)]
-        /// Parser for the OCEL 2.0 XML format
-        pub mod xml_ocel_import;
-        /// Macros for the creation of [`OCEL`]
-        pub mod macros;
-    }
+    pub mod ocel;
+    /// Streaming XES Import
+    pub mod stream_xes;
     pub use event_log_struct::{
         Attribute, AttributeValue, Attributes, Event, EventLog, Trace, XESEditableAttribute,
     };
@@ -60,14 +41,7 @@ pub mod event_log {
 }
 
 /// Object-centric discovery and conformance checking
-pub mod object_centric {
-    /// Object-centric conformance checking
-    pub mod conformance;
-    /// Object-centric process trees [`OCPT`]
-    pub mod ocpt;
-    /// Object-centric directly-follows graphs
-    pub mod object_centric_dfg_struct;
-}
+pub mod object_centric;
 
 /// Util module with smaller helper functions, structs or enums
 pub mod utils;
@@ -220,26 +194,27 @@ pub use event_log::ocel::xml_ocel_export::export_ocel_xml;
 
 #[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
-pub use event_log::ocel::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_path;
+pub use event_log::ocel::sql::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_path;
 
 #[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
-pub use event_log::ocel::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_con;
+pub use event_log::ocel::sql::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_con;
 
 #[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
-pub use event_log::ocel::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_slice;
+pub use event_log::ocel::sql::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_slice;
+
+#[doc(inline)]
+#[cfg(not(all(not(feature = "ocel-duckdb"), not(feature = "ocel-sqlite"))))]
+pub use event_log::ocel::sql::export::export_ocel_to_sql_con;
 
 #[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
-pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_con;
-#[cfg(feature = "ocel-sqlite")]
-#[doc(inline)]
-pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_path;
+pub use event_log::ocel::sql::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_path;
 
 #[cfg(feature = "ocel-sqlite")]
 #[doc(inline)]
-pub use event_log::ocel::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_vec;
+pub use event_log::ocel::sql::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_vec;
 
 #[cfg(feature = "dataframes")]
 #[doc(inline)]

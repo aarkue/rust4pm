@@ -60,7 +60,8 @@ pub struct IndexLinkedOCEL {
     ///
     /// First level: event type, second level: reverse e2o (object index to set of event indices)
     pub e2o_rev_et: HashMap<String, HashMap<ObjectIndex, HashSet<EventIndex>>>,
-    objects_per_type: HashMap<String, Vec<ObjectIndex>>,
+    /// List of object indices per object type
+    pub objects_per_type: HashMap<String, Vec<ObjectIndex>>,
     e2o_rel: Vec<Vec<(String, ObjectIndex)>>,
     e2o_set: Vec<HashSet<ObjectIndex>>,
     o2o_rel: Vec<Vec<(String, ObjectIndex)>>,
@@ -79,6 +80,12 @@ impl IndexLinkedOCEL {
     /// Get the inner [`OCEL`] of the [`IndexLinkedOCEL`]
     pub fn into_inner(self) -> OCEL {
         self.ocel
+    }
+
+    /// Get a immutable reference to the inner [`OCEL`]
+    ///
+    pub fn get_ocel_ref(&self) -> &OCEL {
+        &self.ocel
     }
 
     /// Get a mutable reference of the inner [`OCEL`]

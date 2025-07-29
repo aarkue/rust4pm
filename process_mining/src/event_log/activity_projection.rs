@@ -232,7 +232,7 @@ pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
     let mut should_add_start = true;
     let start_act = match log.act_to_index.get(START_ACTIVITY) {
         Some(a) => {
-            eprintln!("Start activity ({}) already present in activity set! Will skip adding a start activity to every trace, which might not be the desired outcome.", START_ACTIVITY);
+            eprintln!("Start activity ({START_ACTIVITY}) already present in activity set! Will skip adding a start activity to every trace, which might not be the desired outcome.");
             should_add_start = false;
             *a
         }
@@ -247,7 +247,7 @@ pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
     let mut should_add_end = true;
     let end_act = match log.act_to_index.get(END_ACTIVITY) {
         Some(a) => {
-            eprintln!("End activity ({}) already present in activity set! Still adding an end activity to every trace, which might not be the desired outcome.", END_ACTIVITY);
+            eprintln!("End activity ({END_ACTIVITY}) already present in activity set! Still adding an end activity to every trace, which might not be the desired outcome.");
             should_add_end = false;
             *a
         }
