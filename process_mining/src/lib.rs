@@ -71,7 +71,7 @@ pub mod petri_net {
 
 ///
 /// Process trees
-/// 
+///
 pub mod process_tree {
     /// [`ProcessTree`] struct
     pub mod process_tree_struct;

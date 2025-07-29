@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{HashSet};
+use std::collections::HashSet;
 use uuid::Uuid;
 
 ///
@@ -298,10 +298,10 @@ impl Leaf {
     /// is missing
     ///
     pub fn new(leaf_label: Option<String>) -> Self {
-        if leaf_label.is_some() {
+        if let Some(leaf_label) = leaf_label {
             Self {
                 uuid: Uuid::new_v4(),
-                activity_label: LeafLabel::Activity(leaf_label.unwrap().to_string()),
+                activity_label: LeafLabel::Activity(leaf_label),
             }
         } else {
             Self {
