@@ -252,9 +252,12 @@ impl From<OCEL> for IndexLinkedOCEL {
     }
 }
 
-impl<'a> LinkedOCELAccess<'a, EventIndex, ObjectIndex, EventIndex, ObjectIndex>
-    for IndexLinkedOCEL
-{
+impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
+    type EvRefType = EventIndex;
+    type ObRefType = ObjectIndex;
+    type EvRetType = EventIndex;
+    type ObRetType = ObjectIndex;
+
     fn get_evs_of_type(&'a self, ev_type: &'_ str) -> impl Iterator<Item = &'a EventIndex> {
         self.events_per_type.get(ev_type).into_iter().flatten()
     }
@@ -331,5 +334,25 @@ impl<'a> LinkedOCELAccess<'a, EventIndex, ObjectIndex, EventIndex, ObjectIndex>
 
     fn get_all_obs_ref(&'a self) -> impl Iterator<Item = &'a ObjectIndex> {
         self.object_ids_to_index.values()
+    }
+
+    fn get_ev_type(
+        &'a self,
+        ev_type: impl AsRef<str>,
+    ) -> Option<&'a crate::ocel::ocel_struct::OCELType> {
+        self.ocel
+            .event_types
+            .iter()
+            .find(|et| et.name == ev_type.as_ref())
+    }
+
+    fn get_ob_type(
+        &'a self,
+        ob_type: impl AsRef<str>,
+    ) -> Option<&'a crate::ocel::ocel_struct::OCELType> {
+        self.ocel
+            .object_types
+            .iter()
+            .find(|ot| ot.name == ob_type.as_ref())
     }
 }

@@ -6,14 +6,16 @@ use std::{
 
 use chrono::DateTime;
 use polars::{
-    error::PolarsResult,
+    error::{PolarsError, PolarsResult},
     frame::DataFrame,
     io::SerWriter,
-    prelude::{AnyValue, CsvWriter, SortMultipleOptions, TimeUnit},
+    prelude::{AnyValue, CsvWriter, IntoColumn, SortMultipleOptions, TimeUnit},
     series::Series,
 };
 
 use crate::{ocel::ocel_struct::OCELAttributeValue, OCEL};
+
+use super::linked_ocel::LinkedOCELAccess;
 
 #[cfg(test)]
 mod tests;
@@ -644,4 +646,48 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
         o2o: o2o_df,
         e2o: e2o_df,
     }
+}
+
+/// Export all events of an type as a [`DataFrame`]
+pub fn event_type_to_df<'a, I: LinkedOCELAccess<'a>>(
+    locel: &'a I,
+    ev_type: impl AsRef<str>,
+) -> Result<DataFrame, PolarsError> {
+    let evs: Vec<_> = locel
+        .get_evs_of_type(ev_type.as_ref())
+        .map(|ev| locel.get_ev(&I::EvRefType::from(ev)))
+        .collect();
+    let id_series = Series::from_iter(evs.iter().map(|ev| ev.id.as_str()))
+        .into_column()
+        .with_name("id".into());
+    let timestamp_series =
+        Series::from_iter(evs.iter().map(|ev| ev.time.to_utc().timestamp_millis()))
+            .cast(&polars::prelude::DataType::Datetime(
+                TimeUnit::Milliseconds,
+                Some("Utc".into()),
+            ))?
+            .into_column()
+            .with_name("time".into());
+    let columns = vec![id_series, timestamp_series];
+    let df = DataFrame::new(columns)?;
+
+    Ok(df)
+}
+
+/// Export all objects of an type as a [`DataFrame`]
+pub fn object_type_to_df<'a, I: LinkedOCELAccess<'a>>(
+    locel: &'a I,
+    ob_type: impl AsRef<str>,
+) -> Result<DataFrame, PolarsError> {
+    let obs: Vec<_> = locel
+        .get_obs_of_type(ob_type.as_ref())
+        .map(|ob| locel.get_ob(&I::ObRefType::from(ob)))
+        .collect();
+    let id_series = Series::from_iter(obs.iter().map(|ev| ev.id.as_str()))
+        .into_column()
+        .with_name("id".into());
+    let columns = vec![id_series];
+    let df = DataFrame::new(columns)?;
+
+    Ok(df)
 }
