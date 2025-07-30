@@ -257,9 +257,15 @@ mod tests {
 
     #[test]
     fn test_typed_kuzudb_export() {
-        let export_path = get_test_data_path().join("export").join("p2p-ocel.kuzu");
+        let export_path = get_test_data_path()
+            .join("export")
+            .join("order-management-typed-ocel.kuzu");
         let _er = remove_file(&export_path);
-        let ocel = import_ocel_xml_file(get_test_data_path().join("ocel").join("ocel2-p2p.xml"));
+        let ocel = import_ocel_xml_file(
+            get_test_data_path()
+                .join("ocel")
+                .join("order-management.xml"),
+        );
         export_ocel_to_kuzudb_typed(export_path, &ocel).unwrap();
     }
 
