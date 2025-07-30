@@ -9,7 +9,7 @@ use polars::{
     error::{PolarsError, PolarsResult},
     frame::DataFrame,
     io::SerWriter,
-    prelude::{AnyValue, CsvWriter, IntoColumn, SortMultipleOptions, TimeUnit},
+    prelude::{AnyValue, CsvWriter, IntoColumn, SortMultipleOptions, TimeUnit, TimeZone},
     series::Series,
 };
 
@@ -664,11 +664,35 @@ pub fn event_type_to_df<'a, I: LinkedOCELAccess<'a>>(
         Series::from_iter(evs.iter().map(|ev| ev.time.to_utc().timestamp_millis()))
             .cast(&polars::prelude::DataType::Datetime(
                 TimeUnit::Milliseconds,
-                Some("Utc".into()),
+                Some(TimeZone::from_static("UTC")),
             ))?
             .into_column()
             .with_name("time".into());
-    let columns = vec![id_series, timestamp_series];
+    let mut columns = vec![id_series, timestamp_series];
+    columns.extend(
+        locel
+            .get_ev_type(ev_type.as_ref())
+            .iter()
+            .flat_map(|et| &et.attributes)
+            .map(|attr| {
+                let attr_val_series = Series::from_any_values(
+                    attr.name.as_str().into(),
+                    &evs.iter()
+                        .map(
+                            |ev| match ev.attributes.iter().find(|a| a.name == attr.name) {
+                                Some(attr_val) => ocel_attribute_val_to_any_value(&attr_val.value),
+                                None => AnyValue::Null,
+                            },
+                        )
+                        .collect::<Vec<_>>(),
+                    false,
+                )?;
+
+                let attr_col = attr_val_series.into_column();
+                Ok(attr_col.with_name(attr.name.as_str().into()))
+            })
+            .collect::<Result<Vec<_>, PolarsError>>()?,
+    );
     let df = DataFrame::new(columns)?;
 
     Ok(df)
@@ -687,6 +711,140 @@ pub fn object_type_to_df<'a, I: LinkedOCELAccess<'a>>(
         .into_column()
         .with_name("id".into());
     let columns = vec![id_series];
+    let df = DataFrame::new(columns)?;
+
+    Ok(df)
+}
+
+/// Export all E2O relationships as a [`DataFrame`]
+pub fn e2o_to_df<'a, I: LinkedOCELAccess<'a>>(locel: &'a I) -> Result<DataFrame, PolarsError> {
+    let e2o_vec: Vec<_> = locel
+        .get_all_evs_ref()
+        .flat_map(move |e| {
+            locel.get_e2o(e).map(move |(q, o)| {
+                (
+                    locel.get_ev(e).id.as_str(),
+                    locel.get_ob(&o.into()).id.as_str(),
+                    q,
+                )
+            })
+        })
+        .collect();
+    let columns = vec![
+        Series::from_iter(e2o_vec.iter().map(|(e, _, _)| *e))
+            .into_column()
+            .with_name("Event ID".into()),
+        Series::from_iter(e2o_vec.iter().map(|(_, o, _)| *o))
+            .into_column()
+            .with_name("Object ID".into()),
+        Series::from_iter(e2o_vec.iter().map(|(_, _, q)| *q))
+            .into_column()
+            .with_name("Qualifier".into()),
+    ];
+    let df = DataFrame::new(columns)?;
+
+    Ok(df)
+}
+/// Export all O2O relationships as a [`DataFrame`]
+pub fn o2o_to_df<'a, I: LinkedOCELAccess<'a>>(locel: &'a I) -> Result<DataFrame, PolarsError> {
+    let o2o_vec: Vec<_> = locel
+        .get_all_obs_ref()
+        .flat_map(move |o| {
+            locel.get_o2o(o).map(move |(q, o2)| {
+                (
+                    locel.get_ob(o).id.as_str(),
+                    locel.get_ob(&o2.into()).id.as_str(),
+                    q,
+                )
+            })
+        })
+        .collect();
+    let columns = vec![
+        Series::from_iter(o2o_vec.iter().map(|(e, _, _)| *e))
+            .into_column()
+            .with_name("From Object ID".into()),
+        Series::from_iter(o2o_vec.iter().map(|(_, o, _)| *o))
+            .into_column()
+            .with_name("To Object ID".into()),
+        Series::from_iter(o2o_vec.iter().map(|(_, _, q)| *q))
+            .into_column()
+            .with_name("Qualifier".into()),
+    ];
+    let df = DataFrame::new(columns)?;
+
+    Ok(df)
+}
+
+/// Export the E2O relationships between instances of the specified event and object types as a [`DataFrame`]
+pub fn e2o_to_df_for_types<'a, I: LinkedOCELAccess<'a>>(
+    locel: &'a I,
+    event_type: impl AsRef<str>,
+    object_type: impl AsRef<str>,
+) -> Result<DataFrame, PolarsError> {
+    let object_type = object_type.as_ref();
+    let e2o_vec: Vec<_> = locel
+        .get_evs_of_type(event_type.as_ref())
+        .flat_map(move |e| {
+            locel
+                .get_e2o(&e.into())
+                .filter_map(move |(q, o)| {
+                    let o_obj = locel.get_ob(&o.into());
+                    if o_obj.object_type != object_type {
+                        return None;
+                    }
+                    Some((locel.get_ev(&e.into()).id.as_str(), o_obj.id.as_str(), q))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let columns = vec![
+        Series::from_iter(e2o_vec.iter().map(|(e, _, _)| *e))
+            .into_column()
+            .with_name("Event ID".into()),
+        Series::from_iter(e2o_vec.iter().map(|(_, o, _)| *o))
+            .into_column()
+            .with_name("Object ID".into()),
+        Series::from_iter(e2o_vec.iter().map(|(_, _, q)| *q))
+            .into_column()
+            .with_name("Qualifier".into()),
+    ];
+    let df = DataFrame::new(columns)?;
+
+    Ok(df)
+}
+/// Export the O2O relationships between instances of the specified event and object types as a [`DataFrame`]
+pub fn o2o_to_df_for_types<'a, I: LinkedOCELAccess<'a>>(
+    locel: &'a I,
+    from_object_type: impl AsRef<str>,
+    to_object_type: impl AsRef<str>,
+) -> Result<DataFrame, PolarsError> {
+    let to_object_type = to_object_type.as_ref();
+    let o2o_vec: Vec<_> = locel
+        .get_obs_of_type(from_object_type.as_ref())
+        .flat_map(move |o| {
+            locel
+                .get_o2o(&o.into())
+                .filter_map(move |(q, o2)| {
+                    let o2_obj = locel.get_ob(&o2.into());
+                    if o2_obj.object_type != to_object_type {
+                        return None;
+                    }
+                    Some((locel.get_ob(&o.into()).id.as_str(), o2_obj.id.as_str(), q))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let columns = vec![
+        Series::from_iter(o2o_vec.iter().map(|(e, _, _)| *e))
+            .into_column()
+            .with_name("From Object ID".into()),
+        Series::from_iter(o2o_vec.iter().map(|(_, o, _)| *o))
+            .into_column()
+            .with_name("To Object ID".into()),
+        Series::from_iter(o2o_vec.iter().map(|(_, _, q)| *q))
+            .into_column()
+            .with_name("Qualifier".into()),
+    ];
     let df = DataFrame::new(columns)?;
 
     Ok(df)

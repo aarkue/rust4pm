@@ -1,6 +1,6 @@
-use std::{fs::File, path::Path};
-
+use crate::ocel::{linked_ocel::LinkedOCELAccess, ocel_struct::OCELAttributeType};
 use polars::{error::PolarsResult, frame::DataFrame, io::SerWriter, prelude::CsvWriter};
+use std::{fs::File, path::Path};
 
 use crate::OCEL;
 
@@ -134,96 +134,145 @@ pub fn export_ocel_to_kuzudb_generic<P: AsRef<Path>>(
 fn export_df_to_csv<P: AsRef<Path>>(df: &mut DataFrame, export_path: P) -> PolarsResult<()> {
     let f = File::create(export_path)?;
     let mut csvw = CsvWriter::new(f);
-    // let df = &mut self.objects;
-    // if !columns_to_include.is_empty() {
-    //     csvw.finish(&mut df.select(columns_to_include.iter().copied())?)?;
-    // } else {
     csvw.finish(df)?;
     Ok(())
-    // }
 }
-use polars::prelude::*;
+
+fn clean_type_name(name: &str) -> String {
+    name.replace(" ", "")
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect()
+}
+fn ocel_attribute_type_to_kuzu_dtype(attr_type: &str) -> &'static str {
+    match OCELAttributeType::from_type_str(attr_type) {
+        OCELAttributeType::String => "STRING",
+        OCELAttributeType::Time => "TIMESTAMP",
+        OCELAttributeType::Integer => "INT64",
+        OCELAttributeType::Float => "DOUBLE",
+        OCELAttributeType::Boolean => "BOOLEAN",
+        OCELAttributeType::Null => "NULL",
+    }
+}
 /// WIP
 #[cfg(feature = "dataframes")]
-pub fn export_ocel_to_kuzudb_typed<P: AsRef<Path>>(
+pub fn export_ocel_to_kuzudb_typed<'a, P: AsRef<Path>>(
     db_path: P,
-    ocel: &OCEL,
+    locel: &'a impl LinkedOCELAccess<'a>,
 ) -> Result<(), KuzuDBExportError> {
+    use std::fs::remove_file;
+
+    use itertools::Itertools;
     use kuzu::{Connection, Database, SystemConfig};
 
     use crate::ocel::dataframe::{
-        ocel_to_dataframes, OCEL_EVENT_ID_KEY, OCEL_EVENT_TIMESTAMP_KEY, OCEL_EVENT_TYPE_KEY,
-        OCEL_OBJECT_ID_2_KEY, OCEL_OBJECT_ID_KEY, OCEL_OBJECT_TYPE_KEY, OCEL_QUALIFIER_KEY,
+        e2o_to_df_for_types, event_type_to_df, o2o_to_df_for_types, object_type_to_df,
     };
 
     let db = Database::new(db_path, SystemConfig::default())?;
     let conn = Connection::new(&db)?;
     let tmp = tempfile::tempdir()?;
     let path = tmp.path();
-    let mut df = ocel_to_dataframes(ocel);
-    for ot in &ocel.object_types {
-        let mut obs = df
-            .objects
-            .clone()
-            .lazy()
-            .filter(col(OCEL_OBJECT_TYPE_KEY).eq(lit(ot.name.as_str())))
-            .collect()?;
-        export_df_to_csv(&mut obs, path.join("export.csv"))?;
-        let cols = obs.get_column_names();
-        println!("{} got cols: {cols:?}", ot.name);
-        // remove_file(path.join("export.csv"))
+    let mut all_ev_table_names = Vec::new();
+    for ev_type in locel.get_ev_types() {
+        let mut ev_df = event_type_to_df(locel, ev_type)?;
+        if let Some(etype) = locel.get_ev_type(ev_type) {
+            export_df_to_csv(&mut ev_df, path.join("tmp.csv"))?;
+            let clean_name = clean_type_name(ev_type);
+
+            let attribute_fields_str = etype
+                .attributes
+                .iter()
+                .map(|a| {
+                    format!(
+                        "`{}` {}",
+                        a.name,
+                        ocel_attribute_type_to_kuzu_dtype(&a.value_type)
+                    )
+                })
+                .join(", ");
+            let q = format!(
+                "CREATE NODE TABLE `{}`(id STRING PRIMARY KEY, time TIMESTAMP {} {});",
+                clean_name,
+                if attribute_fields_str.is_empty() {
+                    ""
+                } else {
+                    ", "
+                },
+                attribute_fields_str
+            );
+            println!("Query for event type {ev_type}: {q}");
+            conn.query(&q)?;
+
+            conn.query(&format!(
+                "COPY {} FROM '{}' (header=true);",
+                clean_name,
+                path.join("tmp.csv").to_string_lossy()
+            ))?;
+            all_ev_table_names.push(clean_name);
+            remove_file(path.join("tmp.csv"))?;
+        }
     }
-    for et in &ocel.event_types {
-        let mut evs = df
-            .events
-            .clone()
-            .lazy()
-            .filter(col(OCEL_EVENT_TYPE_KEY).eq(lit(et.name.as_str())))
-            .collect()?;
-        export_df_to_csv(&mut evs, path.join("export.csv"))?;
-        let cols = evs.get_column_names();
-        println!("{} got cols: {cols:?}", et.name);
+    let mut all_ob_table_names = Vec::new();
+    for ob_type in locel.get_ob_types() {
+        let mut ob_df = object_type_to_df(locel, ob_type)?;
+        export_df_to_csv(&mut ob_df, path.join("tmp.csv"))?;
+        let clean_name = clean_type_name(ob_type);
+        let q = format!("CREATE NODE TABLE `{clean_name}`(id STRING PRIMARY KEY);",);
+        println!("Query for object type {ob_type}: {q}");
+        conn.query(&q)?;
+
+        conn.query(&format!(
+            "COPY {} FROM '{}' (header=true);",
+            clean_name,
+            path.join("tmp.csv").to_string_lossy()
+        ))?;
+        all_ob_table_names.push(clean_name);
+        remove_file(path.join("tmp.csv"))?;
     }
-    df.export_events_csv(
-        path.join("events.csv"),
-        &[
-            OCEL_EVENT_ID_KEY,
-            OCEL_EVENT_TYPE_KEY,
-            OCEL_EVENT_TIMESTAMP_KEY,
-        ],
-    )?;
-    df.export_objects_csv(
-        path.join("objects.csv"),
-        &[OCEL_OBJECT_ID_KEY, OCEL_OBJECT_TYPE_KEY],
-    )?;
-    df.export_e2o_csv(
-        path.join("e2o.csv"),
-        &[OCEL_EVENT_ID_KEY, OCEL_OBJECT_ID_KEY, OCEL_QUALIFIER_KEY],
-    )?;
-    df.export_o2o_csv(
-        path.join("o2o.csv"),
-        &[OCEL_OBJECT_ID_KEY, OCEL_OBJECT_ID_2_KEY, OCEL_QUALIFIER_KEY],
-    )?;
-    conn.query("CREATE NODE TABLE Event(id STRING PRIMARY KEY, type STRING, time TIMESTAMP);")?;
-    conn.query("CREATE NODE TABLE Object(id STRING PRIMARY KEY, type STRING);")?;
-    conn.query("CREATE REL TABLE E2O(FROM Event to Object, qualifier STRING);")?;
-    conn.query("CREATE REL TABLE O2O(FROM Object to Object, qualifier STRING);")?;
     conn.query(&format!(
-        "COPY Event FROM '{}' (header=true);",
-        path.join("events.csv").to_string_lossy()
+        "CREATE REL TABLE E2O ({}, qualifier STRING)",
+        all_ev_table_names
+            .iter()
+            .cartesian_product(all_ob_table_names.iter())
+            .map(|(ev_type, ob_type)| format!("FROM `{ev_type}` TO `{ob_type}`"))
+            .join(", "),
     ))?;
+    for ev_type in locel.get_ev_types() {
+        for ob_type in locel.get_ob_types() {
+            let mut e2o_df = e2o_to_df_for_types(locel, ev_type, ob_type)?;
+            export_df_to_csv(&mut e2o_df, path.join("tmp.csv"))?;
+            conn.query(&format!(
+                "COPY E2O FROM '{}' (header=true, from='{}', to='{}');",
+                path.join("tmp.csv").to_string_lossy(),
+                clean_type_name(ev_type),
+                clean_type_name(ob_type)
+            ))?;
+            remove_file(path.join("tmp.csv"))?;
+        }
+    }
+
     conn.query(&format!(
-        "COPY Object FROM '{}' (header=true);",
-        path.join("objects.csv").to_string_lossy()
+        "CREATE REL TABLE O2O ({}, qualifier STRING)",
+        all_ob_table_names
+            .iter()
+            .cartesian_product(all_ob_table_names.iter())
+            .map(|(ev_type, ob_type)| format!("FROM `{ev_type}` TO `{ob_type}`"))
+            .join(", "),
     ))?;
-    conn.query(&format!(
-        "COPY E2O FROM '{}' (header=true)",
-        path.join("e2o.csv").to_string_lossy()
-    ))?;
-    conn.query(&format!(
-        "COPY O2O FROM '{}' (header=true)",
-        path.join("o2o.csv").to_string_lossy()
-    ))?;
+    for from_ob_type in locel.get_ob_types() {
+        for to_ob_type in locel.get_ob_types() {
+            let mut o2o_df = o2o_to_df_for_types(locel, from_ob_type, to_ob_type)?;
+            export_df_to_csv(&mut o2o_df, path.join("tmp.csv"))?;
+            conn.query(&format!(
+                "COPY O2O FROM '{}' (header=true, from='{}', to='{}');",
+                path.join("tmp.csv").to_string_lossy(),
+                clean_type_name(from_ob_type),
+                clean_type_name(to_ob_type)
+            ))?;
+            remove_file(path.join("tmp.csv"))?;
+        }
+    }
     Ok(())
 }
 
@@ -235,7 +284,10 @@ mod tests {
     use kuzu::{Connection, Database};
 
     use crate::{
-        import_ocel_xml_file, ocel::graph_db::ocel_kuzudb::export_ocel_to_kuzudb_generic,
+        import_ocel_xml_file,
+        ocel::{
+            graph_db::ocel_kuzudb::export_ocel_to_kuzudb_generic, linked_ocel::IndexLinkedOCEL,
+        },
         utils::test_utils::get_test_data_path,
     };
 
@@ -266,7 +318,11 @@ mod tests {
                 .join("ocel")
                 .join("order-management.xml"),
         );
-        export_ocel_to_kuzudb_typed(export_path, &ocel).unwrap();
+
+        let locel = IndexLinkedOCEL::from(ocel);
+        let now = Instant::now();
+        export_ocel_to_kuzudb_typed(export_path, &locel).unwrap();
+        println!("Export took {:?}", now.elapsed());
     }
 
     #[test]
