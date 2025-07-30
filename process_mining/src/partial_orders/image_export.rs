@@ -88,9 +88,9 @@ pub fn graph_to_dot(g: &Graph) -> String {
 }
 
 ///
-/// Export the image of a [`DirectlyFollowsGraph`] as a SVG file
+/// Export the image of a [`PartialOrderTrace`] as a SVG file
 ///
-/// Also consider using [`DirectlyFollowsGraph::export_svg`] for convenience.
+/// Also consider using [`PartialOrderTrace::export_svg`] for convenience.
 pub fn export_p_trace_image_svg<P: AsRef<std::path::Path>>(
     p_trace: &PartialOrderTrace,
     classifier: &EventLogClassifier,
@@ -100,9 +100,9 @@ pub fn export_p_trace_image_svg<P: AsRef<std::path::Path>>(
 }
 
 ///
-/// Export the image of a [`DirectlyFollowsGraph`] as a PNG file
+/// Export the image of a [`PartialOrderTrace`] as a PNG file
 ///
-/// Also consider using [`DirectlyFollowsGraph::export_png`] for convenience.
+/// Also consider using [`PartialOrderTrace::export_png`] for convenience.
 pub fn export_p_trace_image_png<P: AsRef<std::path::Path>>(
     p_trace: &PartialOrderTrace,
     classifier: &EventLogClassifier,

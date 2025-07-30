@@ -12,7 +12,7 @@ use std::ops::{AddAssign, DivAssign};
 use uuid::Uuid;
 
 ///
-/// An abstraction of either an [`OCEL`] or an [`OCPT`] that is based on:
+/// An object-centric language abstraction based on:
 /// - the start event types,
 /// - the end event types,
 /// - the directly-follows event types,
@@ -338,9 +338,9 @@ impl OCLanguageAbstraction {
     }
 
     ///
-    /// Creates an abstraction from an [`OCEL`].
+    /// Creates an abstraction from an [`crate::OCEL`].
     ///
-    /// Expects the input [`IndexLinkedOCEL`] to have all orphan [`OCELObject`]s to be removed, i.e.,
+    /// Expects the input [`IndexLinkedOCEL`] to have all orphan [`crate::event_log::ocel::ocel_struct::OCELObject`]s to be removed, i.e.,
     /// they should not be contained if they do not have any e2o relation.
     ///
     pub fn create_from_ocel(locel: &IndexLinkedOCEL) -> Self {
