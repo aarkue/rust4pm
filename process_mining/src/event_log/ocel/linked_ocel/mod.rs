@@ -16,12 +16,14 @@ pub use id_linked_ocel::{IDLinkedOCEL, OwnedIDLinkedOCEL};
 ///
 /// See also [`IndexLinkedOCEL`] and [`IDLinkedOCEL`].
 pub trait LinkedOCELAccess<'a> {
+    /// Return type for events (i.e., what type is returned when events are accessed, e.g., through [`LinkedOCELAccess::get_e2o_rev`])
     type EvRetType: 'a;
+    /// Return type for objects (i.e., what type is returned when objects are accessed, e.g., through [`LinkedOCELAccess::get_e2o`])
     type ObRetType: 'a;
+    /// Argument type for events (i.e., what type is used as arguments for referring to events, e.g., in [`LinkedOCELAccess::get_e2o`])
     type EvRefType: 'a + From<&'a Self::EvRetType>;
+    /// Argument type for objects (i.e., what type is used as arguments for referring to objects, e.g., in [`LinkedOCELAccess::get_o2o`])
     type ObRefType: 'a + From<&'a Self::ObRetType>;
-
-    // <'a, EvRefType: 'a, ObRefType: 'a, EvRetType: 'a, ObRetType: 'a>}
 
     /// Get all events of the given event type (activity)
     fn get_evs_of_type(&'a self, ev_type: &'_ str) -> impl Iterator<Item = &'a Self::EvRetType>;
