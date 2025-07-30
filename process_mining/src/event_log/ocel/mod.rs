@@ -8,7 +8,7 @@ pub mod dataframe;
 pub mod flatten;
 /// Linked OCEL 2.0, allowing convenient usage of object-centric data
 pub mod linked_ocel;
-/// Macros for the creation of [`OCEL`]
+/// Macros for the creation of [`ocel_struct::OCEL`]
 pub mod macros;
 /// OCEL 2.0 struct and sub-structs
 pub mod ocel_struct;
