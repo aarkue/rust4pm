@@ -27,6 +27,8 @@ pub mod event_log {
     pub mod export_xes;
     /// XES Import
     pub mod import_xes;
+    /// Event log creation macros
+    pub mod macros;
     ///
     /// OCEL2.0 (Object-Centric Event Logs)
     ///
