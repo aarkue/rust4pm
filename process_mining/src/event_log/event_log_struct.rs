@@ -55,6 +55,57 @@ pub enum AttributeValue {
     None(),
 }
 
+impl From<&str> for AttributeValue {
+    fn from(value: &str) -> Self {
+        Self::String(value.to_string())
+    }
+}
+
+impl From<String> for AttributeValue {
+    fn from(value: String) -> Self {
+        Self::String(value)
+    }
+}
+
+impl<T> From<DateTime<T>> for AttributeValue
+where
+    T: chrono::TimeZone,
+{
+    fn from(value: DateTime<T>) -> Self {
+        Self::Date(value.fixed_offset())
+    }
+}
+
+impl From<i64> for AttributeValue {
+    fn from(value: i64) -> Self {
+        Self::Int(value)
+    }
+}
+
+impl From<f64> for AttributeValue {
+    fn from(value: f64) -> Self {
+        Self::Float(value)
+    }
+}
+
+impl From<bool> for AttributeValue {
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
+    }
+}
+
+impl From<Uuid> for AttributeValue {
+    fn from(value: Uuid) -> Self {
+        Self::ID(value)
+    }
+}
+
+impl From<Vec<Attribute>> for AttributeValue {
+    fn from(value: Vec<Attribute>) -> Self {
+        Self::List(value)
+    }
+}
+
 ///
 /// [`Hash`] trait implementation for [`AttributeValue`]
 ///
