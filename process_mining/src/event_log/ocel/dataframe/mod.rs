@@ -4,7 +4,8 @@ use std::{
     path::Path,
 };
 
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
+use itertools::Itertools;
 use polars::{
     error::{PolarsError, PolarsResult},
     frame::DataFrame,
@@ -848,4 +849,161 @@ pub fn o2o_to_df_for_types<'a, I: LinkedOCELAccess<'a>>(
     let df = DataFrame::new(columns)?;
 
     Ok(df)
+}
+/// Export all events of an type as a [`DataFrame`]
+pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
+    locel: &'a I,
+    ob_type: impl AsRef<str>,
+) -> Result<DataFrame, PolarsError> {
+    let obs: Vec<_> = locel
+        .get_obs_of_type(ob_type.as_ref())
+        .map(|ev| locel.get_ob(&I::ObRefType::from(ev)))
+        .collect();
+    if let Some(ob_type) = locel.get_ob_type(ob_type) {
+        let attribute_map: HashMap<_, _> = ob_type
+            .attributes
+            .iter()
+            .enumerate()
+            .map(|(i, a)| (&a.name, i))
+            .collect();
+        let changes: Vec<_> = obs
+            .into_iter()
+            .flat_map(|ob| {
+                let attributes: Vec<_> = ob.attributes.iter().sorted_by_key(|a| a.time).collect();
+                let mut last_values: HashMap<_, &OCELAttributeValue> = ob_type
+                    .attributes
+                    .iter()
+                    .map(|oa| (&oa.name, &OCELAttributeValue::Null))
+                    .collect();
+                #[allow(clippy::type_complexity)]
+                // for now allow this complex type, as it's only used internally
+                let mut ret: Vec<(
+                    &str,
+                    Option<DateTime<Utc>>,
+                    Option<DateTime<Utc>>,
+                    Vec<&OCELAttributeValue>,
+                )> = vec![(
+                    &ob.id,
+                    None,
+                    None,
+                    ob_type
+                        .attributes
+                        .iter()
+                        .map(|at| *last_values.get(&at.name).expect("added before"))
+                        .collect(),
+                )];
+                for (i, a) in attributes.iter().enumerate() {
+                    last_values.insert(&a.name, &a.value);
+                    if i > 0 && attributes[i].time == a.time {
+                        // This attribute change has the same update time as the last one.
+                        // Thus, combine them!
+                        let (_, _start, _end, vals) = ret
+                            .last_mut()
+                            .expect("should contain at least one attribute, as i > 0");
+                        if let Some(attr_index) = attribute_map.get(&a.name) {
+                            vals[*attr_index] = &a.value;
+                        }
+                    } else {
+                        let (_, _start, end, _) =
+                            ret.last_mut().expect("one initial element is added");
+                        *end = Some(a.time.into());
+                        ret.push((
+                            &ob.id,
+                            Some(a.time.into()),
+                            None,
+                            ob_type
+                                .attributes
+                                .iter()
+                                .map(|a| {
+                                    *last_values
+                                        .get(&a.name)
+                                        .expect("NULLs were also inserted here before")
+                                })
+                                .collect(),
+                        ));
+                    }
+                }
+                ret
+            })
+            .collect();
+        let id_series = Series::from_iter(changes.iter().map(|c| c.0))
+            .into_column()
+            .with_name("object_id".into());
+        let from_time = Series::from_any_values_and_dtype(
+            "from_time".into(),
+            &changes
+                .iter()
+                .map(|c| c.1.map(|t| t.timestamp_millis()).into())
+                .collect::<Vec<_>>(),
+            &polars::prelude::DataType::Datetime(
+                TimeUnit::Milliseconds,
+                Some(TimeZone::from_static("UTC")),
+            ),
+            false,
+        )?
+        .into_column();
+        let to_time = Series::from_any_values_and_dtype(
+            "to_time".into(),
+            &changes
+                .iter()
+                .map(|c| c.2.map(|t| t.timestamp_millis()).into())
+                .collect::<Vec<_>>(),
+            &polars::prelude::DataType::Datetime(
+                TimeUnit::Milliseconds,
+                Some(TimeZone::from_static("UTC")),
+            ),
+            false,
+        )?
+        .into_column();
+        let mut columns = vec![id_series, from_time, to_time];
+        for attrs in &ob_type.attributes {
+            columns.push(
+                Series::from_any_values(
+                    attrs.name.as_str().into(),
+                    &changes
+                        .iter()
+                        .map(|c| {
+                            ocel_attribute_val_to_any_value(
+                                c.3[*attribute_map.get(&attrs.name).expect("inserted before")],
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                    false,
+                )?
+                .into_column(),
+            )
+        }
+        // columns.extend(
+        //     locel
+        //         .get_ev_type(ob_type.as_ref())
+        //         .iter()
+        //         .flat_map(|et| &et.attributes)
+        //         .map(|attr| {
+        //             let attr_val_series = Series::from_any_values(
+        //                 attr.name.as_str().into(),
+        //                 &obs.iter()
+        //                     .map(
+        //                         |ev| match ev.attributes.iter().find(|a| a.name == attr.name) {
+        //                             Some(attr_val) => {
+        //                                 ocel_attribute_val_to_any_value(&attr_val.value)
+        //                             }
+        //                             None => AnyValue::Null,
+        //                         },
+        //                     )
+        //                     .collect::<Vec<_>>(),
+        //                 false,
+        //             )?;
+
+        //             let attr_col = attr_val_series.into_column();
+        //             Ok(attr_col.with_name(attr.name.as_str().into()))
+        //         })
+        //         .collect::<Result<Vec<_>, PolarsError>>()?,
+        // );
+        let df = DataFrame::new(columns)?;
+
+        Ok(df)
+    } else {
+        // Maybe introduce an error type here?
+        Ok(DataFrame::default())
+    }
 }
