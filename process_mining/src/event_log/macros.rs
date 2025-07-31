@@ -258,7 +258,7 @@ macro_rules! trace {
 #[macro_export]
 macro_rules! event_log {
     (
-        $({ $($key:expr => $value:expr),* $(,)? };)?
+        $({ $($key:expr => $value:expr),* $(,)? }$(;)?)?
         $(
             [$($events:tt)*] $({ $($keys:expr => $vals:expr),* $(,)? })?
         ),* $(,)?
@@ -824,5 +824,8 @@ mod tests {
                 .unwrap(),
             7.3
         );
+
+        // Check that the semicolon after event log attributes can be omitted
+        let _log = event_log!({"created_at" => DateTime::UNIX_EPOCH} ["a", "b", "c", "d"]);
     }
 }
