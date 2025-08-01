@@ -699,7 +699,7 @@ pub fn event_type_to_df<'a, I: LinkedOCELAccess<'a>>(
     Ok(df)
 }
 
-/// Export all objects of an type as a [`DataFrame`]
+/// Export all objects of a type as a [`DataFrame`]
 pub fn object_type_to_df<'a, I: LinkedOCELAccess<'a>>(
     locel: &'a I,
     ob_type: impl AsRef<str>,
@@ -850,7 +850,17 @@ pub fn o2o_to_df_for_types<'a, I: LinkedOCELAccess<'a>>(
 
     Ok(df)
 }
-/// Export all events of an type as a [`DataFrame`]
+/// Column key for the object id in the attribute change DF
+pub const ATTRIBUTE_CHANGE_DF_OBJ_ID: &str = "object_id";
+/// Column key for the change id in the attribute change DF
+///
+/// Uniquely identifies the attribute change, i.e., one value version of
+pub const ATTRIBUTE_CHANGE_DF_ID: &str = "change_id";
+/// Column key for the timestamp from which the attribute value change is valid in the attribute change DF
+pub const ATTRIBUTE_CHANGE_DF_FROM_TIME: &str = "from_time";
+/// Column key for the timestamp until which the attribute value change is valid in the attribute change DF
+pub const ATTRIBUTE_CHANGE_DF_TO_TIME: &str = "to_time";
+/// Export all object attribute changes of an object type as a [`DataFrame`]
 pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
     locel: &'a I,
     ob_type: impl AsRef<str>,
@@ -879,11 +889,13 @@ pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
                 // for now allow this complex type, as it's only used internally
                 let mut ret: Vec<(
                     &str,
+                    String,
                     Option<DateTime<Utc>>,
                     Option<DateTime<Utc>>,
                     Vec<&OCELAttributeValue>,
                 )> = vec![(
                     &ob.id,
+                    format!("{}-attrs-0", ob.id),
                     None,
                     None,
                     ob_type
@@ -894,21 +906,22 @@ pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
                 )];
                 for (i, a) in attributes.iter().enumerate() {
                     last_values.insert(&a.name, &a.value);
-                    if i > 0 && attributes[i].time == a.time {
+                    if i > 0 && attributes[i - 1].time == a.time {
                         // This attribute change has the same update time as the last one.
                         // Thus, combine them!
-                        let (_, _start, _end, vals) = ret
+                        let (_, _, _start, _end, vals) = ret
                             .last_mut()
                             .expect("should contain at least one attribute, as i > 0");
                         if let Some(attr_index) = attribute_map.get(&a.name) {
                             vals[*attr_index] = &a.value;
                         }
                     } else {
-                        let (_, _start, end, _) =
+                        let (_, _, _start, end, _) =
                             ret.last_mut().expect("one initial element is added");
                         *end = Some(a.time.into());
                         ret.push((
                             &ob.id,
+                            format!("{}-attrs-{}", ob.id, ret.len()),
                             Some(a.time.into()),
                             None,
                             ob_type
@@ -926,24 +939,14 @@ pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
                 ret
             })
             .collect();
+        let change_id_series = Series::from_iter(changes.iter().map(|c| c.1.as_str()))
+            .into_column()
+            .with_name(ATTRIBUTE_CHANGE_DF_ID.into());
         let id_series = Series::from_iter(changes.iter().map(|c| c.0))
             .into_column()
-            .with_name("object_id".into());
+            .with_name(ATTRIBUTE_CHANGE_DF_OBJ_ID.into());
         let from_time = Series::from_any_values_and_dtype(
-            "from_time".into(),
-            &changes
-                .iter()
-                .map(|c| c.1.map(|t| t.timestamp_millis()).into())
-                .collect::<Vec<_>>(),
-            &polars::prelude::DataType::Datetime(
-                TimeUnit::Milliseconds,
-                Some(TimeZone::from_static("UTC")),
-            ),
-            false,
-        )?
-        .into_column();
-        let to_time = Series::from_any_values_and_dtype(
-            "to_time".into(),
+            ATTRIBUTE_CHANGE_DF_FROM_TIME.into(),
             &changes
                 .iter()
                 .map(|c| c.2.map(|t| t.timestamp_millis()).into())
@@ -955,7 +958,20 @@ pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
             false,
         )?
         .into_column();
-        let mut columns = vec![id_series, from_time, to_time];
+        let to_time = Series::from_any_values_and_dtype(
+            ATTRIBUTE_CHANGE_DF_TO_TIME.into(),
+            &changes
+                .iter()
+                .map(|c| c.3.map(|t| t.timestamp_millis()).into())
+                .collect::<Vec<_>>(),
+            &polars::prelude::DataType::Datetime(
+                TimeUnit::Milliseconds,
+                Some(TimeZone::from_static("UTC")),
+            ),
+            false,
+        )?
+        .into_column();
+        let mut columns = vec![change_id_series, id_series, from_time, to_time];
         for attrs in &ob_type.attributes {
             columns.push(
                 Series::from_any_values(
@@ -964,7 +980,7 @@ pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
                         .iter()
                         .map(|c| {
                             ocel_attribute_val_to_any_value(
-                                c.3[*attribute_map.get(&attrs.name).expect("inserted before")],
+                                c.4[*attribute_map.get(&attrs.name).expect("inserted before")],
                             )
                         })
                         .collect::<Vec<_>>(),
@@ -973,34 +989,7 @@ pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
                 .into_column(),
             )
         }
-        // columns.extend(
-        //     locel
-        //         .get_ev_type(ob_type.as_ref())
-        //         .iter()
-        //         .flat_map(|et| &et.attributes)
-        //         .map(|attr| {
-        //             let attr_val_series = Series::from_any_values(
-        //                 attr.name.as_str().into(),
-        //                 &obs.iter()
-        //                     .map(
-        //                         |ev| match ev.attributes.iter().find(|a| a.name == attr.name) {
-        //                             Some(attr_val) => {
-        //                                 ocel_attribute_val_to_any_value(&attr_val.value)
-        //                             }
-        //                             None => AnyValue::Null,
-        //                         },
-        //                     )
-        //                     .collect::<Vec<_>>(),
-        //                 false,
-        //             )?;
-
-        //             let attr_col = attr_val_series.into_column();
-        //             Ok(attr_col.with_name(attr.name.as_str().into()))
-        //         })
-        //         .collect::<Result<Vec<_>, PolarsError>>()?,
-        // );
         let df = DataFrame::new(columns)?;
-
         Ok(df)
     } else {
         // Maybe introduce an error type here?

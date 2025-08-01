@@ -166,7 +166,9 @@ pub fn export_ocel_to_kuzudb_typed<'a, P: AsRef<Path>>(
     use kuzu::{Connection, Database, SystemConfig};
 
     use crate::ocel::dataframe::{
-        e2o_to_df_for_types, event_type_to_df, o2o_to_df_for_types, object_type_to_df,
+        e2o_to_df_for_types, event_type_to_df, o2o_to_df_for_types, object_attribute_changes_to_df,
+        object_type_to_df, ATTRIBUTE_CHANGE_DF_FROM_TIME, ATTRIBUTE_CHANGE_DF_ID,
+        ATTRIBUTE_CHANGE_DF_OBJ_ID, ATTRIBUTE_CHANGE_DF_TO_TIME,
     };
 
     let db = Database::new(db_path, SystemConfig::default())?;
@@ -213,22 +215,92 @@ pub fn export_ocel_to_kuzudb_typed<'a, P: AsRef<Path>>(
             remove_file(path.join("tmp.csv"))?;
         }
     }
+    for ob_type in locel.get_ob_types() {
+        let clean_name = clean_type_name(ob_type);
+        let q = format!("CREATE NODE TABLE `{clean_name}`(id STRING PRIMARY KEY);",);
+        conn.query(&q)?;
+
+        let attribute_fields_str = locel
+            .get_ob_type(ob_type)
+            .map(|ot| &ot.attributes)
+            .into_iter()
+            .flatten()
+            .map(|a| {
+                format!(
+                    "`{}` {}",
+                    a.name,
+                    ocel_attribute_type_to_kuzu_dtype(&a.value_type)
+                )
+            })
+            .join(", ");
+        let q = format!(
+            "CREATE NODE TABLE `{clean_name}Attributes`(id STRING PRIMARY KEY {} {});",
+            if attribute_fields_str.is_empty() {
+                ""
+            } else {
+                ", "
+            },
+            attribute_fields_str
+        );
+        conn.query(&q)?;
+    }
+
+    conn.query(&format!(
+        "CREATE REL TABLE Attrs ({}, from_time TIMESTAMP, to_time TIMESTAMP)",
+        locel
+            .get_ob_types()
+            .map(clean_type_name)
+            .map(|ob_type| format!("FROM `{ob_type}` TO `{ob_type}Attributes`"))
+            .join(", "),
+    ))?;
     let mut all_ob_table_names = Vec::new();
     for ob_type in locel.get_ob_types() {
         let mut ob_df = object_type_to_df(locel, ob_type)?;
         export_df_to_csv(&mut ob_df, path.join("tmp.csv"))?;
         let clean_name = clean_type_name(ob_type);
-        let q = format!("CREATE NODE TABLE `{clean_name}`(id STRING PRIMARY KEY);",);
-        println!("Query for object type {ob_type}: {q}");
-        conn.query(&q)?;
+        // let q = format!("CREATE NODE TABLE `{clean_name}`(id STRING PRIMARY KEY);",);
+        // conn.query(&q)?;
 
         conn.query(&format!(
-            "COPY {} FROM '{}' (header=true);",
+            "COPY `{}` FROM '{}' (header=true);",
             clean_name,
             path.join("tmp.csv").to_string_lossy()
         ))?;
-        all_ob_table_names.push(clean_name);
         remove_file(path.join("tmp.csv"))?;
+
+        let ob_changes_df = object_attribute_changes_to_df(locel, ob_type)?;
+
+        let mut rel_df = ob_changes_df.select([
+            ATTRIBUTE_CHANGE_DF_OBJ_ID,
+            ATTRIBUTE_CHANGE_DF_ID,
+            ATTRIBUTE_CHANGE_DF_FROM_TIME,
+            ATTRIBUTE_CHANGE_DF_TO_TIME,
+        ])?;
+        let mut changes_df = ob_changes_df.drop_many([
+            ATTRIBUTE_CHANGE_DF_OBJ_ID,
+            ATTRIBUTE_CHANGE_DF_FROM_TIME,
+            ATTRIBUTE_CHANGE_DF_TO_TIME,
+        ]);
+        export_df_to_csv(&mut changes_df, path.join("tmp.csv"))?;
+        conn.query(&format!(
+            "COPY `{clean_name}Attributes` FROM '{}' (header=true);",
+            path.join("tmp.csv").to_string_lossy()
+        ))?;
+        remove_file(path.join("tmp.csv"))?;
+
+        // // Populate relation table object -> objectAttribute
+        export_df_to_csv(&mut rel_df, path.join("tmp.csv"))?;
+        let q = format!(
+            "COPY Attrs FROM '{}' (header=true, from='{}', to='{}Attributes');",
+            path.join("tmp.csv").to_string_lossy(),
+            clean_name,
+            clean_name,
+        );
+        println!(":: {q}");
+        conn.query(&q)?;
+        remove_file(path.join("tmp.csv"))?;
+
+        all_ob_table_names.push(clean_name);
     }
     conn.query(&format!(
         "CREATE REL TABLE E2O ({}, qualifier STRING)",

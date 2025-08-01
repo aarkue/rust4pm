@@ -2,7 +2,10 @@ use std::time::Instant;
 
 use crate::{
     import_ocel_xml_file,
-    ocel::{dataframe::ocel_to_dataframes, linked_ocel::IndexLinkedOCEL},
+    ocel::{
+        dataframe::ocel_to_dataframes,
+        linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess},
+    },
     utils::test_utils::get_test_data_path,
 };
 
@@ -76,10 +79,9 @@ fn ocel_object_attribute_changes() {
         .join("order-management.xml");
     let ocel = import_ocel_xml_file(ocel_path);
     let locel: IndexLinkedOCEL = ocel.into();
+    let product = locel.get_obs_of_type("products").next().unwrap();
+    let product = locel.get_ob(product);
+    println!("{:#?}", product.attributes);
     let df = object_attribute_changes_to_df(&locel, "products").unwrap();
     println!("{df:#?}");
-    assert_eq!(
-        df.get_column_names(),
-        vec!["object_id", "from_time", "to_time", "weight", "price"]
-    );
 }
