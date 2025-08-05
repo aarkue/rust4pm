@@ -21,9 +21,6 @@ macro_rules! attribute {
             $crate::event_log::AttributeValue::from($val),
         )
     };
-    ($key:expr, $val:expr) => {
-        $crate::attribute!($key => $val)
-    };
 }
 
 /// Create an [`Attributes`] instance.
