@@ -5,10 +5,11 @@
 /// # Examples
 ///
 /// ```rust
-/// use process_mining::attribute;
+/// use process_mining::{attribute, chrono::Utc};
+///
 ///
 /// let attr_1 = attribute!("concept:name" => "Approve");
-/// let attr_2 = attribute!("time:timestamp" => chrono::Utc::now());
+/// let attr_2 = attribute!("time:timestamp" => Utc::now());
 /// let attr_3 = attribute!("cost" => 2500.00);
 /// ```
 ///
@@ -30,11 +31,11 @@ macro_rules! attribute {
 /// # Examples
 ///
 /// ```rust
-/// use process_mining::attributes;
+/// use process_mining::{attributes, chrono::Utc};
 ///
 /// let attrs = attributes!(
 ///     "concept:name" => "Approve",
-///     "time:timestamp" => chrono::Utc::now(),
+///     "time:timestamp" => Utc::now(),
 ///     "cost" => 2500.00
 /// );
 /// ```
@@ -59,24 +60,26 @@ macro_rules! attributes {
 /// # Examples
 ///
 /// ```rust
-/// use process_mining::event;
+/// use process_mining::{
+///     chrono::{DateTime, FixedOffset, Utc},
+///     event,
+/// };
 ///
 /// // Create an event with activity "a".
 /// let event_1 = event!("a");
 /// // Create an event with the current time as timestamp
 /// let event_2 = event!("a"; {
-///     "time:timestamp" => chrono::Utc::now()
+///     "time:timestamp" => Utc::now()
 /// });
 /// // Create an event with timestamp 0 and additional attributes
 /// let event_3 = event!("a"; {
-///     "time:timestamp" => chrono::DateTime::UNIX_EPOCH,
+///     "time:timestamp" => DateTime::UNIX_EPOCH,
 ///     "org:resource" => "John",
 ///     "cost" => 2500.00,
 ///     "approved" => true
 /// });
 ///
 /// // Use some pre-defined value for an attribute
-/// use chrono::{DateTime, FixedOffset};
 /// let dt: DateTime<FixedOffset> = "2025-01-01T00:00:00+02:00".parse().unwrap();
 /// let event_4 = event!("a"; {
 ///     "time:timestamp" => dt
@@ -100,8 +103,12 @@ macro_rules! event {
         }
     };
     ($($input:tt)*) => {{
-        use $crate::{attribute, event, event_log::XESEditableAttribute};
-        use chrono::DateTime;
+        use $crate::{
+            attribute,
+            chrono::DateTime,
+            event,
+            event_log::XESEditableAttribute,
+        };
 
         let mut evt = event!(NO_TIMESTAMP; $($input)*);
 
@@ -129,7 +136,10 @@ macro_rules! event {
 /// # Examples
 ///
 /// ```rust
-/// use process_mining::trace;
+/// use process_mining::{
+///     chrono::{DateTime, Utc},
+///     trace
+/// };
 ///
 /// let trace_1 = trace!("a", "b", "c", "d");
 /// // Add trace-level attributes
@@ -137,8 +147,8 @@ macro_rules! event {
 /// // Add trace and event-level attributes
 /// let trace_3 = trace!(
 ///     {"outcome" => "approved"};
-///     "a"; {"time:timestamp" => chrono::DateTime::UNIX_EPOCH},
-///     "b"; {"time:timestamp" => chrono::Utc::now()},
+///     "a"; {"time:timestamp" => DateTime::UNIX_EPOCH},
+///     "b"; {"time:timestamp" => Utc::now()},
 ///     "c",
 ///     "d"; {"approved" => true, "cost" => 2500.00}
 /// );
@@ -156,9 +166,9 @@ macro_rules! trace {
     ) => {{
         use $crate::{
             attribute, attributes,
+            chrono::{DateTime, TimeDelta},
             event_log::{Trace, XESEditableAttribute},
         };
-        use chrono::{DateTime, TimeDelta};
 
         let mut trace = Trace {
             attributes: attributes!(
@@ -235,7 +245,7 @@ macro_rules! trace {
 ///
 /// # Examples
 /// ```rust
-/// use process_mining::event_log;
+/// use process_mining::{chrono::Utc, event_log};
 ///
 /// // Create an event log with traces <a,b,c,d> and <a,c,b,d>
 /// event_log!(
@@ -251,7 +261,7 @@ macro_rules! trace {
 ///
 /// // Add log-level attributes
 /// event_log!(
-///    {"created_at" => chrono::Utc::now()};
+///    {"created_at" => Utc::now()};
 ///    ["a", "b", "c", "d"]
 /// );
 ///
