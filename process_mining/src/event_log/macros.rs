@@ -100,18 +100,15 @@ macro_rules! event {
         }
     };
     ($($input:tt)*) => {{
-        let mut evt = $crate::event!(NO_TIMESTAMP; $($input)*);
+        use $crate::{attribute, event, event_log::XESEditableAttribute};
+        use chrono::DateTime;
 
-        if $crate::event_log::XESEditableAttribute::get_by_key(
-            &evt.attributes,
-            "time:timestamp",
-        )
-        .is_none()
-        {
-            $crate::event_log::XESEditableAttribute::add_attribute(
-                &mut evt.attributes,
-                $crate::attribute!(
-                    "time:timestamp" => chrono::DateTime::UNIX_EPOCH
+        let mut evt = event!(NO_TIMESTAMP; $($input)*);
+
+        if evt.attributes.get_by_key("time:timestamp").is_none() {
+            evt.attributes.add_attribute(
+                attribute!(
+                    "time:timestamp" => DateTime::UNIX_EPOCH
                 )
             )
         }
@@ -157,8 +154,14 @@ macro_rules! trace {
             $activity:expr $(; { $($keys:expr => $values:expr),* $(,)?})?
         ),*
     ) => {{
-        let mut trace = $crate::event_log::Trace {
-            attributes: $crate::attributes!(
+        use $crate::{
+            attribute, attributes,
+            event_log::{Trace, XESEditableAttribute},
+        };
+        use chrono::{DateTime, TimeDelta};
+
+        let mut trace = Trace {
+            attributes: attributes!(
                             $($key => $value),*
                         ),
             events: vec![
@@ -174,33 +177,37 @@ macro_rules! trace {
             ]
         };
 
-        let delta = chrono::TimeDelta::hours(1);
+        let delta = TimeDelta::hours(1);
 
         // Make sure the first event has a timestamp, then fill missing timestamps
         // with previous timestamp + 1h
         if let Some(evt) = trace.events.first_mut() {
-            if $crate::event_log::XESEditableAttribute::get_by_key(
-                &evt.attributes,
+            if evt.attributes.get_by_key(
                 "time:timestamp"
                 ).is_none()
             {
-                $crate::event_log::XESEditableAttribute::add_attribute(&mut evt.attributes,
-                    $crate::attribute!(
-                        "time:timestamp" => chrono::DateTime::UNIX_EPOCH
+                evt.attributes.add_attribute(
+                    attribute!(
+                        "time:timestamp" => DateTime::UNIX_EPOCH
                     )
                 )
             }
         }
 
         for i in 1..trace.events.len() {
-            if $crate::event_log::XESEditableAttribute::get_by_key(&trace.events[i].attributes, "time:timestamp").is_none() {
-                let prev_timestamp = *$crate::event_log::XESEditableAttribute::get_by_key(&trace.events[i-1].attributes, "time:timestamp").unwrap().value.try_as_date().expect("Timestamp should be a date.");
-                $crate::event_log::XESEditableAttribute::add_attribute(
-                    &mut trace.events[i].attributes,
-                    $crate::attribute!(
+            if trace.events[i].attributes.get_by_key("time:timestamp").is_none() {
+                let prev_timestamp = *trace.events[i - 1]
+                    .attributes
+                    .get_by_key("time:timestamp")
+                    .unwrap()
+                    .value
+                    .try_as_date()
+                    .expect("Timestamp should be a date.");
+                trace.events[i].attributes.add_attribute(
+                    attribute!(
                         "time:timestamp" => prev_timestamp + delta
                     )
-                )
+                );
             }
         }
 
@@ -260,19 +267,23 @@ macro_rules! event_log {
             [$($events:tt)*] $({ $($keys:expr => $vals:expr),* $(,)? })?
         ),* $(,)?
      ) => {{
-         let mut log = $crate::event_log::EventLog {
-             attributes: $crate::attributes!(
-                             $(
-                                 $($key => $value),*
-                             )?
-                         ),
+        use $crate::{
+            attribute,
+            attributes,
+            event_log::{EventLog, XESEditableAttribute},
+        };
+        let mut log = EventLog {
+            attributes: attributes!(
+                $(
+                    $($key => $value),*
+                )?
+            ),
             traces: vec![
                 $(
                     $crate::trace!(
                         $({ $($keys => $vals),*};)?
                         $($events)*
                     )
-
                 ),*
             ],
             extensions: None,
@@ -283,10 +294,9 @@ macro_rules! event_log {
 
          // Fill in missing trace ids using their index
          log.traces.iter_mut().enumerate().for_each(|(idx,trace)| {
-            if $crate::event_log::XESEditableAttribute::get_by_key(&trace.attributes, "concept:name").is_none() {
-                $crate::event_log::XESEditableAttribute::add_attribute(
-                    &mut trace.attributes,
-                    $crate::attribute!(
+            if trace.attributes.get_by_key("concept:name").is_none() {
+                trace.attributes.add_attribute(
+                    attribute!(
                         "concept:name" => i64::try_from(idx).unwrap()
                     )
                 )
