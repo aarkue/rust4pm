@@ -91,7 +91,8 @@ macro_rules! attributes {
 /// [`Event`]: crate::event_log::Event
 #[macro_export]
 macro_rules! event {
-    // Macro rule to disable adding a default timestamp. Intended for internal use.
+    // Macro rule to avoid adding a default timestamp. Intended for internal use in
+    // the `trace` macro.
     (NO_TIMESTAMP; $name:expr $(; { $($key:expr => $value:expr),* $(,)? })?) => {
         $crate::event_log::Event {
             attributes: vec![
