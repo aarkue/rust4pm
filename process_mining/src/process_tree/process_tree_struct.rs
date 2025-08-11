@@ -243,6 +243,8 @@ impl Leaf {
             }
         }
     }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::process_tree::process_tree_struct::{
