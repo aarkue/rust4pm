@@ -243,8 +243,10 @@ macro_rules! trace {
 /// attributes may optionally follow the square brackets. Events follow the syntax
 /// of the [`event`] macro.
 ///
-/// Traces are automatically provided trace ids (`concept:name`), if they aren't
+/// Traces are automatically provided trace ids (`concept:name`) if they aren't
 /// manually provided. The trace ids correspond to the index in the event log.
+/// As such, automatically generated trace ids may conflict with manually provided
+/// (integer) trace ids.
 ///
 /// # Examples
 /// ```rust
