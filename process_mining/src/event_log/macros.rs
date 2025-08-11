@@ -57,6 +57,8 @@ macro_rules! attributes {
 /// An event consists of an activity, and can optionally be given attributes using
 /// a `{key => value, ...}` syntax, separated from the activity using a semicolon.
 ///
+/// If no timestamp is provided, the unix epoch will be added as the timestamp.
+///
 /// # Examples
 ///
 /// ```rust
@@ -487,6 +489,18 @@ mod tests {
                 .unwrap(),
             DateTime::UNIX_EPOCH
         );
+    }
+
+    #[test]
+    fn test_event_macro_default_timestamp() {
+        let evt = event!("a");
+        assert_eq!(
+            *evt.attributes
+                .get_by_key("time:timestamp")
+                .and_then(|a| a.value.try_as_date())
+                .unwrap(),
+            DateTime::UNIX_EPOCH
+        )
     }
 
     /// Ensure that all  macros can take identifiers as values on all levels.
