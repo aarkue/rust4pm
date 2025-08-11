@@ -441,7 +441,7 @@ mod tests {
         );
     }
 
-    /// Ensure that all kinds of attributes can be use in the [`event`] macro.
+    /// Ensure that all kinds of attributes can be used in the [`event`] macro.
     #[test]
     fn test_event_macro_with_attributes() {
         let evt = event!("a"; {
