@@ -106,7 +106,7 @@ impl ProcessTree {
         if !self.root.check_children_valid() {
             return false;
         }
-        
+
         // Checking all nodes to have the right number of children
         let mut all_op_nodes_valid = true;
 
@@ -119,14 +119,13 @@ impl ProcessTree {
             Node::Leaf(_) => {}
         };
 
-
         // Iterate through the tree to check all children's number of children to be valid
         let mut next_operators = Vec::new();
         while !curr_operators.is_empty() {
             curr_operators.iter().for_each(|op| {
                 op.children.iter().for_each(|child| {
                     all_op_nodes_valid &= child.check_children_valid();
-                    
+
                     match child {
                         Node::Operator(op) => {
                             next_operators.push(op);
@@ -243,5 +242,88 @@ impl Leaf {
                 activity_label: LeafLabel::Tau,
             }
         }
+    }
+#[cfg(test)]
+mod tests {
+    use crate::process_tree::process_tree_struct::{
+        Leaf, Node, Operator, OperatorType, ProcessTree,
+    };
+
+    #[test]
+    fn is_valid_test() {
+        // SEQ() is not valid
+        let op = Operator::new(OperatorType::Sequence);
+        let pt = ProcessTree::new(Node::Operator(op));
+        assert!(!pt.is_valid());
+
+        // SEQ(a) is valid
+        let mut op = Operator::new(OperatorType::Sequence);
+        let leaf = Leaf::new(Some("a".to_string()));
+        op.children.push(Node::Leaf(leaf));
+        let pt = ProcessTree::new(Node::Operator(op));
+        assert!(pt.is_valid());
+
+        // SEQ(a, b) is valid
+        let mut op = Operator::new(OperatorType::Sequence);
+        let leaf = Leaf::new(Some("a".to_string()));
+        op.children.push(Node::Leaf(leaf));
+        let leaf = Leaf::new(Some("b".to_string()));
+        op.children.push(Node::Leaf(leaf));
+        let pt = ProcessTree::new(Node::Operator(op));
+        assert!(pt.is_valid());
+
+        // LOOP(a) is not valid
+        let mut op = Operator::new(OperatorType::Loop);
+        let leaf = Leaf::new(Some("a".to_string()));
+        op.children.push(Node::Leaf(leaf));
+        let pt = ProcessTree::new(Node::Operator(op));
+        assert!(!pt.is_valid());
+
+        // LOOP(a, a) is valid
+        let mut op = Operator::new(OperatorType::Loop);
+        let leaf = Leaf::new(Some("a".to_string()));
+        op.children.push(Node::Leaf(leaf));
+        let leaf = Leaf::new(Some("a".to_string()));
+        op.children.push(Node::Leaf(leaf));
+        let pt = ProcessTree::new(Node::Operator(op));
+        assert!(pt.is_valid());
+
+        // SEQ(XOR(a,b), LOOP(c, d), Parallel(e, f, g)) is valid
+        let mut xor_node = Operator::new(OperatorType::ExclusiveChoice);
+        let mut loop_node = Operator::new(OperatorType::Loop);
+        let mut parallel_node = Operator::new(OperatorType::Concurrency);
+
+        let mut seq_node = Operator::new(OperatorType::Sequence);
+
+        xor_node
+            .children
+            .push(Node::Leaf(Leaf::new(Some("a".to_string()))));
+        xor_node
+            .children
+            .push(Node::Leaf(Leaf::new(Some("b".to_string()))));
+
+        loop_node
+            .children
+            .push(Node::Leaf(Leaf::new(Some("c".to_string()))));
+        loop_node
+            .children
+            .push(Node::Leaf(Leaf::new(Some("d".to_string()))));
+
+        parallel_node
+            .children
+            .push(Node::Leaf(Leaf::new(Some("e".to_string()))));
+        parallel_node
+            .children
+            .push(Node::Leaf(Leaf::new(Some("f".to_string()))));
+        parallel_node
+            .children
+            .push(Node::Leaf(Leaf::new(Some("g".to_string()))));
+
+        seq_node.children.push(Node::Operator(xor_node));
+        seq_node.children.push(Node::Operator(loop_node));
+        seq_node.children.push(Node::Operator(parallel_node));
+
+        let pt = ProcessTree::new(Node::Operator(seq_node));
+        assert!(pt.is_valid());
     }
 }
