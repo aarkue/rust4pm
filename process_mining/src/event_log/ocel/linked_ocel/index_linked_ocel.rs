@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     ocel::ocel_struct::{OCELEvent, OCELObject},
     OCEL,
@@ -7,7 +9,7 @@ use crate::{
 
 use super::LinkedOCELAccess;
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 /// An Event Index
 ///
 /// Points to an event in the context of a given OCEL
@@ -22,8 +24,16 @@ impl From<usize> for EventIndex {
         Self(value)
     }
 }
+impl EventIndex {
+    /// Retrieve inner index value
+    ///
+    /// Warning: Only use carefully, as wrong usage can lead to invalid `EventIndex` references, even when using only a single OCEL
+    pub fn into_inner(self) -> usize {
+        self.0
+    }
+}
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 /// An Object Index
 ///
 /// Points to an object in the context of a given OCEL
@@ -36,6 +46,34 @@ impl From<&ObjectIndex> for ObjectIndex {
 impl From<usize> for ObjectIndex {
     fn from(value: usize) -> Self {
         Self(value)
+    }
+}
+
+impl ObjectIndex {
+    /// Retrieve inner index value
+    ///
+    /// Warning: Only use carefully, as wrong usage can lead to invalid `ObjectIndex` references, even when using only a single OCEL
+    pub fn into_inner(self) -> usize {
+        self.0
+    }
+}
+
+/// Either an event or an object index
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum EventOrObjectIndex {
+    /// An event index
+    Event(EventIndex),
+    /// An object index
+    Object(ObjectIndex),
+}
+impl From<EventIndex> for EventOrObjectIndex {
+    fn from(value: EventIndex) -> Self {
+        Self::Event(value)
+    }
+}
+impl From<ObjectIndex> for EventOrObjectIndex {
+    fn from(value: ObjectIndex) -> Self {
+        Self::Object(value)
     }
 }
 
@@ -101,6 +139,15 @@ impl IndexLinkedOCEL {
     ///
     pub fn get_e2o_set(&self, index: &EventIndex) -> &HashSet<ObjectIndex> {
         &self.e2o_set[index.0]
+    }
+
+    /// Get event index by ID
+    pub fn get_ev_index(&self, id: impl AsRef<str>) -> Option<EventIndex> {
+        self.event_ids_to_index.get(id.as_ref()).copied()
+    }
+    /// Get object index by ID
+    pub fn get_ob_index(&self, id: impl AsRef<str>) -> Option<ObjectIndex> {
+        self.object_ids_to_index.get(id.as_ref()).copied()
     }
 }
 
