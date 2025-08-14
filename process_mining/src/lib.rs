@@ -79,6 +79,9 @@ pub mod petri_net {
 pub mod process_tree {
     /// [`ProcessTree`] struct
     pub mod process_tree_struct;
+
+    #[doc(inline)]
+    pub use crate::process_tree::process_tree_struct::ProcessTree;
 }
 
 ///
