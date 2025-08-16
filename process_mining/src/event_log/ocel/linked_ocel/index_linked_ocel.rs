@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Index,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -148,6 +151,59 @@ impl IndexLinkedOCEL {
     /// Get object index by ID
     pub fn get_ob_index(&self, id: impl AsRef<str>) -> Option<ObjectIndex> {
         self.object_ids_to_index.get(id.as_ref()).copied()
+    }
+}
+
+impl Index<EventIndex> for IndexLinkedOCEL {
+    type Output = OCELEvent;
+    fn index(&self, index: EventIndex) -> &Self::Output {
+        self.get_ev(&index)
+    }
+}
+impl Index<&EventIndex> for IndexLinkedOCEL {
+    type Output = OCELEvent;
+    fn index(&self, index: &EventIndex) -> &Self::Output {
+        self.get_ev(index)
+    }
+}
+impl Index<EventIndex> for &IndexLinkedOCEL {
+    type Output = OCELEvent;
+    fn index(&self, index: EventIndex) -> &Self::Output {
+        self.get_ev(&index)
+    }
+}
+impl Index<&EventIndex> for &IndexLinkedOCEL {
+    type Output = OCELEvent;
+    fn index(&self, index: &EventIndex) -> &Self::Output {
+        self.get_ev(index)
+    }
+}
+
+impl Index<ObjectIndex> for IndexLinkedOCEL {
+    type Output = OCELObject;
+    fn index(&self, index: ObjectIndex) -> &Self::Output {
+        self.get_ob(&index)
+    }
+}
+
+impl Index<&ObjectIndex> for IndexLinkedOCEL {
+    type Output = OCELObject;
+    fn index(&self, index: &ObjectIndex) -> &Self::Output {
+        self.get_ob(index)
+    }
+}
+
+impl Index<ObjectIndex> for &IndexLinkedOCEL {
+    type Output = OCELObject;
+    fn index(&self, index: ObjectIndex) -> &Self::Output {
+        self.get_ob(&index)
+    }
+}
+
+impl Index<&ObjectIndex> for &IndexLinkedOCEL {
+    type Output = OCELObject;
+    fn index(&self, index: &ObjectIndex) -> &Self::Output {
+        self.get_ob(index)
     }
 }
 
@@ -401,5 +457,40 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
             .object_types
             .iter()
             .find(|ot| ot.name == ob_type.as_ref())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use crate::{import_ocel_xml_file, utils::test_utils::get_test_data_path};
+
+    use super::*;
+
+    #[test]
+    fn test_indexing() {
+        let ocel = import_ocel_xml_file(
+            get_test_data_path()
+                .join("ocel")
+                .join("order-management.xml"),
+        );
+        let locel = IndexLinkedOCEL::from_ocel(ocel);
+        let locel_ref = &locel;
+        if let Some(ev_index) = locel_ref.get_all_evs_ref().next() {
+            let ev1: &OCELEvent = &locel[*ev_index];
+            let ev2 = &locel[ev_index];
+            let ev3 = &locel_ref[ev_index];
+            let ev4 = &locel_ref[ev_index];
+            assert_eq!(ev1, ev2);
+            assert_eq!(ev1, ev3);
+            assert_eq!(ev1, ev4);
+        };
+        if let Some(ob_index) = locel_ref.get_all_obs_ref().next() {
+            let ev1: &OCELObject = &locel[*ob_index];
+            let ev2 = &locel[ob_index];
+            let ev3 = &locel_ref[ob_index];
+            let ev4 = &locel_ref[ob_index];
+            assert_eq!(ev1, ev2);
+            assert_eq!(ev1, ev3);
+            assert_eq!(ev1, ev4);
+        };
     }
 }
