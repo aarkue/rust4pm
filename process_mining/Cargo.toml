@@ -65,3 +65,7 @@ all-features = true
 [[example]]
 name = "ocel_kuzudb_export"
 required-features = ["dataframes", "kuzudb"]
+
+[[example]]
+name = "ocel_duckdb_export"
+required-features = ["ocel-duckdb"]
