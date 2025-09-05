@@ -13,6 +13,7 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
     ocel: &OCEL,
 ) -> Result<(), DatabaseError> {
     let con = con.into();
+    con.execute_no_params("BEGIN TRANSACTION")?;
     // event map type
     con.execute_no_params(&format!(r#"CREATE TABLE IF NOT EXISTS "event_map_type" ("{OCEL_TYPE_COLUMN}" TEXT, "{OCEL_TYPE_MAP_COLUMN}"	TEXT, PRIMARY KEY("{OCEL_TYPE_COLUMN}"))"#))?;
     // object map type
@@ -44,6 +45,8 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
     con.execute_no_params(&format!(r#"CREATE INDEX IF NOT EXISTS "object_object_target" ON "object_object" ("{OCEL_O2O_TARGET_ID_COLUMN}" ASC)"#))?;
     con.execute_no_params(&format!(r#"CREATE INDEX IF NOT EXISTS "object_object_both" ON "object_object" ("{OCEL_O2O_SOURCE_ID_COLUMN}","{OCEL_O2O_TARGET_ID_COLUMN}" ASC)"#))?;
 
+    con.execute_no_params("COMMIT")?;
+    con.execute_no_params("BEGIN TRANSACTION")?;
     let mut et_attr_map: HashMap<&String, &Vec<OCELTypeAttribute>> = HashMap::new();
     // Tables for event types
     for et in &ocel.event_types {
@@ -100,7 +103,6 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
         )?;
     }
 
-    con.execute_no_params("BEGIN TRANSACTION")?;
     con.add_objects("object", ocel.objects.iter())?;
 
     for ot in &ocel.object_types {
@@ -109,7 +111,11 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
         con.add_object_changes_for_type(&clean_sql_name(&format!("object_{}", ot.name)), ot, obs)?;
     }
 
+    con.execute_no_params("COMMIT")?;
+    con.execute_no_params("BEGIN TRANSACTION")?;
     con.add_o2o_relationships("object_object", ocel.objects.iter())?;
+    con.execute_no_params("COMMIT")?;
+    con.execute_no_params("BEGIN TRANSACTION")?;
 
     con.add_events("event", ocel.events.iter())?;
 
@@ -118,7 +124,12 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
 
         con.add_event_attributes_for_type(&clean_sql_name(&format!("event_{}", et.name)), et, evs)?;
     }
+    con.execute_no_params("COMMIT")?;
+    con.execute_no_params("BEGIN TRANSACTION")?;
     con.add_e2o_relationships("event_object", ocel.events.iter())?;
+
+    con.execute_no_params("COMMIT")?;
+    con.execute_no_params("BEGIN TRANSACTION")?;
 
     for ot in &ocel.object_types {
         con.execute_no_params(&format!(
@@ -142,13 +153,7 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
 fn clean_sql_name(type_name: &str) -> String {
     type_name
         .chars()
-        .map(|c| {
-            if c != '\'' && c != '\\' && c != ' ' {
-                c
-            } else {
-                '_'
-            }
-        })
+        .map(|c| if c != '\'' && c != '\\' { c } else { '_' })
         .collect()
 }
 
