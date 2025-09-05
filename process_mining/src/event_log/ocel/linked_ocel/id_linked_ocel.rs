@@ -7,9 +7,15 @@ use crate::{
 
 use super::LinkedOCELAccess;
 
-impl<'a> LinkedOCELAccess<'a, EventID<'a>, ObjectID<'a>, OCELEvent, OCELObject>
-    for IDLinkedOCEL<'a>
-{
+impl<'a> LinkedOCELAccess<'a> for IDLinkedOCEL<'a> {
+    type EvRetType = OCELEvent;
+
+    type ObRetType = OCELObject;
+
+    type EvRefType = EventID<'a>;
+
+    type ObRefType = ObjectID<'a>;
+
     fn get_evs_of_type(&'a self, ev_type: &'_ str) -> impl Iterator<Item = &'a OCELEvent> {
         self.events_per_type
             .get(ev_type)
@@ -78,6 +84,26 @@ impl<'a> LinkedOCELAccess<'a, EventID<'a>, ObjectID<'a>, OCELEvent, OCELObject>
 
     fn get_all_obs_ref(&'a self) -> impl Iterator<Item = &'a ObjectID<'a>> {
         self.objects.iter().map(|o| o.0)
+    }
+
+    fn get_ev_type(
+        &'a self,
+        ev_type: impl AsRef<str>,
+    ) -> Option<&'a crate::ocel::ocel_struct::OCELType> {
+        self.ocel
+            .event_types
+            .iter()
+            .find(|et| et.name == ev_type.as_ref())
+    }
+
+    fn get_ob_type(
+        &'a self,
+        ob_type: impl AsRef<str>,
+    ) -> Option<&'a crate::ocel::ocel_struct::OCELType> {
+        self.ocel
+            .object_types
+            .iter()
+            .find(|ot| ot.name == ob_type.as_ref())
     }
 }
 
@@ -246,9 +272,12 @@ impl From<OCEL> for OwnedIDLinkedOCEL<'_> {
     }
 }
 
-impl<'a> LinkedOCELAccess<'a, EventID<'a>, ObjectID<'a>, OCELEvent, OCELObject>
-    for OwnedIDLinkedOCEL<'a>
-{
+impl<'a> LinkedOCELAccess<'a> for OwnedIDLinkedOCEL<'a> {
+    type EvRefType = EventID<'a>;
+    type ObRefType = ObjectID<'a>;
+    type EvRetType = OCELEvent;
+    type ObRetType = OCELObject;
+
     fn get_evs_of_type(&'a self, ev_type: &'_ str) -> impl Iterator<Item = &'a OCELEvent> {
         self.linked_ocel.get_evs_of_type(ev_type)
     }
@@ -309,5 +338,25 @@ impl<'a> LinkedOCELAccess<'a, EventID<'a>, ObjectID<'a>, OCELEvent, OCELObject>
 
     fn get_all_obs_ref(&'a self) -> impl Iterator<Item = &'a ObjectID<'a>> {
         self.linked_ocel.get_all_obs_ref()
+    }
+
+    fn get_ev_type(
+        &'a self,
+        ev_type: impl AsRef<str>,
+    ) -> Option<&'a crate::ocel::ocel_struct::OCELType> {
+        self.ocel
+            .event_types
+            .iter()
+            .find(|et| et.name == ev_type.as_ref())
+    }
+
+    fn get_ob_type(
+        &'a self,
+        ob_type: impl AsRef<str>,
+    ) -> Option<&'a crate::ocel::ocel_struct::OCELType> {
+        self.ocel
+            .object_types
+            .iter()
+            .find(|ot| ot.name == ob_type.as_ref())
     }
 }

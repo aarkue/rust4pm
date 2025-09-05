@@ -1,9 +1,15 @@
 use std::time::Instant;
 
 use crate::{
-    import_ocel_xml_file, ocel::dataframe::ocel_to_dataframes,
+    import_ocel_xml_file,
+    ocel::{
+        dataframe::ocel_to_dataframes,
+        linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess},
+    },
     utils::test_utils::get_test_data_path,
 };
+
+use super::object_attribute_changes_to_df;
 
 #[test]
 fn test_ocel2_container_df() {
@@ -64,4 +70,18 @@ fn test_ocel2_df() {
     assert_eq!(ocel_dfs.e2o.shape(), (147463, 6));
     assert_eq!(ocel_dfs.o2o.shape(), (28391, 3));
     assert_eq!(ocel_dfs.object_changes.shape(), (18604, 7));
+}
+
+#[test]
+fn ocel_object_attribute_changes() {
+    let ocel_path = get_test_data_path()
+        .join("ocel")
+        .join("order-management.xml");
+    let ocel = import_ocel_xml_file(ocel_path);
+    let locel: IndexLinkedOCEL = ocel.into();
+    let product = locel.get_obs_of_type("products").next().unwrap();
+    let product = locel.get_ob(product);
+    println!("{:#?}", product.attributes);
+    let df = object_attribute_changes_to_df(&locel, "products").unwrap();
+    println!("{df:#?}");
 }

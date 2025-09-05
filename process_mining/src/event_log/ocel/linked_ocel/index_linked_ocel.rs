@@ -1,4 +1,9 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Index,
+};
+
+use serde::{Deserialize, Serialize};
 
 use crate::{
     ocel::ocel_struct::{OCELEvent, OCELObject},
@@ -7,7 +12,7 @@ use crate::{
 
 use super::LinkedOCELAccess;
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 /// An Event Index
 ///
 /// Points to an event in the context of a given OCEL
@@ -22,8 +27,16 @@ impl From<usize> for EventIndex {
         Self(value)
     }
 }
+impl EventIndex {
+    /// Retrieve inner index value
+    ///
+    /// Warning: Only use carefully, as wrong usage can lead to invalid `EventIndex` references, even when using only a single OCEL
+    pub fn into_inner(self) -> usize {
+        self.0
+    }
+}
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 /// An Object Index
 ///
 /// Points to an object in the context of a given OCEL
@@ -36,6 +49,34 @@ impl From<&ObjectIndex> for ObjectIndex {
 impl From<usize> for ObjectIndex {
     fn from(value: usize) -> Self {
         Self(value)
+    }
+}
+
+impl ObjectIndex {
+    /// Retrieve inner index value
+    ///
+    /// Warning: Only use carefully, as wrong usage can lead to invalid `ObjectIndex` references, even when using only a single OCEL
+    pub fn into_inner(self) -> usize {
+        self.0
+    }
+}
+
+/// Either an event or an object index
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum EventOrObjectIndex {
+    /// An event index
+    Event(EventIndex),
+    /// An object index
+    Object(ObjectIndex),
+}
+impl From<EventIndex> for EventOrObjectIndex {
+    fn from(value: EventIndex) -> Self {
+        Self::Event(value)
+    }
+}
+impl From<ObjectIndex> for EventOrObjectIndex {
+    fn from(value: ObjectIndex) -> Self {
+        Self::Object(value)
     }
 }
 
@@ -102,6 +143,68 @@ impl IndexLinkedOCEL {
     pub fn get_e2o_set(&self, index: &EventIndex) -> &HashSet<ObjectIndex> {
         &self.e2o_set[index.0]
     }
+
+    /// Get event index by ID
+    pub fn get_ev_index(&self, id: impl AsRef<str>) -> Option<EventIndex> {
+        self.event_ids_to_index.get(id.as_ref()).copied()
+    }
+    /// Get object index by ID
+    pub fn get_ob_index(&self, id: impl AsRef<str>) -> Option<ObjectIndex> {
+        self.object_ids_to_index.get(id.as_ref()).copied()
+    }
+}
+
+impl Index<EventIndex> for IndexLinkedOCEL {
+    type Output = OCELEvent;
+    fn index(&self, index: EventIndex) -> &Self::Output {
+        self.get_ev(&index)
+    }
+}
+impl Index<&EventIndex> for IndexLinkedOCEL {
+    type Output = OCELEvent;
+    fn index(&self, index: &EventIndex) -> &Self::Output {
+        self.get_ev(index)
+    }
+}
+impl Index<EventIndex> for &IndexLinkedOCEL {
+    type Output = OCELEvent;
+    fn index(&self, index: EventIndex) -> &Self::Output {
+        self.get_ev(&index)
+    }
+}
+impl Index<&EventIndex> for &IndexLinkedOCEL {
+    type Output = OCELEvent;
+    fn index(&self, index: &EventIndex) -> &Self::Output {
+        self.get_ev(index)
+    }
+}
+
+impl Index<ObjectIndex> for IndexLinkedOCEL {
+    type Output = OCELObject;
+    fn index(&self, index: ObjectIndex) -> &Self::Output {
+        self.get_ob(&index)
+    }
+}
+
+impl Index<&ObjectIndex> for IndexLinkedOCEL {
+    type Output = OCELObject;
+    fn index(&self, index: &ObjectIndex) -> &Self::Output {
+        self.get_ob(index)
+    }
+}
+
+impl Index<ObjectIndex> for &IndexLinkedOCEL {
+    type Output = OCELObject;
+    fn index(&self, index: ObjectIndex) -> &Self::Output {
+        self.get_ob(&index)
+    }
+}
+
+impl Index<&ObjectIndex> for &IndexLinkedOCEL {
+    type Output = OCELObject;
+    fn index(&self, index: &ObjectIndex) -> &Self::Output {
+        self.get_ob(index)
+    }
 }
 
 impl From<OCEL> for IndexLinkedOCEL {
@@ -133,35 +236,23 @@ impl From<OCEL> for IndexLinkedOCEL {
             .enumerate()
             .map(|(e_index, e)| {
                 let e_id: EventIndex = EventIndex(e_index);
-                // (
-                // e_id.clone(),
                 e.relationships
                     .iter()
                     .flat_map(|rel| {
                         let obj_id = *object_ids_to_index.get(&rel.object_id)?;
                         let qualifier = rel.qualifier.clone();
-                        e2o_rev_et
-                            .get_mut(&e.event_type)
-                            .unwrap()
-                            .entry(obj_id)
-                            .or_default()
-                            .insert(e_id);
-                        // ((e.event_type.clone()).or_default().insert(e_id.clone());
-                        e2o_rel_rev[obj_id.0]
-                            // .or_default()
-                            .push((qualifier.clone(), e_id));
-                        // let ob = objects.get(&((&rel.object_id).into()))?;
+                        let ev_type = e2o_rev_et.get_mut(&e.event_type)?;
+                        ev_type.entry(obj_id).or_default().insert(e_id);
+                        e2o_rel_rev[obj_id.0].push((qualifier.clone(), e_id));
                         Some((qualifier, obj_id))
                     })
                     .collect()
-                // )
             })
             .collect::<Vec<_>>();
 
         let e2o_set = ocel
             .events
             .iter()
-            // .enumerate()
             .map(|e| {
                 e.relationships
                     .iter()
@@ -252,9 +343,12 @@ impl From<OCEL> for IndexLinkedOCEL {
     }
 }
 
-impl<'a> LinkedOCELAccess<'a, EventIndex, ObjectIndex, EventIndex, ObjectIndex>
-    for IndexLinkedOCEL
-{
+impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
+    type EvRefType = EventIndex;
+    type ObRefType = ObjectIndex;
+    type EvRetType = EventIndex;
+    type ObRetType = ObjectIndex;
+
     fn get_evs_of_type(&'a self, ev_type: &'_ str) -> impl Iterator<Item = &'a EventIndex> {
         self.events_per_type.get(ev_type).into_iter().flatten()
     }
@@ -331,5 +425,60 @@ impl<'a> LinkedOCELAccess<'a, EventIndex, ObjectIndex, EventIndex, ObjectIndex>
 
     fn get_all_obs_ref(&'a self) -> impl Iterator<Item = &'a ObjectIndex> {
         self.object_ids_to_index.values()
+    }
+
+    fn get_ev_type(
+        &'a self,
+        ev_type: impl AsRef<str>,
+    ) -> Option<&'a crate::ocel::ocel_struct::OCELType> {
+        self.ocel
+            .event_types
+            .iter()
+            .find(|et| et.name == ev_type.as_ref())
+    }
+
+    fn get_ob_type(
+        &'a self,
+        ob_type: impl AsRef<str>,
+    ) -> Option<&'a crate::ocel::ocel_struct::OCELType> {
+        self.ocel
+            .object_types
+            .iter()
+            .find(|ot| ot.name == ob_type.as_ref())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use crate::{import_ocel_xml_file, utils::test_utils::get_test_data_path};
+
+    use super::*;
+
+    #[test]
+    fn test_indexing() {
+        let ocel = import_ocel_xml_file(
+            get_test_data_path()
+                .join("ocel")
+                .join("order-management.xml"),
+        );
+        let locel = IndexLinkedOCEL::from_ocel(ocel);
+        let locel_ref = &locel;
+        if let Some(ev_index) = locel_ref.get_all_evs_ref().next() {
+            let ev1: &OCELEvent = &locel[*ev_index];
+            let ev2 = &locel[ev_index];
+            let ev3 = &locel_ref[ev_index];
+            let ev4 = &locel_ref[ev_index];
+            assert_eq!(ev1, ev2);
+            assert_eq!(ev1, ev3);
+            assert_eq!(ev1, ev4);
+        };
+        if let Some(ob_index) = locel_ref.get_all_obs_ref().next() {
+            let ev1: &OCELObject = &locel[*ob_index];
+            let ev2 = &locel[ob_index];
+            let ev3 = &locel_ref[ob_index];
+            let ev4 = &locel_ref[ob_index];
+            assert_eq!(ev1, ev2);
+            assert_eq!(ev1, ev3);
+            assert_eq!(ev1, ev4);
+        };
     }
 }
