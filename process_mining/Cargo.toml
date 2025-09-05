@@ -54,3 +54,7 @@ token_based_replay = ["dep:nalgebra"]
 
 [package.metadata.docs.rs]
 all-features = true
+
+[[example]]
+name = "ocel_duckdb_export"
+required-features = ["ocel-duckdb"]

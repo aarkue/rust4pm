@@ -101,4 +101,26 @@ mod duckdb_tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_duckdb_containers_round_trip_ocel() -> Result<(), ::duckdb::Error> {
+        let path = get_test_data_path()
+            .join("ocel")
+            .join("ContainerLogistics.xml");
+        let ocel = import_ocel_xml_file(path);
+        let export_path = get_test_data_path()
+            .join("export")
+            .join("ContainerLogistics.duckdb");
+        let _ = std::fs::remove_file(&export_path);
+        export_ocel_duckdb_to_path(&ocel, &export_path).unwrap();
+        let ocel2 = import_ocel_duckdb_from_path(&export_path).unwrap();
+
+        assert_eq!(ocel.events.len(), ocel2.events.len());
+        assert_eq!(ocel.objects.len(), ocel2.objects.len());
+        assert_eq!(ocel.event_types.len(), ocel2.event_types.len());
+        assert_eq!(ocel.object_types.len(), ocel2.object_types.len());
+        drop(ocel);
+
+        Ok(())
+    }
 }
