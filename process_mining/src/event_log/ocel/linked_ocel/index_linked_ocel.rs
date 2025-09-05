@@ -236,35 +236,23 @@ impl From<OCEL> for IndexLinkedOCEL {
             .enumerate()
             .map(|(e_index, e)| {
                 let e_id: EventIndex = EventIndex(e_index);
-                // (
-                // e_id.clone(),
                 e.relationships
                     .iter()
                     .flat_map(|rel| {
                         let obj_id = *object_ids_to_index.get(&rel.object_id)?;
                         let qualifier = rel.qualifier.clone();
-                        e2o_rev_et
-                            .get_mut(&e.event_type)
-                            .unwrap()
-                            .entry(obj_id)
-                            .or_default()
-                            .insert(e_id);
-                        // ((e.event_type.clone()).or_default().insert(e_id.clone());
-                        e2o_rel_rev[obj_id.0]
-                            // .or_default()
-                            .push((qualifier.clone(), e_id));
-                        // let ob = objects.get(&((&rel.object_id).into()))?;
+                        let ev_type = e2o_rev_et.get_mut(&e.event_type)?;
+                        ev_type.entry(obj_id).or_default().insert(e_id);
+                        e2o_rel_rev[obj_id.0].push((qualifier.clone(), e_id));
                         Some((qualifier, obj_id))
                     })
                     .collect()
-                // )
             })
             .collect::<Vec<_>>();
 
         let e2o_set = ocel
             .events
             .iter()
-            // .enumerate()
             .map(|e| {
                 e.relationships
                     .iter()
