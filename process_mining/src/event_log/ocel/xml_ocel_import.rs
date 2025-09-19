@@ -59,6 +59,12 @@ enum Mode {
 }
 
 fn read_to_string(x: &mut &[u8]) -> String {
+    if let Ok(x_str) = str::from_utf8(x) {
+        if let Ok(escaped) = quick_xml::escape::unescape(x_str) {
+            return escaped.to_string();
+        }
+        return x_str.to_string();
+    }
     String::from_utf8_lossy(x).to_string()
 }
 
