@@ -137,6 +137,7 @@ pub fn convert_log_to_dataframe(
                 })
                 .collect();
 
+            #[allow(clippy::mutable_key_type)]
             let mut unique_dtypes: HashSet<DataType> = entries.iter().map(|v| v.dtype()).collect();
             unique_dtypes.remove(&DataType::Null);
             if unique_dtypes.len() > 1 {
