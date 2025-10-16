@@ -22,7 +22,7 @@ itertools = { version = "0.14.0" }
 nalgebra = { version = "0.33.2", optional = true }
 ordered-float = "5.0.0"
 petgraph = "0.8.1"
-polars = { version = "0.46.0", features = ["dtype-slim", "timezones", "partition_by"], optional = true }
+polars = { version = "0.51.0", features = ["dtype-slim", "timezones", "partition_by"], optional = true }
 quick-xml = { version = "0.37.4" }
 rand = { version = "0.9.1", optional = true }
 rayon = "1.7.0"
