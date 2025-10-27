@@ -28,6 +28,12 @@ jobs:
           DUCKDB_VERSION: v1.3.2
     - name: Unpacking duckdb
       run: 7z x  ${{ github.workspace }}/libduckdb-linux-amd64.zip -o${{ github.workspace }}/libduckdb
+    - name: Download kuzudb
+      run: wget -O kuzu.zip https://github.com/kuzudb/kuzu/releases/download/$KUZU_VERSION/libkuzu-linux-x86_64.tar.gz
+      env:
+        KUZU_VERSION: v0.11.2
+    - name: Unpacking kuzudb
+      run: mkdir ${{ github.workspace }}/libkuzu && tar xzf  ${{ github.workspace }}/kuzu.zip -C ${{ github.workspace }}/libkuzu
     - name: Downloading test files
       run: wget -O process_mining/test_data/out.zip https://rwth-aachen.sciebo.de/s/4cvtTU3lLOgtxt1/download
     - name: Unpacking test files
@@ -39,6 +45,9 @@ jobs:
         DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
         DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
         LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
+        KUZU_SHARED: 1
+        KUZU_LIBRARY_DIR: ${{ github.workspace }}/libkuzu
+        KUZU_INCLUDE_DIR: ${{ github.workspace }}/libkuzu
     - name: Clippy
       working-directory: ./process_mining
       run: source "$HOME/.cargo/env" && cargo clippy --all-targets --all-features -- -D warnings
@@ -46,6 +55,9 @@ jobs:
         DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
         DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
         LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
+        KUZU_SHARED: 1
+        KUZU_LIBRARY_DIR: ${{ github.workspace }}/libkuzu
+        KUZU_INCLUDE_DIR: ${{ github.workspace }}/libkuzu
     - name: Check formatting
       working-directory: ./process_mining
       run: source "$HOME/.cargo/env" && cargo fmt --all --check
@@ -53,6 +65,9 @@ jobs:
         DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
         DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
         LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
+        KUZU_SHARED: 1
+        KUZU_LIBRARY_DIR: ${{ github.workspace }}/libkuzu
+        KUZU_INCLUDE_DIR: ${{ github.workspace }}/libkuzu
     - name: Check docs
       working-directory: ./process_mining
       run: source "$HOME/.cargo/env" && cargo doc --all-features
@@ -60,6 +75,9 @@ jobs:
         DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
         DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
         LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
+        KUZU_SHARED: 1
+        KUZU_LIBRARY_DIR: ${{ github.workspace }}/libkuzu
+        KUZU_INCLUDE_DIR: ${{ github.workspace }}/libkuzu
         RUSTDOCFLAGS: -D warnings
     - name: Run tests
       run: source "$HOME/.cargo/env" && cargo test --verbose --all-features
@@ -67,4 +85,7 @@ jobs:
       env:
         DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
         DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
-        LD_LIBRARY_PATH: ${{ github.workspace }}/libduckdb
+        LD_LIBRARY_PATH: $LD_LIBRARY_PATH:${{ github.workspace }}/libkuzu/:${{ github.workspace }}/libduckdb/
+        KUZU_SHARED: 1
+        KUZU_LIBRARY_DIR: ${{ github.workspace }}/libkuzu
+        KUZU_INCLUDE_DIR: ${{ github.workspace }}/libkuzu

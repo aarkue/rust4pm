@@ -4,16 +4,19 @@ use std::{
     path::Path,
 };
 
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
+use itertools::Itertools;
 use polars::{
-    error::PolarsResult,
+    error::{PolarsError, PolarsResult},
     frame::DataFrame,
     io::SerWriter,
-    prelude::{AnyValue, CsvWriter, SortMultipleOptions, TimeUnit},
+    prelude::{AnyValue, CsvWriter, IntoColumn, SortMultipleOptions, TimeUnit, TimeZone},
     series::Series,
 };
 
 use crate::{ocel::ocel_struct::OCELAttributeValue, OCEL};
+
+use super::linked_ocel::LinkedOCELAccess;
 
 #[cfg(test)]
 mod tests;
@@ -643,5 +646,347 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
         object_changes: object_changes_df,
         o2o: o2o_df,
         e2o: e2o_df,
+    }
+}
+
+/// Export all events of an type as a [`DataFrame`]
+pub fn event_type_to_df<'a, I: LinkedOCELAccess<'a>>(
+    locel: &'a I,
+    ev_type: impl AsRef<str>,
+) -> Result<DataFrame, PolarsError> {
+    let evs: Vec<_> = locel
+        .get_evs_of_type(ev_type.as_ref())
+        .map(|ev| locel.get_ev(&I::EvRefType::from(ev)))
+        .collect();
+    let id_series = Series::from_iter(evs.iter().map(|ev| ev.id.as_str()))
+        .into_column()
+        .with_name("id".into());
+    let timestamp_series =
+        Series::from_iter(evs.iter().map(|ev| ev.time.to_utc().timestamp_millis()))
+            .cast(&polars::prelude::DataType::Datetime(
+                TimeUnit::Milliseconds,
+                Some(TimeZone::UTC),
+            ))?
+            .into_column()
+            .with_name("time".into());
+    let mut columns = vec![id_series, timestamp_series];
+    columns.extend(
+        locel
+            .get_ev_type(ev_type.as_ref())
+            .iter()
+            .flat_map(|et| &et.attributes)
+            .map(|attr| {
+                let attr_val_series = Series::from_any_values(
+                    attr.name.as_str().into(),
+                    &evs.iter()
+                        .map(
+                            |ev| match ev.attributes.iter().find(|a| a.name == attr.name) {
+                                Some(attr_val) => ocel_attribute_val_to_any_value(&attr_val.value),
+                                None => AnyValue::Null,
+                            },
+                        )
+                        .collect::<Vec<_>>(),
+                    false,
+                )?;
+
+                let attr_col = attr_val_series.into_column();
+                Ok(attr_col.with_name(attr.name.as_str().into()))
+            })
+            .collect::<Result<Vec<_>, PolarsError>>()?,
+    );
+    let df = DataFrame::new(columns)?;
+
+    Ok(df)
+}
+
+/// Export all objects of a type as a [`DataFrame`]
+pub fn object_type_to_df<'a, I: LinkedOCELAccess<'a>>(
+    locel: &'a I,
+    ob_type: impl AsRef<str>,
+) -> Result<DataFrame, PolarsError> {
+    let obs: Vec<_> = locel
+        .get_obs_of_type(ob_type.as_ref())
+        .map(|ob| locel.get_ob(&I::ObRefType::from(ob)))
+        .collect();
+    let id_series = Series::from_iter(obs.iter().map(|ev| ev.id.as_str()))
+        .into_column()
+        .with_name("id".into());
+    let columns = vec![id_series];
+    let df = DataFrame::new(columns)?;
+
+    Ok(df)
+}
+
+/// Export all E2O relationships as a [`DataFrame`]
+pub fn e2o_to_df<'a, I: LinkedOCELAccess<'a>>(locel: &'a I) -> Result<DataFrame, PolarsError> {
+    let e2o_vec: Vec<_> = locel
+        .get_all_evs_ref()
+        .flat_map(move |e| {
+            locel.get_e2o(e).map(move |(q, o)| {
+                (
+                    locel.get_ev(e).id.as_str(),
+                    locel.get_ob(&o.into()).id.as_str(),
+                    q,
+                )
+            })
+        })
+        .collect();
+    let columns = vec![
+        Series::from_iter(e2o_vec.iter().map(|(e, _, _)| *e))
+            .into_column()
+            .with_name("Event ID".into()),
+        Series::from_iter(e2o_vec.iter().map(|(_, o, _)| *o))
+            .into_column()
+            .with_name("Object ID".into()),
+        Series::from_iter(e2o_vec.iter().map(|(_, _, q)| *q))
+            .into_column()
+            .with_name("Qualifier".into()),
+    ];
+    let df = DataFrame::new(columns)?;
+
+    Ok(df)
+}
+/// Export all O2O relationships as a [`DataFrame`]
+pub fn o2o_to_df<'a, I: LinkedOCELAccess<'a>>(locel: &'a I) -> Result<DataFrame, PolarsError> {
+    let o2o_vec: Vec<_> = locel
+        .get_all_obs_ref()
+        .flat_map(move |o| {
+            locel.get_o2o(o).map(move |(q, o2)| {
+                (
+                    locel.get_ob(o).id.as_str(),
+                    locel.get_ob(&o2.into()).id.as_str(),
+                    q,
+                )
+            })
+        })
+        .collect();
+    let columns = vec![
+        Series::from_iter(o2o_vec.iter().map(|(e, _, _)| *e))
+            .into_column()
+            .with_name("From Object ID".into()),
+        Series::from_iter(o2o_vec.iter().map(|(_, o, _)| *o))
+            .into_column()
+            .with_name("To Object ID".into()),
+        Series::from_iter(o2o_vec.iter().map(|(_, _, q)| *q))
+            .into_column()
+            .with_name("Qualifier".into()),
+    ];
+    let df = DataFrame::new(columns)?;
+
+    Ok(df)
+}
+
+/// Export the E2O relationships between instances of the specified event and object types as a [`DataFrame`]
+pub fn e2o_to_df_for_types<'a, I: LinkedOCELAccess<'a>>(
+    locel: &'a I,
+    event_type: impl AsRef<str>,
+    object_type: impl AsRef<str>,
+) -> Result<DataFrame, PolarsError> {
+    let object_type = object_type.as_ref();
+    let e2o_vec: Vec<_> = locel
+        .get_evs_of_type(event_type.as_ref())
+        .flat_map(move |e| {
+            locel
+                .get_e2o(&e.into())
+                .filter_map(move |(q, o)| {
+                    let o_obj = locel.get_ob(&o.into());
+                    if o_obj.object_type != object_type {
+                        return None;
+                    }
+                    Some((locel.get_ev(&e.into()).id.as_str(), o_obj.id.as_str(), q))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let columns = vec![
+        Series::from_iter(e2o_vec.iter().map(|(e, _, _)| *e))
+            .into_column()
+            .with_name("Event ID".into()),
+        Series::from_iter(e2o_vec.iter().map(|(_, o, _)| *o))
+            .into_column()
+            .with_name("Object ID".into()),
+        Series::from_iter(e2o_vec.iter().map(|(_, _, q)| *q))
+            .into_column()
+            .with_name("Qualifier".into()),
+    ];
+    let df = DataFrame::new(columns)?;
+
+    Ok(df)
+}
+/// Export the O2O relationships between instances of the specified event and object types as a [`DataFrame`]
+pub fn o2o_to_df_for_types<'a, I: LinkedOCELAccess<'a>>(
+    locel: &'a I,
+    from_object_type: impl AsRef<str>,
+    to_object_type: impl AsRef<str>,
+) -> Result<DataFrame, PolarsError> {
+    let to_object_type = to_object_type.as_ref();
+    let o2o_vec: Vec<_> = locel
+        .get_obs_of_type(from_object_type.as_ref())
+        .flat_map(move |o| {
+            locel
+                .get_o2o(&o.into())
+                .filter_map(move |(q, o2)| {
+                    let o2_obj = locel.get_ob(&o2.into());
+                    if o2_obj.object_type != to_object_type {
+                        return None;
+                    }
+                    Some((locel.get_ob(&o.into()).id.as_str(), o2_obj.id.as_str(), q))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let columns = vec![
+        Series::from_iter(o2o_vec.iter().map(|(e, _, _)| *e))
+            .into_column()
+            .with_name("From Object ID".into()),
+        Series::from_iter(o2o_vec.iter().map(|(_, o, _)| *o))
+            .into_column()
+            .with_name("To Object ID".into()),
+        Series::from_iter(o2o_vec.iter().map(|(_, _, q)| *q))
+            .into_column()
+            .with_name("Qualifier".into()),
+    ];
+    let df = DataFrame::new(columns)?;
+
+    Ok(df)
+}
+/// Column key for the object id in the attribute change DF
+pub const ATTRIBUTE_CHANGE_DF_OBJ_ID: &str = "object_id";
+/// Column key for the change id in the attribute change DF
+///
+/// Uniquely identifies the attribute change, i.e., one value version of
+pub const ATTRIBUTE_CHANGE_DF_ID: &str = "change_id";
+/// Column key for the timestamp from which the attribute value change is valid in the attribute change DF
+pub const ATTRIBUTE_CHANGE_DF_FROM_TIME: &str = "from_time";
+/// Column key for the timestamp until which the attribute value change is valid in the attribute change DF
+pub const ATTRIBUTE_CHANGE_DF_TO_TIME: &str = "to_time";
+/// Export all object attribute changes of an object type as a [`DataFrame`]
+pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
+    locel: &'a I,
+    ob_type: impl AsRef<str>,
+) -> Result<DataFrame, PolarsError> {
+    let obs: Vec<_> = locel
+        .get_obs_of_type(ob_type.as_ref())
+        .map(|ev| locel.get_ob(&I::ObRefType::from(ev)))
+        .collect();
+    if let Some(ob_type) = locel.get_ob_type(ob_type) {
+        let attribute_map: HashMap<_, _> = ob_type
+            .attributes
+            .iter()
+            .enumerate()
+            .map(|(i, a)| (&a.name, i))
+            .collect();
+        let changes: Vec<_> = obs
+            .into_iter()
+            .flat_map(|ob| {
+                let attributes: Vec<_> = ob.attributes.iter().sorted_by_key(|a| a.time).collect();
+                let mut last_values: HashMap<_, &OCELAttributeValue> = ob_type
+                    .attributes
+                    .iter()
+                    .map(|oa| (&oa.name, &OCELAttributeValue::Null))
+                    .collect();
+                #[allow(clippy::type_complexity)]
+                // for now allow this complex type, as it's only used internally
+                let mut ret: Vec<(
+                    &str,
+                    String,
+                    Option<DateTime<Utc>>,
+                    Option<DateTime<Utc>>,
+                    Vec<&OCELAttributeValue>,
+                )> = vec![(
+                    &ob.id,
+                    format!("{}-attrs-0", ob.id),
+                    None,
+                    None,
+                    ob_type
+                        .attributes
+                        .iter()
+                        .map(|at| *last_values.get(&at.name).expect("added before"))
+                        .collect(),
+                )];
+                for (i, a) in attributes.iter().enumerate() {
+                    last_values.insert(&a.name, &a.value);
+                    if i > 0 && attributes[i - 1].time == a.time {
+                        // This attribute change has the same update time as the last one.
+                        // Thus, combine them!
+                        let (_, _, _start, _end, vals) = ret
+                            .last_mut()
+                            .expect("should contain at least one attribute, as i > 0");
+                        if let Some(attr_index) = attribute_map.get(&a.name) {
+                            vals[*attr_index] = &a.value;
+                        }
+                    } else {
+                        let (_, _, _start, end, _) =
+                            ret.last_mut().expect("one initial element is added");
+                        *end = Some(a.time.into());
+                        ret.push((
+                            &ob.id,
+                            format!("{}-attrs-{}", ob.id, ret.len()),
+                            Some(a.time.into()),
+                            None,
+                            ob_type
+                                .attributes
+                                .iter()
+                                .map(|a| {
+                                    *last_values
+                                        .get(&a.name)
+                                        .expect("NULLs were also inserted here before")
+                                })
+                                .collect(),
+                        ));
+                    }
+                }
+                ret
+            })
+            .collect();
+        let change_id_series = Series::from_iter(changes.iter().map(|c| c.1.as_str()))
+            .into_column()
+            .with_name(ATTRIBUTE_CHANGE_DF_ID.into());
+        let id_series = Series::from_iter(changes.iter().map(|c| c.0))
+            .into_column()
+            .with_name(ATTRIBUTE_CHANGE_DF_OBJ_ID.into());
+        let from_time = Series::from_any_values_and_dtype(
+            ATTRIBUTE_CHANGE_DF_FROM_TIME.into(),
+            &changes
+                .iter()
+                .map(|c| c.2.map(|t| t.timestamp_millis()).into())
+                .collect::<Vec<_>>(),
+            &polars::prelude::DataType::Datetime(TimeUnit::Milliseconds, Some(TimeZone::UTC)),
+            false,
+        )?
+        .into_column();
+        let to_time = Series::from_any_values_and_dtype(
+            ATTRIBUTE_CHANGE_DF_TO_TIME.into(),
+            &changes
+                .iter()
+                .map(|c| c.3.map(|t| t.timestamp_millis()).into())
+                .collect::<Vec<_>>(),
+            &polars::prelude::DataType::Datetime(TimeUnit::Milliseconds, Some(TimeZone::UTC)),
+            false,
+        )?
+        .into_column();
+        let mut columns = vec![change_id_series, id_series, from_time, to_time];
+        for attrs in &ob_type.attributes {
+            columns.push(
+                Series::from_any_values(
+                    attrs.name.as_str().into(),
+                    &changes
+                        .iter()
+                        .map(|c| {
+                            ocel_attribute_val_to_any_value(
+                                c.4[*attribute_map.get(&attrs.name).expect("inserted before")],
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                    false,
+                )?
+                .into_column(),
+            )
+        }
+        let df = DataFrame::new(columns)?;
+        Ok(df)
+    } else {
+        // Maybe introduce an error type here?
+        Ok(DataFrame::default())
     }
 }
