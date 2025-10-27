@@ -161,7 +161,13 @@ pub fn import_ocel_duckdb_from_con(con: Connection) -> Result<OCEL, ::duckdb::Er
             let changed_val = ob_type_attrs
                 .iter()
                 .find(|at| at.name == changed_field)
-                .ok_or(::duckdb::Error::InvalidQuery)
+                .ok_or_else(|| {
+                    println!(
+                        "Could not get change field for {:?} in {:?}",
+                        changed_field, ob_type_attrs
+                    );
+                    ::duckdb::Error::InvalidQuery
+                })
                 .and_then(|attr| get_row_attribute_value(attr, x))
                 .unwrap();
             Ok::<(String, _, String, OCELAttributeValue), ::duckdb::Error>((
