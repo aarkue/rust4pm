@@ -665,7 +665,7 @@ pub fn event_type_to_df<'a, I: LinkedOCELAccess<'a>>(
         Series::from_iter(evs.iter().map(|ev| ev.time.to_utc().timestamp_millis()))
             .cast(&polars::prelude::DataType::Datetime(
                 TimeUnit::Milliseconds,
-                Some(TimeZone::from_static("UTC")),
+                Some(TimeZone::UTC),
             ))?
             .into_column()
             .with_name("time".into());
@@ -951,10 +951,7 @@ pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
                 .iter()
                 .map(|c| c.2.map(|t| t.timestamp_millis()).into())
                 .collect::<Vec<_>>(),
-            &polars::prelude::DataType::Datetime(
-                TimeUnit::Milliseconds,
-                Some(TimeZone::from_static("UTC")),
-            ),
+            &polars::prelude::DataType::Datetime(TimeUnit::Milliseconds, Some(TimeZone::UTC)),
             false,
         )?
         .into_column();
@@ -964,10 +961,7 @@ pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
                 .iter()
                 .map(|c| c.3.map(|t| t.timestamp_millis()).into())
                 .collect::<Vec<_>>(),
-            &polars::prelude::DataType::Datetime(
-                TimeUnit::Milliseconds,
-                Some(TimeZone::from_static("UTC")),
-            ),
+            &polars::prelude::DataType::Datetime(TimeUnit::Milliseconds, Some(TimeZone::UTC)),
             false,
         )?
         .into_column();

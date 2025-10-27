@@ -31,7 +31,7 @@ jobs:
     - name: Download kuzudb
       run: wget -O kuzu.zip https://github.com/kuzudb/kuzu/releases/download/$KUZU_VERSION/libkuzu-linux-x86_64.tar.gz
       env:
-        KUZU_VERSION: v0.11.0
+        KUZU_VERSION: v0.11.2
     - name: Unpacking kuzudb
       run: mkdir ${{ github.workspace }}/libkuzu && tar xzf  ${{ github.workspace }}/kuzu.zip -C ${{ github.workspace }}/libkuzu
     - name: Downloading test files
