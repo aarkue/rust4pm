@@ -15,7 +15,8 @@ use crate::ocel::linked_ocel::{
 };
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
-struct OCDeclareNode(String);
+/// OC-DECLARE node (Activity or Object Init/Exit, also see [`preprocess::preprocess_ocel`])
+pub struct OCDeclareNode(String);
 
 impl<'a> From<&'a OCDeclareNode> for &'a String {
     fn from(val: &'a OCDeclareNode) -> Self {
@@ -24,24 +25,30 @@ impl<'a> From<&'a OCDeclareNode> for &'a String {
 }
 
 impl OCDeclareNode {
+    /// Create OC-DECLARE node from String
     pub fn new<T: Into<String>>(act: T) -> Self {
         Self(act.into())
     }
 
+    /// Return node name
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-/// OC-DECLARE Constraitn arc/edge between two nodes (i.e., activities)
+/// OC-DECLARE Constraint arc/edge between two nodes (i.e., activities)
 pub struct OCDeclareArc {
-    from: OCDeclareNode,
-    to: OCDeclareNode,
-    arc_type: OCDeclareArcType,
-    label: OCDeclareArcLabel,
+    /// Source node (e.g., triggering activity)
+    pub from: OCDeclareNode,
+    /// Target node (e.g., target activity)
+    pub to: OCDeclareNode,
+    /// Arc type, modeling temporal relation
+    pub arc_type: OCDeclareArcType,
+    /// Arc label specifying object involvement criteria
+    pub label: OCDeclareArcLabel,
     /// First tuple element: min count (optional), Second: max count (optional)
-    counts: (Option<usize>, Option<usize>),
+    pub counts: (Option<usize>, Option<usize>),
 }
 
 impl OCDeclareArc {
