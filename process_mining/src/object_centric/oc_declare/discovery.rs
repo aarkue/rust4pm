@@ -140,7 +140,7 @@ pub fn discover_behavior_constraints(
 
     // Third type of discovery: Eventually-follows
     //
-    let direction = OCDeclareArcType::ASS;
+    let direction = OCDeclareArcType::AS;
     let acts_to_use = options
         .acts_to_use
         .unwrap_or_else(|| locel.events_per_type.keys().cloned().collect());
@@ -298,7 +298,7 @@ pub fn discover_behavior_constraints(
                         let mut arc = OCDeclareArc {
                             from: OCDeclareNode::new(act1.clone()),
                             to: OCDeclareNode::new(act2.clone()),
-                            arc_type: OCDeclareArcType::ASS,
+                            arc_type: OCDeclareArcType::AS,
                             label,
                             counts: options.counts_for_filter,
                         };
@@ -354,7 +354,7 @@ fn get_stricter_arrows_for_as(
         }
     }
     if ret.is_empty() && a.from != a.to {
-        a.arc_type = OCDeclareArcType::ASS;
+        a.arc_type = OCDeclareArcType::AS;
         // if a.get_for_all_evs_perf_thresh(locel, noise_thresh) {
         ret.push(a);
         // }

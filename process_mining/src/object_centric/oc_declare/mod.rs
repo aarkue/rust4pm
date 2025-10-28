@@ -136,8 +136,8 @@ impl OCDeclareArc {
 ///
 /// Models temporal relationships
 pub enum OCDeclareArcType {
-    /// Associatin: No temporal restrictions
-    ASS,
+    /// Association: No temporal restrictions
+    AS,
     /// Eventually-Follows: Target must occur after source event
     EF,
     /// Eventually-Precedes: Target must occur before source event
@@ -149,10 +149,27 @@ pub enum OCDeclareArcType {
 }
 
 impl OCDeclareArcType {
+
+    /// Parse a string to an arc type
+    /// 
+    /// e.g., `"AS"` -> [`OCDeclareArcType::AS`], `"EF"` -> [`OCDeclareArcType::EF`]
+    /// 
+    /// Returns `None` if the string cannot be parsed
+    pub fn parse_str(s: impl AsRef<str>) -> Option<Self> {
+        match s.as_ref() {
+            "AS" => Some(Self::AS),
+            "EF" => Some(Self::EF),
+            "EP" => Some(Self::EP),
+            "DF" => Some(Self::DF),
+            "DP" => Some(Self::DP),
+            _ => None,
+        }    
+    }
+
     /// Get name of this arc type as string (e.g., `"EF"`)
     pub fn get_name(&self) -> &'static str {
         match self {
-            OCDeclareArcType::ASS => "AS",
+            OCDeclareArcType::AS => "AS",
             OCDeclareArcType::EF => "EF",
             OCDeclareArcType::EP => "EP",
             OCDeclareArcType::DF => "DF",
@@ -162,10 +179,10 @@ impl OCDeclareArcType {
 
     /// Check if this arc type is dominated by other arc type
     pub fn is_dominated_by_or_eq(&self, arc_type: &OCDeclareArcType) -> bool {
-        if *self == OCDeclareArcType::ASS || self == arc_type {
+        if *self == OCDeclareArcType::AS || self == arc_type {
             return true;
         }
-        if *arc_type == OCDeclareArcType::ASS {
+        if *arc_type == OCDeclareArcType::AS {
             return false;
         }
         match arc_type {
@@ -899,14 +916,14 @@ pub mod perf {
         let ev = linked_ocel.get_ev(ev_index);
         label.get_bindings(ev_index, linked_ocel).any(|binding| {
             match arc_type {
-                OCDeclareArcType::ASS | OCDeclareArcType::EF | OCDeclareArcType::EP => {
+                OCDeclareArcType::AS | OCDeclareArcType::EF | OCDeclareArcType::EP => {
                     let target_ev_iterator = get_evs_with_objs_perf(&binding, linked_ocel, to_et)
                         .filter(|ev2| {
                             // let ev2 = linked_ocel.get_ev(ev2);
                             match arc_type {
                                 OCDeclareArcType::EF => ev_index < ev2,
                                 OCDeclareArcType::EP => ev_index > ev2,
-                                OCDeclareArcType::ASS => true,
+                                OCDeclareArcType::AS => true,
                                 _ => unreachable!("DF should not go here."),
                             }
                         });
