@@ -149,11 +149,10 @@ pub enum OCDeclareArcType {
 }
 
 impl OCDeclareArcType {
-
     /// Parse a string to an arc type
-    /// 
+    ///
     /// e.g., `"AS"` -> [`OCDeclareArcType::AS`], `"EF"` -> [`OCDeclareArcType::EF`]
-    /// 
+    ///
     /// Returns `None` if the string cannot be parsed
     pub fn parse_str(s: impl AsRef<str>) -> Option<Self> {
         match s.as_ref() {
@@ -163,7 +162,7 @@ impl OCDeclareArcType {
             "DF" => Some(Self::DF),
             "DP" => Some(Self::DP),
             _ => None,
-        }    
+        }
     }
 
     /// Get name of this arc type as string (e.g., `"EF"`)
