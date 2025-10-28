@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ocel::linked_ocel::IndexLinkedOCEL;
 use itertools::Itertools;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use super::{
     get_activity_object_involvements, get_object_to_object_involvements,
@@ -12,7 +13,7 @@ use super::{
     INIT_EVENT_PREFIX,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 /// O2O Mode for OC-DECLARE Discovery
 ///
 /// Determines in what extend object-to-object (O2O) relationships are considered
@@ -28,7 +29,7 @@ pub enum O2OMode {
 }
 
 /// Options for the automatic discovery of OC-DECLARE constraints
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OCDeclareDiscoveryOptions {
     /// Noise threshold (i.e., what fraction of events are allowed to violate a discovered constraint)
     pub noise_threshold: f64,

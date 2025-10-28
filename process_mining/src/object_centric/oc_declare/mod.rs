@@ -338,7 +338,7 @@ impl OCDeclareArcLabel {
             ));
         }
         if !self.any.is_empty() {
-            if !self.each.is_empty() || !self.any.is_empty() {
+            if !self.each.is_empty() || !self.all.is_empty() {
                 ret.push_str(", ");
             }
             ret.push_str(&format!(
