@@ -481,6 +481,8 @@ impl<'b> OCDeclareArcLabel {
                     .map(|otass| SetFilter::All(otass.get_for_ev(ev, linked_ocel)))
                     .chain(if product.is_empty() {
                         Vec::default()
+                    } else if product.len() == 1 {
+                        vec![SetFilter::Any(product)]
                     } else {
                         vec![SetFilter::All(product)]
                     })
@@ -672,7 +674,8 @@ pub mod perf {
     };
     use rayon::prelude::*;
 
-    fn get_evs_with_objs_perf<'a>(
+    /// Get all events of the given event type satisfying the filters
+    pub fn get_evs_with_objs_perf<'a>(
         objs: &'a [SetFilter<ObjectIndex>],
         linked_ocel: &'a IndexLinkedOCEL,
         etype: &'a str,
