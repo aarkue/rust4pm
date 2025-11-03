@@ -131,7 +131,7 @@ impl OCDeclareArc {
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 /// OC-DECLARE Arc Direction/Type
 ///
 /// Models temporal relationships
@@ -147,6 +147,14 @@ pub enum OCDeclareArcType {
     /// Directly-Follows: Target must occur directly before source event (considering events that involve all required objects)
     DP,
 }
+/// All OC-DECLARE Arc Types
+pub const ALL_OC_DECLARE_ARC_TYPES: &[OCDeclareArcType] = &[
+    OCDeclareArcType::AS,
+    OCDeclareArcType::EF,
+    OCDeclareArcType::EP,
+    OCDeclareArcType::DF,
+    OCDeclareArcType::DP,
+];
 
 impl OCDeclareArcType {
     /// Parse a string to an arc type

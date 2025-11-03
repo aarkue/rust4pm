@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 // use indicatif::ParallelProgressIterator;
-use crate::ocel::linked_ocel::IndexLinkedOCEL;
+use crate::{
+    object_centric::oc_declare::ALL_OC_DECLARE_ARC_TYPES, ocel::linked_ocel::IndexLinkedOCEL,
+};
 use itertools::Itertools;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -28,6 +30,22 @@ pub enum O2OMode {
     Bidirectional,
 }
 
+/// Mode for reducing OC-DECLARE constraints
+///
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OCDeclareReductionMode {
+    /// Do not reduce constraints at all
+    None,
+    /// Apply lossless reduction
+    ///
+    /// i.e., only removes constraints strictly implied by combining others
+    Lossless,
+    /// Apply lossy reduction
+    ///
+    /// May also remove constraints which are not implied by others
+    Lossy,
+}
+
 /// Options for the automatic discovery of OC-DECLARE constraints
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OCDeclareDiscoveryOptions {
@@ -41,6 +59,12 @@ pub struct OCDeclareDiscoveryOptions {
     pub counts_for_generation: (Option<usize>, Option<usize>),
     /// What min/max counts to use for the candidate filtering step (when the arrow type is determined)
     pub counts_for_filter: (Option<usize>, Option<usize>),
+    /// If/how the discovered constraints should be reduced
+    pub reduction: OCDeclareReductionMode,
+    /// The arrow types to consider when deriving the final constraints
+    ///
+    /// Should be non empty!
+    pub considered_arrow_types: HashSet<OCDeclareArcType>,
 }
 impl Default for OCDeclareDiscoveryOptions {
     fn default() -> Self {
@@ -50,6 +74,8 @@ impl Default for OCDeclareDiscoveryOptions {
             acts_to_use: None,
             counts_for_generation: (Some(1), None),
             counts_for_filter: (Some(1), Some(20)),
+            reduction: OCDeclareReductionMode::None,
+            considered_arrow_types: ALL_OC_DECLARE_ARC_TYPES.into_iter().copied().collect(),
         }
     }
 }
@@ -65,85 +91,10 @@ pub fn discover_behavior_constraints(
     let ob_ob_inv: HashMap<String, HashMap<String, ObjectInvolvementCounts>> =
         get_object_to_object_involvements(locel);
     let ob_ob_rev_inv = get_rev_object_to_object_involvements(locel);
-
-    // First type of discovery: How many events of a specific type per object of specified type?
-    // for ot in locel.get_ob_types() {
-    //     // Only consider activities generally involved with objects of a type
-    //     let mut ev_types_per_ob: HashMap<&str, Vec<usize>> = act_ob_inv
-    //         .iter()
-    //         .filter_map(|(act_name, ob_inv)| {
-    //             if act_name.starts_with(INIT_EVENT_PREFIX)
-    //                 || act_name.starts_with(EXIT_EVENT_PREFIX)
-    //             {
-    //                 return None;
-    //             }
-    //             if let Some(oi) = ob_inv.get(ot) {
-    //                 return Some((act_name.as_str(), Vec::new()));
-    //             }
-    //             None
-    //         })
-    //         .collect();
-    //     for ob in locel.get_obs_of_type(ot) {
-    //         let ev_types = locel
-    //             .get_e2o_rev(ob)
-    //             .map(|(_q, e)| &locel.get_ev(e).event_type)
-    //             .collect_vec();
-    //         ev_types_per_ob.iter_mut().for_each(|(et, counts)| {
-    //             counts.push(ev_types.iter().filter(|et2| *et2 == et).count());
-    //         });
-    //     }
-    //     // Now decide on bounds
-    //     for (act, counts) in ev_types_per_ob {
-    //         // Start with mean
-    //         let mean = counts.iter().sum::<usize>() as f64 / counts.len() as f64;
-    //         if mean >= 20.0 {
-    //             // Probably not interesting (i.e., resource related, grows with log)
-    //             continue;
-    //         }
-    //         let mut n_min = mean.round() as usize;
-    //         let mut n_max = n_min;
-    //         let min_fitting_len = (counts.len() as f64 * (1.0 - noise_thresh)).ceil() as usize;
-    //         while counts
-    //             .iter()
-    //             .filter(|c| c >= &&n_min && c <= &&n_max)
-    //             .count()
-    //             < min_fitting_len
-    //         {
-    //             n_min = if n_min <= 0 { n_min } else { n_min - 1 };
-    //             n_max += 1;
-    //         }
-    //         if n_min == 0 {
-    //             // Oftentimes this is just infrequent behavior
-    //             continue;
-    //         }
-    //         if n_max >= 20 {
-    //             // Probably not interesting (i.e., resource related, grows with log)
-    //             continue;
-    //         }
-    //         // Got bounds!
-    //         // println!("[{ot}] {act}: {n_min} - {n_max} (starting from {mean})");
-    //         ret.push(OCDeclareArc {
-    //             from: OCDeclareNode::new_ob_init(ot),
-    //             to: OCDeclareNode::new_act(act),
-    //             arc_type: OCDeclareArcType::ASS,
-    //             label: OCDeclareArcLabel {
-    //                 each: Vec::default(),
-    //                 any: vec![ObjectTypeAssociation::new_simple(ot)],
-    //                 all: Vec::default(),
-    //             },
-    //             counts: (Some(n_min), Some(n_max)),
-    //         });
-    //     }
-    // }
-
-    // Second type of discovery: How many objects of object type per event of specified activity/event type?
-    // TODO
-
-    // Third type of discovery: Eventually-follows
-    //
     let direction = OCDeclareArcType::AS;
     let acts_to_use = options
         .acts_to_use
+        .clone()
         .unwrap_or_else(|| locel.events_per_type.keys().cloned().collect());
     ret.par_extend(
         acts_to_use
@@ -189,9 +140,9 @@ pub fn discover_behavior_constraints(
                     );
                     if sat {
                         // It IS a viable candidate!
-                        act_arcs.push(any_label.clone());
                         // Also test Each/All:
-                        if is_multiple && sat {
+                        if is_multiple {
+                            act_arcs.push(any_label.clone());
                             // All is also valid!
                             // Next, test Each:
                             let each_label = OCDeclareArcLabel {
@@ -231,6 +182,14 @@ pub fn discover_behavior_constraints(
                                     act_arcs.push(all_label);
                                 }
                             }
+                        } else {
+                            let all_label = OCDeclareArcLabel {
+                                all: any_label.any.clone(),
+                                any: vec![],
+                                each: vec![],
+                            };
+                            act_arcs.push(all_label);
+                            // act_arcs.push(any_label);
                         }
                     }
                 }
@@ -295,7 +254,7 @@ pub fn discover_behavior_constraints(
                         !old.iter()
                             .any(|arc2| *arc1 != *arc2 && arc1.is_dominated_by(arc2))
                     })
-                    .flat_map(move |label| {
+                    .flat_map(|label| {
                         let mut arc = OCDeclareArc {
                             from: OCDeclareNode::new(act1.clone()),
                             to: OCDeclareNode::new(act2.clone()),
@@ -305,7 +264,7 @@ pub fn discover_behavior_constraints(
                         };
                         if arc.get_for_all_evs_perf_thresh(locel, options.noise_threshold) {
                             arc.counts.1 = None;
-                            get_stricter_arrows_for_as(arc, options.noise_threshold, locel)
+                            get_stricter_arrows_for_as(arc, &options, locel)
                         } else {
                             vec![]
                         }
@@ -314,51 +273,91 @@ pub fn discover_behavior_constraints(
             }),
     );
 
-    ret
+    match options.reduction {
+        OCDeclareReductionMode::None => ret,
+        OCDeclareReductionMode::Lossless => reduce_oc_arcs(&ret, true),
+        OCDeclareReductionMode::Lossy => reduce_oc_arcs(&ret, false),
+    }
 }
 
-fn get_stricter_arrows_for_as(
+fn get_stricter_arrows_for_as<'a, 'b>(
     mut a: OCDeclareArc,
-    noise_thresh: f64,
-    locel: &IndexLinkedOCEL,
+    options: &'a OCDeclareDiscoveryOptions,
+    locel: &'b IndexLinkedOCEL,
 ) -> Vec<OCDeclareArc> {
     let mut ret: Vec<OCDeclareArc> = Vec::new();
+    if options
+        .considered_arrow_types
+        .contains(&OCDeclareArcType::EF)
     {
         // Test EF
         a.arc_type = OCDeclareArcType::EF;
-        if a.get_for_all_evs_perf_thresh(locel, noise_thresh) {
+        if a.get_for_all_evs_perf_thresh(locel, options.noise_threshold) {
             // Test DF
             a.arc_type = OCDeclareArcType::DF;
-            // let df_viol_frac = a.get_for_all_evs_perf(locel);
-            if a.get_for_all_evs_perf_thresh(locel, noise_thresh) {
+            if options
+                .considered_arrow_types
+                .contains(&OCDeclareArcType::DF)
+                && a.get_for_all_evs_perf_thresh(locel, options.noise_threshold)
+            {
                 ret.push(a.clone());
             } else {
                 a.arc_type = OCDeclareArcType::EF;
                 ret.push(a.clone());
             }
         }
+    } else if options
+        .considered_arrow_types
+        .contains(&OCDeclareArcType::DF)
+    {
+        a.arc_type = OCDeclareArcType::DF;
+
+        if a.get_for_all_evs_perf_thresh(locel, options.noise_threshold) {
+            ret.push(a.clone());
+        }
     }
+
+    if options
+        .considered_arrow_types
+        .contains(&OCDeclareArcType::EP)
     {
         // Test EP
         a.arc_type = OCDeclareArcType::EP;
-        // let ep_viol_frac = a.get_for_all_evs_perf(locel);
-        if a.get_for_all_evs_perf_thresh(locel, noise_thresh) {
-            // Test DFREV
+        if a.get_for_all_evs_perf_thresh(locel, options.noise_threshold) {
+            // Test DP
             a.arc_type = OCDeclareArcType::DP;
-            // let dp_viol_frac = a.get_for_all_evs_perf(locel);
-            if a.get_for_all_evs_perf_thresh(locel, noise_thresh) {
+            if options
+                .considered_arrow_types
+                .contains(&OCDeclareArcType::DP)
+                && a.get_for_all_evs_perf_thresh(locel, options.noise_threshold)
+            {
                 ret.push(a.clone());
             } else {
                 a.arc_type = OCDeclareArcType::EP;
                 ret.push(a.clone());
             }
         }
+    } else if options
+        .considered_arrow_types
+        .contains(&OCDeclareArcType::DP)
+    {
+        a.arc_type = OCDeclareArcType::DP;
+
+        if a.get_for_all_evs_perf_thresh(locel, options.noise_threshold) {
+            ret.push(a.clone());
+        }
     }
-    if ret.is_empty() && a.from != a.to {
+
+    if ret.is_empty()
+        && options
+            .considered_arrow_types
+            .contains(&OCDeclareArcType::AS)
+        && a.from != a.to
+    {
         a.arc_type = OCDeclareArcType::AS;
-        // if a.get_for_all_evs_perf_thresh(locel, noise_thresh) {
-        ret.push(a);
-        // }
+        if a.get_for_all_evs_perf_thresh(locel, options.noise_threshold) {
+            ret.push(a);
+        }
     }
     ret
 }
@@ -433,4 +432,41 @@ fn get_direct_or_indirect_object_involvements<'a>(
         }));
     }
     res
+}
+
+/// Reduce OC-DECLARE arcs based on some reduction rules
+///
+/// TODO: WIP
+pub fn reduce_oc_arcs(arcs: &Vec<OCDeclareArc>, lossless: bool) -> Vec<OCDeclareArc> {
+    let mut ret = arcs.clone();
+
+    for a in arcs {
+        for b in arcs {
+            if a.from != a.to && b.from == a.to && a.from != b.to {
+                ret.retain(|c| {
+                    let remove = c.from == a.from
+                        && c.to == b.to
+                        && c.arc_type.is_dominated_by_or_eq(&a.arc_type)
+                        && c.arc_type.is_dominated_by_or_eq(&b.arc_type)
+                        && (c.label.is_dominated_by(&a.label) && c.label.is_dominated_by(&b.label));
+
+                    let is_strictly_dominated = c.label.any.iter().all(|any_label| {
+                        // let x = if c.arc_type == OCDeclareArcType::EF
+                        //     || c.arc_type == OCDeclareArcType::DF
+                        // {
+                        !b.label.any.iter().any(|l| l == any_label)
+                        // } else {
+                        //     !a.label.any.iter().any(|l| l == any_label)
+                        // };
+
+                        // x
+                    });
+
+                    !remove || (!lossless || !is_strictly_dominated)
+                })
+            }
+        }
+    }
+
+    ret
 }
