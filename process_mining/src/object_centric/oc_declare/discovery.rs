@@ -75,7 +75,7 @@ impl Default for OCDeclareDiscoveryOptions {
             counts_for_generation: (Some(1), None),
             counts_for_filter: (Some(1), Some(20)),
             reduction: OCDeclareReductionMode::None,
-            considered_arrow_types: ALL_OC_DECLARE_ARC_TYPES.into_iter().copied().collect(),
+            considered_arrow_types: ALL_OC_DECLARE_ARC_TYPES.iter().copied().collect(),
         }
     }
 }
@@ -280,10 +280,10 @@ pub fn discover_behavior_constraints(
     }
 }
 
-fn get_stricter_arrows_for_as<'a, 'b>(
+fn get_stricter_arrows_for_as(
     mut a: OCDeclareArc,
-    options: &'a OCDeclareDiscoveryOptions,
-    locel: &'b IndexLinkedOCEL,
+    options: &OCDeclareDiscoveryOptions,
+    locel: &IndexLinkedOCEL,
 ) -> Vec<OCDeclareArc> {
     let mut ret: Vec<OCDeclareArc> = Vec::new();
     if options
@@ -462,7 +462,7 @@ pub fn reduce_oc_arcs(arcs: &Vec<OCDeclareArc>, lossless: bool) -> Vec<OCDeclare
                         // x
                     });
 
-                    !remove || (!lossless || !is_strictly_dominated)
+                    !remove || (lossless && !is_strictly_dominated)
                 })
             }
         }
