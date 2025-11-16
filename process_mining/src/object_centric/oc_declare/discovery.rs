@@ -183,12 +183,13 @@ pub fn discover_behavior_constraints(
                                 }
                             }
                         } else {
-                            let all_label = OCDeclareArcLabel {
-                                all: any_label.any.clone(),
+                            // Not multiple? Then add as each
+                            let each_label = OCDeclareArcLabel {
+                                each: any_label.any.clone(),
                                 any: vec![],
-                                each: vec![],
+                                all: vec![],
                             };
-                            act_arcs.push(all_label);
+                            act_arcs.push(each_label);
                             // act_arcs.push(any_label);
                         }
                     }
@@ -273,6 +274,9 @@ pub fn discover_behavior_constraints(
             }),
     );
 
+    // println!("Got {}", ret.len());
+
+    // println!("Reduced to {}", reduced_ret.len());
     match options.reduction {
         OCDeclareReductionMode::None => ret,
         OCDeclareReductionMode::Lossless => reduce_oc_arcs(&ret, true),
@@ -434,9 +438,8 @@ fn get_direct_or_indirect_object_involvements<'a>(
     res
 }
 
-/// Reduce OC-DECLARE arcs based on some reduction rules
+/// Reduce OC-DECLARE arcs based on lossless/lossy transitive reduction
 ///
-/// TODO: WIP
 pub fn reduce_oc_arcs(arcs: &Vec<OCDeclareArc>, lossless: bool) -> Vec<OCDeclareArc> {
     let mut ret = arcs.clone();
 
@@ -450,19 +453,12 @@ pub fn reduce_oc_arcs(arcs: &Vec<OCDeclareArc>, lossless: bool) -> Vec<OCDeclare
                         && c.arc_type.is_dominated_by_or_eq(&b.arc_type)
                         && (c.label.is_dominated_by(&a.label) && c.label.is_dominated_by(&b.label));
 
-                    let is_strictly_dominated = c.label.any.iter().all(|any_label| {
-                        // let x = if c.arc_type == OCDeclareArcType::EF
-                        //     || c.arc_type == OCDeclareArcType::DF
-                        // {
-                        !b.label.any.iter().any(|l| l == any_label)
-                        // } else {
-                        //     !a.label.any.iter().any(|l| l == any_label)
-                        // };
-
-                        // x
+                    let bc_any_overlap = c.label.any.iter().any(|any_label| {
+                        let b_is_any = b.label.any.iter().any(|l| l == any_label);
+                        b_is_any
                     });
 
-                    !remove || (lossless && !is_strictly_dominated)
+                    !remove || (lossless && bc_any_overlap)
                 })
             }
         }

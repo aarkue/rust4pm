@@ -1,6 +1,8 @@
 mod discovery;
 mod preprocess;
-pub use discovery::{discover_behavior_constraints, O2OMode, OCDeclareDiscoveryOptions};
+pub use discovery::{
+    discover_behavior_constraints, reduce_oc_arcs, O2OMode, OCDeclareDiscoveryOptions, *,
+};
 pub use preprocess::{preprocess_ocel, EXIT_EVENT_PREFIX, INIT_EVENT_PREFIX};
 
 use std::collections::{HashMap, HashSet};
