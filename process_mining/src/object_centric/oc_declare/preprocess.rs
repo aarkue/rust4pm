@@ -15,18 +15,6 @@ pub const EXIT_EVENT_PREFIX: &str = "<exit>";
 
 /// Preprocess an OCEL for OC-DECLARE, adding init and exit events for objects
 pub fn preprocess_ocel(ocel: OCEL) -> IndexLinkedOCEL {
-    // ocel.object_types.retain(|ot| !ot.name.contains("Step"));
-    // ocel.objects.retain(|o| !o.object_type.contains("Step"));
-    // let all_object_ids: HashSet<_> = ocel.objects.iter().map(|ob| &ob.id).collect();
-    // ocel.events.iter_mut().for_each(|e| {
-    //     e.relationships
-    //         .retain(|rel| all_object_ids.contains(&rel.object_id));
-    //     e.relationships
-    //         .iter_mut()
-    //         .for_each(|rel| rel.qualifier = String::new())
-    // });
-    // export_ocel_xml_path(&ocel, "/home/aarkue/dow/hackathon_ocel_small.xml").unwrap();
-    // println!("After qualifier change");
     let locel: IndexLinkedOCEL = ocel.into();
     let new_evs = locel
         .get_all_obs_ref()
