@@ -838,7 +838,7 @@ pub mod perf {
         following: bool,
     ) -> Option<EventOrSynthetic> {
         let initial: Box<dyn Iterator<Item = EventOrSynthetic>> = if objs.is_empty() {
-            // If no requirements are specified, consider all events 
+            // If no requirements are specified, consider all events
             // TODO: Maybe also consider synthetic events here?
             // But in general, this is not very relevant as there are usually some object requirements
             Box::new(
