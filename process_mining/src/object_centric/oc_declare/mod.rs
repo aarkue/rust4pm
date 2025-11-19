@@ -780,7 +780,7 @@ pub mod perf {
     use super::{OCDeclareArcLabel, OCDeclareArcType, SetFilter};
     use crate::{
         object_centric::oc_declare::EventOrSynthetic,
-        ocel::linked_ocel::{index_linked_ocel::ObjectIndex, IndexLinkedOCEL},
+        ocel::linked_ocel::{index_linked_ocel::ObjectIndex, IndexLinkedOCEL, LinkedOCELAccess},
     };
     use chrono::{DateTime, FixedOffset};
     use rayon::prelude::*;
@@ -791,26 +791,30 @@ pub mod perf {
         linked_ocel: &'a IndexLinkedOCEL,
         etype: &'a str,
     ) -> impl Iterator<Item = EventOrSynthetic> + use<'a> {
-        let initial: Box<dyn Iterator<Item = EventOrSynthetic>> = match &objs[0] {
-            SetFilter::Any(items) => Box::new(
-                items
-                    .iter()
-                    .flat_map(|o| EventOrSynthetic::get_all_of_et_for_ob(linked_ocel, etype, *o)),
-            ),
-            SetFilter::All(items) => {
-                if items.is_empty() {
-                    Box::new(Vec::new().into_iter())
-                } else {
-                    Box::new(
-                        EventOrSynthetic::get_all_of_et_for_ob(linked_ocel, etype, items[0])
-                            .into_iter()
-                            .filter(|e| {
-                                items
-                                    .iter()
-                                    .skip(1)
-                                    .all(|o| e.get_e2o_set(linked_ocel).contains(o))
-                            }),
-                    )
+        let initial: Box<dyn Iterator<Item = EventOrSynthetic>> = if objs.is_empty() {
+            Box::new(EventOrSynthetic::get_all_syn_evs(linked_ocel, etype).into_iter())
+        } else {
+            match &objs[0] {
+                SetFilter::Any(items) => {
+                    Box::new(items.iter().flat_map(|o| {
+                        EventOrSynthetic::get_all_of_et_for_ob(linked_ocel, etype, *o)
+                    }))
+                }
+                SetFilter::All(items) => {
+                    if items.is_empty() {
+                        Box::new(Vec::new().into_iter())
+                    } else {
+                        Box::new(
+                            EventOrSynthetic::get_all_of_et_for_ob(linked_ocel, etype, items[0])
+                                .into_iter()
+                                .filter(|e| {
+                                    items
+                                        .iter()
+                                        .skip(1)
+                                        .all(|o| e.get_e2o_set(linked_ocel).contains(o))
+                                }),
+                        )
+                    }
                 }
             }
         };
@@ -833,35 +837,46 @@ pub mod perf {
         // reference_event: &'a OCELEvent,
         following: bool,
     ) -> Option<EventOrSynthetic> {
-        let initial: Box<dyn Iterator<Item = EventOrSynthetic>> = match &objs[0] {
-            SetFilter::Any(items) => Box::new(items.iter().flat_map(|o| {
-                EventOrSynthetic::get_all_for_ob(linked_ocel, *o)
-                    .into_iter()
-                    .filter(|e| {
-                        let e_time = e.get_timestamp(linked_ocel);
-                        if following {
-                            e_time > *reference_time
-                        } else {
-                            e_time < *reference_time
-                        }
-                    })
-            })),
-            SetFilter::All(items) => {
-                if items.is_empty() {
-                    Box::new(Vec::new().into_iter())
-                } else {
-                    Box::new(
-                        EventOrSynthetic::get_all_for_ob(linked_ocel, items[0])
-                            .into_iter()
-                            .filter(|e| {
-                                let e_time = e.get_timestamp(linked_ocel);
-                                if following {
-                                    e_time > *reference_time
-                                } else {
-                                    e_time < *reference_time
-                                }
-                            }),
-                    )
+        let initial: Box<dyn Iterator<Item = EventOrSynthetic>> = if objs.is_empty() {
+            // If no requirements are specified, consider all events 
+            // TODO: Maybe also consider synthetic events here?
+            // But in general, this is not very relevant as there are usually some object requirements
+            Box::new(
+                linked_ocel
+                    .get_all_evs_ref()
+                    .map(|ev| EventOrSynthetic::Event(*ev)),
+            )
+        } else {
+            match &objs[0] {
+                SetFilter::Any(items) => Box::new(items.iter().flat_map(|o| {
+                    EventOrSynthetic::get_all_for_ob(linked_ocel, *o)
+                        .into_iter()
+                        .filter(|e| {
+                            let e_time = e.get_timestamp(linked_ocel);
+                            if following {
+                                e_time > *reference_time
+                            } else {
+                                e_time < *reference_time
+                            }
+                        })
+                })),
+                SetFilter::All(items) => {
+                    if items.is_empty() {
+                        Box::new(Vec::new().into_iter())
+                    } else {
+                        Box::new(
+                            EventOrSynthetic::get_all_for_ob(linked_ocel, items[0])
+                                .into_iter()
+                                .filter(|e| {
+                                    let e_time = e.get_timestamp(linked_ocel);
+                                    if following {
+                                        e_time > *reference_time
+                                    } else {
+                                        e_time < *reference_time
+                                    }
+                                }),
+                        )
+                    }
                 }
             }
         };
