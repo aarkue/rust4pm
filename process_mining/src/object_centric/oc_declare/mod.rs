@@ -77,32 +77,10 @@ impl OCDeclareArc {
                 .unwrap_or(String::from("∞"))
         )
     }
-}
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-/// Info on an even violating an OC-DECLARE constraint arc
-pub struct ViolationInfo {
-    /// Triggering source event
-    source_ev: String,
-    matching_evs: Vec<String>,
-    all_obs: Vec<String>,
-    any_obs: Vec<Vec<String>>,
-    count: usize,
-    violation_type: ViolationType,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-/// Type of a violation
-pub enum ViolationType {
-    /// Too many target events
-    TooMany,
-    /// Too few target events
-    TooFew,
-}
-impl OCDeclareArc {
     /// Get fraction of source events violating this constraint arc
     ///
-    /// Returns a value from 0 (all source events satisfy this constraints) to 1 (all source events violate this constraint)
+    /// Returns a value from 0 (all source events satisfy this constraint) to 1 (all source events violate this constraint)
     pub fn get_for_all_evs_perf(&self, linked_ocel: &IndexLinkedOCEL) -> f64 {
         perf::get_for_all_evs_perf(
             self.from.as_str(),
@@ -134,6 +112,32 @@ impl OCDeclareArc {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Information on an event violating an OC-DECLARE constraint arc.
+pub struct ViolationInfo {
+    /// The ID of the triggering source event.
+    pub source_ev: String,
+    /// The IDs of matching target events.
+    pub matching_evs: Vec<String>,
+    /// A collection of all objects that must be involved.
+    pub all_obs: Vec<String>,
+    /// A collection of object sets where at least one object from each set must be involved.
+    pub any_obs: Vec<Vec<String>>,
+    /// The actual count of observed target events.
+    pub count: usize,
+    /// The type of violation that occurred.
+    pub violation_type: ViolationType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Describes the type of violation for an OC-DECLARE constraint.
+pub enum ViolationType {
+    /// Indicates that more target events were found than allowed by the constraint's upper bound.
+    TooMany,
+    /// Indicates that fewer target events were found than required by the constraint's lower bound.
+    TooFew,
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 /// OC-DECLARE Arc Direction/Type
 ///
@@ -147,7 +151,7 @@ pub enum OCDeclareArcType {
     EP,
     /// Directly-Follows: Target must occur directly after source event (considering events that involve all required objects)
     DF,
-    /// Directly-Follows: Target must occur directly before source event (considering events that involve all required objects)
+    /// Directly-Precedes: Target must occur directly before source event (considering events that involve all required objects)
     DP,
 }
 /// All OC-DECLARE Arc Types
@@ -266,58 +270,43 @@ impl ObjectTypeAssociation {
     }
 
     /// Get the object index for all objects specified by the association for a specified event
-    pub fn get_for_ev(&self, ev: &TriggerEvent, linked_ocel: &IndexLinkedOCEL) -> Vec<ObjectIndex> {
+    pub fn get_for_ev(
+        &self,
+        ev: &EventOrSynthetic,
+        linked_ocel: &IndexLinkedOCEL,
+    ) -> Vec<ObjectIndex> {
         match self {
             ObjectTypeAssociation::Simple { object_type } => ev
                 .get_e2o(linked_ocel)
-                // .map(|x| x.1)
-                .iter()
-                .filter_map(|o| {
+                .filter(|o| {
                     let ob = linked_ocel.get_ob(o);
-                    if ob.object_type == *object_type {
-                        Some(*o)
-                    } else {
-                        None
-                    }
+                    ob.object_type == *object_type
                 })
                 .collect(),
             ObjectTypeAssociation::O2O {
                 first,
                 second,
                 reversed,
-            } =>
-            // linked_ocel
-            // .get_e2o_set(ev)
-            {
-                ev.get_e2o(linked_ocel)
-                    // .unwrap()
-                    .iter()
-                    // .map(|x| x.1)
-                    .filter(|o| linked_ocel.get_ob(o).object_type == *first)
-                    .flat_map(|o| {
-                        if !reversed {
-                            linked_ocel
-                                .get_o2o(o)
-                                // .get(&Into::<ObjectID>::into(&o.id))
-                                // .unwrap()
-                                // .iter()
-                                .map(|rel| rel.1)
-                                .filter(|o2| linked_ocel.get_ob(o2).object_type == *second)
-                                .collect_vec()
-                        } else {
-                            linked_ocel
-                                .get_o2o_rev(o)
-                                // .get(&Into::<ObjectID>::into(&o.id))
-                                // .unwrap()
-                                // .iter()
-                                .map(|rel| rel.1)
-                                .filter(|o2| linked_ocel.get_ob(o2).object_type == *second)
-                                .collect_vec()
-                        }
-                    })
-                    .copied()
-                    .collect()
-            }
+            } => ev
+                .get_e2o(linked_ocel)
+                .filter(|o| linked_ocel.get_ob(o).object_type == *first)
+                .flat_map(|o| {
+                    if !reversed {
+                        linked_ocel
+                            .get_o2o(&o)
+                            .map(|rel| rel.1)
+                            .filter(|o2| linked_ocel.get_ob(o2).object_type == *second)
+                            .collect_vec()
+                    } else {
+                        linked_ocel
+                            .get_o2o_rev(&o)
+                            .map(|rel| rel.1)
+                            .filter(|o2| linked_ocel.get_ob(o2).object_type == *second)
+                            .collect_vec()
+                    }
+                })
+                .copied()
+                .collect(),
         }
     }
 }
@@ -325,7 +314,7 @@ impl ObjectTypeAssociation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, Hash)]
 /// Object Involvement Label of an OC-DECLARE arc
 pub struct OCDeclareArcLabel {
-    /// Each (for each object of that type seperately, there must be the specified number of relevant target events)
+    /// Each (for each object of that type separately, there must be the specified number of relevant target events)
     pub each: Vec<ObjectTypeAssociation>,
     /// Any (there must be the specified number of relevant target events involving at least one of the objects of this type involved in the source event)
     pub any: Vec<ObjectTypeAssociation>,
@@ -368,7 +357,7 @@ impl OCDeclareArcLabel {
 impl OCDeclareArcLabel {
     /// Combine this OC-DECLARE arc label with another one
     ///
-    /// Merges the different object involvements, where more strict requirements take precendence (e.g., ALL over ANY)
+    /// Merges the different object involvements, where more strict requirements take precedence (e.g., ALL over ANY)
     pub fn combine(&self, other: &Self) -> Self {
         let all = self
             .all
@@ -390,48 +379,10 @@ impl OCDeclareArcLabel {
             .filter(|e| !all.contains(e) && !each.contains(e))
             .cloned()
             .collect::<HashSet<_>>();
-        // let first_obj_types: HashSet<_> = get_out_types(&all)
-        //     .chain(get_out_types(&any))
-        //     .chain(get_out_types(&each))
-        //     .cloned()
-        //     .collect();
         Self {
-            each: each
-                .into_iter()
-                // .filter(|t| match t {
-                //     ObjectTypeAssociation::O2O {
-                //         first: _,
-                //         second,
-                //         reversed: _,
-                //     } => !first_obj_types.contains(second),
-                //     ObjectTypeAssociation::Simple { object_type: _ } => true,
-                // })
-                .sorted()
-                .collect(),
-            all: all
-                .into_iter()
-                // .filter(|t| match t {
-                //     ObjectTypeAssociation::O2O {
-                //         first: _,
-                //         second,
-                //         reversed: _,
-                //     } => !first_obj_types.contains(second),
-                //     ObjectTypeAssociation::Simple { object_type: _ } => true,
-                // })
-                .sorted()
-                .collect(),
-            any: any
-                .into_iter()
-                // .filter(|t| match t {
-                //     ObjectTypeAssociation::O2O {
-                //         first: _,
-                //         second,
-                //         reversed: _,
-                //     } => !first_obj_types.contains(second),
-                //     ObjectTypeAssociation::Simple { object_type: _ } => true,
-                // })
-                .sorted()
-                .collect(),
+            each: each.into_iter().sorted().collect(),
+            all: all.into_iter().sorted().collect(),
+            any: any.into_iter().sorted().collect(),
         }
     }
 
@@ -477,34 +428,48 @@ impl<T: Eq + Hash> SetFilter<T> {
 }
 
 impl<'b> OCDeclareArcLabel {
-    /// Get all bindings for an OC-DECLARE arc label for a specified events
+    /// Get all bindings for an OC-DECLARE arc label for a specified event.
     ///
     /// Bindings correspond to all scenarios for which the constraint has to be checked.
-    /// In particular, there are multiple bindings for an event if there multiple objects of a type that is included with EACH involvement.
+    /// In particular, there are multiple bindings for an event if there are multiple objects of a type that is included with EACH involvement.
     pub fn get_bindings<'a>(
         &'a self,
-        ev: &'a TriggerEvent,
+        ev: &'a EventOrSynthetic,
         linked_ocel: &'a IndexLinkedOCEL,
     ) -> impl Iterator<Item = Vec<SetFilter<ObjectIndex>>> + use<'a, 'b> {
         self.each
             .iter()
+            .sorted_by_key(|ot| match ot {
+                ObjectTypeAssociation::Simple { object_type } => {
+                    -(linked_ocel.get_obs_of_type(object_type).count() as i32)
+                }
+                ObjectTypeAssociation::O2O { second, .. } => {
+                    -(linked_ocel.get_obs_of_type(second).count() as i32)
+                }
+            })
             .map(|otass| otass.get_for_ev(ev, linked_ocel))
             .multi_cartesian_product()
             .map(|product| {
                 self.all
                     .iter()
+                    .sorted_by_key(|ot| match ot {
+                        ObjectTypeAssociation::Simple { object_type } => {
+                            -(linked_ocel.get_obs_of_type(object_type).count() as i32)
+                        }
+                        ObjectTypeAssociation::O2O { second, .. } => {
+                            -(linked_ocel.get_obs_of_type(second).count() as i32)
+                        }
+                    })
                     .map(|otass| SetFilter::All(otass.get_for_ev(ev, linked_ocel)))
                     .chain(if product.is_empty() {
                         Vec::default()
-                    } else if product.len() == 1 {
-                        vec![SetFilter::Any(product)]
                     } else {
                         vec![SetFilter::All(product)]
                     })
                     .chain(
                         self.any
                             .iter()
-                            .sorted_by_cached_key(|ot| match ot {
+                            .sorted_by_key(|ot| match ot {
                                 ObjectTypeAssociation::Simple { object_type } => {
                                     -(linked_ocel.get_obs_of_type(object_type).count() as i32)
                                 }
@@ -523,15 +488,16 @@ impl<'b> OCDeclareArcLabel {
                     )
                     .collect_vec()
             })
-        // .collect_vec()
     }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-/// Counts how many objects of type are involved with an activity
+/// Stores statistics on the number of objects of a certain type involved with an activity or in an O2O relationship.
 pub struct ObjectInvolvementCounts {
-    min: usize,
-    max: usize,
+    /// The minimum number of objects of a given type involved in a single instance.
+    pub min: usize,
+    /// The maximum number of objects of a given type involved in a single instance.
+    pub max: usize,
     // mean: usize,
 }
 impl Default for ObjectInvolvementCounts {
@@ -582,7 +548,6 @@ pub fn get_activity_object_involvements(
                     .filter(|(_x, y)| y.max > 0)
                     .collect(),
             )
-            // (nums_of_objects_per_type
         })
         .collect()
 }
@@ -626,7 +591,6 @@ pub fn get_object_to_object_involvements(
                     .filter(|(_x, y)| y.max > 0)
                     .collect(),
             )
-            // (nums_of_objects_per_type
         })
         .collect()
 }
@@ -670,87 +634,105 @@ pub fn get_rev_object_to_object_involvements(
                     .filter(|(_x, y)| y.max > 0)
                     .collect(),
             )
-            // (nums_of_objects_per_type
         })
         .collect()
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum TriggerEvent {
+/// Represents either a regular event or a synthetic initialization/exit event for an object.
+///
+/// This enum is used to model synthetic events (as source or target) for OC-DECLARE constraints, which can be activated by
+/// regular events from the log or by synthetic events marking object lifecycles.
+pub enum EventOrSynthetic {
+    /// A regular event from the event log, identified by its index.
     Event(EventIndex),
+    /// A synthetic event marking the initialization of an object, identified by the object's index.
     Init(ObjectIndex),
+    /// A synthetic event marking the exit of an object, identified by the object's index.
     Exit(ObjectIndex),
 }
 
-impl TriggerEvent {
+impl EventOrSynthetic {
+    /// Get the event type of the event (regular or synthetic)
     pub fn get_as_event_type(&self, locel: &IndexLinkedOCEL) -> String {
         match self {
-            TriggerEvent::Event(event_index) => locel[event_index].event_type.to_string(),
-            TriggerEvent::Init(object_index) => {
+            EventOrSynthetic::Event(event_index) => locel[event_index].event_type.to_string(),
+            EventOrSynthetic::Init(object_index) => {
                 format!("{INIT_EVENT_PREFIX} {}", locel[object_index].object_type)
             }
-            TriggerEvent::Exit(object_index) => {
+            EventOrSynthetic::Exit(object_index) => {
                 format!("{EXIT_EVENT_PREFIX} {}", locel[object_index].object_type)
             }
         }
     }
     fn get_mock_ev_index(&self, locel: &IndexLinkedOCEL) -> EventIndex {
         match self {
-            TriggerEvent::Event(event_index) => *event_index,
-            TriggerEvent::Init(x) | TriggerEvent::Exit(x) => {
+            EventOrSynthetic::Event(event_index) => *event_index,
+            EventOrSynthetic::Init(x) | EventOrSynthetic::Exit(x) => {
                 let evs = locel.get_e2o_rev(x).map(|(_q, e)| e);
-                let min_ev = if matches!(self, TriggerEvent::Init(_)) {
-                    // We could also just unwrap here, as trigger events per definition _have to occur_ in order to end up here
+
+                if matches!(self, EventOrSynthetic::Init(_)) {
                     evs.min().copied().unwrap_or(0_usize.into())
                 } else {
                     evs.max().copied().unwrap_or(0_usize.into())
-                };
-                min_ev
+                }
             }
         }
     }
 
+    /// Get the timestamp of the event (regular or synthetic)
     pub fn get_timestamp(&self, locel: &IndexLinkedOCEL) -> DateTime<FixedOffset> {
         let mock_ev_index = self.get_mock_ev_index(locel);
 
         let time = &locel[mock_ev_index].time;
         match self {
-            TriggerEvent::Event(_) => *time,
-            TriggerEvent::Init(_) => *time - Duration::milliseconds(1),
-            TriggerEvent::Exit(_) => *time + Duration::milliseconds(1),
+            EventOrSynthetic::Event(_) => *time,
+            EventOrSynthetic::Init(_) => *time - Duration::milliseconds(1),
+            EventOrSynthetic::Exit(_) => *time + Duration::milliseconds(1),
         }
     }
 
-    pub fn get_e2o(&self, locel: &IndexLinkedOCEL) -> HashSet<ObjectIndex> {
+    /// Get iterator over objects involved in the event (regular or synthetic)
+    pub fn get_e2o<'a>(
+        &self,
+        locel: &'a IndexLinkedOCEL,
+    ) -> Box<dyn Iterator<Item = ObjectIndex> + 'a> {
         match self {
-            TriggerEvent::Event(event_index) => locel.get_e2o_set(event_index).clone(),
-            TriggerEvent::Init(x) | TriggerEvent::Exit(x) => {
-                let mut ret = HashSet::new();
-                ret.insert(*x);
-                ret
+            EventOrSynthetic::Event(event_index) => {
+                Box::new(locel.get_e2o_set(event_index).iter().copied())
             }
+            EventOrSynthetic::Init(x) | EventOrSynthetic::Exit(x) => Box::new(vec![*x].into_iter()),
         }
     }
-    pub fn get_all_trigger_evs(locel: &IndexLinkedOCEL, ev_type: &str) -> Vec<Self> {
+    /// Get set of objects involved in the event (regular or synthetic)
+    pub fn get_e2o_set(&self, locel: &IndexLinkedOCEL) -> HashSet<ObjectIndex> {
+        match self {
+            EventOrSynthetic::Event(event_index) => locel.get_e2o_set(event_index).clone(),
+            EventOrSynthetic::Init(x) | EventOrSynthetic::Exit(x) => vec![*x].into_iter().collect(),
+        }
+    }
+    /// Get all events (regular or synthetic) of a specific event type
+    pub fn get_all_syn_evs(locel: &IndexLinkedOCEL, ev_type: &str) -> Vec<Self> {
         if ev_type.starts_with(INIT_EVENT_PREFIX) {
             let ob_type = &ev_type[INIT_EVENT_PREFIX.len() + 1..ev_type.len()];
             locel
                 .get_obs_of_type(ob_type)
-                .map(|ob| TriggerEvent::Init(*ob))
+                .map(|ob| EventOrSynthetic::Init(*ob))
                 .collect()
         } else if ev_type.starts_with(EXIT_EVENT_PREFIX) {
             let ob_type = &ev_type[EXIT_EVENT_PREFIX.len() + 1..ev_type.len()];
             locel
                 .get_obs_of_type(ob_type)
-                .map(|ob| TriggerEvent::Exit(*ob))
+                .map(|ob| EventOrSynthetic::Exit(*ob))
                 .collect()
         } else {
             locel
                 .get_evs_of_type(ev_type)
-                .map(|ev| TriggerEvent::Event(*ev))
+                .map(|ev| EventOrSynthetic::Event(*ev))
                 .collect()
         }
     }
 
+    /// Get all events (regular or synthetic) of a specific event type involving a specific object
     pub fn get_all_of_et_for_ob(
         locel: &IndexLinkedOCEL,
         ev_type: &str,
@@ -781,32 +763,26 @@ impl TriggerEvent {
                 .collect()
         }
     }
+    /// Get all events (regular or synthetic) involving a specific object
     pub fn get_all_for_ob(locel: &IndexLinkedOCEL, ob: ObjectIndex) -> Vec<Self> {
         locel
             .get_e2o_rev(&ob)
             .map(|x| Self::Event(*x.1))
-            .chain(vec![Self::Init(ob.clone()), Self::Exit(ob)])
+            .chain(vec![Self::Init(ob), Self::Exit(ob)])
             .collect()
     }
 }
 
 /// Performance-focused implementations of checking OC-DECLARE constraints
 pub mod perf {
-    use std::{collections::HashSet, sync::atomic::AtomicI32};
+    use std::sync::atomic::AtomicI32;
 
     use super::{OCDeclareArcLabel, OCDeclareArcType, SetFilter};
     use crate::{
-        object_centric::oc_declare::{TriggerEvent, EXIT_EVENT_PREFIX, INIT_EVENT_PREFIX},
-        ocel::{
-            linked_ocel::{
-                index_linked_ocel::{EventIndex, ObjectIndex},
-                IndexLinkedOCEL, LinkedOCELAccess,
-            },
-            ocel_struct::OCELEvent,
-        },
+        object_centric::oc_declare::EventOrSynthetic,
+        ocel::linked_ocel::{index_linked_ocel::ObjectIndex, IndexLinkedOCEL},
     };
     use chrono::{DateTime, FixedOffset};
-    use itertools::Itertools;
     use rayon::prelude::*;
 
     /// Get all events of the given event type satisfying the filters
@@ -814,34 +790,32 @@ pub mod perf {
         objs: &'a [SetFilter<ObjectIndex>],
         linked_ocel: &'a IndexLinkedOCEL,
         etype: &'a str,
-    ) -> impl Iterator<Item = TriggerEvent> + use<'a> {
-        let initial: Box<dyn Iterator<Item = TriggerEvent>> = match &objs[0] {
+    ) -> impl Iterator<Item = EventOrSynthetic> + use<'a> {
+        let initial: Box<dyn Iterator<Item = EventOrSynthetic>> = match &objs[0] {
             SetFilter::Any(items) => Box::new(
                 items
                     .iter()
-                    .flat_map(|o| TriggerEvent::get_all_of_et_for_ob(linked_ocel, etype, *o))
-                    .collect::<HashSet<_>>()
-                    .into_iter(),
+                    .flat_map(|o| EventOrSynthetic::get_all_of_et_for_ob(linked_ocel, etype, *o)),
             ),
             SetFilter::All(items) => {
                 if items.is_empty() {
                     Box::new(Vec::new().into_iter())
                 } else {
                     Box::new(
-                        TriggerEvent::get_all_of_et_for_ob(linked_ocel, etype, items[0])
+                        EventOrSynthetic::get_all_of_et_for_ob(linked_ocel, etype, items[0])
                             .into_iter()
                             .filter(|e| {
                                 items
                                     .iter()
                                     .skip(1)
-                                    .all(|o| e.get_e2o(linked_ocel).contains(o))
+                                    .all(|o| e.get_e2o_set(linked_ocel).contains(o))
                             }),
                     )
                 }
             }
         };
         initial.filter(|e| {
-            let obs = &e.get_e2o(linked_ocel);
+            let obs = &e.get_e2o_set(linked_ocel);
             for o in objs.iter() {
                 if !o.check(obs) {
                     return false;
@@ -858,32 +832,26 @@ pub mod perf {
         reference_time: &'a DateTime<FixedOffset>,
         // reference_event: &'a OCELEvent,
         following: bool,
-    ) -> Option<TriggerEvent> {
-        let initial: Box<dyn Iterator<Item = TriggerEvent>> = match &objs[0] {
-            SetFilter::Any(items) => Box::new(
-                items
-                    .iter()
-                    .flat_map(|o| {
-                        TriggerEvent::get_all_for_ob(linked_ocel, *o)
-                            .into_iter()
-                            .filter(|e| {
-                                let e_time = e.get_timestamp(linked_ocel);
-                                if following {
-                                    e_time > *reference_time
-                                } else {
-                                    e_time < *reference_time
-                                }
-                            })
+    ) -> Option<EventOrSynthetic> {
+        let initial: Box<dyn Iterator<Item = EventOrSynthetic>> = match &objs[0] {
+            SetFilter::Any(items) => Box::new(items.iter().flat_map(|o| {
+                EventOrSynthetic::get_all_for_ob(linked_ocel, *o)
+                    .into_iter()
+                    .filter(|e| {
+                        let e_time = e.get_timestamp(linked_ocel);
+                        if following {
+                            e_time > *reference_time
+                        } else {
+                            e_time < *reference_time
+                        }
                     })
-                    .collect::<HashSet<_>>()
-                    .into_iter(),
-            ),
+            })),
             SetFilter::All(items) => {
                 if items.is_empty() {
                     Box::new(Vec::new().into_iter())
                 } else {
                     Box::new(
-                        TriggerEvent::get_all_for_ob(linked_ocel, items[0])
+                        EventOrSynthetic::get_all_for_ob(linked_ocel, items[0])
                             .into_iter()
                             .filter(|e| {
                                 let e_time = e.get_timestamp(linked_ocel);
@@ -899,7 +867,7 @@ pub mod perf {
         };
         let x = initial.filter(|e| {
             for o in objs.iter() {
-                let obs = &e.get_e2o(linked_ocel);
+                let obs = &e.get_e2o_set(linked_ocel);
                 if !o.check(obs) {
                     return false;
                 }
@@ -914,7 +882,7 @@ pub mod perf {
 
     /// Get fraction of source events violating this constraint arc
     ///
-    /// Returns a value from 0 (all source events satisfy this constraints) to 1 (all source events violate this constraint)
+    /// Returns a value from 0 (all source events satisfy this constraint) to 1 (all source events violate this constraint)
     pub fn get_for_all_evs_perf(
         from_et: &str,
         to_et: &str,
@@ -923,7 +891,7 @@ pub mod perf {
         counts: &(Option<usize>, Option<usize>),
         linked_ocel: &IndexLinkedOCEL,
     ) -> f64 {
-        let evs = TriggerEvent::get_all_trigger_evs(linked_ocel, from_et);
+        let evs = EventOrSynthetic::get_all_syn_evs(linked_ocel, from_et);
         let ev_count = evs.len();
         let violated_evs_count = evs
             .into_par_iter()
@@ -945,13 +913,13 @@ pub mod perf {
         linked_ocel: &IndexLinkedOCEL,
         violation_thresh: f64,
     ) -> bool {
-        let evs = TriggerEvent::get_all_trigger_evs(linked_ocel, from_et);
+        let evs = EventOrSynthetic::get_all_syn_evs(linked_ocel, from_et);
         let ev_count = evs.len();
         let min_s = (ev_count as f64 * (1.0 - violation_thresh)).ceil() as usize;
         let min_v = (ev_count as f64 * violation_thresh).floor() as usize + 1;
-        // // Non-Atomic:
+        // Non-Atomic:
         // for ev in evs {
-        //     let violated = get_for_ev_perf(ev, label, to_et, arc_type, counts, linked_ocel);
+        //     let violated = get_for_ev_perf(&ev, label, to_et, arc_type, counts, linked_ocel);
         //     if violated {
         //         min_v -= 1;
         //         if min_v == 0 {
@@ -1024,16 +992,14 @@ pub mod perf {
 
     /// Returns true if violated!
     pub fn get_for_ev_perf(
-        ev_index: &TriggerEvent,
+        ev_index: &EventOrSynthetic,
         label: &OCDeclareArcLabel,
         to_et: &str,
         arc_type: &OCDeclareArcType,
         counts: &(Option<usize>, Option<usize>),
         linked_ocel: &IndexLinkedOCEL,
     ) -> bool {
-        let trigger_time = ev_index.get_timestamp(linked_ocel);
-        // let mock_ev_trigger = ev_index.get_mock_ev_index(linked_ocel);
-        // let ev = linked_ocel.get_ev(ev_index);
+        let syn_time = ev_index.get_timestamp(linked_ocel);
         label.get_bindings(ev_index, linked_ocel).any(|binding| {
             match arc_type {
                 OCDeclareArcType::AS | OCDeclareArcType::EF | OCDeclareArcType::EP => {
@@ -1041,15 +1007,14 @@ pub mod perf {
                         .filter(|ev2| {
                             let ev2_time = ev2.get_timestamp(linked_ocel);
                             match arc_type {
-                                OCDeclareArcType::EF => trigger_time < ev2_time,
-                                OCDeclareArcType::EP => trigger_time > ev2_time,
+                                OCDeclareArcType::EF => syn_time < ev2_time,
+                                OCDeclareArcType::EP => syn_time > ev2_time,
                                 OCDeclareArcType::AS => true,
                                 _ => unreachable!("DF should not go here."),
                             }
                         });
                     if counts.1.is_none() {
                         // Only take necessary
-                        // ev_count.
                         if counts.0.unwrap_or_default()
                             > target_ev_iterator
                                 .take(counts.0.unwrap_or_default())
@@ -1071,9 +1036,7 @@ pub mod perf {
                     let df_ev = get_df_or_dp_event_perf(
                         &binding,
                         linked_ocel,
-                        &trigger_time,
-                        // ev_index,
-                        // ev,
+                        &syn_time,
                         arc_type == &OCDeclareArcType::DF,
                     );
                     let count = if df_ev.is_some_and(|e| e.get_as_event_type(linked_ocel) == to_et)

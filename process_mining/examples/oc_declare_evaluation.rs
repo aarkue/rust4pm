@@ -3,9 +3,10 @@ use std::{env, fs::File, hint::black_box, path::PathBuf, time::Instant};
 use process_mining::{
     import_ocel_json_from_path, import_ocel_xml_file,
     object_centric::oc_declare::{
-        discover_behavior_constraints, preprocess_ocel, reduce_oc_arcs, O2OMode, OCDeclareArcType,
+        discover_behavior_constraints, reduce_oc_arcs, O2OMode, OCDeclareArcType,
         OCDeclareDiscoveryOptions, OCDeclareReductionMode,
     },
+    ocel::linked_ocel::IndexLinkedOCEL,
 };
 use serde::{Deserialize, Serialize};
 
@@ -46,7 +47,7 @@ fn main() {
                 let num_et = ocel.event_types.len();
                 let num_ot = ocel.object_types.len();
 
-                let locel = preprocess_ocel(ocel);
+                let locel = IndexLinkedOCEL::from_ocel(ocel);
                 for o2o_mode in [O2OMode::None] {
                     //, O2OMode::Direct] {
                     println!("{:?}", o2o_mode);

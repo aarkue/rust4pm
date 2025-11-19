@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-// use indicatif::ParallelProgressIterator;
 use crate::{
     object_centric::oc_declare::ALL_OC_DECLARE_ARC_TYPES, ocel::linked_ocel::IndexLinkedOCEL,
 };
@@ -18,7 +17,7 @@ use super::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 /// O2O Mode for OC-DECLARE Discovery
 ///
-/// Determines in what extend object-to-object (O2O) relationships are considered
+/// Determines to what extent object-to-object (O2O) relationships are considered
 pub enum O2OMode {
     /// O2O relationships are not considered at all
     None,
@@ -26,7 +25,7 @@ pub enum O2OMode {
     Direct,
     /// Reverse direction of O2O relationships are considered
     Reversed,
-    /// O2O relationships and there inverse directions are considered
+    /// O2O relationships and their inverse directions are considered
     Bidirectional,
 }
 
@@ -101,7 +100,6 @@ pub fn discover_behavior_constraints(
             .iter()
             .cartesian_product(acts_to_use.iter())
             .par_bridge()
-            // .progress_count(locel.events_per_type.len() as u64 * locel.events_per_type.len() as u64)
             .filter(|(act1, act2)| {
                 if act1.starts_with(INIT_EVENT_PREFIX)
                     || act1.starts_with(EXIT_EVENT_PREFIX)
@@ -161,7 +159,6 @@ pub fn discover_behavior_constraints(
                             );
                             if each_sat {
                                 // All is also valid!
-                                // act_arcs.push(all_label);
                                 act_arcs.push(each_label);
                                 let all_label = OCDeclareArcLabel {
                                     all: any_label.any.clone(),
@@ -190,7 +187,6 @@ pub fn discover_behavior_constraints(
                                 all: vec![],
                             };
                             act_arcs.push(each_label);
-                            // act_arcs.push(any_label);
                         }
                     }
                 }
@@ -198,7 +194,6 @@ pub fn discover_behavior_constraints(
                 let mut old: HashSet<_> = act_arcs.iter().cloned().collect();
                 let mut iteration = 1;
                 while changed {
-                    // println!("{}->{}, |act_arcs|={}",act1,act2,act_arcs.len());
                     let x = 0..act_arcs.len();
                     let new_res: HashSet<_> = x
                         .flat_map(|arc1_i| {
@@ -249,7 +244,6 @@ pub fn discover_behavior_constraints(
                 }
                 let v = old
                     .clone()
-                    // .into_iter()
                     .into_par_iter()
                     .filter(move |arc1| {
                         !old.iter()
@@ -274,9 +268,6 @@ pub fn discover_behavior_constraints(
             }),
     );
 
-    // println!("Got {}", ret.len());
-
-    // println!("Reduced to {}", reduced_ret.len());
     match options.reduction {
         OCDeclareReductionMode::None => ret,
         OCDeclareReductionMode::Lossless => reduce_oc_arcs(&ret, true),
@@ -284,6 +275,9 @@ pub fn discover_behavior_constraints(
     }
 }
 
+/// Try to find stricter constraints for an AS constraint
+///
+/// e.g., if AS is satisfied, check if EF, DF, EP, DP are also satisfied
 fn get_stricter_arrows_for_as(
     mut a: OCDeclareArc,
     options: &OCDeclareDiscoveryOptions,
@@ -367,7 +361,8 @@ fn get_stricter_arrows_for_as(
 }
 
 /// Returns an iterator over different object type associations
-/// in particular each item (X,b) consists of an `ObjectTypeAssociation` X and a flag b, indicating if multiple objects are sometimes involved in the source (or through the O2O)
+///
+/// In particular each item (X,b) consists of an `ObjectTypeAssociation` X and a flag b, indicating if multiple objects are sometimes involved in the source (or through the O2O)
 fn get_direct_or_indirect_object_involvements<'a>(
     act1: &'a str,
     act2: &'a str,
@@ -396,7 +391,6 @@ fn get_direct_or_indirect_object_involvements<'a>(
                 .flat_map(|ots2| {
                     ots2.iter()
                         .filter(|(ot2, _)| act2_obs.contains(ot2))
-                        // .filter(|(ot2, _)| *ot == "customers" && *ot2 == "employees")
                         .map(|(ot2, oi)| {
                             (
                                 ot,
@@ -439,7 +433,6 @@ fn get_direct_or_indirect_object_involvements<'a>(
 }
 
 /// Reduce OC-DECLARE arcs based on lossless/lossy transitive reduction
-///
 pub fn reduce_oc_arcs(arcs: &Vec<OCDeclareArc>, lossless: bool) -> Vec<OCDeclareArc> {
     let mut ret = arcs.clone();
 
