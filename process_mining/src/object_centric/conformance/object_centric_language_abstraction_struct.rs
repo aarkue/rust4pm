@@ -27,21 +27,21 @@ use uuid::Uuid;
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct OCLanguageAbstraction {
     /// The start event types per object type
-    start_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
+    pub start_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
     /// The end event types per object type
-    end_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
+    pub end_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
     /// The directly-following event types per object type
-    directly_follows_ev_types_per_ob_type: HashMap<ObjectType, HashSet<(EventType, EventType)>>,
+    pub directly_follows_ev_types_per_ob_type: HashMap<ObjectType, HashSet<(EventType, EventType)>>,
     /// The related event types per object type
-    related_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
+    pub related_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
     /// The divergent event types per object type
-    divergent_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
+    pub divergent_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
     /// The convergent event types per object type
-    convergent_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
+    pub convergent_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
     /// The deficient event types per object type
-    deficient_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
+    pub deficient_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
     /// The optional event types per object type
-    optional_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
+    pub optional_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>>,
 }
 
 impl OCLanguageAbstraction {
