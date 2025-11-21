@@ -45,7 +45,7 @@ fn stringMapToAttributeMap(map: &Attributes) -> HashMap<String, Attribute> {
 ///
 /// Required for converting a [`JEventLog`] to an [`EventLog`] (+ all subtypes)
 fn AttributeMapToStringMap(map: &HashMap<String, Attribute>) -> Attributes {
-    map.iter().map(|(_, value)| value.clone()).collect()
+    map.values().cloned().collect()
 }
 
 impl From<&Event> for JEvent {
