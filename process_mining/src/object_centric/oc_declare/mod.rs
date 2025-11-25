@@ -1,9 +1,7 @@
 mod discovery;
 mod preprocess;
 use chrono::{DateTime, Duration, FixedOffset};
-pub use discovery::{
-    discover_behavior_constraints, reduce_oc_arcs, O2OMode, OCDeclareDiscoveryOptions, *,
-};
+pub use discovery::*;
 pub use preprocess::{preprocess_ocel, EXIT_EVENT_PREFIX, INIT_EVENT_PREFIX};
 
 use std::collections::{HashMap, HashSet};
@@ -17,7 +15,7 @@ use crate::ocel::linked_ocel::{
     IndexLinkedOCEL, LinkedOCELAccess,
 };
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 /// OC-DECLARE node (Activity or Object Init/Exit, also see [`preprocess::preprocess_ocel`])
 pub struct OCDeclareNode(String);
 
@@ -39,7 +37,7 @@ impl OCDeclareNode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash, PartialOrd, Ord)]
 /// OC-DECLARE Constraint arc/edge between two nodes (i.e., activities)
 pub struct OCDeclareArc {
     /// Source node (e.g., triggering activity)
@@ -138,7 +136,7 @@ pub enum ViolationType {
     TooFew,
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 /// OC-DECLARE Arc Direction/Type
 ///
 /// Models temporal relationships
@@ -311,7 +309,7 @@ impl ObjectTypeAssociation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, Hash, PartialOrd, Ord)]
 /// Object Involvement Label of an OC-DECLARE arc
 pub struct OCDeclareArcLabel {
     /// Each (for each object of that type separately, there must be the specified number of relevant target events)
