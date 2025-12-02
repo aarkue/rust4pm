@@ -109,9 +109,10 @@ pub fn import_ocel_sqlite_from_con(con: Connection) -> Result<OCEL, rusqlite::Er
         )?;
         let objs = query_all::<_>(&mut s, [])?;
         objs.and_then(|x| {
-            Ok::<(String, _, Vec<_>), rusqlite::Error>((
+            Ok::<(String, Vec<_>), rusqlite::Error>((
                 x.get(OCEL_ID_COLUMN)?,
-                try_get_column_date_val(x, OCEL_TIME_COLUMN)?,
+                // We do not really need the time of initial attributes.
+                // try_get_column_date_val(x, OCEL_TIME_COLUMN)?,
                 ob_type_attrs
                     .iter()
                     .flat_map(|attr| {
@@ -124,7 +125,7 @@ pub fn import_ocel_sqlite_from_con(con: Connection) -> Result<OCEL, rusqlite::Er
             ))
         })
         .flatten()
-        .for_each(|(ob_id, mut time, attrs)| {
+        .for_each(|(ob_id, attrs)| {
             let mut o = OCELObject {
                 id: ob_id.clone(),
                 object_type: ob_type_ocel.to_string(),
@@ -133,10 +134,7 @@ pub fn import_ocel_sqlite_from_con(con: Connection) -> Result<OCEL, rusqlite::Er
             };
             // Technically time should probably be set to UNIX epoch (1970-01-01 00:00 UTC) for these "initial" attribute values
             // however there are some OCEL logs for which this does not hold?
-            if DateTime::UNIX_EPOCH.fixed_offset() != time {
-                // eprintln!("Expected initial object attribute value to have UNIX epoch as time. Instead got {time:?}. Overwriting to UNIX epoch.");
-                time = DateTime::UNIX_EPOCH.into();
-            }
+            let time = DateTime::UNIX_EPOCH.into();
             o.attributes
                 .extend(
                     attrs
