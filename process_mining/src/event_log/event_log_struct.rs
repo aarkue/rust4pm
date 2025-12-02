@@ -2,6 +2,7 @@ use chrono::{DateTime, FixedOffset};
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::hash::{Hash, Hasher};
 use uuid::Uuid;
 
@@ -27,6 +28,13 @@ use super::constants::ACTIVITY_NAME;
 /// let f = v.try_as_float().unwrap();
 /// assert_eq!(*f,42.0);
 /// ````
+///
+///
+/// [`AttributeValue`] implements [`Display`] and thus `to_string()`, with the following design decisions:
+///
+/// For container/list attribute values, a debug representation String is returned.
+/// This could, for example, look like this: `[Attribute { key: "test", value: Float(0.3), own_attributes: None }]`.
+/// For None attribute vaues, the String `"None"` is returned.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "content")]
 pub enum AttributeValue {
@@ -53,6 +61,28 @@ pub enum AttributeValue {
     Container(Attributes),
     /// Used to represent invalid values (e.g., `DateTime` which could not be parsed)
     None(),
+}
+
+impl Display for AttributeValue {
+    /// Get String representation of an [`AttributeValue`]
+    ///
+    /// Note: For container/list attribute values, this returns a debug representation string.
+    ///
+    /// For None attribute vaues, the String `"None"` is returned.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            AttributeValue::String(s) => s.to_string(),
+            AttributeValue::Date(date_time) => date_time.to_string(),
+            AttributeValue::Int(i) => i.to_string(),
+            AttributeValue::Float(f) => f.to_string(),
+            AttributeValue::Boolean(b) => b.to_string(),
+            AttributeValue::ID(uuid) => uuid.to_string(),
+            AttributeValue::List(attributes) => format!("{:?}", attributes),
+            AttributeValue::Container(attributes) => format!("{:?}", attributes),
+            AttributeValue::None() => String::from("None"),
+        };
+        write!(f, "{}", s)
+    }
 }
 
 impl From<&str> for AttributeValue {
@@ -424,7 +454,7 @@ pub fn to_attributes(from: HashMap<String, AttributeValue>) -> Attributes {
 ///
 /// An event consists of multiple (event) attributes ([Attributes])
 ///
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Hash, Eq)]
 pub struct Event {
     /// Event attributes
     pub attributes: Attributes,
