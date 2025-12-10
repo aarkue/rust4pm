@@ -1,8 +1,8 @@
+use crate::EventLog;
 use crate::dfg::DirectlyFollowsGraph;
 use crate::event_log::event_log_struct::EventLogClassifier;
 use crate::ocel::flatten::flatten_ocel_on;
 use crate::ocel::linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess};
-use crate::EventLog;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

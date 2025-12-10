@@ -5,9 +5,9 @@ use std::{
     time::Instant,
 };
 
-use process_mining::{
-    import_ocel_xml_file,
-    ocel::{graph_db::ocel_kuzudb::export_ocel_to_kuzudb_typed, linked_ocel::IndexLinkedOCEL},
+use process_mining::core::event_data::object_centric::{
+    graph_db::ocel_kuzudb::export_ocel_to_kuzudb_typed, linked_ocel::IndexLinkedOCEL,
+    ocel_xml::xml_ocel_import::import_ocel_xml_file,
 };
 
 fn main() {

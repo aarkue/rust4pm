@@ -2,13 +2,5 @@
 resolver = "2"
 
 members = [
-	"binary",
 	"process_mining",
-	"python_bridge",
-	"java_bridge",
-	"pm_wasm",
-	"npm_wasm"
 ]
-
-[profile.release.package.pm_wasm]
-debug = true
