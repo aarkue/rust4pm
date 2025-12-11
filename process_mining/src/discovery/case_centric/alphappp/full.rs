@@ -5,12 +5,13 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    event_log::activity_projection::{
+use crate::core::{
+    event_data::case_centric::utils::activity_projection::{
         add_start_end_acts_proj, ActivityProjectionDFG, EventLogActivityProjection, END_ACTIVITY,
         START_ACTIVITY,
     },
-    petri_net::petri_net_struct::{ArcType, Marking, PetriNet, TransitionID},
+    process_models::case_centric::petri_net::petri_net_struct::{ArcType, Marking, TransitionID},
+    PetriNet,
 };
 
 use super::{

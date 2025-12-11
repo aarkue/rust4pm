@@ -11,9 +11,10 @@ pub use chrono;
 
 pub mod core;
 
+pub mod discovery;
+
 /// Used for internal testing
-#[doc(hidden)]
-// #[cfg(test)]
+// #[doc(hidden)]
 pub mod test_utils {
     use std::path::PathBuf;
 

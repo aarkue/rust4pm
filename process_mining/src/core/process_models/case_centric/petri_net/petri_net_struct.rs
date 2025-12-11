@@ -1,4 +1,3 @@
-use super::import_pnml::PNMLParseError;
 #[cfg(feature = "token_based_replay")]
 use itertools::Itertools;
 #[cfg(feature = "token_based_replay")]
@@ -6,6 +5,11 @@ use nalgebra::{DMatrix, Dyn, OMatrix};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+
+use crate::core::process_models::case_centric::petri_net::pnml::{
+    export_pnml,
+    import_pnml::{self, PNMLParseError},
+};
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Hash, Eq, PartialOrd, Ord)]
 /// Place in a Petri net
 pub struct Place {
@@ -419,7 +423,7 @@ impl PetriNet {
     /// _Note_: This is an export method for __saving__ the Petri net data.
     /// The resulting file can also be imported as a Petri net again (see [`PetriNet::import_pnml`]).
     pub fn export_pnml<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), quick_xml::Error> {
-        super::export_pnml::export_petri_net_to_pnml_path(self, path)
+        export_pnml::export_petri_net_to_pnml_path(self, path)
     }
     /// Import Petri net from a PNML file
     ///
@@ -428,7 +432,7 @@ impl PetriNet {
     ///
     /// For the related export function, see [`PetriNet::export_pnml`])
     pub fn import_pnml<P: AsRef<std::path::Path>>(path: P) -> Result<PetriNet, PNMLParseError> {
-        super::import_pnml::import_pnml_from_path(path)
+        import_pnml::import_pnml_from_path(path)
     }
 }
 

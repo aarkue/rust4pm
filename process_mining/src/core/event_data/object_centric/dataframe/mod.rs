@@ -54,9 +54,11 @@ impl OCELDataFrames {
     /// Example
     ///
     /// ```
-    /// use process_mining::{ocel, OCEL};
-    /// use process_mining::event_log::ocel::dataframe::*;
-    /// use process_mining::utils::test_utils::get_test_data_path;
+    /// use process_mining::{
+    ///     core::event_data::object_centric::dataframe::{ocel_to_dataframes, OCEL_OBJECT_ID_KEY},
+    ///     ocel,
+    ///     test_utils::get_test_data_path,
+    /// };
     /// let ocel = ocel![
     ///     events:
     ///     ("place", ["c:1", "o:1", "i:1", "i:2"]),
@@ -65,7 +67,12 @@ impl OCELDataFrames {
     ///     ("o:1", "i:1")
     /// ];
     /// let mut ocel_dfs = ocel_to_dataframes(&ocel);
-    /// ocel_dfs.export_objects_csv(get_test_data_path().join("export").join("ocel-objects.csv"),&[OCEL_OBJECT_ID_KEY]).expect("Object CSV Export Failed");
+    /// ocel_dfs
+    ///     .export_objects_csv(
+    ///         get_test_data_path().join("export").join("ocel-objects.csv"),
+    ///         &[OCEL_OBJECT_ID_KEY],
+    ///     )
+    ///     .expect("Object CSV Export Failed");
     /// ```
     pub fn export_objects_csv<P: AsRef<Path>>(
         &mut self,
@@ -91,9 +98,10 @@ impl OCELDataFrames {
     /// Example
     ///
     /// ```
-    /// use process_mining::{ocel, OCEL};
-    /// use process_mining::event_log::ocel::dataframe::*;
-    /// use process_mining::utils::test_utils::get_test_data_path;
+    /// use process_mining::{
+    ///     core::event_data::object_centric::dataframe::{ocel_to_dataframes}, ocel,
+    ///     test_utils::get_test_data_path,
+    /// };
     /// let ocel = ocel![
     ///     events:
     ///     ("place", ["c:1", "o:1", "i:1", "i:2"]),
@@ -128,9 +136,10 @@ impl OCELDataFrames {
     /// Example
     ///
     /// ```
-    /// use process_mining::{ocel, OCEL};
-    /// use process_mining::event_log::ocel::dataframe::*;
-    /// use process_mining::utils::test_utils::get_test_data_path;
+    /// use process_mining::{
+    ///     core::event_data::object_centric::dataframe::ocel_to_dataframes, ocel,
+    ///     test_utils::get_test_data_path,
+    /// };
     /// let ocel = ocel![
     ///     events:
     ///     ("place", ["c:1", "o:1", "i:1", "i:2"]),
@@ -139,7 +148,12 @@ impl OCELDataFrames {
     ///     ("o:1", "i:1")
     /// ];
     /// let mut ocel_dfs = ocel_to_dataframes(&ocel);
-    /// ocel_dfs.export_e2o_csv(get_test_data_path().join("export").join("ocel-e2o.csv"),&[]).expect("E2O CSV Export Failed");
+    /// ocel_dfs
+    ///     .export_e2o_csv(
+    ///         get_test_data_path().join("export").join("ocel-e2o.csv"),
+    ///         &[],
+    ///     )
+    ///     .expect("E2O CSV Export Failed");
     /// ```
     pub fn export_e2o_csv<P: AsRef<Path>>(
         &mut self,
@@ -165,9 +179,10 @@ impl OCELDataFrames {
     /// Example
     ///
     /// ```
-    /// use process_mining::{ocel, OCEL};
-    /// use process_mining::event_log::ocel::dataframe::*;
-    /// use process_mining::utils::test_utils::get_test_data_path;
+    /// use process_mining::{
+    ///     core::event_data::object_centric::dataframe::ocel_to_dataframes, ocel,
+    ///     test_utils::get_test_data_path,
+    /// };
     /// let ocel = ocel![
     ///     events:
     ///     ("place", ["c:1", "o:1", "i:1", "i:2"]),
@@ -176,7 +191,14 @@ impl OCELDataFrames {
     ///     ("o:1", "i:1")
     /// ];
     /// let mut ocel_dfs = ocel_to_dataframes(&ocel);
-    /// ocel_dfs.export_o2o_csv(get_test_data_path().join("export").join("ocel-o2o.csv"),&[]).expect("O2O CSV Export Failed");
+    /// ocel_dfs
+    ///     .export_object_changes_csv(
+    ///         get_test_data_path()
+    ///             .join("export")
+    ///             .join("ocel-object-changes.csv"),
+    ///         &[],
+    ///     )
+    ///     .expect("Object Changes CSV Export Failed");
     /// ```
     pub fn export_o2o_csv<P: AsRef<Path>>(
         &mut self,
@@ -202,9 +224,10 @@ impl OCELDataFrames {
     /// Example
     ///
     /// ```
-    /// use process_mining::{ocel, OCEL};
-    /// use process_mining::event_log::ocel::dataframe::*;
-    /// use process_mining::utils::test_utils::get_test_data_path;
+    /// use process_mining::{
+    ///     core::event_data::object_centric::dataframe::ocel_to_dataframes, ocel,
+    ///     test_utils::get_test_data_path,
+    /// };
     /// let ocel = ocel![
     ///     events:
     ///     ("place", ["c:1", "o:1", "i:1", "i:2"]),
@@ -213,7 +236,14 @@ impl OCELDataFrames {
     ///     ("o:1", "i:1")
     /// ];
     /// let mut ocel_dfs = ocel_to_dataframes(&ocel);
-    /// ocel_dfs.export_object_changes_csv(get_test_data_path().join("export").join("ocel-object-changes.csv"),&[]).expect("Object Changes CSV Export Failed");
+    /// ocel_dfs
+    ///     .export_object_changes_csv(
+    ///         get_test_data_path()
+    ///             .join("export")
+    ///             .join("ocel-object-changes.csv"),
+    ///         &[],
+    ///     )
+    ///     .expect("Object Changes CSV Export Failed");
     /// ```
     pub fn export_object_changes_csv<P: AsRef<Path>>(
         &mut self,

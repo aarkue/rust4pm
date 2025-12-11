@@ -5,10 +5,9 @@ use std::{
 
 use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
-use crate::event_log::activity_projection::{
+use crate::core::event_data::case_centric::utils::activity_projection::{
     EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY,
 };
-
 fn compute_balance(a: &[usize], b: &[usize], act_count: &[i128]) -> f32 {
     let mut ai: i128 = 0;
     let mut bi: i128 = 0;

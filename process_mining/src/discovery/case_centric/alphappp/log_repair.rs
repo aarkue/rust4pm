@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
-use crate::event_log::activity_projection::{
+use crate::core::event_data::case_centric::utils::activity_projection::{
     ActivityProjectionDFG, EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY,
 };
 

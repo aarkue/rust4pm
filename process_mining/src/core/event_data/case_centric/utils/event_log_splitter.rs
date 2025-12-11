@@ -23,8 +23,7 @@ use crate::core::EventLog;
 ///
 /// ```
 /// use std::collections::HashSet;
-/// use process_mining::core::event_data::case_centric::utils::;
-/// use process_mining::event_log::event_log_splitter::random_activity_split_max_bins;
+/// use process_mining::core::event_data::case_centric::utils::event_log_splitter::random_activity_split_max_bins;
 ///
 /// // Create the set of activities
 /// let mut activities = HashSet::new();
@@ -80,19 +79,19 @@ pub fn random_activity_split_max_bins<'a>(
 /// # Examples
 ///
 /// ```
-///
+/// use process_mining::core::event_data::case_centric::utils::event_log_splitter::random_activity_split;
 /// use std::collections::HashSet;
-/// use process_mining::event_log::event_log_splitter::random_activity_split;
-///
+
 /// // Create the set of activities
-/// let mut activities = HashSet::new();
-/// activities.insert("Admission IC");
-/// activities.insert("ER Sepsis Triage");
-/// activities.insert("IV Antibiotics");
-/// activities.insert("Release A");
-/// activities.insert("Release B");
-/// activities.insert("Admission NC");
-///
+/// let activities = HashSet::from([
+///     "Admission IC",
+///     "ER Sepsis Triage",
+///     "IV Antibiotics",
+///     "Release A",
+///     "Release B",
+///     "Admission NC",
+/// ]);
+
 /// // Splits the activities into exactly three sets with no set being empty and random distribution.
 /// let split_sets: Vec<HashSet<&str>> = random_activity_split(&activities, 3);
 /// ```
@@ -136,42 +135,42 @@ pub fn random_activity_split<'a>(
 /// # Examples
 /// For the following example, it is required to have the sepsis case event log setup on your device.
 /// ```
+/// use process_mining::core::event_data::case_centric::utils::event_log_splitter::ActivityBasedEventLogSplitter;
+/// use process_mining::core::event_data::case_centric::{
+///     utils::event_log_splitter::random_activity_split,
+///     xes::import_xes::{import_xes_file, XESImportOptions},
+/// };
+/// use process_mining::test_utils::get_test_data_path;
 /// use std::collections::HashSet;
-/// use process_mining::{import_xes_file, XESImportOptions};
-/// use process_mining::event_log::event_log_splitter::{random_activity_split, ActivityBasedEventLogSplitter};
-/// use process_mining::utils::test_utils::get_test_data_path;
-///
+
 /// let path = get_test_data_path()
-///                 .join("xes")
-///                 .join("Sepsis Cases - Event Log.xes.gz");
+///     .join("xes")
+///     .join("Sepsis Cases - Event Log.xes.gz");
 /// let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
-///
-/// let mut activities = HashSet::new();
-///
-/// activities.insert("Admission IC");
-/// activities.insert("ER Sepsis Triage");
-/// activities.insert("IV Antibiotics");
-/// activities.insert("Release A");
-/// activities.insert("Release B");
-/// activities.insert("Admission NC");
-/// activities.insert("CRP");
-/// activities.insert("IV Liquid");
-/// activities.insert("Release C");
-/// activities.insert("Release D");
-/// activities.insert("ER Registration");
-/// activities.insert("ER Triage");
-/// activities.insert("LacticAcid");
-/// activities.insert("Leucocytes");
-/// activities.insert("Release E");
-/// activities.insert("Return ER");
-///
+
+/// let activities = HashSet::from([
+///     "Admission IC",
+///     "ER Sepsis Triage",
+///     "IV Antibiotics",
+///     "Release A",
+///     "Release B",
+///     "Admission NC",
+///     "CRP",
+///     "IV Liquid",
+///     "Release C",
+///     "Release D",
+///     "ER Registration",
+///     "ER Triage",
+///     "LacticAcid",
+///     "Leucocytes",
+///     "Release E",
+///     "Return ER",
+/// ]);
+
 /// let split_sets: Vec<HashSet<&str>> = random_activity_split(&activities, 4);
 /// assert_eq!(split_sets.len(), 4);
-///
-///
 /// let splitter = ActivityBasedEventLogSplitter::new(&log, &split_sets);
 /// assert!(splitter.check_split_set_validity());
-///
 /// let result_event_logs = &splitter.split();
 /// for event_log in result_event_logs {
 ///     assert_eq!(event_log.traces.len(), 1050);
@@ -307,36 +306,48 @@ impl<'a> ActivityBasedEventLogSplitter<'a> {
 /// For the following example, it is required to have the sepsis case event log setup on your device.
 /// ```
 /// use std::collections::HashSet;
-/// use process_mining::{import_xes_file, XESImportOptions};
-/// use process_mining::event_log::event_log_splitter::{random_activity_split, RandomEventLogSplitter};
-/// use process_mining::utils::test_utils::get_test_data_path;
-///
+
+/// use process_mining::{
+///     core::event_data::case_centric::{
+///         utils::event_log_splitter::{
+///             random_activity_split, ActivityBasedEventLogSplitter, RandomEventLogSplitter,
+///         },
+///         xes::import_xes::{import_xes_file, XESImportOptions},
+///     },
+///     test_utils::get_test_data_path,
+/// };
 /// let path = get_test_data_path()
-///                 .join("xes")
-///                 .join("Sepsis Cases - Event Log.xes.gz");
+///     .join("xes")
+///     .join("Sepsis Cases - Event Log.xes.gz");
 /// let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
-///
-/// let mut activities = HashSet::new();
-///
-/// activities.insert("Admission IC");
-/// activities.insert("ER Sepsis Triage");
-/// activities.insert("IV Antibiotics");
-/// activities.insert("Release A");
-/// activities.insert("Release B");
-/// activities.insert("Admission NC");
-/// activities.insert("CRP");
-/// activities.insert("IV Liquid");
-/// activities.insert("Release C");
-/// activities.insert("Release D");
-/// activities.insert("ER Registration");
-/// activities.insert("ER Triage");
-/// activities.insert("LacticAcid");
-/// activities.insert("Leucocytes");
-/// activities.insert("Release E");
-/// activities.insert("Return ER");
-///
+/// let activities = HashSet::from([
+///     "Admission IC",
+///     "ER Sepsis Triage",
+///     "IV Antibiotics",
+///     "Release A",
+///     "Release B",
+///     "Admission NC",
+///     "CRP",
+///     "IV Liquid",
+///     "Release C",
+///     "Release D",
+///     "ER Registration",
+///     "ER Triage",
+///     "LacticAcid",
+///     "Leucocytes",
+///     "Release E",
+///     "Return ER",
+/// ]);
 /// let mut splitter = RandomEventLogSplitter::new(&log, 4);
-///
+/// let result_event_logs = &splitter.split();
+/// for event_log in result_event_logs {
+///     assert_eq!(event_log.traces.len(), 1050);
+/// }
+
+/// let split_sets: Vec<HashSet<&str>> = random_activity_split(&activities, 4);
+/// assert_eq!(split_sets.len(), 4);
+/// let splitter = ActivityBasedEventLogSplitter::new(&log, &split_sets);
+/// assert!(splitter.check_split_set_validity());
 /// let result_event_logs = &splitter.split();
 /// for event_log in result_event_logs {
 ///     assert_eq!(event_log.traces.len(), 1050);

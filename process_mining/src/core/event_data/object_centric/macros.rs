@@ -11,7 +11,7 @@
 /// type 'o' (e.g., order), and 'i:1', 'i:2' have object type 'i' (e.g., item).
 ///
 /// ```
-/// use process_mining::{ocel, core::OCEL};
+/// use process_mining::ocel;
 ///
 /// let object_centric_event_log = ocel![
 ///     events:
@@ -29,7 +29,7 @@ macro_rules! ocel {
         use ::std::collections::{HashSet, HashMap};
         use chrono::{TimeDelta, TimeZone, Utc};
         use $crate::core::event_data::object_centric::ocel_struct::{
-            OCELEvent, OCELObject, OCELRelationship, OCELType,
+            OCEL, OCELEvent, OCELObject, OCELRelationship, OCELType,
         };
         use std::ops::AddAssign;
 

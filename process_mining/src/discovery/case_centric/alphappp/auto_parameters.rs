@@ -1,6 +1,6 @@
-use crate::{
-    event_log::activity_projection::EventLogActivityProjection,
-    petri_net::petri_net_struct::{PetriNet, Transition},
+use crate::core::{
+    event_data::case_centric::utils::activity_projection::EventLogActivityProjection,
+    process_models::case_centric::petri_net::petri_net_struct::Transition, PetriNet,
 };
 
 use super::full::{alphappp_discover_petri_net, AlphaPPPConfig};

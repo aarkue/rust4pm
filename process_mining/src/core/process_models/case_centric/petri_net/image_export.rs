@@ -8,7 +8,7 @@ use graphviz_rust::{
 };
 use uuid::Uuid;
 
-use crate::PetriNet;
+use crate::core::PetriNet;
 
 ///
 /// Export the image of a [`PetriNet`]
@@ -124,8 +124,9 @@ pub fn export_petri_net_image_png<P: AsRef<std::path::Path>>(
 mod test {
 
     use crate::{
-        alphappp::auto_parameters, import_xes_file, utils::test_utils::get_test_data_path,
-        XESImportOptions,
+        core::event_data::case_centric::xes::import_xes::{import_xes_file, XESImportOptions},
+        discovery::case_centric::alphappp::auto_parameters,
+        test_utils::get_test_data_path,
     };
 
     use super::{export_petri_net_image_png, export_petri_net_image_svg};

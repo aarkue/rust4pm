@@ -1,8 +1,11 @@
-use super::petri_net_struct::PetriNet;
-use crate::utils::xml_utils::XMLWriterWrapper;
 use quick_xml::{events::BytesText, Writer};
 use std::{fs::File, io::Write};
 use uuid::Uuid;
+
+use crate::{
+    core::{process_models::case_centric::petri_net::petri_net_struct::ArcType, PetriNet},
+    XMLWriterWrapper,
+};
 const OK: Result<(), std::io::Error> = Ok(());
 
 ///
@@ -117,12 +120,8 @@ where
                             });
                             pn.arcs.iter().for_each(|arc| {
                                 let (source_id, target_id) = match arc.from_to {
-                                    super::petri_net_struct::ArcType::PlaceTransition(from, to) => {
-                                        (from, to)
-                                    }
-                                    super::petri_net_struct::ArcType::TransitionPlace(from, to) => {
-                                        (from, to)
-                                    }
+                                    ArcType::PlaceTransition(from, to) => (from, to),
+                                    ArcType::TransitionPlace(from, to) => (from, to),
                                 };
                                 writer
                                     .create_element("arc")
@@ -210,20 +209,23 @@ pub fn export_petri_net_to_pnml_path<P: AsRef<std::path::Path>>(
 
 #[cfg(test)]
 mod test {
-    use super::export_petri_net_to_pnml_path;
     use crate::{
-        import_xes_file, petri_net::export_pnml::export_petri_net_to_pnml,
-        utils::test_utils::get_test_data_path, XESImportOptions,
+        core::{
+            event_data::case_centric::xes::import_xes::{import_xes_file, XESImportOptions},
+            process_models::case_centric::petri_net::pnml::export_pnml::export_petri_net_to_pnml,
+        },
+        discovery::case_centric::alphappp::auto_parameters::alphappp_discover_with_auto_parameters,
+        test_utils::get_test_data_path,
     };
+
+    use super::export_petri_net_to_pnml_path;
     use std::{fs::File, io::BufWriter};
 
     #[test]
     fn test_export_pnml() {
         let path = get_test_data_path().join("xes").join("AN1-example.xes");
         let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
-        let (_, mut pn) = crate::alphappp::auto_parameters::alphappp_discover_with_auto_parameters(
-            &(&log).into(),
-        );
+        let (_, mut pn) = alphappp_discover_with_auto_parameters(&(&log).into());
         pn.arcs.last_mut().unwrap().weight = 1337;
         let export_path = get_test_data_path().join("export").join("pnml-export.pnml");
         export_petri_net_to_pnml_path(&pn, &export_path).unwrap();
@@ -234,9 +236,7 @@ mod test {
     fn test_export_pnml_to_writer() -> Result<(), quick_xml::Error> {
         let path = get_test_data_path().join("xes").join("AN1-example.xes");
         let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
-        let (_, mut pn) = crate::alphappp::auto_parameters::alphappp_discover_with_auto_parameters(
-            &(&log).into(),
-        );
+        let (_, mut pn) = alphappp_discover_with_auto_parameters(&(&log).into());
         pn.arcs.last_mut().unwrap().weight = 1337;
         let export_path = get_test_data_path().join("export").join("pnml-export.pnml");
         let file = File::create(&export_path)?;

@@ -1,8 +1,11 @@
-use super::petri_net_struct::{ArcType, Marking, PlaceID};
-use crate::PetriNet;
 use quick_xml::{Error as QuickXMLError, Reader};
 use std::{collections::HashMap, io::BufRead};
 use uuid::Uuid;
+
+use crate::core::{
+    process_models::case_centric::petri_net::petri_net_struct::{ArcType, Marking, PlaceID},
+    PetriNet,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -383,7 +386,7 @@ pub fn import_pnml_from_path<P: AsRef<std::path::Path>>(
 mod test {
     use quick_xml::Reader;
 
-    use crate::utils::test_utils::get_test_data_path;
+    use crate::test_utils::get_test_data_path;
 
     use super::import_pnml;
 
