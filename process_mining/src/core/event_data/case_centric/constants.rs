@@ -1,3 +1,5 @@
+//! Constants for fields and attributes
+//!
 /// Common identifying field for event identities (i.e., activities)
 ///
 /// _Note_: While the concept XES extension is the de-facto standard for identifying activity names,

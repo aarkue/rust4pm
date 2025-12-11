@@ -1,3 +1,8 @@
+//! Acivity Projection of Event Logs
+//!
+//! Only considers traces as sequences of activities.
+//!
+//! Cases with the same activity trace are aggregated as frequencies.
 use std::collections::{HashMap, HashSet};
 
 use rayon::prelude::*;

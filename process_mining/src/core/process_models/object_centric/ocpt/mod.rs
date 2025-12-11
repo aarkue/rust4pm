@@ -1,7 +1,8 @@
-pub mod object_centric_process_tree_struct;
+//! Object-centric process trees (OCPT)
+pub(crate) mod object_centric_process_tree_struct;
+pub use object_centric_process_tree_struct::*;
 
 use std::collections::HashSet;
-/// Object-centric process trees (OCPT)
 
 /// OCEL object type
 pub type ObjectType = String;

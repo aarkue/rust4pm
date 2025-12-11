@@ -1,3 +1,4 @@
+//! Convenient Macros for Creating Event Data
 /// Create an [`Attribute`].
 ///
 /// An attribute is denoted by a `key => value` mapping.
@@ -5,7 +6,7 @@
 /// # Examples
 ///
 /// ```rust
-/// use process_mining::{attribute, chrono::Utc};
+/// use process_mining::{attribute, core::chrono::Utc};
 ///
 ///
 /// let attr_1 = attribute!("concept:name" => "Approve");
@@ -13,13 +14,13 @@
 /// let attr_3 = attribute!("cost" => 2500.00);
 /// ```
 ///
-/// [`Attribute`]: crate::core::event_data::case_centric::event_log_struct::Attribute
+/// [`Attribute`]: crate::core::event_data::case_centric::Attribute
 #[macro_export]
 macro_rules! attribute {
     ($key:expr => $val:expr) => {
-        $crate::core::event_data::case_centric::event_log_struct::Attribute::new(
+        $crate::core::event_data::case_centric::Attribute::new(
             $key.into(),
-            $crate::core::event_data::case_centric::event_log_struct::AttributeValue::from($val),
+            $crate::core::event_data::case_centric::AttributeValue::from($val),
         )
     };
 }
@@ -31,7 +32,7 @@ macro_rules! attribute {
 /// # Examples
 ///
 /// ```rust
-/// use process_mining::{attributes, chrono::Utc};
+/// use process_mining::{attributes, core::chrono::Utc};
 ///
 /// let attrs = attributes!(
 ///     "concept:name" => "Approve",
@@ -40,7 +41,7 @@ macro_rules! attribute {
 /// );
 /// ```
 ///
-/// [`Attributes`]: crate::core::event_data::case_centric::event_log_struct::Attributes
+/// [`Attributes`]: crate::core::event_data::case_centric::Attributes
 #[macro_export]
 macro_rules! attributes {
     ($($key:expr => $value:expr),* $(,)?) => {
@@ -63,7 +64,7 @@ macro_rules! attributes {
 ///
 /// ```rust
 /// use process_mining::{
-///     chrono::{DateTime, FixedOffset, Utc},
+///     core::chrono::{DateTime, FixedOffset, Utc},
 ///     event,
 /// };
 ///
@@ -88,13 +89,13 @@ macro_rules! attributes {
 /// });
 /// ```
 ///
-/// [`Event`]: crate::core::event_data::case_centric::event_log_struct::Event
+/// [`Event`]: crate::core::event_data::case_centric::Event
 #[macro_export]
 macro_rules! event {
     // Macro rule to avoid adding a default timestamp. Intended for internal use in
     // the `trace` macro.
     (NO_TIMESTAMP; $name:expr $(; { $($key:expr => $value:expr),* $(,)? })?) => {
-        $crate::core::event_data::case_centric::event_log_struct::Event {
+        $crate::core::event_data::case_centric::Event {
             attributes: vec![
                 $crate::attribute!("concept:name" => $name),
                 $(
@@ -108,9 +109,9 @@ macro_rules! event {
     ($($input:tt)*) => {{
         use $crate::{
             attribute,
-            chrono::DateTime,
+            core::chrono::DateTime,
             event,
-            event_log::XESEditableAttribute,
+            core::event_data::case_centric::XESEditableAttribute,
         };
 
         let mut evt = event!(NO_TIMESTAMP; $($input)*);
@@ -140,7 +141,7 @@ macro_rules! event {
 ///
 /// ```rust
 /// use process_mining::{
-///     chrono::{DateTime, Utc},
+///     core::chrono::{DateTime, Utc},
 ///     trace
 /// };
 ///
@@ -157,7 +158,7 @@ macro_rules! event {
 /// );
 /// ```
 ///
-/// [`Trace`]: crate::core::event_data::case_centric::event_log_struct::Trace
+/// [`Trace`]: crate::core::event_data::case_centric::Trace
 /// [`event`]: crate::event
 #[macro_export]
 macro_rules! trace {
@@ -169,8 +170,8 @@ macro_rules! trace {
     ) => {{
         use $crate::{
             attribute, attributes,
-            chrono::{DateTime, TimeDelta},
-            event_log::{Trace, XESEditableAttribute},
+            core::chrono::{DateTime, TimeDelta},
+            core::event_data::case_centric::{Trace, XESEditableAttribute},
         };
 
         let mut trace = Trace {
@@ -250,7 +251,7 @@ macro_rules! trace {
 ///
 /// # Examples
 /// ```rust
-/// use process_mining::{chrono::Utc, event_log};
+/// use process_mining::{core::chrono::Utc, event_log};
 ///
 /// // Create an event log with traces <a,b,c,d> and <a,c,b,d>
 /// event_log!(
@@ -272,7 +273,7 @@ macro_rules! trace {
 ///
 /// ```
 ///
-/// [`EventLog`]: crate::core::event_data::case_centric::event_log_struct::EventLog
+/// [`EventLog`]: crate::core::event_data::case_centric::EventLog
 /// [`event`]: crate::event
 #[macro_export]
 macro_rules! event_log {
@@ -285,7 +286,7 @@ macro_rules! event_log {
         use $crate::{
             attribute,
             attributes,
-            event_log::{EventLog, XESEditableAttribute},
+            core::event_data::case_centric::{EventLog, XESEditableAttribute},
         };
         let mut log = EventLog {
             attributes: attributes!(
@@ -327,9 +328,7 @@ mod tests {
     use chrono::{DateTime, TimeDelta};
     use uuid::Uuid;
 
-    use crate::core::event_data::case_centric::event_log_struct::{
-        Attribute, AttributeValue, XESEditableAttribute,
-    };
+    use crate::core::event_data::case_centric::{Attribute, AttributeValue, XESEditableAttribute};
 
     /// Ensure that all types of attributes can be made using  the [`attribute`]
     /// macro. Uses expressions, literals, and identifiers and each value enum variant.

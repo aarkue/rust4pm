@@ -1,3 +1,6 @@
+//! Conversion of Event Data from/to polars `DataFrame`s
+//!
+//! 🔐 Requires the `dataframes` feature to be enabled.
 use std::{collections::HashSet, time::Instant};
 
 use chrono::DateTime;

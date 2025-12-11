@@ -1,3 +1,4 @@
+//!  Functionality to Flatten OCEL on an Object Type
 use crate::core::{
     event_data::{
         case_centric::event_log_struct::{

@@ -1,3 +1,4 @@
+//! Convenient Macros for Creating Object-centric Event Data
 /// Creates an [`OCEL`] containing the given events, objects, event-to-object (e2o) relations.
 ///
 /// `ocel!` allows `OCEL`s to be defined with a list of events and their e2o relations.
@@ -28,7 +29,7 @@ macro_rules! ocel {
     (events: $(($ev_type:expr, [$($object:expr), *])), *, o2o: $(($from_ob:expr, $to_ob:expr)), *) => {{
         use ::std::collections::{HashSet, HashMap};
         use chrono::{TimeDelta, TimeZone, Utc};
-        use $crate::core::event_data::object_centric::ocel_struct::{
+        use $crate::core::event_data::object_centric::{
             OCEL, OCELEvent, OCELObject, OCELRelationship, OCELType,
         };
         use std::ops::AddAssign;

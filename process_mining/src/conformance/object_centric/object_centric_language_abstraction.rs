@@ -1,3 +1,4 @@
+//! Object-centric OCEL and OCPT Abstraction for Conformance Checking
 use itertools::MultiUnzip;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};

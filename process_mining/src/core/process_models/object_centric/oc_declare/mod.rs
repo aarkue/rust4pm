@@ -1,1 +1,1 @@
-
+//! OC-DECLARE

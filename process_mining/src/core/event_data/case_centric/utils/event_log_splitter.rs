@@ -1,3 +1,4 @@
+//! Splitting Event Logs in Multiple Sublogs
 use rand::distr::{Distribution, Uniform};
 use rand::prelude::ThreadRng;
 use rand::seq::SliceRandom;
@@ -81,7 +82,7 @@ pub fn random_activity_split_max_bins<'a>(
 /// ```
 /// use process_mining::core::event_data::case_centric::utils::event_log_splitter::random_activity_split;
 /// use std::collections::HashSet;
-
+///
 /// // Create the set of activities
 /// let activities = HashSet::from([
 ///     "Admission IC",
@@ -91,7 +92,7 @@ pub fn random_activity_split_max_bins<'a>(
 ///     "Release B",
 ///     "Admission NC",
 /// ]);
-
+///
 /// // Splits the activities into exactly three sets with no set being empty and random distribution.
 /// let split_sets: Vec<HashSet<&str>> = random_activity_split(&activities, 3);
 /// ```
@@ -138,16 +139,16 @@ pub fn random_activity_split<'a>(
 /// use process_mining::core::event_data::case_centric::utils::event_log_splitter::ActivityBasedEventLogSplitter;
 /// use process_mining::core::event_data::case_centric::{
 ///     utils::event_log_splitter::random_activity_split,
-///     xes::import_xes::{import_xes_file, XESImportOptions},
+///     xes::{import_xes_file, XESImportOptions},
 /// };
 /// use process_mining::test_utils::get_test_data_path;
 /// use std::collections::HashSet;
-
+///
 /// let path = get_test_data_path()
 ///     .join("xes")
 ///     .join("Sepsis Cases - Event Log.xes.gz");
 /// let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
-
+///
 /// let activities = HashSet::from([
 ///     "Admission IC",
 ///     "ER Sepsis Triage",
@@ -166,7 +167,7 @@ pub fn random_activity_split<'a>(
 ///     "Release E",
 ///     "Return ER",
 /// ]);
-
+///
 /// let split_sets: Vec<HashSet<&str>> = random_activity_split(&activities, 4);
 /// assert_eq!(split_sets.len(), 4);
 /// let splitter = ActivityBasedEventLogSplitter::new(&log, &split_sets);
@@ -306,13 +307,13 @@ impl<'a> ActivityBasedEventLogSplitter<'a> {
 /// For the following example, it is required to have the sepsis case event log setup on your device.
 /// ```
 /// use std::collections::HashSet;
-
+///
 /// use process_mining::{
 ///     core::event_data::case_centric::{
 ///         utils::event_log_splitter::{
 ///             random_activity_split, ActivityBasedEventLogSplitter, RandomEventLogSplitter,
 ///         },
-///         xes::import_xes::{import_xes_file, XESImportOptions},
+///         xes::{import_xes_file, XESImportOptions},
 ///     },
 ///     test_utils::get_test_data_path,
 /// };
@@ -343,7 +344,7 @@ impl<'a> ActivityBasedEventLogSplitter<'a> {
 /// for event_log in result_event_logs {
 ///     assert_eq!(event_log.traces.len(), 1050);
 /// }
-
+///
 /// let split_sets: Vec<HashSet<&str>> = random_activity_split(&activities, 4);
 /// assert_eq!(split_sets.len(), 4);
 /// let splitter = ActivityBasedEventLogSplitter::new(&log, &split_sets);
@@ -434,7 +435,7 @@ mod tests {
     use crate::{
         core::event_data::case_centric::{
             utils::event_log_splitter::{random_activity_split, ActivityBasedEventLogSplitter},
-            xes::import_xes::{import_xes_file, XESImportOptions},
+            xes::{import_xes_file, XESImportOptions},
         },
         test_utils::get_test_data_path,
     };

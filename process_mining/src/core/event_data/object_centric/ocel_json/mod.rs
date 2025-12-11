@@ -1,3 +1,4 @@
+//! OCEL 2.0 JSON Format Import/Export
 use std::{
     fs::File,
     io::{BufReader, BufWriter},

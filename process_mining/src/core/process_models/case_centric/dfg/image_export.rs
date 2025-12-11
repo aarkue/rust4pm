@@ -1,3 +1,6 @@
+//! Image Export of DFGs
+//!
+//! 🔐 Requires the `graphviz-export` feature to be enabled
 use std::{cmp::Ordering, fs::File, io::Write};
 
 use graphviz_rust::{

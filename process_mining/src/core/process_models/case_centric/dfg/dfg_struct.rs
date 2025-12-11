@@ -1,3 +1,4 @@
+//! Struct for Directly-Follows Graphs
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{

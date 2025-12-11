@@ -1,3 +1,6 @@
+//! Partial Orderings of Events
+//!
+//! In contrast to total ordering, pairs of events can be unordered.
 use petgraph::adj::DefaultIx;
 use petgraph::graph::NodeIndex;
 use petgraph::{Directed, Graph};

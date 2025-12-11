@@ -1,3 +1,4 @@
+//! Token-based Replay on Petri Nets
 use nalgebra::{DMatrix, DVector};
 use std::collections::HashMap;
 use uuid::Uuid;

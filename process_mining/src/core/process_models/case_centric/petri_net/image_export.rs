@@ -1,3 +1,6 @@
+//! Image Export of Petri nets
+//!
+//! 🔐 Requires the `graphviz-export` feature to be enabled
 use std::{fs::File, io::Write};
 
 use graphviz_rust::{

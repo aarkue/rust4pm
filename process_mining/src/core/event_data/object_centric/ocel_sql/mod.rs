@@ -1,3 +1,7 @@
+//! OCEL 2.0 SQL-based Import/Export (`SQLite` and `DuckDB`)
+//!
+//! 🔐 Requires the `ocel-sqlite` or `ocel-duckdb` feature to be enabled.
+#![cfg(not(all(not(feature = "ocel-duckdb"), not(feature = "ocel-sqlite"))))]
 use chrono::DateTime;
 
 pub(crate) const OCEL_ID_COLUMN: &str = "ocel_id";

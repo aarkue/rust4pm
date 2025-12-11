@@ -1,3 +1,4 @@
+//! Alpha+++ Process Discovery Algorithm
 /// Automatic determining algorithm parameters for Alpha+++
 pub mod auto_parameters;
 /// Alpha+++ Place Candidate Building

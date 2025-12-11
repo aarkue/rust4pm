@@ -1,3 +1,6 @@
+//! Image Export of Partial Orders
+//!
+//! 🔐 Requires the `graphviz-export` feature to be enabled
 use graphviz_rust::{
     cmd::Format,
     dot_generator::{attr, edge, graph, id, node, node_id, stmt},

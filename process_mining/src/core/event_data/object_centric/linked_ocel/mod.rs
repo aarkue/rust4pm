@@ -1,3 +1,4 @@
+//! OCEL Struct for Efficient Usage of Relations
 use super::ocel_struct::{OCELEvent, OCELObject, OCELType};
 
 #[allow(unused_imports)]
