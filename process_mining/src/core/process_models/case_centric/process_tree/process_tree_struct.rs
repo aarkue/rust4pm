@@ -246,7 +246,7 @@ impl Leaf {
 
 #[cfg(test)]
 mod tests {
-    use crate::process_tree::process_tree_struct::{
+    use crate::core::process_models::case_centric::process_tree::process_tree_struct::{
         Leaf, Node, Operator, OperatorType, ProcessTree,
     };
 
@@ -255,6 +255,7 @@ mod tests {
         // SEQ() is not valid
         let op = Operator::new(OperatorType::Sequence);
         let pt = ProcessTree::new(Node::Operator(op));
+
         assert!(!pt.is_valid());
 
         // SEQ(a) is valid

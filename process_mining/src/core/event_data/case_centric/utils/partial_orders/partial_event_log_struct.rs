@@ -1,5 +1,3 @@
-use crate::event_log::event_log_struct::EventLogClassifier;
-use crate::event_log::{Attributes, Event};
 use petgraph::adj::DefaultIx;
 use petgraph::graph::NodeIndex;
 use petgraph::{Directed, Graph};
@@ -8,6 +6,8 @@ use serde_with::serde_as;
 use serde_with::SetLastValueWins;
 use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
+
+use crate::core::event_data::case_centric::{Attributes, Event, EventLogClassifier};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Copy)]
 /// A struct to create a [`Hash`] value from an [`Event`].

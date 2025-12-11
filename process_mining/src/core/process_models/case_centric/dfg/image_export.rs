@@ -8,7 +8,7 @@ use graphviz_rust::{
 };
 use uuid::Uuid;
 
-use crate::dfg::dfg_struct::DirectlyFollowsGraph;
+use crate::core::process_models::case_centric::dfg::dfg_struct::DirectlyFollowsGraph;
 
 ///
 /// Export the image of a [`DirectlyFollowsGraph`]
@@ -159,7 +159,10 @@ mod test {
     ]
 }"#;
 
-    use crate::{dfg::dfg_struct::DirectlyFollowsGraph, utils::test_utils::get_test_data_path};
+    use crate::{
+        core::process_models::case_centric::dfg::dfg_struct::DirectlyFollowsGraph,
+        test_utils::get_test_data_path,
+    };
 
     use super::{export_dfg_image_png, export_dfg_image_svg};
 

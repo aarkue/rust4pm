@@ -1,9 +1,10 @@
-use crate::object_centric::ocpt::{
-    add_all_dfr_from_to_alphabets, compute_shuffle_dfr_language, EventType, ObjectType,
-};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+
+use crate::core::process_models::object_centric::ocpt::{
+    add_all_dfr_from_to_alphabets, compute_shuffle_dfr_language, EventType, ObjectType,
+};
 
 ///
 /// Leaf in an object-centric process tree

@@ -1,11 +1,11 @@
-use crate::event_log::event_log_struct::EventLogClassifier;
-use crate::EventLog;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
 };
+
+use crate::core::{event_data::case_centric::EventLogClassifier, EventLog};
 
 /// Activity in a directly-follows graph.
 pub type Activity = String;
@@ -249,13 +249,13 @@ mod tests {
     ]
 }"#;
 
+    use crate::{
+        core::event_data::case_centric::xes::import_xes::{import_xes_file, XESImportOptions},
+        test_utils::get_test_data_path,
+    };
+
     use super::*;
     #[cfg(feature = "graphviz-export")]
-    use crate::dfg::image_export::export_dfg_image_png;
-
-    use crate::event_log::import_xes::{import_xes_file, XESImportOptions};
-    use crate::utils::test_utils::get_test_data_path;
-
     #[test]
     fn directly_follows_graph() {
         let mut graph = DirectlyFollowsGraph::new();
@@ -320,6 +320,8 @@ mod tests {
 
         #[cfg(feature = "graphviz-export")]
         {
+            use crate::core::process_models::case_centric::dfg::image_export::export_dfg_image_png;
+
             let path_output = get_test_data_path()
                 .join("export")
                 .join("RepairExample-DFG.png");
@@ -355,6 +357,8 @@ mod tests {
 
         #[cfg(feature = "graphviz-export")]
         {
+            use crate::core::process_models::case_centric::dfg::image_export::export_dfg_image_png;
+
             let path_output = get_test_data_path().join("export").join("Sepsis-DFG.png");
             export_dfg_image_png(&graph, &path_output).unwrap();
         }
@@ -402,6 +406,8 @@ mod tests {
 
         #[cfg(feature = "graphviz-export")]
         {
+            use crate::core::process_models::case_centric::dfg::image_export::export_dfg_image_png;
+
             let path_output = get_test_data_path().join("export").join("AN1-DFG.png");
             export_dfg_image_png(&graph, &path_output).unwrap();
         }

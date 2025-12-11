@@ -1,5 +1,3 @@
-use crate::event_log::event_log_struct::EventLogClassifier;
-use crate::partial_orders::partial_event_log_struct::{EventHash, PartialOrderTrace};
 use graphviz_rust::{
     cmd::Format,
     dot_generator::{attr, edge, graph, id, node, node_id, stmt},
@@ -9,6 +7,11 @@ use graphviz_rust::{
 use std::collections::HashMap;
 use std::{fs::File, io::Write};
 use uuid::Uuid;
+
+use crate::core::event_data::case_centric::{
+    utils::partial_orders::partial_event_log_struct::{EventHash, PartialOrderTrace},
+    EventLogClassifier,
+};
 
 ///
 /// Export the image of a [`PartialOrderTrace`]
@@ -187,10 +190,14 @@ mod test {
     ]
 }"#;
 
+    use crate::{
+        core::event_data::case_centric::{
+            utils::partial_orders::partial_event_log_struct::PartialOrderTrace, EventLogClassifier,
+        },
+        test_utils::get_test_data_path,
+    };
+
     use super::{export_p_trace_image_png, export_p_trace_image_svg};
-    use crate::event_log::event_log_struct::EventLogClassifier;
-    use crate::partial_orders::partial_event_log_struct::PartialOrderTrace;
-    use crate::utils::test_utils::get_test_data_path;
     use std::default::Default;
 
     #[test]

@@ -11,6 +11,7 @@ pub use chrono;
 
 pub mod core;
 
+pub mod conformance;
 pub mod discovery;
 
 /// Used for internal testing

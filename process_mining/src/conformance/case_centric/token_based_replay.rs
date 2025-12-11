@@ -1,8 +1,12 @@
-use crate::petri_net::petri_net_struct::Marking;
-use crate::{EventLogActivityProjection, PetriNet};
 use nalgebra::{DMatrix, DVector};
 use std::collections::HashMap;
 use uuid::Uuid;
+
+use crate::core::process_models::case_centric::petri_net::petri_net_struct::Marking;
+#[cfg(feature = "token_based_replay")]
+use crate::core::{
+    event_data::case_centric::utils::activity_projection::EventLogActivityProjection, PetriNet,
+};
 
 ///
 /// Errors than can occur for the input of the token-based replay algorithm
@@ -207,10 +211,13 @@ pub fn count_missing(marking: &mut DVector<i64>) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::{
+        event_data::case_centric::{Event, Trace},
+        process_models::case_centric::petri_net::petri_net_struct::ArcType,
+        EventLog,
+    };
+
     use super::*;
-    use crate::event_log::{Event, Trace};
-    use crate::petri_net::petri_net_struct::ArcType;
-    use crate::EventLog;
 
     #[test]
     fn token_based_replay_test() {

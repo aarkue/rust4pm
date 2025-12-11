@@ -1,10 +1,17 @@
-use crate::EventLog;
-use crate::dfg::DirectlyFollowsGraph;
-use crate::event_log::event_log_struct::EventLogClassifier;
-use crate::ocel::flatten::flatten_ocel_on;
-use crate::ocel::linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use crate::core::{
+    event_data::{
+        case_centric::EventLogClassifier,
+        object_centric::{
+            linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess},
+            utils::flatten::flatten_ocel_on,
+        },
+    },
+    process_models::case_centric::dfg::dfg_struct::DirectlyFollowsGraph,
+    EventLog,
+};
 
 ///
 /// An object-centric directly-follows graph containing a [`DirectlyFollowsGraph`] for each object

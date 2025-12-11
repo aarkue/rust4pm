@@ -1,15 +1,18 @@
-use crate::object_centric::object_centric_dfg_struct::OCDirectlyFollowsGraph;
-use crate::object_centric::ocpt::object_centric_process_tree_struct::{
-    OCPTLeafLabel, OCPTNode, OCPT,
-};
-use crate::object_centric::ocpt::{EventType, ObjectType};
-use crate::ocel::linked_ocel::index_linked_ocel::{EventIndex, ObjectIndex};
-use crate::ocel::linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess};
 use itertools::MultiUnzip;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::ops::{AddAssign, DivAssign};
 use uuid::Uuid;
+
+use crate::core::event_data::object_centric::linked_ocel::index_linked_ocel::{
+    EventIndex, ObjectIndex,
+};
+use crate::core::event_data::object_centric::linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess};
+use crate::core::process_models::object_centric::ocdfg::object_centric_dfg_struct::OCDirectlyFollowsGraph;
+use crate::core::process_models::object_centric::ocpt::object_centric_process_tree_struct::{
+    OCPTLeafLabel, OCPTNode, OCPT,
+};
+use crate::core::process_models::object_centric::ocpt::{EventType, ObjectType};
 
 ///
 /// An object-centric language abstraction based on:
@@ -847,15 +850,21 @@ pub fn compute_fitness_precision(
 
 #[cfg(test)]
 mod tests {
-    use crate::object_centric::conformance::object_centric_language_abstraction_struct::{
-        compute_fitness_precision, OCLanguageAbstraction,
-    };
-    use crate::object_centric::ocpt::object_centric_process_tree_struct::{
-        OCPTNode, OCPTOperatorType, OCPT,
-    };
-    use crate::ocel::linked_ocel::IndexLinkedOCEL;
-    use crate::{ocel, OCEL};
     use std::time::Instant;
+
+    use crate::{
+        conformance::object_centric::object_centric_language_abstraction::{
+            compute_fitness_precision, OCLanguageAbstraction,
+        },
+        core::{
+            event_data::object_centric::linked_ocel::IndexLinkedOCEL,
+            process_models::object_centric::ocpt::object_centric_process_tree_struct::{
+                OCPTNode, OCPTOperatorType, OCPT,
+            },
+            OCEL,
+        },
+        ocel,
+    };
 
     fn create_test_tree() -> OCPT {
         let mut root_op = OCPTNode::new_operator(OCPTOperatorType::Sequence);
