@@ -107,7 +107,8 @@ macro_rules! event {
         }
     };
     ($($input:tt)*) => {{
-        use $crate::{
+      #[allow(unused_imports)]
+       use $crate::{
             attribute,
             core::chrono::DateTime,
             event,
@@ -168,6 +169,7 @@ macro_rules! trace {
             $activity:expr $(; { $($keys:expr => $values:expr),* $(,)?})?
         ),*
     ) => {{
+        #[allow(unused_imports)]
         use $crate::{
             attribute, attributes,
             core::chrono::{DateTime, TimeDelta},
@@ -283,6 +285,7 @@ macro_rules! event_log {
             [$($events:tt)*] $({ $($keys:expr => $vals:expr),* $(,)? })?
         ),* $(,)?
      ) => {{
+       #[allow(unused_imports)]
         use $crate::{
             attribute,
             attributes,
