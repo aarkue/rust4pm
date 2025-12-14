@@ -16,6 +16,9 @@ pub mod core;
 pub mod conformance;
 pub mod discovery;
 
+/// Bindings (WIP)
+pub mod bindings;
+
 /// Used for internal testing
 #[doc(hidden)]
 pub mod test_utils {

@@ -3,6 +3,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use binding_macros::register_binding;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::{
@@ -58,7 +60,7 @@ pub fn get_current_time_millis() -> u128 {
         .as_millis()
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, JsonSchema)]
 /// Algorithm parameters for Alpha+++
 pub struct AlphaPPPConfig {
     /// Balance threshold (for filtering place candidates)
@@ -92,6 +94,7 @@ impl AlphaPPPConfig {
 ///
 /// Additionally returns the durations for performance measurements
 ///
+#[register_binding]
 pub fn alphappp_discover_petri_net(
     log_proj: &EventLogActivityProjection,
     config: AlphaPPPConfig,
