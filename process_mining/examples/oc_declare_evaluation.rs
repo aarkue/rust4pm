@@ -1,14 +1,20 @@
 use std::{collections::HashMap, env, fs::File, hint::black_box, path::PathBuf, time::Instant};
 
 use process_mining::{
-    import_ocel_json_from_path, import_ocel_xml_file,
-    object_centric::oc_declare::{
-        discover_behavior_constraints, get_activity_object_involvements,
-        get_object_to_object_involvements, get_rev_object_to_object_involvements, reduce_oc_arcs,
-        refine_oc_arcs, O2OMode, OCDeclareArcType, OCDeclareDiscoveryOptions,
-        OCDeclareReductionMode, ObjectInvolvementCounts,
+    core::{
+        event_data::object_centric::{
+            linked_ocel::SlimLinkedOCEL, ocel_json::import_ocel_json_from_path,
+            ocel_xml::import_ocel_xml_file,
+        },
+        process_models::oc_declare::{
+            get_activity_object_involvements, get_object_to_object_involvements,
+            get_rev_object_to_object_involvements, OCDeclareArcType, ObjectInvolvementCounts,
+        },
     },
-    ocel::linked_ocel::{IndexLinkedOCEL, SlimLinkedOCEL},
+    discovery::object_centric::oc_declare::{
+        discover_behavior_constraints, reduce_oc_arcs, refine_oc_arcs, O2OMode,
+        OCDeclareDiscoveryOptions, OCDeclareReductionMode,
+    },
 };
 use serde::{Deserialize, Serialize};
 
@@ -125,6 +131,7 @@ fn main() {
                                 String,
                                 HashMap<String, ObjectInvolvementCounts>,
                             > = get_object_to_object_involvements(&locel);
+
                             let ob_ob_rev_inv = get_rev_object_to_object_involvements(&locel);
                             let now = Instant::now();
                             refined = black_box(refine_oc_arcs(

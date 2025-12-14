@@ -1,23 +1,27 @@
+//! Discovering OC-DECLARE Models from Object-Centric Event Data
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::{
-    object_centric::oc_declare::ALL_OC_DECLARE_ARC_TYPES, ocel::linked_ocel::SlimLinkedOCEL,
-};
 use itertools::Itertools;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::{
-    get_activity_object_involvements, get_object_to_object_involvements,
-    get_rev_object_to_object_involvements, perf, OCDeclareArc, OCDeclareArcLabel, OCDeclareArcType,
-    OCDeclareNode, ObjectInvolvementCounts, ObjectTypeAssociation, EXIT_EVENT_PREFIX,
-    INIT_EVENT_PREFIX,
+use crate::{
+    conformance::oc_declare::get_for_all_evs_perf_thresh,
+    core::{
+        event_data::object_centric::linked_ocel::SlimLinkedOCEL,
+        process_models::oc_declare::{
+            get_activity_object_involvements, get_object_to_object_involvements,
+            get_rev_object_to_object_involvements, OCDeclareArc, OCDeclareArcLabel,
+            OCDeclareArcType, OCDeclareNode, ObjectInvolvementCounts, ObjectTypeAssociation,
+            ALL_OC_DECLARE_ARC_TYPES, EXIT_EVENT_PREFIX, INIT_EVENT_PREFIX,
+        },
+    },
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 /// O2O Mode for OC-DECLARE Discovery
 ///
 /// Determines to what extent object-to-object (O2O) relationships are considered
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum O2OMode {
     /// O2O relationships are not considered at all
     None,
@@ -87,7 +91,6 @@ pub fn discover_behavior_constraints(
     locel: &SlimLinkedOCEL,
     options: OCDeclareDiscoveryOptions,
 ) -> Vec<OCDeclareArc> {
-    let mut ret = Vec::new();
     let act_ob_inv: HashMap<String, HashMap<String, ObjectInvolvementCounts>> =
         get_activity_object_involvements(locel);
     let ob_ob_inv: HashMap<String, HashMap<String, ObjectInvolvementCounts>> =
@@ -98,68 +101,65 @@ pub fn discover_behavior_constraints(
         .acts_to_use
         .clone()
         .unwrap_or_else(|| locel.get_ev_types().cloned().collect());
-    ret.extend(
-        // ret.par_extend(
-        acts_to_use
-            .iter()
-            .cartesian_product(acts_to_use.iter())
-            // .par_bridge()
-            .filter(|(act1, act2)| {
-                if act1.starts_with(INIT_EVENT_PREFIX)
-                    || act1.starts_with(EXIT_EVENT_PREFIX)
-                    || act2.starts_with(INIT_EVENT_PREFIX)
-                    || act2.starts_with(EXIT_EVENT_PREFIX)
-                {
-                    return false;
-                }
-                true
-            })
-            .flat_map(|(act1, act2)| {
-                let obj_invs = get_direct_or_indirect_object_involvements(
-                    act1,
-                    act2,
-                    &act_ob_inv,
-                    &ob_ob_inv,
-                    &ob_ob_rev_inv,
-                    options.o2o_mode,
-                );
-                let act_arcs = get_oi_labels(
-                    act1,
-                    act2,
-                    obj_invs.clone(),
-                    direction,
-                    &options.counts_for_generation,
-                    options.noise_threshold,
-                    locel,
-                );
-                let old =
-                    combine_constraints(act_arcs, act1, act2, direction, &options, locel, true);
-                let v = old
-                    .clone()
-                    .into_iter()
-                    // .into_par_iter()
-                    .filter(move |arc1| {
-                        !old.iter()
-                            .any(|arc2| *arc1 != *arc2 && arc1.is_dominated_by(arc2))
-                    })
-                    .flat_map(|label| {
-                        let mut arc = OCDeclareArc {
-                            from: OCDeclareNode::new(act1.clone()),
-                            to: OCDeclareNode::new(act2.clone()),
-                            arc_type: OCDeclareArcType::AS,
-                            label,
-                            counts: options.counts_for_filter,
-                        };
-                        if arc.get_for_all_evs_perf_thresh(locel, options.noise_threshold) {
-                            arc.counts.1 = None;
-                            get_stricter_arrows_for_as(arc, &options, locel)
-                        } else {
-                            vec![]
-                        }
-                    });
-                v
-            }),
-    );
+    let ret = acts_to_use
+        .iter()
+        .cartesian_product(acts_to_use.iter())
+        .par_bridge()
+        .filter(|(act1, act2)| {
+            if act1.starts_with(INIT_EVENT_PREFIX)
+                || act1.starts_with(EXIT_EVENT_PREFIX)
+                || act2.starts_with(INIT_EVENT_PREFIX)
+                || act2.starts_with(EXIT_EVENT_PREFIX)
+            {
+                return false;
+            }
+            true
+        })
+        .flat_map(|(act1, act2)| {
+            let obj_invs = get_direct_or_indirect_object_involvements(
+                act1,
+                act2,
+                &act_ob_inv,
+                &ob_ob_inv,
+                &ob_ob_rev_inv,
+                options.o2o_mode,
+            );
+            let act_arcs = get_oi_labels(
+                act1,
+                act2,
+                obj_invs.clone(),
+                direction,
+                &options.counts_for_generation,
+                options.noise_threshold,
+                locel,
+            );
+            let old = combine_constraints(act_arcs, act1, act2, direction, &options, locel, true);
+            let v = old
+                .clone()
+                // .into_iter()
+                .into_par_iter()
+                .filter(move |arc1| {
+                    !old.iter()
+                        .any(|arc2| *arc1 != *arc2 && arc1.is_dominated_by(arc2))
+                })
+                .flat_map(|label| {
+                    let mut arc = OCDeclareArc {
+                        from: OCDeclareNode::new(act1.clone()),
+                        to: OCDeclareNode::new(act2.clone()),
+                        arc_type: OCDeclareArcType::AS,
+                        label,
+                        counts: options.counts_for_filter,
+                    };
+                    if arc.get_for_all_evs_perf_thresh(locel, options.noise_threshold) {
+                        arc.counts.1 = None;
+                        get_stricter_arrows_for_as(arc, &options, locel)
+                    } else {
+                        vec![]
+                    }
+                });
+            v
+        })
+        .collect();
 
     let reduced_ret = match options.reduction {
         OCDeclareReductionMode::None => ret,
@@ -200,7 +200,7 @@ pub fn get_oi_labels<'a>(
             any: vec![ot],
             all: vec![],
         };
-        let sat = perf::get_for_all_evs_perf_thresh(
+        let sat = get_for_all_evs_perf_thresh(
             act1,
             act2,
             &any_label,
@@ -221,7 +221,7 @@ pub fn get_oi_labels<'a>(
                     any: vec![],
                     each: any_label.any.clone(),
                 };
-                let each_sat = perf::get_for_all_evs_perf_thresh(
+                let each_sat = get_for_all_evs_perf_thresh(
                     act1,
                     act2,
                     &each_label,
@@ -239,7 +239,7 @@ pub fn get_oi_labels<'a>(
                         each: vec![],
                     };
                     // Otherwise, do not need to bother with differentiating Each/All!
-                    let all_sat = perf::get_for_all_evs_perf_thresh(
+                    let all_sat = get_for_all_evs_perf_thresh(
                         act1,
                         act2,
                         &all_label,
@@ -298,7 +298,7 @@ pub fn combine_constraints<'a>(
                 if iteration_check && new_n != iteration + 1 {
                     return None;
                 }
-                let sat = perf::get_for_all_evs_perf_thresh(
+                let sat = get_for_all_evs_perf_thresh(
                     act1,
                     act2,
                     &new_arc_label,
@@ -429,7 +429,7 @@ pub fn refine_oc_arcs(
 ) -> Vec<OCDeclareArc> {
     let act_pairs: HashSet<(_, _)> = all_arcs
         .iter()
-        .map(|arc| (&arc.from.0, &arc.to.0))
+        .map(|arc| (arc.from.as_str(), arc.to.as_str()))
         .collect();
     act_pairs
         .into_iter()
@@ -437,7 +437,7 @@ pub fn refine_oc_arcs(
         .flat_map(|(act1, act2)| {
             let arcs = all_arcs
                 .iter()
-                .filter(|arc| &arc.from.0 == act1 && &arc.to.0 == act2)
+                .filter(|arc| arc.from.as_str() == act1 && arc.to.as_str() == act2)
                 .cloned()
                 .collect_vec();
             let obj_invs = get_direct_or_indirect_object_involvements(
@@ -468,7 +468,7 @@ pub fn refine_oc_arcs(
                             None
                         } else {
                             let combined = l.combine(&arc.label);
-                            let sat = perf::get_for_all_evs_perf_thresh(
+                            let sat = get_for_all_evs_perf_thresh(
                                 act1,
                                 act2,
                                 &combined,
@@ -489,8 +489,8 @@ pub fn refine_oc_arcs(
                 let combined =
                     combine_constraints(labels, act1, act2, arc.arc_type, options, locel, false);
                 new_arcs.extend(combined.into_iter().map(|a| OCDeclareArc {
-                    from: OCDeclareNode::new(act1.clone()),
-                    to: OCDeclareNode::new(act2.clone()),
+                    from: OCDeclareNode::new(act1),
+                    to: OCDeclareNode::new(act2),
                     arc_type: arc.arc_type,
                     label: a,
                     counts: (Some(1), None),
@@ -620,9 +620,9 @@ pub fn reduce_oc_arcs(mut arcs: Vec<OCDeclareArc>, lossless: bool) -> Vec<OCDecl
     arcs.sort();
     // Adjacency list mapping Node Name -> Indices of outgoing arcs
     // Used for efficient traversal
-    let mut adj: HashMap<&String, Vec<usize>> = HashMap::new();
+    let mut adj: HashMap<&str, Vec<usize>> = HashMap::new();
     for (i, arc) in arcs.iter().enumerate() {
-        adj.entry(&arc.from.0).or_default().push(i);
+        adj.entry(arc.from.as_str()).or_default().push(i);
     }
 
     // Track which arcs are still active and can be used
@@ -647,7 +647,7 @@ pub fn reduce_oc_arcs(mut arcs: Vec<OCDeclareArc>, lossless: bool) -> Vec<OCDecl
 fn has_dominating_path(
     candidate_idx: usize,
     arcs: &[OCDeclareArc],
-    adj: &HashMap<&String, Vec<usize>>,
+    adj: &HashMap<&str, Vec<usize>>,
     active: &[bool],
     lossless: bool,
 ) -> bool {
@@ -657,12 +657,12 @@ fn has_dominating_path(
     let mut queue = VecDeque::new();
     let mut visited = HashSet::new();
 
-    queue.push_back((&c.from.0, 0));
-    visited.insert(&c.from.0);
+    queue.push_back((c.from.as_str(), 0));
+    visited.insert(c.from.as_str());
 
     while let Some((curr_node, depth)) = queue.pop_front() {
         // If we reached the target via a path, 'c' is redundant.
-        if curr_node == &c.to.0 {
+        if curr_node == c.to.as_str() {
             return true;
         }
 
@@ -697,9 +697,9 @@ fn has_dominating_path(
                 }
 
                 // Push reached node and continue search
-                if !visited.contains(&edge.to.0) {
-                    visited.insert(&edge.to.0);
-                    queue.push_back((&edge.to.0, depth + 1));
+                if !visited.contains(edge.to.as_str()) {
+                    visited.insert(edge.to.as_str());
+                    queue.push_back((edge.to.as_str(), depth + 1));
                 }
             }
         }

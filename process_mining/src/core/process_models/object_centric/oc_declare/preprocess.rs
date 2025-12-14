@@ -1,9 +1,9 @@
 use itertools::Itertools;
 
-use crate::{
-    ocel::{
+use crate::core::{
+    event_data::object_centric::{
         linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess, SlimLinkedOCEL},
-        ocel_struct::{OCELEvent, OCELRelationship, OCELType},
+        OCELEvent, OCELRelationship, OCELType,
     },
     OCEL,
 };

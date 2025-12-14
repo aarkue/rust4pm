@@ -1,3 +1,6 @@
+//! Linked Slim (i.e., less duplicate fields) OCEL
+//!
+//! Allows easy and efficient access to events, objects, and their relations
 use std::collections::HashMap;
 
 use chrono::{DateTime, FixedOffset};
@@ -5,8 +8,8 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{
-    ocel::ocel_struct::{
+use crate::core::{
+    event_data::object_centric::{
         OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELRelationship, OCELType,
     },
     OCEL,
@@ -102,7 +105,7 @@ impl EventIndex {
         Some(attr_val)
     }
     /// Get 'fat' version of Event (i.e., with all fields expanded, with a structure similiar to the OCEL 2.0 specification)
-    pub fn fat_ev<'a>(&self, locel: &'a SlimLinkedOCEL) -> OCELEvent {
+    pub fn fat_ev(&self, locel: &SlimLinkedOCEL) -> OCELEvent {
         let sev = self.get_ev(locel);
         let ev_type = &locel.event_types[sev.event_type];
         OCELEvent {
@@ -185,8 +188,7 @@ impl ObjectIndex {
             .objects
             .get(self.0)
             .into_iter()
-            .map(|o| &o.relationships)
-            .flatten()
+            .flat_map(|o| &o.relationships)
             .map(|(o, _q)| o)
         // .copied()
     }
@@ -413,7 +415,7 @@ impl SlimLinkedOCEL {
                             o.attributes
                                 .iter()
                                 .filter(|ea| ea.name == a.name)
-                                .map(|ea| (ea.time.clone(), ea.value.clone()))
+                                .map(|ea| (ea.time, ea.value.clone()))
                                 .collect()
                         })
                         .collect(),
@@ -432,8 +434,8 @@ impl SlimLinkedOCEL {
             })
             .collect();
         Self {
-            events: events,
-            objects: objects,
+            events,
+            objects,
             event_types: ocel.event_types,
             object_types: ocel.object_types,
             object_ids_to_index,
@@ -449,7 +451,7 @@ impl SlimLinkedOCEL {
 
     /// Get all event indices
     pub fn get_all_evs(&self) -> impl Iterator<Item = EventIndex> {
-        (0..self.events.len()).into_iter().map(|i| EventIndex(i))
+        (0..self.events.len()).map(EventIndex)
     }
     /// Get all events of the spcecified event type
     pub fn get_evs_of_type<'a>(
@@ -475,7 +477,7 @@ impl SlimLinkedOCEL {
     }
 
     /// Get all object types as strings
-    pub fn get_ob_types<'a>(&'a self) -> impl Iterator<Item = &'a String> {
+    pub fn get_ob_types(&self) -> impl Iterator<Item = &String> {
         self.object_types.iter().map(|ot| &ot.name)
     }
     /// Get the type struct for an object type
@@ -483,7 +485,7 @@ impl SlimLinkedOCEL {
         &self.object_types[*self.obtype_to_index.get(ob_type).unwrap()]
     }
     /// Get all event types as strings
-    pub fn get_ev_types<'a>(&'a self) -> impl Iterator<Item = &'a String> {
+    pub fn get_ev_types(&self) -> impl Iterator<Item = &String> {
         self.event_types.iter().map(|et| &et.name)
     }
     /// Get the type struct for an event type
@@ -495,9 +497,9 @@ impl SlimLinkedOCEL {
     /// Returns the newly added [`EventIndex`]
     /// or None if the event type is unknown or the id is already taken
     ///
-    pub fn add_event<'a>(
+    pub fn add_event(
         &mut self,
-        event_type: &'a str,
+        event_type: &str,
         time: DateTime<FixedOffset>,
         id: Option<String>,
         attributes: Vec<OCELAttributeValue>,
@@ -511,7 +513,7 @@ impl SlimLinkedOCEL {
         self.events.push(SlimOCELEvent {
             id,
             event_type: *etype,
-            time: time,
+            time,
             attributes,
             relationships,
         });
@@ -522,9 +524,9 @@ impl SlimLinkedOCEL {
     /// Returns the newly added [`ObjectIndex`]
     /// or None if the object type is unknown or the id is already taken
     ///
-    pub fn add_object<'a>(
+    pub fn add_object(
         &mut self,
-        object_type: &'a str,
+        object_type: &str,
         id: Option<String>,
         attributes: Vec<Vec<(DateTime<FixedOffset>, OCELAttributeValue)>>,
         relationships: Vec<(ObjectIndex, String)>,
@@ -543,33 +545,28 @@ impl SlimLinkedOCEL {
         Some(ObjectIndex(self.events.len()))
     }
     /// Add an E2O relationship between the passed event and object, with the specified qualifier
-    pub fn add_e2o<'a>(&'a mut self, event: EventIndex, object: ObjectIndex, qualifier: String) {
-        let evtype_index = event.get_ev(&self).event_type;
+    pub fn add_e2o(&mut self, event: EventIndex, object: ObjectIndex, qualifier: String) {
+        let evtype_index = event.get_ev(self).event_type;
         self.e2o_rel_rev[object.0][evtype_index].push(event);
         self.events[event.0].relationships.push((object, qualifier));
     }
     /// Add an O2O relationship between the passed objects, with the specified qualifier
-    pub fn add_o2o<'a>(
-        &'a mut self,
-        from_obj: ObjectIndex,
-        to_obj: ObjectIndex,
-        qualifier: String,
-    ) {
+    pub fn add_o2o(&mut self, from_obj: ObjectIndex, to_obj: ObjectIndex, qualifier: String) {
         self.o2o_rel_rev[to_obj.0].push(from_obj);
         self.objects[from_obj.0]
             .relationships
             .push((to_obj, qualifier));
     }
-    /// Remove the E2O relationship between the passed event and object from the LinkedOCEL
-    pub fn delete_e2o<'a>(&'a mut self, event: &EventIndex, object: &ObjectIndex) {
-        let evtype_index = event.get_ev(&self).event_type;
+    /// Remove the E2O relationship between the passed event and object from the `LinkedOCEL`
+    pub fn delete_e2o(&mut self, event: &EventIndex, object: &ObjectIndex) {
+        let evtype_index = event.get_ev(self).event_type;
         self.e2o_rel_rev[object.0][evtype_index].retain(|e| e != event);
         self.events[event.0]
             .relationships
             .retain(|(o, _q)| o != object);
     }
-    /// Remove the O2O relationship between the passed objects from the LinkedOCEL
-    pub fn delete_o2o<'a>(&'a mut self, from_obj: &ObjectIndex, to_obj: &ObjectIndex) {
+    /// Remove the O2O relationship between the passed objects from the `LinkedOCEL`
+    pub fn delete_o2o(&mut self, from_obj: &ObjectIndex, to_obj: &ObjectIndex) {
         self.o2o_rel_rev[to_obj.0].retain(|e| e != from_obj);
         self.objects[from_obj.0]
             .relationships
@@ -584,7 +581,7 @@ impl From<OCEL> for SlimLinkedOCEL {
 
 /// A slim version of an OCEL Event
 ///
-/// Some fields (i.e., event_type and relationships) are modified for easier and memory-efficient usage
+/// Some fields (i.e., `event_type` and relationships) are modified for easier and memory-efficient usage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlimOCELEvent {
     /// Event ID
@@ -603,7 +600,7 @@ pub struct SlimOCELEvent {
 }
 /// A slim version of an OCEL Object
 ///
-/// Some fields (i.e., object_type and relationships) are modified for easier and memory-efficient usage
+/// Some fields (i.e., `object_type` and relationships) are modified for easier and memory-efficient usage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlimOCELObject {
     /// Event ID
