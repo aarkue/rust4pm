@@ -8,7 +8,7 @@ use process_mining::{
         refine_oc_arcs, O2OMode, OCDeclareArcType, OCDeclareDiscoveryOptions,
         OCDeclareReductionMode, ObjectInvolvementCounts,
     },
-    ocel::linked_ocel::IndexLinkedOCEL,
+    ocel::linked_ocel::{IndexLinkedOCEL, SlimLinkedOCEL},
 };
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +19,7 @@ fn main() {
         Some(base_path) => {
             let path: PathBuf = PathBuf::from(base_path);
             println!("Using base path {:?}", path);
-            let num_runs = 10;
+            let num_runs = 1;
             let noise_thresh = 0.2;
             let event_logs = vec![
                 ("Logistics", path.join("ContainerLogistics.json")),
@@ -49,7 +49,7 @@ fn main() {
                 let num_et = ocel.event_types.len();
                 let num_ot = ocel.object_types.len();
 
-                let locel = IndexLinkedOCEL::from_ocel(ocel);
+                let locel = SlimLinkedOCEL::from_ocel(ocel);
                 for o2o_mode in [O2OMode::None] {
                     //, O2OMode::Direct] {
                     println!("{:?}", o2o_mode);

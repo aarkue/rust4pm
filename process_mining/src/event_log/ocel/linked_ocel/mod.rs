@@ -10,7 +10,9 @@ pub mod index_linked_ocel;
 pub use index_linked_ocel::IndexLinkedOCEL;
 /// An [`OCEL`] linked through object/event identifiers (i.e., [`String`]s)
 pub mod id_linked_ocel;
+pub mod slim_linked_ocel;
 pub use id_linked_ocel::{IDLinkedOCEL, OwnedIDLinkedOCEL};
+pub use slim_linked_ocel::SlimLinkedOCEL;
 
 /// Linked access to an [`OCEL`], making it easy to follow event-to-object and object-to-object relationships, as well as their reverse
 ///

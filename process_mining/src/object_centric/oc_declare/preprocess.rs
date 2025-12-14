@@ -2,7 +2,7 @@ use itertools::Itertools;
 
 use crate::{
     ocel::{
-        linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess},
+        linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess, SlimLinkedOCEL},
         ocel_struct::{OCELEvent, OCELRelationship, OCELType},
     },
     OCEL,
@@ -14,7 +14,7 @@ pub const INIT_EVENT_PREFIX: &str = "<init>";
 pub const EXIT_EVENT_PREFIX: &str = "<exit>";
 
 /// Preprocess an OCEL for OC-DECLARE, adding init and exit events for objects
-pub fn preprocess_ocel(ocel: OCEL) -> IndexLinkedOCEL {
+pub fn preprocess_ocel(ocel: OCEL) -> SlimLinkedOCEL {
     let locel: IndexLinkedOCEL = ocel.into();
     let new_evs = locel
         .get_all_obs_ref()
@@ -67,5 +67,5 @@ pub fn preprocess_ocel(ocel: OCEL) -> IndexLinkedOCEL {
             ]
         }));
     ocel.events.extend(new_evs);
-    ocel.into()
+    SlimLinkedOCEL::from_ocel(ocel)
 }

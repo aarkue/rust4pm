@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
-    object_centric::oc_declare::ALL_OC_DECLARE_ARC_TYPES, ocel::linked_ocel::IndexLinkedOCEL,
+    object_centric::oc_declare::ALL_OC_DECLARE_ARC_TYPES, ocel::linked_ocel::SlimLinkedOCEL,
 };
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -84,7 +84,7 @@ impl Default for OCDeclareDiscoveryOptions {
 
 /// Discover behavioral OC-DECLARE constraints
 pub fn discover_behavior_constraints(
-    locel: &IndexLinkedOCEL,
+    locel: &SlimLinkedOCEL,
     options: OCDeclareDiscoveryOptions,
 ) -> Vec<OCDeclareArc> {
     let mut ret = Vec::new();
@@ -97,12 +97,13 @@ pub fn discover_behavior_constraints(
     let acts_to_use = options
         .acts_to_use
         .clone()
-        .unwrap_or_else(|| locel.events_per_type.keys().cloned().collect());
-    ret.par_extend(
+        .unwrap_or_else(|| locel.get_ev_types().cloned().collect());
+    ret.extend(
+        // ret.par_extend(
         acts_to_use
             .iter()
             .cartesian_product(acts_to_use.iter())
-            .par_bridge()
+            // .par_bridge()
             .filter(|(act1, act2)| {
                 if act1.starts_with(INIT_EVENT_PREFIX)
                     || act1.starts_with(EXIT_EVENT_PREFIX)
@@ -135,7 +136,8 @@ pub fn discover_behavior_constraints(
                     combine_constraints(act_arcs, act1, act2, direction, &options, locel, true);
                 let v = old
                     .clone()
-                    .into_par_iter()
+                    .into_iter()
+                    // .into_par_iter()
                     .filter(move |arc1| {
                         !old.iter()
                             .any(|arc2| *arc1 != *arc2 && arc1.is_dominated_by(arc2))
@@ -188,7 +190,7 @@ pub fn get_oi_labels<'a>(
     direction: OCDeclareArcType,
     counts_for_generation: &(Option<usize>, Option<usize>),
     noise_threshold: f64,
-    locel: &IndexLinkedOCEL,
+    locel: &SlimLinkedOCEL,
 ) -> Vec<OCDeclareArcLabel> {
     let mut ret = Vec::new();
     for (ot, is_multiple) in obj_invs {
@@ -273,7 +275,7 @@ pub fn combine_constraints<'a>(
     act2: &'a str,
     direction: OCDeclareArcType,
     options: &OCDeclareDiscoveryOptions,
-    locel: &IndexLinkedOCEL,
+    locel: &SlimLinkedOCEL,
     iteration_check: bool,
 ) -> HashSet<OCDeclareArcLabel> {
     let mut changed = true;
@@ -283,7 +285,7 @@ pub fn combine_constraints<'a>(
         let x = 0..act_arcs.len();
         let new_res: HashSet<_> = x
             .flat_map(|arc1_i| ((arc1_i + 1)..act_arcs.len()).map(move |arc2_i| (arc1_i, arc2_i)))
-            .par_bridge()
+            // .par_bridge()
             .filter_map(|(arc1_i, arc2_i)| {
                 let arc1 = &act_arcs[arc1_i];
                 let arc2 = &act_arcs[arc2_i];
@@ -335,7 +337,7 @@ pub fn combine_constraints<'a>(
 fn get_stricter_arrows_for_as(
     mut a: OCDeclareArc,
     options: &OCDeclareDiscoveryOptions,
-    locel: &IndexLinkedOCEL,
+    locel: &SlimLinkedOCEL,
 ) -> Vec<OCDeclareArc> {
     let mut ret: Vec<OCDeclareArc> = Vec::new();
     if options
@@ -423,7 +425,7 @@ pub fn refine_oc_arcs(
     ob_ob_inv: &HashMap<String, HashMap<String, ObjectInvolvementCounts>>,
     ob_ob_rev_inv: &HashMap<String, HashMap<String, ObjectInvolvementCounts>>,
     options: &OCDeclareDiscoveryOptions,
-    locel: &IndexLinkedOCEL,
+    locel: &SlimLinkedOCEL,
 ) -> Vec<OCDeclareArc> {
     let act_pairs: HashSet<(_, _)> = all_arcs
         .iter()
@@ -431,7 +433,7 @@ pub fn refine_oc_arcs(
         .collect();
     act_pairs
         .into_iter()
-        .par_bridge()
+        // .par_bridge()
         .flat_map(|(act1, act2)| {
             let arcs = all_arcs
                 .iter()

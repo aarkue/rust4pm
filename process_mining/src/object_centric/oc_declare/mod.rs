@@ -11,8 +11,8 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use crate::ocel::linked_ocel::{
-    index_linked_ocel::{EventIndex, ObjectIndex},
-    IndexLinkedOCEL, LinkedOCELAccess,
+    slim_linked_ocel::{EventIndex, ObjectIndex},
+    SlimLinkedOCEL,
 };
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
@@ -79,7 +79,7 @@ impl OCDeclareArc {
     /// Get fraction of source events violating this constraint arc
     ///
     /// Returns a value from 0 (all source events satisfy this constraint) to 1 (all source events violate this constraint)
-    pub fn get_for_all_evs_perf(&self, linked_ocel: &IndexLinkedOCEL) -> f64 {
+    pub fn get_for_all_evs_perf(&self, linked_ocel: &SlimLinkedOCEL) -> f64 {
         perf::get_for_all_evs_perf(
             self.from.as_str(),
             self.to.as_str(),
@@ -95,7 +95,7 @@ impl OCDeclareArc {
     /// Returns false, if the fraction of events violating the constraint is above the noise threshold.
     pub fn get_for_all_evs_perf_thresh(
         &self,
-        linked_ocel: &IndexLinkedOCEL,
+        linked_ocel: &SlimLinkedOCEL,
         noise_thresh: f64,
     ) -> bool {
         perf::get_for_all_evs_perf_thresh(
@@ -110,36 +110,10 @@ impl OCDeclareArc {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-/// Information on an event violating an OC-DECLARE constraint arc.
-pub struct ViolationInfo {
-    /// The ID of the triggering source event.
-    pub source_ev: String,
-    /// The IDs of matching target events.
-    pub matching_evs: Vec<String>,
-    /// A collection of all objects that must be involved.
-    pub all_obs: Vec<String>,
-    /// A collection of object sets where at least one object from each set must be involved.
-    pub any_obs: Vec<Vec<String>>,
-    /// The actual count of observed target events.
-    pub count: usize,
-    /// The type of violation that occurred.
-    pub violation_type: ViolationType,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-/// Describes the type of violation for an OC-DECLARE constraint.
-pub enum ViolationType {
-    /// Indicates that more target events were found than allowed by the constraint's upper bound.
-    TooMany,
-    /// Indicates that fewer target events were found than required by the constraint's lower bound.
-    TooFew,
-}
-
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 /// OC-DECLARE Arc Direction/Type
 ///
 /// Models temporal relationships
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum OCDeclareArcType {
     /// Association: No temporal restrictions
     AS,
@@ -205,9 +179,9 @@ impl OCDeclareArcType {
     }
 }
 
+/// Object Type Association: Direct or O2O Object Types
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(tag = "type")]
-/// Object Type Association: Direct or O2O Object Types
 pub enum ObjectTypeAssociation {
     /// Simple: Direct Object Types involved with an Activity
     Simple {
@@ -268,17 +242,17 @@ impl ObjectTypeAssociation {
     }
 
     /// Get the object index for all objects specified by the association for a specified event
-    pub fn get_for_ev(
-        &self,
-        ev: &EventOrSynthetic,
-        linked_ocel: &IndexLinkedOCEL,
-    ) -> Vec<ObjectIndex> {
+    pub fn get_for_ev<'a>(
+        &'a self,
+        ev: &'a EventOrSynthetic,
+        linked_ocel: &'a SlimLinkedOCEL,
+    ) -> Vec<&'a ObjectIndex> {
         match self {
             ObjectTypeAssociation::Simple { object_type } => ev
                 .get_e2o(linked_ocel)
                 .filter(|o| {
-                    let ob = linked_ocel.get_ob(o);
-                    ob.object_type == *object_type
+                    let ot = o.get_ob_type(&linked_ocel);
+                    ot == object_type
                 })
                 .collect(),
             ObjectTypeAssociation::O2O {
@@ -287,23 +261,18 @@ impl ObjectTypeAssociation {
                 reversed,
             } => ev
                 .get_e2o(linked_ocel)
-                .filter(|o| linked_ocel.get_ob(o).object_type == *first)
+                .filter(|o| o.get_ob_type(linked_ocel) == first)
                 .flat_map(|o| {
                     if !reversed {
-                        linked_ocel
-                            .get_o2o(&o)
-                            .map(|rel| rel.1)
-                            .filter(|o2| linked_ocel.get_ob(o2).object_type == *second)
+                        o.get_o2o(linked_ocel)
+                            .filter(|o2| o2.get_ob_type(linked_ocel) == second)
                             .collect_vec()
                     } else {
-                        linked_ocel
-                            .get_o2o_rev(&o)
-                            .map(|rel| rel.1)
-                            .filter(|o2| linked_ocel.get_ob(o2).object_type == *second)
+                        o.get_o2o_rev(linked_ocel)
+                            .filter(|o2| o2.get_ob_type(linked_ocel) == second)
                             .collect_vec()
                     }
                 })
-                .copied()
                 .collect(),
         }
     }
@@ -415,12 +384,12 @@ pub enum SetFilter<T: Eq + Hash> {
     All(Vec<T>),
 }
 
-impl<T: Eq + Hash> SetFilter<T> {
+impl<T: Eq + Hash + Ord> SetFilter<T> {
     /// Check if the specified `HashSet` fulfills this predicate
-    pub fn check(&self, s: &HashSet<T>) -> bool {
+    pub fn check(&self, s: &Vec<T>) -> bool {
         match self {
-            SetFilter::Any(items) => items.iter().any(|i| s.contains(i)),
-            SetFilter::All(items) => items.iter().all(|i| s.contains(i)),
+            SetFilter::Any(items) => items.iter().any(|i| s.binary_search(i).is_ok()),
+            SetFilter::All(items) => items.iter().all(|i| s.binary_search(i).is_ok()),
         }
     }
 }
@@ -433,8 +402,8 @@ impl<'b> OCDeclareArcLabel {
     pub fn get_bindings<'a>(
         &'a self,
         ev: &'a EventOrSynthetic,
-        linked_ocel: &'a IndexLinkedOCEL,
-    ) -> impl Iterator<Item = Vec<SetFilter<ObjectIndex>>> + use<'a, 'b> {
+        linked_ocel: &'a SlimLinkedOCEL,
+    ) -> impl Iterator<Item = Vec<SetFilter<&'a ObjectIndex>>> + use<'a, 'b> {
         self.each
             .iter()
             .sorted_by_key(|ot| match ot {
@@ -513,7 +482,7 @@ impl Default for ObjectInvolvementCounts {
 ///
 /// The result is a mapping: Activity -> (Object Type -> Counts)
 pub fn get_activity_object_involvements(
-    locel: &IndexLinkedOCEL,
+    locel: &SlimLinkedOCEL,
 ) -> HashMap<String, HashMap<String, ObjectInvolvementCounts>> {
     locel
         .get_ev_types()
@@ -524,9 +493,9 @@ pub fn get_activity_object_involvements(
                 .collect();
             for ev in locel.get_evs_of_type(et) {
                 let mut num_of_objects_for_ev: HashMap<&str, usize> = HashMap::new();
-                for (_q, oi) in locel.get_e2o(ev) {
-                    let o = locel.get_ob(oi);
-                    *num_of_objects_for_ev.entry(&o.object_type).or_default() += 1;
+                for oi in ev.get_e2o(locel) {
+                    let ot = oi.get_ob_type(locel);
+                    *num_of_objects_for_ev.entry(ot).or_default() += 1;
                 }
                 for (ot, count) in num_of_objects_for_ev {
                     let num_ob_per_type = nums_of_objects_per_type.get_mut(ot).unwrap();
@@ -556,7 +525,7 @@ pub fn get_activity_object_involvements(
 ///
 /// where Count specifies how many objects of the second object type are referenced by each objects of the first object type
 pub fn get_object_to_object_involvements(
-    locel: &IndexLinkedOCEL,
+    locel: &SlimLinkedOCEL,
 ) -> HashMap<String, HashMap<String, ObjectInvolvementCounts>> {
     locel
         .get_ob_types()
@@ -567,9 +536,9 @@ pub fn get_object_to_object_involvements(
                 .collect();
             for ob in locel.get_obs_of_type(ot) {
                 let mut num_of_objects_for_ob: HashMap<&str, usize> = HashMap::new();
-                for (_q, oi) in locel.get_o2o(ob) {
-                    let o = locel.get_ob(oi);
-                    *num_of_objects_for_ob.entry(&o.object_type).or_default() += 1;
+                for oi in ob.get_o2o(locel) {
+                    let ot = oi.get_ob_type(locel);
+                    *num_of_objects_for_ob.entry(ot).or_default() += 1;
                 }
                 for (ot, count) in num_of_objects_for_ob {
                     let num_ob_per_type = nums_of_objects_per_type.get_mut(ot).unwrap();
@@ -599,7 +568,7 @@ pub fn get_object_to_object_involvements(
 ///
 /// where Count specifies how many objects of the second object type reference each object of the first object type
 pub fn get_rev_object_to_object_involvements(
-    locel: &IndexLinkedOCEL,
+    locel: &SlimLinkedOCEL,
 ) -> HashMap<String, HashMap<String, ObjectInvolvementCounts>> {
     locel
         .get_ob_types()
@@ -610,9 +579,9 @@ pub fn get_rev_object_to_object_involvements(
                 .collect();
             for ob in locel.get_obs_of_type(ot) {
                 let mut num_of_objects_for_ob: HashMap<&str, usize> = HashMap::new();
-                for (_q, oi) in locel.get_o2o_rev(ob) {
-                    let o = locel.get_ob(oi);
-                    *num_of_objects_for_ob.entry(&o.object_type).or_default() += 1;
+                for oi in ob.get_o2o_rev(locel) {
+                    let ot = oi.get_ob_type(locel);
+                    *num_of_objects_for_ob.entry(ot).or_default() += 1;
                 }
                 for (ot, count) in num_of_objects_for_ob {
                     let num_ob_per_type = nums_of_objects_per_type.get_mut(ot).unwrap();
@@ -651,22 +620,22 @@ pub enum EventOrSynthetic {
 
 impl EventOrSynthetic {
     /// Get the event type of the event (regular or synthetic)
-    pub fn get_as_event_type(&self, locel: &IndexLinkedOCEL) -> String {
+    pub fn get_as_event_type(&self, locel: &SlimLinkedOCEL) -> String {
         match self {
-            EventOrSynthetic::Event(event_index) => locel[event_index].event_type.to_string(),
+            EventOrSynthetic::Event(event_index) => event_index.get_ev_type(locel).to_string(),
             EventOrSynthetic::Init(object_index) => {
-                format!("{INIT_EVENT_PREFIX} {}", locel[object_index].object_type)
+                format!("{INIT_EVENT_PREFIX} {}", object_index.get_ob_type(locel))
             }
             EventOrSynthetic::Exit(object_index) => {
-                format!("{EXIT_EVENT_PREFIX} {}", locel[object_index].object_type)
+                format!("{EXIT_EVENT_PREFIX} {}", object_index.get_ob_type(locel))
             }
         }
     }
-    fn get_mock_ev_index(&self, locel: &IndexLinkedOCEL) -> EventIndex {
+    fn get_mock_ev_index(&self, locel: &SlimLinkedOCEL) -> EventIndex {
         match self {
             EventOrSynthetic::Event(event_index) => *event_index,
             EventOrSynthetic::Init(x) | EventOrSynthetic::Exit(x) => {
-                let evs = locel.get_e2o_rev(x).map(|(_q, e)| e);
+                let evs = x.get_e2o_rev(locel);
 
                 if matches!(self, EventOrSynthetic::Init(_)) {
                     evs.min().copied().unwrap_or(0_usize.into())
@@ -678,10 +647,10 @@ impl EventOrSynthetic {
     }
 
     /// Get the timestamp of the event (regular or synthetic)
-    pub fn get_timestamp(&self, locel: &IndexLinkedOCEL) -> DateTime<FixedOffset> {
+    pub fn get_timestamp(&self, locel: &SlimLinkedOCEL) -> DateTime<FixedOffset> {
         let mock_ev_index = self.get_mock_ev_index(locel);
 
-        let time = &locel[mock_ev_index].time;
+        let time = mock_ev_index.get_time(locel);
         match self {
             EventOrSynthetic::Event(_) => *time,
             EventOrSynthetic::Init(_) => *time - Duration::milliseconds(1),
@@ -691,25 +660,28 @@ impl EventOrSynthetic {
 
     /// Get iterator over objects involved in the event (regular or synthetic)
     pub fn get_e2o<'a>(
-        &self,
-        locel: &'a IndexLinkedOCEL,
-    ) -> Box<dyn Iterator<Item = ObjectIndex> + 'a> {
+        &'a self,
+        locel: &'a SlimLinkedOCEL,
+    ) -> Box<dyn Iterator<Item = &'a ObjectIndex> + 'a> {
         match self {
-            EventOrSynthetic::Event(event_index) => {
-                Box::new(locel.get_e2o_set(event_index).iter().copied())
-            }
-            EventOrSynthetic::Init(x) | EventOrSynthetic::Exit(x) => Box::new(vec![*x].into_iter()),
+            EventOrSynthetic::Event(event_index) => Box::new(event_index.get_e2o(locel)),
+            EventOrSynthetic::Init(x) | EventOrSynthetic::Exit(x) => Box::new(vec![x].into_iter()),
         }
     }
     /// Get set of objects involved in the event (regular or synthetic)
-    pub fn get_e2o_set(&self, locel: &IndexLinkedOCEL) -> HashSet<ObjectIndex> {
+    pub fn get_e2o_set<'a>(&'a self, locel: &'a SlimLinkedOCEL) -> Vec<&'a ObjectIndex> {
         match self {
-            EventOrSynthetic::Event(event_index) => locel.get_e2o_set(event_index).clone(),
-            EventOrSynthetic::Init(x) | EventOrSynthetic::Exit(x) => vec![*x].into_iter().collect(),
+            EventOrSynthetic::Event(event_index) => {
+                event_index
+                    .get_e2o(locel)
+                    // .sorted_unstable()
+                    .collect()
+            }
+            EventOrSynthetic::Init(x) | EventOrSynthetic::Exit(x) => vec![x].into_iter().collect(),
         }
     }
     /// Get all events (regular or synthetic) of a specific event type
-    pub fn get_all_syn_evs(locel: &IndexLinkedOCEL, ev_type: &str) -> Vec<Self> {
+    pub fn get_all_syn_evs(locel: &SlimLinkedOCEL, ev_type: &str) -> Vec<Self> {
         if ev_type.starts_with(INIT_EVENT_PREFIX) {
             let ob_type = &ev_type[INIT_EVENT_PREFIX.len() + 1..ev_type.len()];
             locel
@@ -731,41 +703,37 @@ impl EventOrSynthetic {
     }
 
     /// Get all events (regular or synthetic) of a specific event type involving a specific object
-    pub fn get_all_of_et_for_ob(
-        locel: &IndexLinkedOCEL,
-        ev_type: &str,
+    pub fn get_all_of_et_for_ob<'a>(
+        locel: &'a SlimLinkedOCEL,
+        ev_type: &'a str,
         ob: ObjectIndex,
-    ) -> Vec<Self> {
+    ) -> Box<dyn Iterator<Item = Self> + 'a> {
         if ev_type.starts_with(INIT_EVENT_PREFIX) {
             let ob_type = &ev_type[INIT_EVENT_PREFIX.len() + 1..ev_type.len()];
-            if locel[ob].object_type == ob_type {
-                vec![Self::Init(ob)]
+            if ob.get_ob_type(locel) == ob_type {
+                Box::new(vec![Self::Init(ob)].into_iter())
             } else {
-                Vec::default()
+                Box::new(Vec::default().into_iter())
             }
         } else if ev_type.starts_with(EXIT_EVENT_PREFIX) {
             let ob_type = &ev_type[EXIT_EVENT_PREFIX.len() + 1..ev_type.len()];
-            if locel[ob].object_type == ob_type {
-                vec![Self::Exit(ob)]
+            if ob.get_ob_type(locel) == ob_type {
+                Box::new(vec![Self::Exit(ob)].into_iter())
             } else {
-                Vec::default()
+                Box::new(Vec::default().into_iter())
             }
         } else {
-            locel
-                .e2o_rev_et
-                .get(ev_type)
-                .iter()
-                .flat_map(|x| x.get(&ob))
-                .flatten()
-                .map(|ev| Self::Event(*ev))
-                .collect()
+            Box::new(
+                ob.get_e2o_rev_of_evtype(locel, ev_type)
+                    .map(|ev| Self::Event(*ev)),
+            )
+            // .collect()
         }
     }
     /// Get all events (regular or synthetic) involving a specific object
-    pub fn get_all_for_ob(locel: &IndexLinkedOCEL, ob: ObjectIndex) -> Vec<Self> {
-        locel
-            .get_e2o_rev(&ob)
-            .map(|x| Self::Event(*x.1))
+    pub fn get_all_for_ob(locel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<Self> {
+        ob.get_e2o_rev(locel)
+            .map(|e| Self::Event(*e))
             .chain(vec![Self::Init(ob), Self::Exit(ob)])
             .collect()
     }
@@ -773,20 +741,20 @@ impl EventOrSynthetic {
 
 /// Performance-focused implementations of checking OC-DECLARE constraints
 pub mod perf {
-    use std::sync::atomic::AtomicI32;
+    use std::sync::atomic::AtomicU32;
 
     use super::{OCDeclareArcLabel, OCDeclareArcType, SetFilter};
     use crate::{
         object_centric::oc_declare::EventOrSynthetic,
-        ocel::linked_ocel::{index_linked_ocel::ObjectIndex, IndexLinkedOCEL, LinkedOCELAccess},
+        ocel::linked_ocel::{slim_linked_ocel::ObjectIndex, SlimLinkedOCEL},
     };
     use chrono::{DateTime, FixedOffset};
     use rayon::prelude::*;
 
     /// Get all events of the given event type satisfying the filters
     pub fn get_evs_with_objs_perf<'a>(
-        objs: &'a [SetFilter<ObjectIndex>],
-        linked_ocel: &'a IndexLinkedOCEL,
+        objs: &'a [SetFilter<&ObjectIndex>],
+        linked_ocel: &'a SlimLinkedOCEL,
         etype: &'a str,
     ) -> impl Iterator<Item = EventOrSynthetic> + use<'a> {
         let initial: Box<dyn Iterator<Item = EventOrSynthetic>> = if objs.is_empty() {
@@ -795,7 +763,7 @@ pub mod perf {
             match &objs[0] {
                 SetFilter::Any(items) => {
                     Box::new(items.iter().flat_map(|o| {
-                        EventOrSynthetic::get_all_of_et_for_ob(linked_ocel, etype, *o)
+                        EventOrSynthetic::get_all_of_et_for_ob(linked_ocel, etype, **o)
                     }))
                 }
                 SetFilter::All(items) => {
@@ -803,7 +771,7 @@ pub mod perf {
                         Box::new(Vec::new().into_iter())
                     } else {
                         Box::new(
-                            EventOrSynthetic::get_all_of_et_for_ob(linked_ocel, etype, items[0])
+                            EventOrSynthetic::get_all_of_et_for_ob(linked_ocel, etype, *items[0])
                                 .into_iter()
                                 .filter(|e| {
                                     items
@@ -828,8 +796,8 @@ pub mod perf {
     }
 
     fn get_df_or_dp_event_perf<'a>(
-        objs: &'a [SetFilter<ObjectIndex>],
-        linked_ocel: &'a IndexLinkedOCEL,
+        objs: &'a [SetFilter<&'a ObjectIndex>],
+        linked_ocel: &'a SlimLinkedOCEL,
         // reference_mock_event_index: &'a EventIndex,
         reference_time: &'a DateTime<FixedOffset>,
         // reference_event: &'a OCELEvent,
@@ -841,13 +809,13 @@ pub mod perf {
             // But in general, this is not very relevant as there are usually some object requirements
             Box::new(
                 linked_ocel
-                    .get_all_evs_ref()
-                    .map(|ev| EventOrSynthetic::Event(*ev)),
+                    .get_all_evs()
+                    .map(|ev| EventOrSynthetic::Event(ev)),
             )
         } else {
             match &objs[0] {
                 SetFilter::Any(items) => Box::new(items.iter().flat_map(|o| {
-                    EventOrSynthetic::get_all_for_ob(linked_ocel, *o)
+                    EventOrSynthetic::get_all_for_ob(linked_ocel, **o)
                         .into_iter()
                         .filter(|e| {
                             let e_time = e.get_timestamp(linked_ocel);
@@ -863,7 +831,7 @@ pub mod perf {
                         Box::new(Vec::new().into_iter())
                     } else {
                         Box::new(
-                            EventOrSynthetic::get_all_for_ob(linked_ocel, items[0])
+                            EventOrSynthetic::get_all_for_ob(linked_ocel, *items[0])
                                 .into_iter()
                                 .filter(|e| {
                                     let e_time = e.get_timestamp(linked_ocel);
@@ -902,13 +870,13 @@ pub mod perf {
         label: &OCDeclareArcLabel,
         arc_type: &OCDeclareArcType,
         counts: &(Option<usize>, Option<usize>),
-        linked_ocel: &IndexLinkedOCEL,
+        linked_ocel: &SlimLinkedOCEL,
     ) -> f64 {
         let evs = EventOrSynthetic::get_all_syn_evs(linked_ocel, from_et);
         let ev_count = evs.len();
         let violated_evs_count = evs
-            .into_par_iter()
-            // .into_iter()
+            // .into_par_iter()
+            .into_iter()
             .filter(|ev| get_for_ev_perf(ev, label, to_et, arc_type, counts, linked_ocel))
             .count();
         violated_evs_count as f64 / ev_count as f64
@@ -923,13 +891,13 @@ pub mod perf {
         label: &OCDeclareArcLabel,
         arc_type: &OCDeclareArcType,
         counts: &(Option<usize>, Option<usize>),
-        linked_ocel: &IndexLinkedOCEL,
+        linked_ocel: &SlimLinkedOCEL,
         violation_thresh: f64,
     ) -> bool {
         let evs = EventOrSynthetic::get_all_syn_evs(linked_ocel, from_et);
         let ev_count = evs.len();
-        let min_s = (ev_count as f64 * (1.0 - violation_thresh)).ceil() as usize;
-        let min_v = (ev_count as f64 * violation_thresh).floor() as usize + 1;
+        let min_s = (ev_count as f64 * (1.0 - violation_thresh)).ceil() as u32;
+        let min_v = (ev_count as f64 * violation_thresh).floor() as u32 + 1;
         // Non-Atomic:
         // for ev in evs {
         //     let violated = get_for_ev_perf(&ev, label, to_et, arc_type, counts, linked_ocel);
@@ -952,55 +920,40 @@ pub mod perf {
         //     return false;
         // }
 
-        // Atomic:
-        let min_v_atomic = AtomicI32::new(min_v as i32);
-        let min_s_atomic = AtomicI32::new(min_s as i32);
+        // // Atomic:
+        let min_v_atomic = AtomicU32::new(0);
+        let min_s_atomic = AtomicU32::new(0);
         evs.into_par_iter()
             .map(|ev| {
                 let violated = get_for_ev_perf(&ev, label, to_et, arc_type, counts, linked_ocel);
                 if violated {
-                    min_v_atomic.fetch_add(-1, std::sync::atomic::Ordering::Relaxed);
+                    min_v_atomic.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 } else {
-                    min_s_atomic.fetch_add(-1, std::sync::atomic::Ordering::Relaxed);
+                    min_s_atomic.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
-                ev
+                ()
             })
-            .take_any_while(|_x| {
-                if min_s_atomic.load(std::sync::atomic::Ordering::Relaxed) <= 0 {
+            .take_any_while(|_| {
+                if min_s_atomic.load(std::sync::atomic::Ordering::Relaxed) >= min_s {
                     return false;
                 }
-                if min_v_atomic.load(std::sync::atomic::Ordering::Relaxed) <= 0 {
+                if min_v_atomic.load(std::sync::atomic::Ordering::Relaxed) >= min_v {
                     return false;
                 }
                 true
             })
-            .count();
+            .for_each(|_| {});
         let min_s_atomic = min_s_atomic.into_inner();
         let min_v_atomic = min_v_atomic.into_inner();
         // println!("{} and {}",min_s_atomic,min_v_atomic);
-        if min_s_atomic <= 0 {
+        if min_s_atomic >= min_s {
             return true;
         }
-        if min_v_atomic <= 0 {
+        if min_v_atomic >= min_v {
             return false;
         }
 
         unreachable!()
-
-        // println!("{} and {} of {} (min_s: {}, min_v: {})",min_s_atomic,min_v_atomic,ev_count,min_s,min_v);
-        // true
-
-        // Previous:
-        // let violated_evs_count =
-        // evs
-        //     .into_par_iter()
-        //     // .into_iter()
-        //     .filter(|ev| get_for_ev_perf(ev, label, to_et, arc_type, counts, linked_ocel))
-        //     // .take_any(min_v)
-        //     .take_any(min_s)
-        //     .count();
-        // violated_evs_count < min_v
-        // // sat_evs_count >= min_s
     }
 
     /// Returns true if violated!
@@ -1010,7 +963,7 @@ pub mod perf {
         to_et: &str,
         arc_type: &OCDeclareArcType,
         counts: &(Option<usize>, Option<usize>),
-        linked_ocel: &IndexLinkedOCEL,
+        linked_ocel: &SlimLinkedOCEL,
     ) -> bool {
         let syn_time = ev_index.get_timestamp(linked_ocel);
         label.get_bindings(ev_index, linked_ocel).any(|binding| {
