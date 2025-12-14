@@ -1,6 +1,6 @@
 <div align="center">
 <h1>Rust4PM</h1>
-  <p><strong><code>process_mining</code></pre> Rust Crate</strong></p>
+  <p><strong><code>process_mining</code> Rust Crate</strong></p>
   <p>
     <a href="https://crates.io/crates/process_mining">
         <img src="https://img.shields.io/crates/v/process_mining.svg" alt="Crates.io"/></a>
@@ -32,7 +32,9 @@ Simply download this zip and extract it into the `test_data` folder.
 
 We use automatic CI pipelines for checking lint and formatting rules of the `process_mining` crate.
 See the corresponding .yml file for the exact checks.
-You can and should test your changes also locally, e.g., using `cargo clippy --all-targets --all-features -- -D warnings`, `cargo fmt --all --check` and ` cargo test --verbose --all-features` inside the `process_mining` folder.
+You can and should test your changes also locally, e.g., using `cargo clippy --all-targets --all-features -- -D warnings`, `cargo fmt --all --check`
+and ` cargo test --verbose --all-features` inside the `process_mining` folder.
+To test integrity of the documentation, use `RUSTDOCFLAGS="-D warnings" cargo doc --all-features` (on Windows `PowerShell` you might need to set the `RUSTDOCFLAGS` env variable differently).
 
 To apply compatible lint and formatting rules automatically, run `cargo clippy --all-targets --all-features --fix --allow-staged` and `cargo fmt --all` in the `process_mining` folder.
 

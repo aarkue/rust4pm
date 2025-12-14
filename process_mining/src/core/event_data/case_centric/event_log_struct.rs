@@ -13,6 +13,7 @@ use polars::frame::DataFrame;
 
 #[cfg(feature = "dataframes")]
 use crate::core::event_data::case_centric::dataframe::convert_log_to_dataframe;
+use crate::core::event_data::case_centric::xes::XESOuterLogData;
 
 use super::constants::ACTIVITY_NAME;
 
@@ -594,14 +595,11 @@ impl EventLog {
     }
 
     ///
-    /// Construct an [`EventLog`] from list of [`Trace`]s and [`super::stream_xes::XESOuterLogData`]
+    /// Construct an [`EventLog`] from list of [`Trace`]s and [`XESOuterLogData`]
     ///
     /// This is useful in combination with streaming XES import when traces are filtered/pre-processed directly
     ///
-    pub fn from_traces_and_log_data(
-        traces: Vec<Trace>,
-        log_data: super::xes::stream_xes::XESOuterLogData,
-    ) -> Self {
+    pub fn from_traces_and_log_data(traces: Vec<Trace>, log_data: XESOuterLogData) -> Self {
         EventLog {
             attributes: log_data.log_attributes,
             traces,

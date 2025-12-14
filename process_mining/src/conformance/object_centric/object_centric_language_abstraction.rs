@@ -342,10 +342,10 @@ impl OCLanguageAbstraction {
     }
 
     ///
-    /// Creates an abstraction from an [`crate::OCEL`].
+    /// Creates an abstraction from an [`OCEL`](crate::core::event_data::object_centric::OCEL).
     ///
-    /// Expects the input [`IndexLinkedOCEL`] to have all orphan [`crate::event_log::ocel::ocel_struct::OCELObject`]s to be removed, i.e.,
-    /// they should not be contained if they do not have any e2o relation.
+    /// Expects the input [`IndexLinkedOCEL`] to have all orphan [`OCELObjects`](crate::core::event_data::object_centric::OCELObject)
+    ///  to be removed, i.e., they should not be contained if they do not have any e2o relation.
     ///
     pub fn create_from_ocel(locel: &IndexLinkedOCEL) -> Self {
         // Computes the directly-follows graphs for all object types
