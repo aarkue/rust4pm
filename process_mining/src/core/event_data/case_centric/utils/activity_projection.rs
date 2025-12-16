@@ -5,6 +5,7 @@
 //! Cases with the same activity trace are aggregated as frequencies.
 use std::collections::{HashMap, HashSet};
 
+use binding_macros::RegistryEntity;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +22,7 @@ pub const START_ACTIVITY: &str = "__START";
 /// Name of `START_ACTIVITY` (can be added to [`EventLogActivityProjection`]/[`EventLog`] to mark END of traces)
 pub const END_ACTIVITY: &str = "__END";
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, RegistryEntity)]
 /// Projection of an event log on just activity labels
 ///
 /// Currently assumes a default activity name ([`ACTIVITY_NAME`])

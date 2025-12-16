@@ -16,14 +16,18 @@ pub mod core;
 pub mod conformance;
 pub mod discovery;
 
+/// Bindings (WIP)
+pub mod bindings;
+
 /// Used for internal testing
 #[doc(hidden)]
-pub mod test_utils {
+pub(crate) mod test_utils {
     use std::path::PathBuf;
 
     /// Get the based path for test data.
     ///
     ///  Used for internal testing
+    #[allow(unused)]
     pub fn get_test_data_path() -> PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data")
     }

@@ -3,16 +3,20 @@ use std::{
     ops::Index,
 };
 
+use binding_macros::RegistryEntity;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::event_data::object_centric::ocel_struct::{OCELEvent, OCELObject, OCELType, OCEL};
 
 use super::LinkedOCELAccess;
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 /// An Event Index
 ///
 /// Points to an event in the context of a given OCEL
+#[derive(
+    PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 pub struct EventIndex(usize);
 impl From<&EventIndex> for EventIndex {
     fn from(value: &EventIndex) -> Self {
@@ -33,10 +37,12 @@ impl EventIndex {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 /// An Object Index
 ///
 /// Points to an object in the context of a given OCEL
+#[derive(
+    PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 pub struct ObjectIndex(usize);
 impl From<&ObjectIndex> for ObjectIndex {
     fn from(value: &ObjectIndex) -> Self {
@@ -77,7 +83,6 @@ impl From<ObjectIndex> for EventOrObjectIndex {
     }
 }
 
-#[derive(Debug, Clone)]
 ///
 /// An [`OCEL`] linked through event and object indices
 ///
@@ -88,6 +93,7 @@ impl From<ObjectIndex> for EventOrObjectIndex {
 ///
 /// Implements the [`LinkedOCELAccess`] trait.
 ///
+#[derive(Debug, Clone, RegistryEntity)]
 pub struct IndexLinkedOCEL {
     ocel: OCEL,
     event_ids_to_index: HashMap<String, EventIndex>,

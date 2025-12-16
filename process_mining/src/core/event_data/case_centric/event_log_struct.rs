@@ -1,3 +1,4 @@
+use binding_macros::RegistryEntity;
 use chrono::{DateTime, FixedOffset};
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
@@ -507,7 +508,7 @@ impl Trace {
 ///
 /// Event log consisting of a list of [`Trace`]s and log [`Attributes`]
 ///
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, RegistryEntity)]
 pub struct EventLog {
     /// Top-level attributes
     pub attributes: Attributes,
