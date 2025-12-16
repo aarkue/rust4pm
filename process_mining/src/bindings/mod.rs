@@ -42,6 +42,8 @@ pub struct Binding {
     pub name: &'static str,
     /// Function handler (executing the function with (de-)serializing inputs/outputs)
     pub handler: fn(&Value, &AppState) -> Result<Value, String>,
+    /// Documentation of function
+    pub docs: fn() -> Vec<String>,
     /// Get arguments of the function
     pub args: fn() -> HashMap<String, Value>,
     /// Retrieve the JSON Schema of the function

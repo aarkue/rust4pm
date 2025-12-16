@@ -1,5 +1,7 @@
 //! Discover [`DirectlyFollowsGraph`]s from Data
 
+use binding_macros::register_binding;
+
 use crate::core::{
     event_data::case_centric::EventLogClassifier,
     process_models::case_centric::dfg::DirectlyFollowsGraph, EventLog,
@@ -36,6 +38,7 @@ pub fn discover_dfg_with_classifier<'a, 'b>(
 }
 
 /// Discover [`DirectlyFollowsGraph`] with default classifier
+#[register_binding]
 pub fn discover_dfg<'b>(event_log: &EventLog) -> DirectlyFollowsGraph<'b> {
     discover_dfg_with_classifier(event_log, &EventLogClassifier::default())
 }

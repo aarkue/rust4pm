@@ -48,8 +48,7 @@ impl<'a> DirectlyFollowsGraph<'a> {
             end_activities: HashSet::new(),
         }
     }
-
-    /// Discover a [`DirectlyFollowsGraph`] from an [`EventLog`] using the specified [`EventLogClassifier`] to derive the 'activity' names
+    /// Discover a [`DirectlyFollowsGraph`] from an [`EventLog`] using the specified [`EventLogClassifier`](crate::core::event_data::case_centric::EventLogClassifier) to derive the 'activity' names
     ///
     /// If there is no special classifier to be used, the default (`&EventLogClassifier::default()`) can also simply be passed in
     pub fn discover(event_log: &EventLog) -> Self {

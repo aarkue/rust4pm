@@ -1,6 +1,83 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, FnArg, ItemFn, Pat};
+use syn::{parse_macro_input, FnArg, ItemFn, Lifetime, Pat};
+
+use syn::fold::{self, Fold};
+use syn::{AngleBracketedGenericArguments, GenericArgument, Type, TypeReference};
+
+/// Removes lifetimes and other special cases (i.e., certain generics) from types
+///
+struct LifetimeStripper;
+
+impl Fold for LifetimeStripper {
+    /// Remove lifetimes from type references `&'a T -> &T`
+    fn fold_type_reference(&mut self, mut node: TypeReference) -> TypeReference {
+        // Remove the lifetime
+        // node.lifetime = None;
+        node.lifetime = Some(syn::Lifetime::new("'_", proc_macro2::Span::call_site()));
+        // Recurse
+        fold::fold_type_reference(self, node)
+    }
+
+    /// Remove lifetimes from generic structs `MyStruct<'a, T> -> MyStruct<T>`
+    fn fold_angle_bracketed_generic_arguments(
+        &mut self,
+        mut node: AngleBracketedGenericArguments,
+    ) -> AngleBracketedGenericArguments {
+        // Filter out any arguments that are explicit lifetimes
+        node.args = node
+            .args
+            .into_iter()
+            .map(|arg| {
+                if matches!(arg, GenericArgument::Lifetime(_)) {
+                    GenericArgument::Lifetime(Lifetime::new("'_", proc_macro2::Span::call_site()))
+                } else {
+                    arg
+                }
+            })
+            .collect();
+
+        // Recurse
+        fold::fold_angle_bracketed_generic_arguments(self, node)
+    }
+    /// Handle `impl Trait` types specially
+    ///
+    /// In particular, a few ones are mapped to concrete types manually
+    fn fold_type(&mut self, ty: Type) -> Type {
+        if let Type::ImplTrait(it) = &ty {
+            if it.bounds.len() != 1 {
+                // For now, don't handle this case.
+                return fold::fold_type(self, ty);
+            }
+            // Next, check if our single bound is a trait bound
+            if let Some(syn::TypeParamBound::Trait(really_it)) = it.bounds.first() {
+                let really_it_str = quote::quote!(#really_it).to_string();
+                // panic!("{:#?}", really_it_str);
+                let ret = match really_it_str.as_str() {
+                    "AsRef < Path >"
+                    | "AsRef < std :: path :: Path >"
+                    | "AsRef < path :: Path >" => {
+                        syn::parse_quote!(std::path::PathBuf)
+                    }
+                    "AsRef < str >" => syn::parse_quote!(String),
+                    _ => {
+                        // Other impl Trait -> leave as is for now
+                        return fold::fold_type(self, ty);
+                    }
+                };
+                return ret;
+            };
+        }
+        // Call default folder
+        fold::fold_type(self, ty)
+    }
+}
+
+/// Strip lifetimes: Helper function to use in your main macro logic
+fn strip_lifetimes(ty: Type) -> Type {
+    let mut stripper = LifetimeStripper;
+    stripper.fold_type(ty)
+}
 
 #[proc_macro_attribute]
 pub fn register_binding(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -8,6 +85,27 @@ pub fn register_binding(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let fn_name = &input_fn.sig.ident;
     let wrapper_name = format_ident!("{}_wrapper", fn_name);
 
+    let docs: Vec<String> = input_fn
+        .attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("doc"))
+        .filter_map(|attr| match &attr.meta {
+            syn::Meta::NameValue(syn::MetaNameValue {
+                value:
+                    syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(s),
+                        ..
+                    }),
+                ..
+            }) => Some(s.value()),
+            _ => None,
+        })
+        .flat_map(|s| {
+            s.lines()
+                .map(|l| l.strip_prefix(' ').unwrap_or(l).to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
     let args_info: Vec<_> = input_fn
         .sig
         .inputs
@@ -20,7 +118,7 @@ pub fn register_binding(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     Pat::Ident(p) => p.ident.to_string(),
                     _ => panic!("Simple args only"),
                 };
-                (arg_name, ty)
+                (arg_name, strip_lifetimes(*ty.clone()))
             }
             _ => panic!("Self not supported"),
         })
@@ -56,6 +154,7 @@ pub fn register_binding(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 Binding {
                     name: stringify!(#fn_name),
                     handler: #wrapper_name,
+                    docs: || vec![#(#docs.to_string(),)*],
                     args: || {
 
                         let mut args_schema = ::std::collections::HashMap::new();

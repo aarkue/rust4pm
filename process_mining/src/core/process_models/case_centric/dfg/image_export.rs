@@ -117,11 +117,25 @@ pub fn export_dfg_image_svg<P: AsRef<std::path::Path>>(
 /// Export the image of a [`DirectlyFollowsGraph`] as a PNG file
 ///
 /// Also consider using [`DirectlyFollowsGraph::export_png`] for convenience.
-pub fn export_dfg_image_png<P: AsRef<std::path::Path>>(
+pub fn export_dfg_image_png(
     dfg: &DirectlyFollowsGraph<'_>,
-    path: P,
+    path: impl AsRef<std::path::Path>,
 ) -> Result<(), std::io::Error> {
     export_dfg_image(dfg, path, Format::Png, Some(2.0))
+}
+
+#[cfg(feature = "bindings")]
+mod private {
+    use binding_macros::register_binding;
+
+    use crate::core::process_models::case_centric::dfg::{
+        image_export::export_dfg_image_png, DirectlyFollowsGraph,
+    };
+
+    #[register_binding]
+    fn export_dfg_png(dfg: DirectlyFollowsGraph<'_>, path: impl AsRef<std::path::Path>) {
+        export_dfg_image_png(&dfg, path).unwrap();
+    }
 }
 
 #[cfg(test)]

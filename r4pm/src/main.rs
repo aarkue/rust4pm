@@ -1,30 +1,71 @@
-use std::{fs::File, io::BufWriter, path::PathBuf};
+use std::{
+    fs::File,
+    io::{BufReader, BufWriter},
+    path::PathBuf,
+    sync::LazyLock,
+};
 
+use anstyle::AnsiColor;
 pub use process_mining::bindings;
 use process_mining::{
-    bindings::{RegistryItem, get_fn_binding},
+    bindings::{Binding, RegistryItem, get_fn_binding},
     core::event_data::{
         case_centric::xes::{XESImportOptions, import_xes_file},
         object_centric::{linked_ocel::IndexLinkedOCEL, ocel_json::import_ocel_json_from_path},
     },
 };
 use serde_json::Value;
+static PRIMARY: LazyLock<anstyle::Style> = LazyLock::new(|| {
+    anstyle::Style::new()
+        .bold()
+        .fg_color(Some(AnsiColor::BrightBlue.into()))
+});
+static MUTED: LazyLock<anstyle::Style> = LazyLock::new(|| {
+    anstyle::Style::new()
+        // .bold()
+        .fg_color(Some(AnsiColor::BrightBlack.into()))
+});
+static WARN: LazyLock<anstyle::Style> = LazyLock::new(|| {
+    anstyle::Style::new()
+        .bold()
+        .fg_color(Some(AnsiColor::BrightRed.into()))
+});
+
+fn primary(s: impl std::fmt::Display) -> String {
+    let sty = &*PRIMARY;
+    format!("{sty}{s}{sty:#}")
+}
+fn muted(s: impl std::fmt::Display) -> String {
+    let sty = &*MUTED;
+    format!("{sty}{s}{sty:#}")
+}
+fn warn(s: impl std::fmt::Display) -> String {
+    let sty = &*WARN;
+    format!("{sty}{s}{sty:#}")
+}
+static CLI_NAME: &str = "r4pm";
 
 fn main() {
     let functions = bindings::list_functions();
-    println!("Available functions: {:?}", functions);
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() <= 1 {
+        println!(
+            "Usage: {CLI_NAME} fun_name --arg1 'abc' --arg2 4\nAvailable functions: {}",
+            functions.join(", ")
+        );
+        std::process::exit(2);
+    }
     let mut state = bindings::AppState::default();
 
-    let args: Vec<String> = std::env::args().collect();
     let func_name = &args[1];
     let binding = get_fn_binding(func_name).expect("Unknown function name!");
+    print_function_info(binding);
     let fn_args = (binding.args)();
-    println!("Running '{}'", func_name);
 
     let mut params = serde_json::Map::new();
     let mut output_path: Option<PathBuf> = None;
 
-    let mut args_iter = args.iter().peekable();
+    let mut args_iter = args.iter().skip(2).peekable();
     while let Some(arg) = args_iter.next() {
         if arg.starts_with("--") {
             if let Some(value) = args_iter.peek() {
@@ -33,9 +74,18 @@ fn main() {
                     .get(arg_name)
                     .and_then(|arg_info| arg_info.as_object())
                 {
-                    let mut value_to_use = serde_json::from_str::<Value>(value)
-                        // .inspect_err(|e| println!("Could not parse as JSON: {}", e))
-                        .unwrap_or_else(|_| value.to_string().into());
+                    // println!("Arg Info: {:#?}", arg_info);
+                    let mut value_to_use = if arg_info.get("type").expect("Valid JSON Schema")
+                        == "object"
+                        && value.ends_with(".json")
+                    {
+                        let buf = BufReader::new(File::open(value).unwrap());
+                        serde_json::from_reader::<_, Value>(buf).unwrap()
+                    } else {
+                        serde_json::from_str::<Value>(value)
+                            // .inspect_err(|e| println!("Could not parse as JSON: {}", e))
+                            .unwrap_or_else(|_| value.to_string().into())
+                    };
                     if let Some(arg_refs) = arg_info
                         .get("x-registry-ref")
                         .and_then(|arg_ref| arg_ref.as_str())
@@ -82,10 +132,30 @@ fn main() {
             if args_iter.peek().is_none() {
                 // If not starting with -- and is last argument: assume output path!
                 output_path = Some(PathBuf::from(arg));
+            } else {
+                // Unknown argument?!
+                eprintln!("{}", warn(format!("Unknown argument: {:?}", arg)));
+                std::process::exit(2);
             }
         }
     }
 
+    // Check if all parameters are there
+    let missing_args: Vec<_> = (binding.args)()
+        .keys()
+        .filter(|k| !params.contains_key(*k))
+        .cloned()
+        .collect();
+    if !missing_args.is_empty() {
+        eprintln!(
+            "{}",
+            warn(format!(
+                "Missing required arguments: {}",
+                missing_args.join(", ")
+            ))
+        );
+        std::process::exit(2);
+    }
     let fn_args = serde_json::Value::Object(params);
     match bindings::call(func_name, &fn_args, &state) {
         Ok(res) => {
@@ -101,4 +171,19 @@ fn main() {
         }
         Err(e) => eprintln!("Error: {}", e),
     }
+}
+
+fn print_function_info(binding: &Binding) {
+    let name = binding.name;
+
+    let docs = (binding.docs)()
+        .into_iter()
+        .map(|s| format!("\t{s}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let args: Vec<_> = ((binding.args)()).keys().map(|s| s.to_string()).collect();
+    let arg_hints = format!("\tRequired Arguments: {}", args.join(", "));
+
+    println!("\n{}\n{}\n{}\n", primary(name), muted(docs), arg_hints);
 }

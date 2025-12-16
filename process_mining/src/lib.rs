@@ -21,7 +21,7 @@ pub mod bindings;
 
 /// Used for internal testing
 #[doc(hidden)]
-pub(crate) mod test_utils {
+pub mod test_utils {
     use std::path::PathBuf;
 
     /// Get the based path for test data.
