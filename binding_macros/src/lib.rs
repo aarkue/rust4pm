@@ -33,7 +33,7 @@ pub fn register_binding(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // 2. Schema Logic
     let schema_gens = args_info.iter().map(|(name, ty)| {
-        quote! { props.insert(#name.to_string(), <#ty as crate::bindings::SchemaProvider>::get_schema_gen()); }
+        quote! { args_schema.insert(#name.to_string(), <#ty as crate::bindings::SchemaProvider>::get_schema_gen()); }
     });
 
     let arg_names = args_info.iter().map(|(name, _)| name);
@@ -56,13 +56,19 @@ pub fn register_binding(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 Binding {
                     name: stringify!(#fn_name),
                     handler: #wrapper_name,
-                    schema: || {
-                        let mut props = serde_json::Map::new();
+                    args: || {
+
+                        let mut args_schema = ::std::collections::HashMap::new();
                         #(#schema_gens)*
+                        args_schema
+                    },
+                    schema: || {
+                        // let mut args_schema = serde_json::Map::new();
+                        // #(#schema_gens)*
                         serde_json::json!({
                             "type": "object",
                             "title": stringify!(#fn_name),
-                            "properties": props,
+                            // "args_schema": args_schema,
                             "required": vec![ #( #arg_names ),* ]
                         })
                     }

@@ -1,0 +1,9 @@
+[package]
+name = "r4pm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+process_mining = { path = "../process_mining", features = ["bindings", "ocel-sqlite", "graphviz-export"]}
+serde_json = "1.0.105"
+serde = {version = "1.0.188", features = ["derive"]}

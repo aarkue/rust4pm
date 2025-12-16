@@ -1,3 +1,3 @@
 //! Case-centric Conformance-checking Approaches
-#[cfg(feature = "token_based_replay")]
+#[cfg(feature = "token-based-replay")]
 pub mod token_based_replay;

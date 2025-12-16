@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::core::process_models::case_centric::petri_net::petri_net_struct::Marking;
-#[cfg(feature = "token_based_replay")]
+#[cfg(feature = "token-based-replay")]
 use crate::core::{
     event_data::case_centric::utils::activity_projection::EventLogActivityProjection, PetriNet,
 };
@@ -77,7 +77,7 @@ impl TokenBasedReplayResult {
 ///
 /// Computes token-based replay for a Petri net that has unique labels and no silent transitions
 ///
-#[cfg(feature = "token_based_replay")]
+#[cfg(feature = "token-based-replay")]
 pub fn apply_token_based_replay(
     petri_net: &PetriNet,
     event_log: &EventLogActivityProjection,

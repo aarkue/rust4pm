@@ -2,5 +2,5 @@
 resolver = "2"
 
 members = ["binding_macros",
-	"process_mining",
+	"process_mining", "r4pm",
 ]
