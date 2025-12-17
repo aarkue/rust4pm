@@ -3,6 +3,7 @@
 //! 🔐 Requires the `graphviz-export` feature to be enabled
 use std::{fs::File, io::Write};
 
+use binding_macros::register_binding;
 use graphviz_rust::{
     cmd::Format,
     dot_generator::{attr, edge, graph, id, node, node_id, stmt},
@@ -105,9 +106,10 @@ pub fn graph_to_dot(g: &Graph) -> String {
 /// Export the image of a [`PetriNet`] as a SVG file
 ///
 /// Also consider using [`PetriNet::export_svg`] for convenience.
-pub fn export_petri_net_image_svg<P: AsRef<std::path::Path>>(
+#[register_binding(stringify_error)]
+pub fn export_petri_net_image_svg(
     net: &PetriNet,
-    path: P,
+    path: impl AsRef<std::path::Path>,
 ) -> Result<(), std::io::Error> {
     export_petri_net_image(net, path, Format::Svg, None)
 }
@@ -116,9 +118,10 @@ pub fn export_petri_net_image_svg<P: AsRef<std::path::Path>>(
 /// Export the image of a [`PetriNet`] as a PNG file
 ///
 /// Also consider using [`PetriNet::export_png`] for convenience.
-pub fn export_petri_net_image_png<P: AsRef<std::path::Path>>(
+#[register_binding(stringify_error)]
+pub fn export_petri_net_image_png(
     net: &PetriNet,
-    path: P,
+    path: impl AsRef<std::path::Path>,
 ) -> Result<(), std::io::Error> {
     export_petri_net_image(net, path, Format::Png, Some(2.0))
 }

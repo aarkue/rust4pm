@@ -1,4 +1,5 @@
 use binding_macros::register_binding;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -15,7 +16,7 @@ use crate::core::{
 /// An object-centric directly-follows graph containing a [`DirectlyFollowsGraph`] for each object
 /// type involved.
 ///
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, JsonSchema)]
 pub struct OCDirectlyFollowsGraph<'a> {
     /// The DFG per object type
     pub object_type_to_dfg: HashMap<String, DirectlyFollowsGraph<'a>>,

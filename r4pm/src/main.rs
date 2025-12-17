@@ -1,20 +1,14 @@
 use std::{
-    fs::File,
-    io::{BufReader, BufWriter},
-    path::PathBuf,
-    sync::LazyLock,
+    collections::HashSet, fs::File, io::BufWriter, path::PathBuf, process::ExitCode, sync::LazyLock,
 };
 
 use anstyle::AnsiColor;
 pub use process_mining::bindings;
-use process_mining::{
-    bindings::{Binding, RegistryItem, get_fn_binding},
-    core::event_data::{
-        case_centric::xes::{XESImportOptions, import_xes_file},
-        object_centric::{linked_ocel::IndexLinkedOCEL, ocel_json::import_ocel_json_from_path},
-    },
-};
-use serde_json::Value;
+use process_mining::bindings::Binding;
+
+static SPACE: &str = "  ";
+static CLI_NAME: &str = "r4pm";
+
 static PRIMARY: LazyLock<anstyle::Style> = LazyLock::new(|| {
     anstyle::Style::new()
         .bold()
@@ -31,6 +25,14 @@ static WARN: LazyLock<anstyle::Style> = LazyLock::new(|| {
         .fg_color(Some(AnsiColor::BrightRed.into()))
 });
 
+static INFO: LazyLock<anstyle::Style> = LazyLock::new(|| {
+    anstyle::Style::new()
+        .bold()
+        .fg_color(Some(AnsiColor::BrightGreen.into()))
+});
+
+static BOLD: LazyLock<anstyle::Style> = LazyLock::new(|| anstyle::Style::new().bold());
+
 fn primary(s: impl std::fmt::Display) -> String {
     let sty = &*PRIMARY;
     format!("{sty}{s}{sty:#}")
@@ -43,23 +45,39 @@ fn warn(s: impl std::fmt::Display) -> String {
     let sty = &*WARN;
     format!("{sty}{s}{sty:#}")
 }
-static CLI_NAME: &str = "r4pm";
+fn info(s: impl std::fmt::Display) -> String {
+    let sty = &*INFO;
+    format!("{sty}{s}{sty:#}")
+}
+fn bold(s: impl std::fmt::Display) -> String {
+    let sty = &*BOLD;
+    format!("{sty}{s}{sty:#}")
+}
 
-fn main() {
+fn main() -> ExitCode {
     let functions = bindings::list_functions();
     let args: Vec<String> = std::env::args().collect();
     if args.len() <= 1 {
         println!(
-            "Usage: {CLI_NAME} fun_name --arg1 'abc' --arg2 4\nAvailable functions: {}",
-            functions.join(", ")
+            "{}\nAvailable functions: {}",
+            warn(format!("Usage: {CLI_NAME} fun_name --arg1 'abc' --arg2 4")),
+            functions
+                .iter()
+                .map(|f| f.name)
+                .collect::<Vec<_>>()
+                .join(", "),
         );
-        std::process::exit(2);
+        return ExitCode::FAILURE;
     }
     let mut state = bindings::AppState::default();
 
     let func_name = &args[1];
-    let binding = get_fn_binding(func_name).expect("Unknown function name!");
-    print_function_info(binding);
+    let binding = *functions
+        .iter()
+        .find(|f| f.name == func_name)
+        .expect("Unknown function name!");
+    let required_fn_args: HashSet<String> = ((binding.required_args)()).into_iter().collect();
+    print_function_info(binding, &required_fn_args);
     let fn_args = (binding.args)();
 
     let mut params = serde_json::Map::new();
@@ -68,61 +86,25 @@ fn main() {
     let mut args_iter = args.iter().skip(2).peekable();
     while let Some(arg) = args_iter.next() {
         if arg.starts_with("--") {
-            if let Some(value) = args_iter.peek() {
+            if let Some(value_str) = args_iter.peek() {
                 let arg_name = &arg[2..arg.len()];
-                if let Some(arg_info) = fn_args
-                    .get(arg_name)
-                    .and_then(|arg_info| arg_info.as_object())
-                {
-                    // println!("Arg Info: {:#?}", arg_info);
-                    let mut value_to_use = if arg_info.get("type").expect("Valid JSON Schema")
-                        == "object"
-                        && value.ends_with(".json")
-                    {
-                        let buf = BufReader::new(File::open(value).unwrap());
-                        serde_json::from_reader::<_, Value>(buf).unwrap()
-                    } else {
-                        serde_json::from_str::<Value>(value)
-                            // .inspect_err(|e| println!("Could not parse as JSON: {}", e))
-                            .unwrap_or_else(|_| value.to_string().into())
-                    };
-                    if let Some(arg_refs) = arg_info
-                        .get("x-registry-ref")
-                        .and_then(|arg_ref| arg_ref.as_str())
-                    {
-                        let stored_name = format!("A{arg_name}");
-                        match arg_refs {
-                            "IndexLinkedOCEL" => {
-                                let path = value;
-                                let ocel = import_ocel_json_from_path(path).unwrap();
-                                let locel = IndexLinkedOCEL::from_ocel(ocel);
-                                state.add(
-                                    &stored_name,
-                                    bindings::RegistryItem::IndexLinkedOCEL(locel),
-                                );
-                            }
-                            "EventLogActivityProjection" => {
-                                let path = value;
-                                println!("Path: {path}");
-                                let xes =
-                                    import_xes_file(path, XESImportOptions::default()).unwrap();
-                                state.add(
-                                    &stored_name,
-                                    RegistryItem::EventLogActivityProjection((&xes).into()),
-                                )
-                            }
-                            "EventLog" => {
-                                let path = value;
-                                println!("Path: {path}");
-                                let xes =
-                                    import_xes_file(path, XESImportOptions::default()).unwrap();
-                                state.add(&stored_name, RegistryItem::EventLog(xes))
-                            }
-                            _ => todo!(),
+                if let Some((_, schema)) = fn_args.iter().find(|(an, _)| an == arg_name) {
+                    // Initial value is just the string from CLI
+                    let initial_value = serde_json::Value::String(value_str.to_string());
+
+                    // Resolve the argument using the bindings helper
+                    match bindings::resolve_argument(arg_name, initial_value, schema, &mut state) {
+                        Ok(resolved_value) => {
+                            params.insert(arg_name.to_string(), resolved_value);
                         }
-                        value_to_use = stored_name.into();
+                        Err(e) => {
+                            eprintln!(
+                                "{}",
+                                warn(format!("Error resolving argument '{}': {}", arg_name, e))
+                            );
+                            return ExitCode::FAILURE;
+                        }
                     }
-                    params.insert(arg_name.to_string(), value_to_use);
                 }
                 // Skip next element (as it is the value!)
                 args_iter.next();
@@ -135,16 +117,14 @@ fn main() {
             } else {
                 // Unknown argument?!
                 eprintln!("{}", warn(format!("Unknown argument: {:?}", arg)));
-                std::process::exit(2);
+                return ExitCode::FAILURE;
             }
         }
     }
-
     // Check if all parameters are there
-    let missing_args: Vec<_> = (binding.args)()
-        .keys()
-        .filter(|k| !params.contains_key(*k))
-        .cloned()
+    let missing_args: Vec<_> = required_fn_args
+        .into_iter()
+        .filter(|k| !params.contains_key(k))
         .collect();
     if !missing_args.is_empty() {
         eprintln!(
@@ -154,36 +134,79 @@ fn main() {
                 missing_args.join(", ")
             ))
         );
-        std::process::exit(2);
+        return ExitCode::FAILURE;
     }
     let fn_args = serde_json::Value::Object(params);
-    match bindings::call(func_name, &fn_args, &state) {
+    match bindings::call(binding, &fn_args, &state) {
         Ok(res) => {
             if let Some(output_path) = output_path {
                 let writer = BufWriter::new(File::create(&output_path).unwrap());
                 // Right now we just write to JSON, but of course here we could also support other formats :)
                 serde_json::to_writer(writer, &res).unwrap();
-                println!("Wrote output to {:?}", output_path);
+                println!("Wrote output to {:?}.", output_path);
             } else {
                 // If not output path is specified, print result
                 println!("\n\nOutput:\n{:#}", res);
             }
+            ExitCode::SUCCESS
         }
-        Err(e) => eprintln!("Error: {}", e),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+
+            ExitCode::FAILURE
+        }
     }
 }
 
-fn print_function_info(binding: &Binding) {
+fn print_function_info(binding: &Binding, required_fn_args: &HashSet<String>) {
     let name = binding.name;
 
     let docs = (binding.docs)()
         .into_iter()
-        .map(|s| format!("\t{s}"))
+        .map(|s| format!("{SPACE}{s}"))
         .collect::<Vec<_>>()
         .join("\n");
 
-    let args: Vec<_> = ((binding.args)()).keys().map(|s| s.to_string()).collect();
-    let arg_hints = format!("\tRequired Arguments: {}", args.join(", "));
+    let args: Vec<_> = ((binding.args)())
+        .iter()
+        .map(|(s, v)| {
+            let type_name = v
+                .as_object()
+                .unwrap()
+                .get("title")
+                .unwrap()
+                .as_str()
+                .unwrap();
+            if required_fn_args.contains(s.as_str()) {
+                format!("{s}: {}", type_name)
+            } else {
+                format!("[{s}: {}]", type_name)
+            }
+        })
+        .collect();
+    let arg_hints = format!("{SPACE}{}: {}", bold("Arguments"), args.join(", "));
+    let ret_hint = format!(
+        "{SPACE}{}: {}",
+        bold("Returns"),
+        (binding.return_type)()
+            .as_object()
+            .unwrap()
+            .get("title")
+            .unwrap()
+            .as_str()
+            .unwrap()
+    );
+    let source_hints = format!(
+        "{SPACE}Source: {}:{}\n{SPACE}Module: {}",
+        binding.source_path, binding.source_line, binding.module
+    );
 
-    println!("\n{}\n{}\n{}\n", primary(name), muted(docs), arg_hints);
+    println!(
+        "\n{}\n{}\n{}\n{}\n{}\n",
+        primary(name),
+        info(docs),
+        arg_hints,
+        ret_hint,
+        muted(source_hints)
+    );
 }

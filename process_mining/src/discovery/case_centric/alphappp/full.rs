@@ -89,22 +89,31 @@ impl AlphaPPPConfig {
     }
 }
 
+const NORMAL_ALPHAPPP_CONFIG: AlphaPPPConfig = AlphaPPPConfig {
+    balance_thresh: 0.2,
+    fitness_thresh: 0.75,
+    replay_thresh: 0.0,
+    log_repair_skip_df_thresh_rel: 2.0,
+    log_repair_loop_df_thresh_rel: 2.0,
+    absolute_df_clean_thresh: 10,
+    relative_df_clean_thresh: 0.1,
+};
 ///
 /// Discover a [`PetriNet`] using the Alpha+++ Process Discovery algorithm
 ///
-/// Additionally returns the durations for performance measurements
-///
-#[register_binding]
+#[register_binding(name = "discover_alpha+++")]
 pub fn alphappp_discover_petri_net(
     log_proj: &EventLogActivityProjection,
-    config: AlphaPPPConfig,
-) -> (PetriNet, AlgoDuration) {
-    alphappp_discover_petri_net_with_timing_fn(log_proj, config, &get_current_time_millis)
+    #[bind(default = NORMAL_ALPHAPPP_CONFIG)] config: AlphaPPPConfig,
+) -> PetriNet {
+    alphappp_discover_petri_net_with_timing_fn(log_proj, config, &get_current_time_millis).0
 }
 
 /// Run Alpha+++ discovery
 ///
 /// Measures [`AlgoDuration`] using the passed `get_time_millis_fn` function
+///
+/// Returns the discovered Petri net as well as performance measurements
 pub fn alphappp_discover_petri_net_with_timing_fn(
     log_proj: &EventLogActivityProjection,
     config: AlphaPPPConfig,

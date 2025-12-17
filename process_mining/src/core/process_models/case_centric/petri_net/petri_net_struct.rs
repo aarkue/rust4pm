@@ -2,6 +2,7 @@
 use itertools::Itertools;
 #[cfg(feature = "token-based-replay")]
 use nalgebra::{DMatrix, Dyn, OMatrix};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -10,13 +11,17 @@ use crate::core::process_models::case_centric::petri_net::pnml::{
     export_pnml,
     import_pnml::{self, PNMLParseError},
 };
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Hash, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, PartialEq, Deserialize, Serialize, Hash, Eq, PartialOrd, Ord, JsonSchema,
+)]
 /// Place in a Petri net
 pub struct Place {
     id: Uuid,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Hash, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, PartialEq, Deserialize, Serialize, Hash, Eq, PartialOrd, Ord, JsonSchema,
+)]
 /// Transition in a Petri net
 pub struct Transition {
     /// Transition label (None if this transition is _invisible_)
@@ -35,7 +40,9 @@ pub enum PetriNetNodes {
     Transitions(Vec<TransitionID>),
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Deserialize, Serialize, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, JsonSchema,
+)]
 #[serde(tag = "type", content = "nodes")]
 /// Arc type in a Petri net
 pub enum ArcType {
@@ -63,7 +70,9 @@ impl ArcType {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Deserialize, Serialize, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, JsonSchema,
+)]
 /// Arc in a Petri net
 ///
 /// Connecting a transition and a place (or the other way around)
@@ -74,7 +83,9 @@ pub struct Arc {
     pub weight: u32,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Hash, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Hash, Eq, PartialOrd, Ord, JsonSchema,
+)]
 /// Place ID
 pub struct PlaceID(pub Uuid);
 impl PlaceID {
@@ -108,7 +119,7 @@ impl TransitionID {
 /// Marking of a Petri net: Assigning [`PlaceID`]s to a number of tokens
 pub type Marking = HashMap<PlaceID, u64>;
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, JsonSchema)]
 ///
 /// A Petri net of [`Place`]s and [`Transition`]s
 ///

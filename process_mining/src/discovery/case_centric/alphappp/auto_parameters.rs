@@ -114,7 +114,7 @@ pub fn alphappp_discover_with_auto_parameters(
 ) -> (AlphaPPPConfig, PetriNet) {
     let mut best: Option<(AlphaPPPConfig, f32, PetriNet)> = None;
     for c in AUTO_CONFIGS {
-        let (pn, _) = alphappp_discover_petri_net(log_proj, *c);
+        let pn = alphappp_discover_petri_net(log_proj, *c);
         let score = score_discovered_pn(&pn, c);
         match best {
             Some((_, best_score, _)) => {

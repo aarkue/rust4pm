@@ -1,6 +1,7 @@
 use binding_macros::RegistryEntity;
 use chrono::{DateTime, FixedOffset};
 use ordered_float::OrderedFloat;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -37,7 +38,7 @@ use super::constants::ACTIVITY_NAME;
 /// For container/list attribute values, a debug representation String is returned.
 /// This could, for example, look like this: `[Attribute { key: "test", value: Float(0.3), own_attributes: None }]`.
 /// For None attribute vaues, the String `"None"` is returned.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", content = "content")]
 pub enum AttributeValue {
     /// String values
@@ -255,7 +256,7 @@ impl AttributeValue {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq, JsonSchema)]
 ///
 /// Attribute made up of the key and value
 ///
@@ -456,7 +457,7 @@ pub fn to_attributes(from: HashMap<String, AttributeValue>) -> Attributes {
 ///
 /// An event consists of multiple (event) attributes ([Attributes])
 ///
-#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Hash, Eq)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Hash, Eq, JsonSchema)]
 pub struct Event {
     /// Event attributes
     pub attributes: Attributes,
@@ -479,7 +480,7 @@ impl Event {
 ///
 /// A trace consists of a list of events and trace attributes (See also [`Event`] and [`Attributes`])
 ///
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, JsonSchema)]
 pub struct Trace {
     /// Trace-level attributes
     pub attributes: Attributes,
@@ -508,7 +509,7 @@ impl Trace {
 ///
 /// Event log consisting of a list of [`Trace`]s and log [`Attributes`]
 ///
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, RegistryEntity)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, RegistryEntity, JsonSchema)]
 pub struct EventLog {
     /// Top-level attributes
     pub attributes: Attributes,
@@ -621,7 +622,7 @@ impl EventLog {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, JsonSchema)]
 /// An XES Extension
 pub struct EventLogExtension {
     /// Extension name
@@ -632,7 +633,7 @@ pub struct EventLogExtension {
     pub uri: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 /// Event classifier
 ///
 /// Enables classifying events by a set of attributes to consider for the _class identity_

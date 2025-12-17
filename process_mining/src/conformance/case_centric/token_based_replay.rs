@@ -1,5 +1,9 @@
 //! Token-based Replay on Petri Nets
+#[cfg(feature = "token-based-replay")]
+use binding_macros::register_binding;
 use nalgebra::{DMatrix, DVector};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -12,7 +16,7 @@ use crate::core::{
 ///
 /// Errors than can occur for the input of the token-based replay algorithm
 ///
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum TokenBasedReplayError {
     /// Error if no initial marking is provided
     NoInitialMarking,
@@ -49,7 +53,7 @@ impl std::fmt::Display for TokenBasedReplayError {
 ///
 /// Result from the token-based replay computation
 ///
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TokenBasedReplayResult {
     /// Produced tokens during token-based replay
     pub produced: u64,
@@ -78,6 +82,7 @@ impl TokenBasedReplayResult {
 /// Computes token-based replay for a Petri net that has unique labels and no silent transitions
 ///
 #[cfg(feature = "token-based-replay")]
+#[register_binding]
 pub fn apply_token_based_replay(
     petri_net: &PetriNet,
     event_log: &EventLogActivityProjection,
