@@ -7,7 +7,12 @@ use syn::fold::{self, Fold};
 use syn::{AngleBracketedGenericArguments, GenericArgument, Type, TypeReference};
 
 /// Name of big data types, which are handled over app state instead of being (de-)serialized
-const BIG_TYPES_NAMES: &[&str] = &["EventLogActivityProjection", "IndexLinkedOCEL", "EventLog"];
+const BIG_TYPES_NAMES: &[&str] = &[
+    "EventLogActivityProjection",
+    "IndexLinkedOCEL",
+    "EventLog",
+    "OCEL",
+];
 
 /// Removes/elide lifetimes and other special cases (i.e., certain generics) from types
 struct LifetimeStripper;

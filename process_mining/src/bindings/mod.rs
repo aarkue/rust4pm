@@ -33,7 +33,7 @@
 use crate::core::{
     event_data::{
         case_centric::utils::activity_projection::EventLogActivityProjection,
-        object_centric::linked_ocel::IndexLinkedOCEL,
+        object_centric::{linked_ocel::IndexLinkedOCEL, ocel_struct::OCEL},
     },
     EventLog,
 };
@@ -50,14 +50,16 @@ pub enum RegistryItem {
     EventLogActivityProjection(EventLogActivityProjection),
     IndexLinkedOCEL(IndexLinkedOCEL),
     EventLog(EventLog),
+    OCEL(OCEL),
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[allow(missing_docs)]
 pub enum RegistryItemKind {
     EventLogActivityProjection,
     IndexLinkedOCEL,
     EventLog,
+    OCEL,
 }
 
 impl Display for RegistryItemKind {
@@ -66,6 +68,7 @@ impl Display for RegistryItemKind {
             RegistryItemKind::EventLogActivityProjection => "EventLogActivityProjection",
             RegistryItemKind::IndexLinkedOCEL => "IndexLinkedOCEL",
             RegistryItemKind::EventLog => "EventLog",
+            RegistryItemKind::OCEL => "OCEL",
         };
         write!(f, "{}", s)
     }
@@ -78,6 +81,7 @@ impl RegistryItemKind {
             RegistryItemKind::EventLogActivityProjection,
             RegistryItemKind::IndexLinkedOCEL,
             RegistryItemKind::EventLog,
+            RegistryItemKind::OCEL,
         ]
     }
 }
@@ -90,43 +94,481 @@ impl std::str::FromStr for RegistryItemKind {
             "EventLogActivityProjection" => Ok(RegistryItemKind::EventLogActivityProjection),
             "IndexLinkedOCEL" => Ok(RegistryItemKind::IndexLinkedOCEL),
             "EventLog" => Ok(RegistryItemKind::EventLog),
+            "OCEL" => Ok(RegistryItemKind::OCEL),
             _ => Err(format!("Unknown RegistryItemKind: {}", s)),
         }
     }
 }
 
+/// Trait for importing types from a file path
+pub trait ImportFromPath: Sized {
+    /// Import from a file path, optionally specifying the format
+    fn import_from_path(path: &std::path::Path, format: Option<&str>) -> Result<Self, String>;
+}
+
+/// Trait for importing types from bytes
+pub trait ImportFromBytes: Sized {
+    /// Import from bytes, specifying the format
+    fn import_from_bytes(data: &[u8], format: &str) -> Result<Self, String>;
+}
+
+/// Trait for exporting types to a file path
+pub trait ExportToPath {
+    /// Export to a file path, optionally specifying the format
+    fn export_to_path(&self, path: &std::path::Path, format: Option<&str>) -> Result<(), String>;
+}
+
+/// Trait for exporting types to bytes
+pub trait ExportToBytes {
+    /// Export to bytes, specifying the format
+    fn export_to_bytes(&self, format: &str) -> Result<Vec<u8>, String>;
+}
+
+impl ImportFromPath for EventLog {
+    fn import_from_path(path: &std::path::Path, format: Option<&str>) -> Result<Self, String> {
+        let format = format.map(|s| s.to_string()).unwrap_or_else(|| {
+            let p = path.to_string_lossy().to_lowercase();
+            if p.ends_with(".xes.gz") {
+                "xes.gz".to_string()
+            } else if p.ends_with(".json") {
+                "json".to_string()
+            } else {
+                "xes".to_string()
+            }
+        });
+
+        match format.as_str() {
+            "json" => {
+                let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+                let reader = std::io::BufReader::new(file);
+                serde_json::from_reader(reader).map_err(|e| e.to_string())
+            }
+            "xes" | "xes.gz" => crate::core::event_data::case_centric::xes::import_xes_file(
+                path.to_str().ok_or("Invalid path")?,
+                crate::core::event_data::case_centric::xes::XESImportOptions::default(),
+            )
+            .map_err(|e| e.to_string()),
+            _ => Err(format!("Unsupported format for EventLog: {:?}", format)),
+        }
+    }
+}
+
+impl ImportFromBytes for EventLog {
+    fn import_from_bytes(data: &[u8], format: &str) -> Result<Self, String> {
+        match format {
+            "json" => serde_json::from_slice(data).map_err(|e| e.to_string()),
+            "xes" | "xes.gz" => crate::core::event_data::case_centric::xes::import_xes_slice(
+                data,
+                format == "xes.gz",
+                Default::default(),
+            )
+            .map_err(|e| e.to_string()),
+            _ => Err(format!("Unsupported format for EventLog: {:?}", format)),
+        }
+    }
+}
+
+impl ExportToPath for EventLog {
+    fn export_to_path(&self, path: &std::path::Path, format: Option<&str>) -> Result<(), String> {
+        let format = format.map(|s| s.to_string()).unwrap_or_else(|| {
+            if path.to_string_lossy().to_lowercase().ends_with(".json") {
+                "json".to_string()
+            } else {
+                "xes".to_string()
+            }
+        });
+
+        match format.as_str() {
+            "json" => {
+                let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+                serde_json::to_writer(file, self).map_err(|e| e.to_string())
+            }
+            "xes" | "xes.gz" => {
+                crate::core::event_data::case_centric::xes::export_xes::export_xes_event_log_to_file_path(
+                    self,
+                    path,
+                )
+                .map_err(|e| e.to_string())
+            }
+            _ => Err(format!("Unsupported format for EventLog: {:?}", format)),
+        }
+    }
+}
+
+impl ExportToBytes for EventLog {
+    fn export_to_bytes(&self, format: &str) -> Result<Vec<u8>, String> {
+        match format {
+            "json" => serde_json::to_vec(self).map_err(|e| e.to_string()),
+            "xes" | "xes.gz" => {
+                if format == "xes.gz" {
+                    let mut bytes = Vec::new();
+                    {
+                        let encoder =
+                            flate2::write::GzEncoder::new(&mut bytes, flate2::Compression::fast());
+                        let mut writer = quick_xml::Writer::new(std::io::BufWriter::new(encoder));
+                        crate::core::event_data::case_centric::xes::export_xes::export_xes_event_log(
+                            &mut writer,
+                            self,
+                        )
+                        .map_err(|e| e.to_string())?;
+                    }
+                    Ok(bytes)
+                } else {
+                    let mut bytes = Vec::new();
+                    {
+                        let mut writer =
+                            quick_xml::Writer::new(std::io::BufWriter::new(&mut bytes));
+                        crate::core::event_data::case_centric::xes::export_xes::export_xes_event_log(
+                            &mut writer,
+                            self,
+                        )
+                        .map_err(|e| e.to_string())?;
+                    }
+                    Ok(bytes)
+                }
+            }
+            _ => Err(format!("Unsupported format for EventLog: {:?}", format)),
+        }
+    }
+}
+
+impl ImportFromPath for OCEL {
+    fn import_from_path(path: &std::path::Path, format: Option<&str>) -> Result<Self, String> {
+        let format = format.unwrap_or_else(|| {
+            let p = path.to_string_lossy().to_lowercase();
+            if p.ends_with(".xml") {
+                "xml"
+            } else if p.ends_with(".sqlite") || p.ends_with(".db") {
+                "sqlite"
+            } else if p.ends_with(".ocel.json") {
+                "ocel.json"
+            } else {
+                "json"
+            }
+        });
+
+        match format {
+            "ocel.json" => {
+                crate::core::event_data::object_centric::ocel_json::import_ocel_json_from_path(
+                    path.to_str().ok_or("Invalid path")?,
+                )
+                .map_err(|e| e.to_string())
+            }
+            "xml" => {
+                if !path.exists() {
+                    return Err(format!("File not found: {:?}", path));
+                }
+                Ok(crate::core::event_data::object_centric::ocel_xml::xml_ocel_import::import_ocel_xml_file(
+                    path.to_str().unwrap(),
+                ))
+            }
+            "sqlite" => {
+                #[cfg(feature = "ocel-sqlite")]
+                {
+                    crate::core::event_data::object_centric::ocel_sql::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_path(
+                        path.to_str().unwrap(),
+                    )
+                    .map_err(|e| e.to_string())
+                }
+                #[cfg(not(feature = "ocel-sqlite"))]
+                {
+                    Err(
+                        "SQLite support is not enabled. Enable the 'ocel-sqlite' feature."
+                            .to_string(),
+                    )
+                }
+            }
+            _ => Err(format!("Unsupported format for OCEL: {:?}", format)),
+        }
+    }
+}
+
+impl ImportFromBytes for OCEL {
+    fn import_from_bytes(data: &[u8], format: &str) -> Result<Self, String> {
+        match format {
+            "json" | "ocel.json" => {
+                crate::core::event_data::object_centric::ocel_json::import_ocel_json_from_slice(
+                    data,
+                )
+                .map_err(|e| e.to_string())
+            }
+            "xml" => {
+                Ok(crate::core::event_data::object_centric::ocel_xml::xml_ocel_import::import_ocel_xml_slice(
+                    data,
+                ))
+            }
+            "sqlite" => {
+                #[cfg(feature = "ocel-sqlite")]
+                {
+                    crate::core::event_data::object_centric::ocel_sql::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_slice(
+                        data,
+                    )
+                    .map_err(|e| e.to_string())
+                }
+                #[cfg(not(feature = "ocel-sqlite"))]
+                {
+                    Err(
+                        "SQLite support is not enabled. Enable the 'ocel-sqlite' feature."
+                            .to_string(),
+                    )
+                }
+            }
+            _ => Err(format!("Unsupported format for OCEL: {:?}", format)),
+        }
+    }
+}
+
+impl ExportToPath for OCEL {
+    fn export_to_path(&self, path: &std::path::Path, format: Option<&str>) -> Result<(), String> {
+        let format = format.map(|s| s.to_string()).unwrap_or_else(|| {
+            let p = path.to_string_lossy().to_lowercase();
+            if p.ends_with(".xml") {
+                "xml".to_string()
+            } else if p.ends_with(".sqlite") || p.ends_with(".db") {
+                "sqlite".to_string()
+            } else {
+                "json".to_string()
+            }
+        });
+
+        match format.as_str() {
+            "json" | "ocel.json" => {
+                crate::core::event_data::object_centric::ocel_json::export_ocel_json_path(
+                    self, path,
+                )
+                .map_err(|e| e.to_string())
+            }
+            "xml" => {
+                crate::core::event_data::object_centric::ocel_xml::xml_ocel_export::export_ocel_xml_path(
+                    self, path,
+                )
+                .map_err(|e| e.to_string())
+            }
+            "sqlite" => {
+                #[cfg(feature = "ocel-sqlite")]
+                {
+                    crate::core::event_data::object_centric::ocel_sql::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_path(
+                        self, path,
+                    )
+                    .map_err(|e| e.to_string())
+                }
+                #[cfg(not(feature = "ocel-sqlite"))]
+                {
+                    Err(
+                        "SQLite support is not enabled. Enable the 'ocel-sqlite' feature."
+                            .to_string(),
+                    )
+                }
+            }
+            _ => Err(format!("Unsupported format for OCEL: {:?}", format)),
+        }
+    }
+}
+
+impl ExportToBytes for OCEL {
+    fn export_to_bytes(&self, format: &str) -> Result<Vec<u8>, String> {
+        match format {
+            "json" | "ocel.json" => {
+                crate::core::event_data::object_centric::ocel_json::export_ocel_json_to_vec(self)
+                    .map_err(|e| e.to_string())
+            }
+            "xml" => {
+                let mut bytes = Vec::new();
+                crate::core::event_data::object_centric::ocel_xml::xml_ocel_export::export_ocel_xml(
+                    &mut quick_xml::Writer::new(std::io::BufWriter::new(&mut bytes)),
+                    self,
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(bytes)
+            }
+            "sqlite" => {
+                #[cfg(feature = "ocel-sqlite")]
+                {
+                    crate::core::event_data::object_centric::ocel_sql::sqlite::sqlite_ocel_export::export_ocel_sqlite_to_vec(
+                        self,
+                    )
+                    .map_err(|e| e.to_string())
+                }
+                #[cfg(not(feature = "ocel-sqlite"))]
+                {
+                    Err(
+                        "SQLite support is not enabled. Enable the 'ocel-sqlite' feature."
+                            .to_string(),
+                    )
+                }
+            }
+            _ => Err(format!("Unsupported format for OCEL: {:?}", format)),
+        }
+    }
+}
+
+impl ImportFromPath for IndexLinkedOCEL {
+    fn import_from_path(path: &std::path::Path, format: Option<&str>) -> Result<Self, String> {
+        let format = format.map(|s| s.to_string()).unwrap_or_else(|| {
+            let p = path.to_string_lossy().to_lowercase();
+            if p.ends_with(".ocel.json") {
+                "ocel.json".to_string()
+            } else if p.ends_with(".json") {
+                "json".to_string()
+            } else {
+                "ocel.json".to_string()
+            }
+        });
+
+        if format == "json" {
+            let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+            let reader = std::io::BufReader::new(file);
+            serde_json::from_reader(reader).map_err(|e| e.to_string())
+        } else {
+            let ocel = OCEL::import_from_path(path, Some(&format))?;
+            Ok(IndexLinkedOCEL::from_ocel(ocel))
+        }
+    }
+}
+
+impl ImportFromBytes for IndexLinkedOCEL {
+    fn import_from_bytes(data: &[u8], format: &str) -> Result<Self, String> {
+        if format == "json" {
+            serde_json::from_slice(data).map_err(|e| e.to_string())
+        } else {
+            let ocel = OCEL::import_from_bytes(data, format)?;
+            Ok(IndexLinkedOCEL::from_ocel(ocel))
+        }
+    }
+}
+
+impl ExportToPath for IndexLinkedOCEL {
+    fn export_to_path(&self, path: &std::path::Path, format: Option<&str>) -> Result<(), String> {
+        let format = format.map(|s| s.to_string()).unwrap_or_else(|| {
+            let p = path.to_string_lossy().to_lowercase();
+            if p.ends_with(".ocel.json") {
+                "ocel.json".to_string()
+            } else if p.ends_with(".json") {
+                "json".to_string()
+            } else {
+                "ocel.json".to_string()
+            }
+        });
+
+        if format == "json" {
+            let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+            serde_json::to_writer(file, self).map_err(|e| e.to_string())
+        } else {
+            self.get_ocel_ref().export_to_path(path, Some(&format))
+        }
+    }
+}
+
+impl ExportToBytes for IndexLinkedOCEL {
+    fn export_to_bytes(&self, format: &str) -> Result<Vec<u8>, String> {
+        if format == "json" {
+            serde_json::to_vec(self).map_err(|e| e.to_string())
+        } else {
+            self.get_ocel_ref().export_to_bytes(format)
+        }
+    }
+}
+
+impl ImportFromPath for EventLogActivityProjection {
+    fn import_from_path(path: &std::path::Path, format: Option<&str>) -> Result<Self, String> {
+        let format = format.map(|s| s.to_string()).unwrap_or_else(|| {
+            if path.to_string_lossy().to_lowercase().ends_with(".json") {
+                "json".to_string()
+            } else {
+                "xes".to_string()
+            }
+        });
+
+        match format.as_str() {
+            "json" => {
+                let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+                let reader = std::io::BufReader::new(file);
+                serde_json::from_reader(reader).map_err(|e| e.to_string())
+            }
+            "xes" | "xes.gz" => {
+                let log = EventLog::import_from_path(path, Some(&format))?;
+                Ok((&log).into())
+            }
+            _ => Err(format!(
+                "Unsupported format for EventLogActivityProjection: {:?}",
+                format
+            )),
+        }
+    }
+}
+
+impl ImportFromBytes for EventLogActivityProjection {
+    fn import_from_bytes(data: &[u8], format: &str) -> Result<Self, String> {
+        match format {
+            "json" => serde_json::from_slice(data).map_err(|e| e.to_string()),
+            "xes" | "xes.gz" => {
+                let log = EventLog::import_from_bytes(data, format)?;
+                Ok((&log).into())
+            }
+            _ => Err(format!(
+                "Unsupported format for EventLogActivityProjection: {:?}",
+                format
+            )),
+        }
+    }
+}
+
+impl ExportToPath for EventLogActivityProjection {
+    fn export_to_path(&self, path: &std::path::Path, _format: Option<&str>) -> Result<(), String> {
+        // Only JSON supported
+        let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+        serde_json::to_writer(file, self).map_err(|e| e.to_string())
+    }
+}
+
+impl ExportToBytes for EventLogActivityProjection {
+    fn export_to_bytes(&self, format: &str) -> Result<Vec<u8>, String> {
+        match format {
+            "json" => serde_json::to_vec(self).map_err(|e| e.to_string()),
+            _ => Err(format!(
+                "Unsupported format for EventLogActivityProjection: {:?}",
+                format
+            )),
+        }
+    }
+}
+
 impl RegistryItem {
+    /// Convert the registry item to a JSON value
+    ///
+    /// For "Big Types", this performs a full serialization.
+    pub fn to_value(&self) -> Result<Value, String> {
+        match self {
+            RegistryItem::EventLog(log) => serde_json::to_value(log).map_err(|e| e.to_string()),
+            RegistryItem::OCEL(ocel) => serde_json::to_value(ocel).map_err(|e| e.to_string()),
+            RegistryItem::IndexLinkedOCEL(locel) => {
+                serde_json::to_value(locel).map_err(|e| e.to_string())
+            }
+            RegistryItem::EventLogActivityProjection(proj) => {
+                serde_json::to_value(proj).map_err(|e| e.to_string())
+            }
+        }
+    }
+
     /// Try to load a registry item from a file path based on the expected type name
     pub fn load_from_path(type_name: impl AsRef<str>, path: &str) -> Result<Self, String> {
         use std::str::FromStr;
         let item_type = RegistryItemKind::from_str(type_name.as_ref())
             .map_err(|_| format!("Unknown registry type: {}", type_name.as_ref()))?;
+        let path = std::path::Path::new(path);
 
         match item_type {
-            RegistryItemKind::IndexLinkedOCEL => {
-                let ocel =
-                    crate::core::event_data::object_centric::ocel_json::import_ocel_json_from_path(
-                        path,
-                    )
-                    .map_err(|e| e.to_string())?;
-                let locel = IndexLinkedOCEL::from_ocel(ocel);
-                Ok(RegistryItem::IndexLinkedOCEL(locel))
-            }
+            RegistryItemKind::EventLog => Ok(RegistryItem::EventLog(EventLog::import_from_path(
+                path, None,
+            )?)),
+            RegistryItemKind::OCEL => Ok(RegistryItem::OCEL(OCEL::import_from_path(path, None)?)),
+            RegistryItemKind::IndexLinkedOCEL => Ok(RegistryItem::IndexLinkedOCEL(
+                IndexLinkedOCEL::import_from_path(path, None)?,
+            )),
             RegistryItemKind::EventLogActivityProjection => {
-                let xes = crate::core::event_data::case_centric::xes::import_xes_file(
-                    path,
-                    crate::core::event_data::case_centric::xes::XESImportOptions::default(),
-                )
-                .map_err(|e| e.to_string())?;
-                Ok(RegistryItem::EventLogActivityProjection((&xes).into()))
-            }
-            RegistryItemKind::EventLog => {
-                let xes = crate::core::event_data::case_centric::xes::import_xes_file(
-                    path,
-                    crate::core::event_data::case_centric::xes::XESImportOptions::default(),
-                )
-                .map_err(|e| e.to_string())?;
-                Ok(RegistryItem::EventLog(xes))
+                Ok(RegistryItem::EventLogActivityProjection(
+                    EventLogActivityProjection::import_from_path(path, None)?,
+                ))
             }
         }
     }
@@ -138,39 +580,73 @@ impl RegistryItem {
         format: &str,
     ) -> Result<Self, String> {
         match item_type {
-            RegistryItemKind::IndexLinkedOCEL => {
-                let ocel = match format {
-                    "json" => crate::core::event_data::object_centric::ocel_json::import_ocel_json_from_slice(data)
-                        .map_err(|e| e.to_string())?,
-                    "xml" => crate::core::event_data::object_centric::ocel_xml::xml_ocel_import::import_ocel_xml_slice(data),
-                    #[cfg(feature = "ocel-sqlite")]
-                    "sqlite" => crate::core::event_data::object_centric::ocel_sql::sqlite::sqlite_ocel_import::import_ocel_sqlite_from_slice(data)
-                        .map_err(|e| e.to_string())?,
-                     _ => return Err(format!("Unknown or unsupported format for IndexLinkedOCEL: {}", format)),
-                };
-                let locel = IndexLinkedOCEL::from_ocel(ocel);
-                Ok(RegistryItem::IndexLinkedOCEL(locel))
+            RegistryItemKind::EventLog => Ok(RegistryItem::EventLog(EventLog::import_from_bytes(
+                data, format,
+            )?)),
+            RegistryItemKind::OCEL => {
+                Ok(RegistryItem::OCEL(OCEL::import_from_bytes(data, format)?))
             }
+            RegistryItemKind::IndexLinkedOCEL => Ok(RegistryItem::IndexLinkedOCEL(
+                IndexLinkedOCEL::import_from_bytes(data, format)?,
+            )),
             RegistryItemKind::EventLogActivityProjection => {
-                // Assume XES
-                let xes = crate::core::event_data::case_centric::xes::import_xes_slice(
-                    data,
-                    format.ends_with(".gz"),
-                    Default::default(),
-                )
-                .map_err(|e| e.to_string())?;
-                Ok(RegistryItem::EventLogActivityProjection((&xes).into()))
+                Ok(RegistryItem::EventLogActivityProjection(
+                    EventLogActivityProjection::import_from_bytes(data, format)?,
+                ))
             }
-            RegistryItemKind::EventLog => {
-                // Assume XES
-                let xes = crate::core::event_data::case_centric::xes::import_xes_slice(
-                    data,
-                    format.ends_with(".gz"),
-                    Default::default(),
-                )
-                .map_err(|e| e.to_string())?;
-                Ok(RegistryItem::EventLog(xes))
+        }
+    }
+
+    /// Get the kind of the registry item
+    pub fn kind(&self) -> RegistryItemKind {
+        match self {
+            RegistryItem::EventLogActivityProjection(_) => {
+                RegistryItemKind::EventLogActivityProjection
             }
+            RegistryItem::IndexLinkedOCEL(_) => RegistryItemKind::IndexLinkedOCEL,
+            RegistryItem::EventLog(_) => RegistryItemKind::EventLog,
+            RegistryItem::OCEL(_) => RegistryItemKind::OCEL,
+        }
+    }
+
+    /// Export the registry item to a file path
+    pub fn export_to_path(
+        &self,
+        path: impl AsRef<std::path::Path>,
+        format: Option<&str>,
+    ) -> Result<(), String> {
+        let path = path.as_ref();
+        match self {
+            RegistryItem::EventLog(x) => x.export_to_path(path, format),
+            RegistryItem::OCEL(x) => x.export_to_path(path, format),
+            RegistryItem::IndexLinkedOCEL(x) => x.export_to_path(path, format),
+            RegistryItem::EventLogActivityProjection(x) => x.export_to_path(path, format),
+        }
+    }
+
+    /// Export the registry item to a byte vector
+    pub fn export_to_bytes(&self, format: &str) -> Result<Vec<u8>, String> {
+        match self {
+            RegistryItem::EventLog(x) => x.export_to_bytes(format),
+            RegistryItem::OCEL(x) => x.export_to_bytes(format),
+            RegistryItem::IndexLinkedOCEL(x) => x.export_to_bytes(format),
+            RegistryItem::EventLogActivityProjection(x) => x.export_to_bytes(format),
+        }
+    }
+
+    /// Convert the registry item to another kind
+    pub fn convert(&self, target_kind: RegistryItemKind) -> Result<Self, String> {
+        match (self, target_kind) {
+            (RegistryItem::EventLog(log), RegistryItemKind::EventLogActivityProjection) => {
+                Ok(RegistryItem::EventLogActivityProjection(log.into()))
+            }
+            (RegistryItem::OCEL(ocel), RegistryItemKind::IndexLinkedOCEL) => Ok(
+                RegistryItem::IndexLinkedOCEL(IndexLinkedOCEL::from_ocel(ocel.clone())),
+            ),
+            (RegistryItem::IndexLinkedOCEL(locel), RegistryItemKind::OCEL) => {
+                Ok(RegistryItem::OCEL(locel.get_ocel_ref().clone()))
+            }
+            _ => Err(format!("Cannot convert {} to {}", self.kind(), target_kind)),
         }
     }
 }
@@ -266,20 +742,37 @@ pub fn resolve_argument(
     if let Some(arg_ref) = schema_obj.get("x-registry-ref").and_then(|r| r.as_str()) {
         // If the value is already a string ID that exists in the registry, use it.
         if let Some(id) = value.as_str() {
-            if state.contains_key(id) {
-                return Ok(value);
+            let mut items = state.items.write().map_err(|e| e.to_string())?;
+            if let Some(item) = items.get(id) {
+                if item.kind().to_string() == arg_ref {
+                    return Ok(value);
+                }
+
+                // Try conversion
+                use std::str::FromStr;
+                let target_kind = RegistryItemKind::from_str(arg_ref)?;
+                match item.convert(target_kind) {
+                    Ok(converted) => {
+                        let new_id = format!("{}_as_{}", id, arg_ref);
+                        items.insert(new_id.clone(), converted);
+                        return Ok(serde_json::Value::String(new_id));
+                    }
+                    Err(e) => {
+                        return Err(format!(
+                        "Type mismatch for ID '{}': expected {}, found {}. Conversion failed: {}",
+                        id,
+                        arg_ref,
+                        item.kind(),
+                        e
+                    ))
+                    }
+                }
             }
+            drop(items);
 
             // Otherwise, try to load it from file
             let item = RegistryItem::load_from_path(arg_ref, id)?;
-            let stored_name = format!(
-                "A{}_{}",
-                arg_name,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            );
+            let stored_name = format!("A{}_{}", arg_name, uuid::Uuid::new_v4());
             state.add(&stored_name, item);
             return Ok(serde_json::Value::String(stored_name));
         }
@@ -328,10 +821,21 @@ pub fn get_fn_binding(id: &str) -> Option<&'static Binding> {
     inventory::iter::<Binding>.into_iter().find(|b| b.id == id)
 }
 
-/// Test Binding
+/// Get the number of objects in an [`OCEL`]
 #[binding_macros::register_binding]
-pub fn test(log: &EventLog) -> EventLog {
-    log.clone()
+pub fn num_objects(ocel: &IndexLinkedOCEL) -> usize {
+    ocel.get_ocel_ref().objects.len()
+}
+/// Get the number of events in an [`OCEL`]
+#[binding_macros::register_binding]
+pub fn num_events(ocel: &IndexLinkedOCEL) -> usize {
+    ocel.get_ocel_ref().events.len()
+}
+
+/// Convert an [`OCEL`] to an [`IndexLinkedOCEL`]
+#[binding_macros::register_binding]
+pub fn index_link_ocel(ocel: &OCEL) -> IndexLinkedOCEL {
+    IndexLinkedOCEL::from_ocel(ocel.clone())
 }
 
 #[cfg(test)]

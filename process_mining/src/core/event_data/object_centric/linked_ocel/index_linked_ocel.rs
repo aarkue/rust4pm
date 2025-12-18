@@ -93,7 +93,7 @@ impl From<ObjectIndex> for EventOrObjectIndex {
 ///
 /// Implements the [`LinkedOCELAccess`] trait.
 ///
-#[derive(Debug, Clone, RegistryEntity)]
+#[derive(Debug, Clone, RegistryEntity, Serialize, Deserialize, JsonSchema)]
 pub struct IndexLinkedOCEL {
     ocel: OCEL,
     event_ids_to_index: HashMap<String, EventIndex>,

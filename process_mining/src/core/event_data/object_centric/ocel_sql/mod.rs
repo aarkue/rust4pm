@@ -122,6 +122,17 @@ impl From<::duckdb::Error> for DatabaseError {
     }
 }
 
+impl std::fmt::Display for DatabaseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            #[cfg(feature = "ocel-sqlite")]
+            DatabaseError::SQLITE(e) => write!(f, "SQLite error: {}", e),
+            #[cfg(feature = "ocel-duckdb")]
+            DatabaseError::DUCKDB(e) => write!(f, "DuckDB error: {}", e),
+        }
+    }
+}
+
 #[cfg(all(not(feature = "ocel-duckdb"), not(feature = "ocel-sqlite")))]
 /// SQL Query Parameter
 ///

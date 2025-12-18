@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fmt::Display;
 
+use binding_macros::RegistryEntity;
 use chrono::{DateTime, FixedOffset};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -14,7 +15,7 @@ use crate::core::event_data::object_centric::linked_ocel::{
 ///
 /// Consists of multiple [`OCELEvent`]s and [`OCELObject`]s with corresponding event and object [`OCELType`]s
 ///
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, RegistryEntity)]
 pub struct OCEL {
     /// Event Types in OCEL
     #[serde(rename = "eventTypes")]

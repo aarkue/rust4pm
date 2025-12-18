@@ -1,6 +1,4 @@
-use std::{
-    collections::HashSet, fs::File, io::BufWriter, path::PathBuf, process::ExitCode, sync::LazyLock,
-};
+use std::{collections::HashSet, path::PathBuf, process::ExitCode, sync::LazyLock};
 
 use anstyle::AnsiColor;
 pub use process_mining::bindings;
@@ -12,6 +10,7 @@ static CLI_NAME: &str = "r4pm";
 static PRIMARY: LazyLock<anstyle::Style> = LazyLock::new(|| {
     anstyle::Style::new()
         .bold()
+        .underline()
         .fg_color(Some(AnsiColor::BrightBlue.into()))
 });
 static MUTED: LazyLock<anstyle::Style> = LazyLock::new(|| {
@@ -27,7 +26,7 @@ static WARN: LazyLock<anstyle::Style> = LazyLock::new(|| {
 
 static INFO: LazyLock<anstyle::Style> = LazyLock::new(|| {
     anstyle::Style::new()
-        .bold()
+        // .bold()
         .fg_color(Some(AnsiColor::BrightGreen.into()))
 });
 
@@ -140,22 +139,50 @@ fn main() -> ExitCode {
     match bindings::call(binding, &fn_args, &state) {
         Ok(res) => {
             if let Some(output_path) = output_path {
-                let writer = BufWriter::new(File::create(&output_path).unwrap());
-                // Right now we just write to JSON, but of course here we could also support other formats :)
-                serde_json::to_writer(writer, &res).unwrap();
-                println!("Wrote output to {:?}.", output_path);
+                if let Some(id) = res.as_str() {
+                    let state_guard = state.items.read().unwrap();
+                    if let Some(item) = state_guard.get(id) {
+                        match item.export_to_path(&output_path, None) {
+                            Ok(_) => {
+                                println!("Exported registry item '{}' to {:?}", id, output_path);
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "{}",
+                                    warn(format!("Failed to export registry item: {}", e))
+                                );
+                                return ExitCode::FAILURE;
+                            }
+                        }
+                    } else {
+                        // Not a registry item, just write the JSON
+                        let file = std::fs::File::create(output_path).unwrap();
+                        serde_json::to_writer_pretty(file, &res).unwrap();
+                    }
+                } else {
+                    // Not a string (so not a registry ID), just write the JSON
+                    let file = std::fs::File::create(output_path).unwrap();
+                    serde_json::to_writer_pretty(file, &res).unwrap();
+                }
             } else {
-                // If not output path is specified, print result
-                println!("\n\nOutput:\n{:#}", res);
+                // No output path, print to stdout
+                let mut final_res = res.clone();
+                if let Some(id) = res.as_str() {
+                    let state_guard = state.items.read().unwrap();
+                    if let Some(item) = state_guard.get(id)
+                        && let Ok(val) = item.to_value() {
+                            final_res = val;
+                        }
+                }
+                println!("{}", serde_json::to_string_pretty(&final_res).unwrap());
             }
-            ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("Error: {}", e);
-
-            ExitCode::FAILURE
+            eprintln!("{}", warn(format!("Error calling function: {}", e)));
+            return ExitCode::FAILURE;
         }
     }
+    ExitCode::SUCCESS
 }
 
 fn print_function_info(binding: &Binding, required_fn_args: &HashSet<String>) {
