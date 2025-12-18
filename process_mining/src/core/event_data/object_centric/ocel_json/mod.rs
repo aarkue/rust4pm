@@ -30,9 +30,7 @@ pub fn json_to_ocel(ocel_json: &str) -> OCEL {
 ///
 /// See also [`import_ocel_json_from_slice`].
 ///
-pub fn import_ocel_json_from_path<P: AsRef<std::path::Path>>(
-    path: P,
-) -> Result<OCEL, std::io::Error> {
+pub fn import_ocel_json_path<P: AsRef<std::path::Path>>(path: P) -> Result<OCEL, std::io::Error> {
     let reader: BufReader<File> = BufReader::new(File::open(path)?);
     Ok(serde_json::from_reader(reader)?)
 }
@@ -40,7 +38,7 @@ pub fn import_ocel_json_from_path<P: AsRef<std::path::Path>>(
 ///
 /// Import [`OCEL`] from a JSON byte slice
 ///
-/// See also [`import_ocel_json_from_path`].
+/// See also [`import_ocel_json_path`].
 ///
 pub fn import_ocel_json_from_slice(slice: &[u8]) -> Result<OCEL, std::io::Error> {
     Ok(serde_json::from_slice(slice)?)
@@ -49,9 +47,12 @@ pub fn import_ocel_json_from_slice(slice: &[u8]) -> Result<OCEL, std::io::Error>
 ///
 /// Export [`OCEL`] to a JSON file at the specified path
 ///
-/// To import an OCEL .json file see [`import_ocel_json_from_path`] instead.
+/// To import an OCEL .json file see [`import_ocel_json_path`] instead.
 ///
-pub fn export_ocel_json_path<P: AsRef<Path>>(ocel: &OCEL, path: P) -> Result<(), std::io::Error> {
+pub fn export_ocel_json_to_path<P: AsRef<Path>>(
+    ocel: &OCEL,
+    path: P,
+) -> Result<(), std::io::Error> {
     let writer: BufWriter<File> = BufWriter::new(File::create(path)?);
     Ok(serde_json::to_writer(writer, ocel)?)
 }
@@ -59,7 +60,7 @@ pub fn export_ocel_json_path<P: AsRef<Path>>(ocel: &OCEL, path: P) -> Result<(),
 ///
 /// Export [`OCEL`] to JSON in a byte array ([`Vec<u8>`])
 ///
-/// To import an OCEL .json file see [`import_ocel_json_from_path`] instead.
+/// To import an OCEL .json file see [`import_ocel_json_path`] instead.
 ///
 pub fn export_ocel_json_to_vec(ocel: &OCEL) -> Result<Vec<u8>, std::io::Error> {
     Ok(serde_json::to_vec(ocel)?)

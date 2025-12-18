@@ -36,7 +36,7 @@ pub enum PNMLParseError {
     /// Encountered PNML/XML tag unexpected for the current parsing mode
     InvalidMode,
     /// IO error
-    IOError(std::rc::Rc<std::io::Error>),
+    IOError(std::sync::Arc<std::io::Error>),
     /// XML error (e.g., incorrect XML format )
     XMLParsingError(QuickXMLError),
     /// Missing key on XML element (with expected key included)
@@ -73,7 +73,7 @@ impl std::error::Error for PNMLParseError {
 
 impl From<std::io::Error> for PNMLParseError {
     fn from(e: std::io::Error) -> Self {
-        Self::IOError(std::rc::Rc::new(e))
+        PNMLParseError::IOError(std::sync::Arc::new(e))
     }
 }
 

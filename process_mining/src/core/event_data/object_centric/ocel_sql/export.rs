@@ -167,12 +167,11 @@ mod test {
     #[cfg(feature = "ocel-duckdb")]
     fn test_duckdb_ocel_export_order() {
         use crate::{
-            core::event_data::object_centric::ocel_json::import_ocel_json_from_path, test_utils,
+            core::event_data::object_centric::ocel_json::import_ocel_json_path, test_utils,
         };
 
         let path = test_utils::get_test_data_path();
-        let ocel =
-            import_ocel_json_from_path(path.join("ocel").join("order-management.json")).unwrap();
+        let ocel = import_ocel_json_path(path.join("ocel").join("order-management.json")).unwrap();
         let export_path = path.join("export").join("duckdb-export.db");
         let _ = remove_file(&export_path);
         let conn = ::duckdb::Connection::open(&export_path).unwrap();
@@ -183,12 +182,11 @@ mod test {
     #[cfg(feature = "ocel-sqlite")]
     fn test_sqlite_ocel_export_order() {
         use crate::{
-            core::event_data::object_centric::ocel_json::import_ocel_json_from_path, test_utils,
+            core::event_data::object_centric::ocel_json::import_ocel_json_path, test_utils,
         };
 
         let path: std::path::PathBuf = test_utils::get_test_data_path();
-        let ocel =
-            import_ocel_json_from_path(path.join("ocel").join("order-management.json")).unwrap();
+        let ocel = import_ocel_json_path(path.join("ocel").join("order-management.json")).unwrap();
         let export_path = path.join("export").join("sqlite-export.sqlite");
         let _ = remove_file(&export_path);
         let conn = rusqlite::Connection::open(&export_path).unwrap();

@@ -11,7 +11,7 @@ mod duckdb_tests {
         core::event_data::object_centric::{
             ocel_sql::{export_ocel_duckdb_to_path, import_ocel_duckdb_from_path},
             ocel_struct::{OCELAttributeValue, OCELRelationship},
-            ocel_xml::xml_ocel_import::import_ocel_xml_file,
+            ocel_xml::xml_ocel_import::import_ocel_xml_path,
         },
         test_utils::get_test_data_path,
     };
@@ -21,7 +21,7 @@ mod duckdb_tests {
         let path = get_test_data_path()
             .join("ocel")
             .join("order-management.xml");
-        let ocel = import_ocel_xml_file(path);
+        let ocel = import_ocel_xml_path(path).unwrap();
         let export_path = get_test_data_path()
             .join("export")
             .join("order-management.duckdb");
@@ -105,7 +105,7 @@ mod duckdb_tests {
         let path = get_test_data_path()
             .join("ocel")
             .join("ContainerLogistics.xml");
-        let ocel = import_ocel_xml_file(path);
+        let ocel = import_ocel_xml_path(path).unwrap();
         let export_path = get_test_data_path()
             .join("export")
             .join("ContainerLogistics.duckdb");

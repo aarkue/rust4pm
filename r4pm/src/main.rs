@@ -142,7 +142,7 @@ fn main() -> ExitCode {
                 if let Some(id) = res.as_str() {
                     let state_guard = state.items.read().unwrap();
                     if let Some(item) = state_guard.get(id) {
-                        match item.export_to_path(&output_path, None) {
+                        match item.export_to_path(&output_path) {
                             Ok(_) => {
                                 println!("Exported registry item '{}' to {:?}", id, output_path);
                             }

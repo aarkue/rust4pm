@@ -11,6 +11,7 @@ pub mod dataframe;
 ///
 #[cfg(feature = "kuzudb")]
 pub mod graph_db;
+pub mod io;
 pub mod linked_ocel;
 pub mod macros;
 pub mod ocel_json;

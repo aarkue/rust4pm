@@ -4,7 +4,7 @@ use std::{collections::HashSet, time::Instant};
 use rayon::prelude::*;
 
 use crate::{
-    core::event_data::case_centric::xes::import_xes::{import_xes_file, XESImportOptions},
+    core::event_data::case_centric::xes::import_xes::{import_xes_path, XESImportOptions},
     test_utils::get_test_data_path,
 };
 
@@ -13,7 +13,7 @@ pub fn test_get_class_identity() {
     let path = get_test_data_path()
         .join("xes")
         .join("Road_Traffic_Fine_Management_Process.xes.gz");
-    let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
+    let log = import_xes_path(&path, XESImportOptions::default()).unwrap();
     let now = Instant::now();
     let event_name_classifier = log.get_classifier_by_name("Event Name");
     assert!(event_name_classifier.is_some());
@@ -59,7 +59,7 @@ pub fn test_get_class_identity() {
 #[test]
 pub fn test_get_class_identity_complex() {
     let path = get_test_data_path().join("xes").join("AN1-example.xes");
-    let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
+    let log = import_xes_path(&path, XESImportOptions::default()).unwrap();
     let now = Instant::now();
     let classifier = log.get_classifier_by_name("classifier1");
     assert!(classifier.is_some());

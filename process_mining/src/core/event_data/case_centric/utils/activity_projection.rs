@@ -10,6 +10,8 @@ use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::event_data::case_centric::io::EventLogIOError;
+use crate::core::io::{Exportable, Importable};
 use crate::core::{
     event_data::case_centric::{
         constants::ACTIVITY_NAME, xes::stream_xes::XESParsingTraceStream, Attribute,
@@ -17,6 +19,8 @@ use crate::core::{
     },
     EventLog,
 };
+use std::io::{Read, Write};
+use std::path::Path;
 
 /// Name of `START_ACTIVITY` (can be added to [`EventLogActivityProjection`]/[`EventLog`] to mark START of traces)
 pub const START_ACTIVITY: &str = "__START";
@@ -302,5 +306,48 @@ impl ActivityProjectionDFG {
                 .unwrap(),
         };
         dfg
+    }
+}
+
+impl Importable for EventLogActivityProjection {
+    type Error = EventLogIOError;
+
+    fn import_from_reader<R: Read>(reader: R, format: &str) -> Result<Self, Self::Error> {
+        if format == "json" || format.ends_with(".json") {
+            let reader = std::io::BufReader::new(reader);
+            let res: Self = serde_json::from_reader(reader)?;
+            Ok(res)
+        } else if format == "xes"
+            || format == "xes.gz"
+            || format.ends_with(".xes")
+            || format.ends_with(".xes.gz")
+        {
+            let log = EventLog::import_from_reader(reader, format)?;
+            Ok((&log).into())
+        } else {
+            Err(EventLogIOError::UnsupportedFormat(format.to_string()))
+        }
+    }
+
+    fn infer_format(path: &Path) -> Option<String> {
+        let p = path.to_string_lossy().to_lowercase();
+        if p.ends_with(".json") {
+            Some("json".to_string())
+        } else {
+            <EventLog as Importable>::infer_format(path)
+        }
+    }
+}
+
+impl Exportable for EventLogActivityProjection {
+    type Error = EventLogIOError;
+
+    fn export_to_writer<W: Write>(&self, writer: W, format: &str) -> Result<(), Self::Error> {
+        if format == "json" || format.ends_with(".json") {
+            serde_json::to_writer(writer, self)?;
+            Ok(())
+        } else {
+            Err(EventLogIOError::UnsupportedFormat(format.to_string()))
+        }
     }
 }

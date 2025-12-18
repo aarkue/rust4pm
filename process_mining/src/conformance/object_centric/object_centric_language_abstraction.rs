@@ -394,7 +394,7 @@ impl OCLanguageAbstraction {
                 .map(|event_type| event_type.to_string())
                 .collect();
 
-            related_ev_type_per_ob_type.insert(ob_type.to_string(), ev_types.clone());
+            related_ev_type_per_ob_type.insert(ob_type.to_string(), ev_types);
             divergent_ev_type_per_ob_type.insert(ob_type.to_string(), HashSet::new());
             convergent_ev_type_per_ob_type.insert(ob_type.to_string(), HashSet::new());
             deficient_ev_type_per_ob_type.insert(ob_type.to_string(), HashSet::new());

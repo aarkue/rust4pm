@@ -3,6 +3,9 @@
 pub use chrono;
 pub mod event_data;
 
+/// IO Traits
+pub mod io;
+
 pub mod process_models;
 
 pub use event_data::case_centric::EventLog;

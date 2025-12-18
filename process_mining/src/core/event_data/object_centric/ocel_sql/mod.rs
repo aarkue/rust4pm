@@ -465,7 +465,7 @@ mod test {
 
     use crate::{
         core::event_data::object_centric::{
-            ocel_json::import_ocel_json_from_path,
+            ocel_json::import_ocel_json_path,
             ocel_sql::{export::export_ocel_to_sql_con, import_ocel_sqlite_from_path},
         },
         test_utils,
@@ -474,8 +474,7 @@ mod test {
     #[test]
     fn test_sqlite_ocel_round_trip_order() {
         let path: std::path::PathBuf = test_utils::get_test_data_path();
-        let ocel =
-            import_ocel_json_from_path(path.join("ocel").join("order-management.json")).unwrap();
+        let ocel = import_ocel_json_path(path.join("ocel").join("order-management.json")).unwrap();
         let export_path = path.join("export").join("roundtrip-sqlite-export.sqlite");
         let _ = remove_file(&export_path);
         let conn = rusqlite::Connection::open(&export_path).unwrap();

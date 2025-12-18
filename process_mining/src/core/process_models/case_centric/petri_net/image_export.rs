@@ -130,7 +130,7 @@ pub fn export_petri_net_image_png(
 mod test {
 
     use crate::{
-        core::event_data::case_centric::xes::import_xes::{import_xes_file, XESImportOptions},
+        core::event_data::case_centric::xes::import_xes::{import_xes_path, XESImportOptions},
         discovery::case_centric::alphappp::auto_parameters,
         test_utils::get_test_data_path,
     };
@@ -140,7 +140,7 @@ mod test {
     #[test]
     pub fn test_petri_net_png_export() {
         let path = get_test_data_path().join("xes").join("AN1-example.xes");
-        let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
+        let log = import_xes_path(&path, XESImportOptions::default()).unwrap();
         let (_, pn) = auto_parameters::alphappp_discover_with_auto_parameters(&(&log).into());
         let export_path = get_test_data_path()
             .join("export")
@@ -151,7 +151,7 @@ mod test {
     #[test]
     pub fn test_petri_net_svg_export() {
         let path = get_test_data_path().join("xes").join("AN1-example.xes");
-        let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
+        let log = import_xes_path(&path, XESImportOptions::default()).unwrap();
         let (_, pn) = auto_parameters::alphappp_discover_with_auto_parameters(&(&log).into());
         let export_path = get_test_data_path()
             .join("export")

@@ -232,7 +232,7 @@ mod tests {
 }"#;
 
     use crate::{
-        core::event_data::case_centric::xes::import_xes::{import_xes_file, XESImportOptions},
+        core::event_data::case_centric::xes::import_xes::{import_xes_path, XESImportOptions},
         test_utils::get_test_data_path,
     };
 
@@ -278,7 +278,7 @@ mod tests {
     fn reading_dfg_from_event_log_repair_example() {
         let path = get_test_data_path().join("xes").join("RepairExample.xes");
 
-        let log: EventLog = import_xes_file(
+        let log: EventLog = import_xes_path(
             path,
             XESImportOptions {
                 ignore_log_attributes_except: Some(HashSet::default()),
@@ -315,7 +315,7 @@ mod tests {
             .join("xes")
             .join("Sepsis Cases - Event Log.xes.gz");
 
-        let log: EventLog = import_xes_file(
+        let log: EventLog = import_xes_path(
             path,
             XESImportOptions {
                 ignore_log_attributes_except: Some(HashSet::default()),
@@ -348,7 +348,7 @@ mod tests {
     fn test_dfg_from_an1_example() {
         let path = get_test_data_path().join("xes").join("AN1-example.xes");
 
-        let log: EventLog = import_xes_file(
+        let log: EventLog = import_xes_path(
             path,
             XESImportOptions {
                 ignore_log_attributes_except: Some(HashSet::default()),

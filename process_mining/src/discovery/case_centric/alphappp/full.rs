@@ -89,6 +89,21 @@ impl AlphaPPPConfig {
     }
 }
 
+impl Default for AlphaPPPConfig {
+    fn default() -> Self {
+        Self {
+            balance_thresh: 0.2,
+            fitness_thresh: 0.75,
+            replay_thresh: 0.0,
+            log_repair_skip_df_thresh_rel: 2.0,
+            log_repair_loop_df_thresh_rel: 2.0,
+            absolute_df_clean_thresh: 10,
+            relative_df_clean_thresh: 0.1,
+        }
+    }
+}
+
+#[allow(dead_code)]
 const NORMAL_ALPHAPPP_CONFIG: AlphaPPPConfig = AlphaPPPConfig {
     balance_thresh: 0.2,
     fitness_thresh: 0.75,
