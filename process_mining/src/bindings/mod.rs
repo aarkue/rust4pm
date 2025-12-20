@@ -37,6 +37,8 @@ use crate::core::{
     },
     EventLog,
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::RwLock;
 use std::{collections::HashMap, fmt::Display};
@@ -51,6 +53,27 @@ pub enum RegistryItem {
     IndexLinkedOCEL(IndexLinkedOCEL),
     EventLog(EventLog),
     OCEL(OCEL),
+}
+
+impl From<EventLog> for RegistryItem {
+    fn from(value: EventLog) -> Self {
+        Self::EventLog(value)
+    }
+}
+impl From<EventLogActivityProjection> for RegistryItem {
+    fn from(value: EventLogActivityProjection) -> Self {
+        Self::EventLogActivityProjection(value)
+    }
+}
+impl From<IndexLinkedOCEL> for RegistryItem {
+    fn from(value: IndexLinkedOCEL) -> Self {
+        Self::IndexLinkedOCEL(value)
+    }
+}
+impl From<OCEL> for RegistryItem {
+    fn from(value: OCEL) -> Self {
+        Self::OCEL(value)
+    }
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -242,8 +265,8 @@ pub struct AppState {
 }
 impl AppState {
     /// Add the passed registry item
-    pub fn add(&self, id: &str, item: RegistryItem) {
-        self.items.write().unwrap().insert(id.to_string(), item);
+    pub fn add(&self, id: impl Into<String>, item: impl Into<RegistryItem>) {
+        self.items.write().unwrap().insert(id.into(), item.into());
     }
     /// Check if the state contains the passed key
     pub fn contains_key(&self, id: &str) -> bool {
@@ -277,6 +300,45 @@ pub struct Binding {
 }
 inventory::collect!(Binding);
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Metadata of a function binding
+pub struct BindingMeta {
+    /// Unique ID of the function
+    pub id: String,
+    /// Name of the function
+    pub name: String,
+    /// Documentation of function
+    pub docs: Vec<String>,
+    /// Module path of declared function
+    pub module: String,
+    /// File path of declared function
+    pub source_path: String,
+    /// Line number of function in `source_path`
+    pub source_line: u32,
+    /// Get arguments of the function with the corresponding JSON schema
+    pub args: Vec<(String, Value)>,
+    /// Get a list of all required arguments
+    pub required_args: Vec<String>,
+    /// JSON Schema of return type
+    pub return_type: Value,
+}
+
+impl From<&Binding> for BindingMeta {
+    fn from(value: &Binding) -> Self {
+        Self {
+            id: value.id.to_string(),
+            name: value.name.to_string(),
+            docs: (value.docs)(),
+            module: value.module.to_string(),
+            source_path: value.source_path.to_string(),
+            source_line: value.source_line,
+            args: (value.args)(),
+            required_args: (value.required_args)(),
+            return_type: (value.return_type)(),
+        }
+    }
+}
+
 // Helper functions
 
 /// Derive Value from Context
@@ -291,7 +353,8 @@ pub fn extract_param<'a, T: FromContext<'a>>(
     k: &str,
     s: &'a InnerAppState,
 ) -> Result<T, String> {
-    T::from_context(m.get(k).ok_or("Missing Arg")?, s)
+    T::from_context(m.get(k).ok_or_else(|| format!("Missing Argument: {k}"))?, s)
+        .map_err(|e| format!("Invalid Argument: {k}\n{e}"))
 }
 
 // Runtime Extraction
@@ -396,6 +459,13 @@ pub fn call(binding: &Binding, args: &Value, state: &AppState) -> Result<Value, 
 pub fn list_functions() -> Vec<&'static Binding> {
     inventory::iter::<Binding>.into_iter().collect()
 }
+/// Get a list of all function metadata available through bindings
+pub fn list_functions_meta() -> Vec<BindingMeta> {
+    inventory::iter::<Binding>
+        .into_iter()
+        .map(BindingMeta::from)
+        .collect()
+}
 
 /// Get the binding information of an function by its name
 pub fn get_fn_binding(id: &str) -> Option<&'static Binding> {
@@ -417,6 +487,14 @@ pub fn num_events(ocel: &IndexLinkedOCEL) -> usize {
 #[binding_macros::register_binding]
 pub fn index_link_ocel(ocel: &OCEL) -> IndexLinkedOCEL {
     IndexLinkedOCEL::from_ocel(ocel.clone())
+}
+
+#[binding_macros::register_binding]
+/// This is a documentation test function **this should be bold**, and this is *italic*.
+///
+/// Nice! :)
+pub fn test_some_inputs(s: String, _n: usize, _i: i32, _f: f64, _b: bool) -> String {
+    s
 }
 
 #[cfg(test)]

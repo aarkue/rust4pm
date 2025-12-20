@@ -121,7 +121,7 @@ pub fn alphappp_discover_petri_net(
     log_proj: &EventLogActivityProjection,
     #[bind(default = NORMAL_ALPHAPPP_CONFIG)] config: AlphaPPPConfig,
 ) -> PetriNet {
-    alphappp_discover_petri_net_with_timing_fn(log_proj, config, &get_current_time_millis).0
+    alphappp_discover_petri_net_with_timing_fn(log_proj, config, &|| 0).0
 }
 
 /// Run Alpha+++ discovery
