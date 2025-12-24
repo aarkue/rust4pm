@@ -30,9 +30,12 @@ rayon = "1.7.0"
 rusqlite = { version = "0.32.1", features = ["bundled","chrono", "serialize"], optional = true }
 serde_json = "1.0.105"
 serde = {version = "1.0.188", features = ["derive"]}
-serde_with = "3.11.0"
+serde_with = { version = "3.16.0", features = ["std", "macros", "schemars_1"]}
 tempfile = "3"
 uuid = {version = "1.16.0", features = ["v4", "serde"]}
+binding_macros = { path = "../binding_macros" }
+schemars = { version = "1.1.0", features = ["chrono04", "uuid1"]}
+inventory = { version = "0.3", optional = true }
 
 [features]
 
@@ -55,7 +58,14 @@ kuzudb = ["dep:kuzu"]
 log-splitting = ["dep:rand"]
 
 # Enables algebraic functionality
-token_based_replay = ["dep:nalgebra"]
+token-based-replay = ["dep:nalgebra"]
+
+# Enable bindings
+bindings = [
+   "dep:inventory"
+]
+
+all = ["graphviz-export","ocel-sqlite","ocel-duckdb","dataframes","kuzudb", "log-splitting", "token-based-replay", "bindings" ]
 
 [package.metadata.docs.rs]
 all-features = true

@@ -70,7 +70,7 @@ jobs:
         KUZU_INCLUDE_DIR: ${{ github.workspace }}/libkuzu
     - name: Check docs
       working-directory: ./process_mining
-      run: source "$HOME/.cargo/env" && cargo doc --all-features
+      run: source "$HOME/.cargo/env" && cargo doc --all-features --no-deps
       env:
         DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
         DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb

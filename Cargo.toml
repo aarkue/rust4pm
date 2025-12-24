@@ -1,14 +1,6 @@
 [workspace]
 resolver = "2"
 
-members = [
-	"binary",
-	"process_mining",
-	"python_bridge",
-	"java_bridge",
-	"pm_wasm",
-	"npm_wasm"
+members = ["binding_macros",
+	"process_mining", "r4pm",
 ]
-
-[profile.release.package.pm_wasm]
-debug = true
