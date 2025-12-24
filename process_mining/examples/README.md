@@ -19,7 +19,7 @@ This folder contains example usages of the `process_mining` crate.
   cargo run --example petri_net_import_export -- <input_model.pnml> <output_model.pnml>
   ```
 
-## Object-Centric Process Mining (OCEL)
+## Object-Centric Process Mining
 
 - **`ocel_stats.rs`**: Imports an OCEL (XML/JSON) and prints basic statistics.
   ```bash
