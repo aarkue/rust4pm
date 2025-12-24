@@ -103,23 +103,13 @@ impl Default for AlphaPPPConfig {
     }
 }
 
-#[allow(dead_code)]
-const NORMAL_ALPHAPPP_CONFIG: AlphaPPPConfig = AlphaPPPConfig {
-    balance_thresh: 0.2,
-    fitness_thresh: 0.75,
-    replay_thresh: 0.0,
-    log_repair_skip_df_thresh_rel: 2.0,
-    log_repair_loop_df_thresh_rel: 2.0,
-    absolute_df_clean_thresh: 10,
-    relative_df_clean_thresh: 0.1,
-};
 ///
 /// Discover a [`PetriNet`] using the Alpha+++ Process Discovery algorithm
 ///
 #[register_binding(name = "discover_alpha+++")]
 pub fn alphappp_discover_petri_net(
     log_proj: &EventLogActivityProjection,
-    #[bind(default = NORMAL_ALPHAPPP_CONFIG)] config: AlphaPPPConfig,
+    #[bind(default = Default::default())] config: AlphaPPPConfig,
 ) -> PetriNet {
     alphappp_discover_petri_net_with_timing_fn(log_proj, config, &|| 0).0
 }
