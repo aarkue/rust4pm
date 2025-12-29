@@ -40,8 +40,8 @@ use crate::core::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::RwLock;
 use std::{collections::HashMap, fmt::Display};
+use std::{str::FromStr, sync::RwLock};
 
 /// Manually maintained Registry enum of 'big' types
 ///
@@ -143,13 +143,10 @@ impl RegistryItem {
     }
 
     /// Try to load a registry item from a file path based on the expected type name
-    pub fn load_from_path(type_name: impl AsRef<str>, path: &str) -> Result<Self, String> {
-        use std::str::FromStr;
-        let item_type = RegistryItemKind::from_str(type_name.as_ref())
-            .map_err(|_| format!("Unknown registry type: {}", type_name.as_ref()))?;
+    pub fn load_from_path(item_kind: &RegistryItemKind, path: &str) -> Result<Self, String> {
         let path = std::path::Path::new(path);
 
-        match item_type {
+        match item_kind {
             RegistryItemKind::EventLog => Ok(RegistryItem::EventLog(
                 EventLog::import_from_path(path).map_err(|e| e.to_string())?,
             )),
@@ -170,11 +167,11 @@ impl RegistryItem {
 
     /// Try to load a registry item from bytes based on the expected type name and format
     pub fn load_from_bytes(
-        item_type: RegistryItemKind,
+        item_kind: &RegistryItemKind,
         data: &[u8],
         format: &str,
     ) -> Result<Self, String> {
-        match item_type {
+        match item_kind {
             RegistryItemKind::EventLog => Ok(RegistryItem::EventLog(
                 EventLog::import_from_bytes(data, format).map_err(|e| e.to_string())?,
             )),
@@ -415,7 +412,7 @@ pub fn resolve_argument(
             drop(items);
 
             // Otherwise, try to load it from file
-            let item = RegistryItem::load_from_path(arg_ref, id)?;
+            let item = RegistryItem::load_from_path(&RegistryItemKind::from_str(arg_ref)?, id)?;
             let stored_name = format!("A{}_{}", arg_name, uuid::Uuid::new_v4());
             state.add(&stored_name, item);
             return Ok(serde_json::Value::String(stored_name));
@@ -490,11 +487,12 @@ pub fn index_link_ocel(ocel: &OCEL) -> IndexLinkedOCEL {
 }
 
 #[binding_macros::register_binding]
-/// This is a documentation test function **this should be bold**, and this is *italic*.
+/// This is a test function.
 ///
-/// Nice! :)
-pub fn test_some_inputs(s: String, _n: usize, _i: i32, _f: f64, _b: bool) -> String {
-    s
+/// **This should be bold**, *this is italic*, `and this code`.
+///
+pub fn test_some_inputs(s: String, n: usize, i: i32, f: f64, b: bool) -> String {
+    format!("s={},n={},i={},f={},b={}", s, n, i, f, b)
 }
 
 #[cfg(test)]
