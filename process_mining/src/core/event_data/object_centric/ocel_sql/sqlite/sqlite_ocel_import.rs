@@ -10,7 +10,7 @@ use crate::core::event_data::object_centric::ocel_xml::xml_ocel_import::{
 };
 
 use super::super::*;
-use chrono::{DateTime, FixedOffset};
+use chrono::FixedOffset;
 use rusqlite::{Connection, Params, Row, Rows, Statement};
 
 fn try_get_column_date_val(
@@ -177,7 +177,7 @@ pub fn import_ocel_sqlite_from_con(con: Connection) -> Result<OCEL, rusqlite::Er
                 })
                 .attributes
                 .push(OCELObjectAttribute {
-                    name: changed_field.clone(),
+                    name: changed_field,
                     value: changed_val,
                     time,
                 });

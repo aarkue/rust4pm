@@ -363,7 +363,7 @@ mod tests {
     use crate::{
         core::event_data::object_centric::{
             graph_db::ocel_kuzudb::export_ocel_to_kuzudb_generic, linked_ocel::IndexLinkedOCEL,
-            ocel_xml::xml_ocel_import::import_ocel_xml_file,
+            ocel_xml::xml_ocel_import::import_ocel_xml_path,
         },
         test_utils::get_test_data_path,
     };
@@ -376,11 +376,12 @@ mod tests {
             .join("export")
             .join("order-management-ocel.kuzu");
         let _er = remove_file(&export_path);
-        let ocel = import_ocel_xml_file(
+        let ocel = import_ocel_xml_path(
             get_test_data_path()
                 .join("ocel")
                 .join("order-management.xml"),
-        );
+        )
+        .unwrap();
         export_ocel_to_kuzudb_generic(export_path, &ocel).unwrap();
     }
 
@@ -390,11 +391,12 @@ mod tests {
             .join("export")
             .join("order-management-typed-ocel.kuzu");
         let _er = remove_file(&export_path);
-        let ocel = import_ocel_xml_file(
+        let ocel = import_ocel_xml_path(
             get_test_data_path()
                 .join("ocel")
                 .join("order-management.xml"),
-        );
+        )
+        .unwrap();
 
         let locel = IndexLinkedOCEL::from(ocel);
         let now = Instant::now();
@@ -422,7 +424,7 @@ mod tests {
         }
         println!("{:?}", now.elapsed());
         Ok(())
-        // let ocel = import_ocel_xml_file(get_test_data_path().join("ocel").join("ocel2-p2p.xml"));
+        // let ocel = import_ocel_xml_path(get_test_data_path().join("ocel").join("ocel2-p2p.xml"));
         // export_ocel_to_kuzudb_typed(export_path, &ocel).unwrap();
     }
 }

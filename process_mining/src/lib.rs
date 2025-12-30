@@ -2,7 +2,9 @@
     clippy::doc_markdown,
     missing_debug_implementations,
     rust_2018_idioms,
-    missing_docs
+    missing_docs,
+    clippy::redundant_clone,
+    clippy::clone_on_copy
 )]
 // #![allow(clippy::needless_doctest_main)]
 #![doc = include_str!("../../README.md")]
@@ -16,6 +18,14 @@ pub mod core;
 pub mod conformance;
 pub mod discovery;
 
+pub use core::io::{Exportable, Importable};
+
+// Re-export main structs for convenience
+pub use core::{EventLog, PetriNet, OCEL};
+
+/// Bindings (WIP)
+pub mod bindings;
+
 /// Used for internal testing
 #[doc(hidden)]
 pub mod test_utils {
@@ -24,6 +34,7 @@ pub mod test_utils {
     /// Get the based path for test data.
     ///
     ///  Used for internal testing
+    #[allow(unused)]
     pub fn get_test_data_path() -> PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data")
     }

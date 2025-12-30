@@ -1,18 +1,26 @@
 use std::{
     collections::{HashMap, HashSet},
+    io::{Read, Write},
     ops::Index,
+    path::Path,
 };
 
+use binding_macros::RegistryEntity;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::event_data::object_centric::io::OCELIOError;
 use crate::core::event_data::object_centric::ocel_struct::{OCELEvent, OCELObject, OCELType, OCEL};
+use crate::core::io::{Exportable, Importable};
 
 use super::LinkedOCELAccess;
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 /// An Event Index
 ///
 /// Points to an event in the context of a given OCEL
+#[derive(
+    PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 pub struct EventIndex(usize);
 impl From<&EventIndex> for EventIndex {
     fn from(value: &EventIndex) -> Self {
@@ -33,10 +41,12 @@ impl EventIndex {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 /// An Object Index
 ///
 /// Points to an object in the context of a given OCEL
+#[derive(
+    PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 pub struct ObjectIndex(usize);
 impl From<&ObjectIndex> for ObjectIndex {
     fn from(value: &ObjectIndex) -> Self {
@@ -77,7 +87,6 @@ impl From<ObjectIndex> for EventOrObjectIndex {
     }
 }
 
-#[derive(Debug, Clone)]
 ///
 /// An [`OCEL`] linked through event and object indices
 ///
@@ -88,6 +97,7 @@ impl From<ObjectIndex> for EventOrObjectIndex {
 ///
 /// Implements the [`LinkedOCELAccess`] trait.
 ///
+#[derive(Debug, Clone, RegistryEntity, Serialize, Deserialize, JsonSchema)]
 pub struct IndexLinkedOCEL {
     ocel: OCEL,
     event_ids_to_index: HashMap<String, EventIndex>,
@@ -275,7 +285,7 @@ impl From<OCEL> for IndexLinkedOCEL {
                     .flat_map(|rel| {
                         let qualifier = rel.qualifier.clone();
                         let obj2_id = *object_ids_to_index.get(&rel.object_id)?;
-                        o2o_rel_rev[obj2_id.0].push((qualifier.clone(), o_id));
+                        o2o_rel_rev[obj2_id.0].push((qualifier, o_id));
                         Some(((&rel.qualifier).into(), obj2_id))
                     })
                     .collect()
@@ -438,11 +448,50 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
             .find(|ot| ot.name == ob_type.as_ref())
     }
 }
+
+impl Importable for IndexLinkedOCEL {
+    type Error = OCELIOError;
+
+    fn import_from_reader<R: Read>(reader: R, format: &str) -> Result<Self, Self::Error> {
+        if format == "json" || format.ends_with(".json") {
+            let reader = std::io::BufReader::new(reader);
+            let res: Self = serde_json::from_reader(reader)?;
+            Ok(res)
+        } else {
+            let ocel = OCEL::import_from_reader(reader, format)?;
+            Ok(IndexLinkedOCEL::from_ocel(ocel))
+        }
+    }
+
+    fn infer_format(path: &Path) -> Option<String> {
+        let p = path.to_string_lossy().to_lowercase();
+        if p.ends_with(".ocel.json") {
+            Some("ocel.json".to_string())
+        } else if p.ends_with(".json") {
+            Some("json".to_string())
+        } else {
+            <OCEL as Importable>::infer_format(path)
+        }
+    }
+}
+
+impl Exportable for IndexLinkedOCEL {
+    type Error = OCELIOError;
+
+    fn export_to_writer<W: Write>(&self, writer: W, format: &str) -> Result<(), Self::Error> {
+        if format == "json" || format.ends_with(".json") {
+            serde_json::to_writer(writer, self)?;
+            Ok(())
+        } else {
+            self.ocel.export_to_writer(writer, format)
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
 
     use crate::{
-        core::event_data::object_centric::ocel_xml::xml_ocel_import::import_ocel_xml_file,
+        core::event_data::object_centric::ocel_xml::xml_ocel_import::import_ocel_xml_path,
         test_utils::get_test_data_path,
     };
 
@@ -450,11 +499,12 @@ mod tests {
 
     #[test]
     fn test_indexing() {
-        let ocel = import_ocel_xml_file(
+        let ocel = import_ocel_xml_path(
             get_test_data_path()
                 .join("ocel")
                 .join("order-management.xml"),
-        );
+        )
+        .unwrap();
         let locel = IndexLinkedOCEL::from_ocel(ocel);
         let locel_ref = &locel;
         if let Some(ev_index) = locel_ref.get_all_evs_ref().next() {

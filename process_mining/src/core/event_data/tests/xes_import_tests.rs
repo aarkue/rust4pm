@@ -8,7 +8,7 @@ use crate::{
         event_log_struct::{AttributeValue, Trace, XESEditableAttribute},
         xes::{
             export_xes::export_xes_event_log,
-            import_xes::{import_xes_file, import_xes_slice, XESImportOptions, XESParseError},
+            import_xes::{import_xes_path, import_xes_slice, XESImportOptions, XESParseError},
         },
     },
     test_utils::get_test_data_path,
@@ -19,7 +19,7 @@ fn test_xes_gz_import() {
     let path = get_test_data_path()
         .join("xes")
         .join("Sepsis Cases - Event Log.xes.gz");
-    let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
+    let log = import_xes_path(&path, XESImportOptions::default()).unwrap();
 
     // Log has 1050 cases total
     assert_eq!(log.traces.len(), 1050);
@@ -112,7 +112,7 @@ fn test_xes_gz_import() {
 
 #[test]
 pub fn test_invalid_xes_non_existing_file_gz() {
-    let res_gz = import_xes_file(
+    let res_gz = import_xes_path(
         "this-file-does-not-exist.xes.gz",
         XESImportOptions::default(),
     );
@@ -120,7 +120,7 @@ pub fn test_invalid_xes_non_existing_file_gz() {
 }
 #[test]
 pub fn test_invalid_xes_non_existing_file() {
-    let res_gz = import_xes_file("this-file-does-not-exist.xes", XESImportOptions::default());
+    let res_gz = import_xes_path("this-file-does-not-exist.xes", XESImportOptions::default());
     assert!(matches!(res_gz, Err(XESParseError::IOError(_))));
 }
 
@@ -187,7 +187,7 @@ pub fn test_invalid_xes_file_pnml() {
     let path = get_test_data_path()
         .join("petri-net")
         .join("BPI_Challenge_2019_sampled_3000cases_model_alphappp.pnml");
-    let res = import_xes_file(&path, XESImportOptions::default());
+    let res = import_xes_path(&path, XESImportOptions::default());
     assert!(matches!(res, Err(XESParseError::NoTopLevelLog)));
 }
 
@@ -196,7 +196,7 @@ pub fn test_invalid_xes_file_json() {
     let path = get_test_data_path()
         .join("ocel")
         .join("order-management.json");
-    let res = import_xes_file(&path, XESImportOptions::default());
+    let res = import_xes_path(&path, XESImportOptions::default());
     assert!(matches!(res, Err(XESParseError::NoTopLevelLog)));
 }
 
@@ -210,7 +210,7 @@ pub fn test_invalid_xes_file_empty() {
 #[test]
 pub fn test_nested_global_event_attr() {
     let path = get_test_data_path().join("xes").join("small-example.xes");
-    let res = import_xes_file(
+    let res = import_xes_path(
         &path,
         XESImportOptions {
             ..XESImportOptions::default()
@@ -253,7 +253,7 @@ pub fn test_xes_unsorted_traces() {
     }
 
     let path = get_test_data_path().join("xes").join("small-example.xes");
-    let res = import_xes_file(
+    let res = import_xes_path(
         &path,
         XESImportOptions {
             ..XESImportOptions::default()
@@ -271,7 +271,7 @@ pub fn test_xes_unsorted_traces() {
         ]
     );
 
-    let res_sorted_events = import_xes_file(
+    let res_sorted_events = import_xes_path(
         &path,
         XESImportOptions {
             sort_events_with_timestamp_key: Some("time:timestamp".into()),
@@ -318,7 +318,7 @@ pub fn test_xes_nested_attrs() {
 // pub fn test_2017bpic_log() {
 
 //     let path = get_test_data_path().join("xes").join("BPI_Challenge_2017.xes");
-//     let log = import_xes_file(
+//     let log = import_xes_path(
 //         &path,
 //         XESImportOptions {
 //             ignore_log_attributes_except: Some(HashSet::default()),
@@ -349,7 +349,7 @@ pub fn test_xes_nested_attrs() {
 // #[test]
 // pub fn test_2018bpic_log() {
 //     let path = get_test_data_path().join("xes").join("BPI Challenge 2018.xes.gz");
-//     let log = import_xes_file(
+//     let log = import_xes_path(
 //         &path,
 //         XESImportOptions {
 //             ignore_log_attributes_except: Some(HashSet::default()),

@@ -1,12 +1,12 @@
 use std::{collections::HashSet, env::args, path::PathBuf};
 
-use process_mining::core::event_data::object_centric::{
-    ocel_sql::export_ocel_duckdb_to_path, ocel_xml::xml_ocel_import::import_ocel_xml_file,
-};
-pub fn main() {
+use process_mining::{Exportable, Importable, OCEL};
+use std::error::Error;
+
+pub fn main() -> Result<(), Box<dyn Error>> {
     let path_opt = args().nth(1);
     if let Some(mut path) = path_opt.map(PathBuf::from) {
-        let mut ocel = import_ocel_xml_file(&path);
+        let mut ocel = OCEL::import_from_path(&path)?;
         // Including invalid E2O relations (i.e., to objects that do not exist) can cause corrupted or incomplete SQL exports
         // Thus, we filter the E2O relations to only keep valid ones
         let all_obj_ids: HashSet<_> = ocel.objects.iter().map(|o| &o.id).collect();
@@ -21,6 +21,7 @@ pub fn main() {
                 .and_then(|p| p.to_str())
                 .unwrap_or_default()
         ));
-        export_ocel_duckdb_to_path(&ocel, &path).unwrap();
+        ocel.export_to_path(&path)?;
     }
+    Ok(())
 }

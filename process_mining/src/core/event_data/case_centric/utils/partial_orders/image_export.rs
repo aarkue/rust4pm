@@ -201,7 +201,6 @@ mod test {
     };
 
     use super::{export_p_trace_image_png, export_p_trace_image_svg};
-    use std::default::Default;
 
     #[test]
     pub fn test_dfg_png_export() {

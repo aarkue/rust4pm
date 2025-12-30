@@ -5,9 +5,13 @@
 //! Cases with the same activity trace are aggregated as frequencies.
 use std::collections::{HashMap, HashSet};
 
+use binding_macros::{register_binding, RegistryEntity};
 use rayon::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::event_data::case_centric::io::EventLogIOError;
+use crate::core::io::{Exportable, Importable};
 use crate::core::{
     event_data::case_centric::{
         constants::ACTIVITY_NAME, xes::stream_xes::XESParsingTraceStream, Attribute,
@@ -15,13 +19,15 @@ use crate::core::{
     },
     EventLog,
 };
+use std::io::{Read, Write};
+use std::path::Path;
 
 /// Name of `START_ACTIVITY` (can be added to [`EventLogActivityProjection`]/[`EventLog`] to mark START of traces)
 pub const START_ACTIVITY: &str = "__START";
 /// Name of `START_ACTIVITY` (can be added to [`EventLogActivityProjection`]/[`EventLog`] to mark END of traces)
 pub const END_ACTIVITY: &str = "__END";
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, RegistryEntity)]
 /// Projection of an event log on just activity labels
 ///
 /// Currently assumes a default activity name ([`ACTIVITY_NAME`])
@@ -40,91 +46,6 @@ pub struct EventLogActivityProjection {
     ///
     /// Each pair represents one activity projection and the number of occurences in the log
     pub traces: Vec<(Vec<usize>, u64)>,
-}
-
-#[derive(Debug, Default, Clone, Deserialize, Serialize)]
-/// Weighted DFG of [`EventLogActivityProjection`]
-pub struct ActivityProjectionDFG {
-    /// Nodes of the DFG
-    pub nodes: Vec<usize>,
-    /// Edges of the DFG (weighted)
-    pub edges: HashMap<(usize, usize), u64>,
-}
-
-impl ActivityProjectionDFG {
-    /// Check if there is a df-relation between `a` and `b`
-    pub fn df_between(&self, a: usize, b: usize) -> u64 {
-        *self.edges.get(&(a, b)).unwrap_or(&0)
-    }
-
-    /// Get the preset of activity `act` in the DFG
-    pub fn df_preset_of<T: FromIterator<usize>>(&self, act: usize, df_threshold: u64) -> T {
-        self.edges
-            .iter()
-            .filter_map(|((a, b), w)| {
-                if *b == act && *w >= df_threshold {
-                    Some(*a)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    /// Get the postset of activity `act` in the DFG
-    pub fn df_postset_of(&self, act: usize, df_threshold: u64) -> impl Iterator<Item = usize> + '_ {
-        self.edges.iter().filter_map(move |((a, b), w)| {
-            if *a == act && *w >= df_threshold {
-                Some(*b)
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Construct an [`ActivityProjectionDFG`] from an [`EventLogActivityProjection`]
-    pub fn from_event_log_projection(log: &EventLogActivityProjection) -> Self {
-        let dfg = ActivityProjectionDFG {
-            nodes: (0..log.activities.len()).collect(),
-            edges: log
-                .traces
-                .par_iter()
-                .map(|(t, w)| {
-                    let mut trace_dfs: Vec<((usize, usize), u64)> = Vec::new();
-                    let mut prev_event: Option<usize> = None;
-                    for e in t {
-                        if let Some(prev_e) = prev_event {
-                            trace_dfs.push(((prev_e, *e), *w));
-                        }
-                        prev_event = Some(*e);
-                    }
-                    trace_dfs
-                })
-                .flatten()
-                .fold(
-                    HashMap::<(usize, usize), u64>::new,
-                    |mut map, (df_pair, w)| {
-                        *map.entry(df_pair).or_insert(0) += w;
-                        map
-                    },
-                )
-                .reduce_with(|mut m1, mut m2| {
-                    if m1.len() < m2.len() {
-                        for (k, v) in m2 {
-                            *m1.entry(k).or_default() += v;
-                        }
-                        m1
-                    } else {
-                        for (k, v) in m1 {
-                            *m2.entry(k).or_default() += v;
-                        }
-                        m2
-                    }
-                })
-                .unwrap(),
-        };
-        dfg
-    }
 }
 
 impl<'a> From<XESParsingTraceStream<'a>> for EventLogActivityProjection {
@@ -166,6 +87,15 @@ impl<'a> From<&mut XESParsingTraceStream<'a>> for EventLogActivityProjection {
         }
     }
 }
+
+#[register_binding]
+/// Convert an [`EventLog`] into an [`EventLogActivityProjection`]
+///
+/// All traces with the same activity sequence are aggregated into one trace with a frequency count
+fn log_to_activity_projection(log: &EventLog) -> EventLogActivityProjection {
+    log.into()
+}
+
 impl From<&EventLog> for EventLogActivityProjection {
     fn from(val: &EventLog) -> Self {
         let acts_per_trace: Vec<Vec<String>> = val
@@ -292,4 +222,132 @@ pub fn add_start_end_acts(log: &mut EventLog) {
         t.events.insert(0, start_event);
         t.events.push(end_event);
     });
+}
+
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+/// Weighted DFG of [`EventLogActivityProjection`]
+pub struct ActivityProjectionDFG {
+    /// Nodes of the DFG
+    pub nodes: Vec<usize>,
+    /// Edges of the DFG (weighted)
+    pub edges: HashMap<(usize, usize), u64>,
+}
+
+impl ActivityProjectionDFG {
+    /// Check if there is a df-relation between `a` and `b`
+    pub fn df_between(&self, a: usize, b: usize) -> u64 {
+        *self.edges.get(&(a, b)).unwrap_or(&0)
+    }
+
+    /// Get the preset of activity `act` in the DFG
+    pub fn df_preset_of<T: FromIterator<usize>>(&self, act: usize, df_threshold: u64) -> T {
+        self.edges
+            .iter()
+            .filter_map(|((a, b), w)| {
+                if *b == act && *w >= df_threshold {
+                    Some(*a)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Get the postset of activity `act` in the DFG
+    pub fn df_postset_of(&self, act: usize, df_threshold: u64) -> impl Iterator<Item = usize> + '_ {
+        self.edges.iter().filter_map(move |((a, b), w)| {
+            if *a == act && *w >= df_threshold {
+                Some(*b)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Construct an [`ActivityProjectionDFG`] from an [`EventLogActivityProjection`]
+    pub fn from_event_log_projection(log: &EventLogActivityProjection) -> Self {
+        let dfg = ActivityProjectionDFG {
+            nodes: (0..log.activities.len()).collect(),
+            edges: log
+                .traces
+                .par_iter()
+                .map(|(t, w)| {
+                    let mut trace_dfs: Vec<((usize, usize), u64)> = Vec::new();
+                    let mut prev_event: Option<usize> = None;
+                    for e in t {
+                        if let Some(prev_e) = prev_event {
+                            trace_dfs.push(((prev_e, *e), *w));
+                        }
+                        prev_event = Some(*e);
+                    }
+                    trace_dfs
+                })
+                .flatten()
+                .fold(
+                    HashMap::<(usize, usize), u64>::new,
+                    |mut map, (df_pair, w)| {
+                        *map.entry(df_pair).or_insert(0) += w;
+                        map
+                    },
+                )
+                .reduce_with(|mut m1, mut m2| {
+                    if m1.len() < m2.len() {
+                        for (k, v) in m2 {
+                            *m1.entry(k).or_default() += v;
+                        }
+                        m1
+                    } else {
+                        for (k, v) in m1 {
+                            *m2.entry(k).or_default() += v;
+                        }
+                        m2
+                    }
+                })
+                .unwrap(),
+        };
+        dfg
+    }
+}
+
+impl Importable for EventLogActivityProjection {
+    type Error = EventLogIOError;
+
+    fn import_from_reader<R: Read>(reader: R, format: &str) -> Result<Self, Self::Error> {
+        if format == "json" || format.ends_with(".json") {
+            let reader = std::io::BufReader::new(reader);
+            let res: Self = serde_json::from_reader(reader)?;
+            Ok(res)
+        } else if format == "xes"
+            || format == "xes.gz"
+            || format.ends_with(".xes")
+            || format.ends_with(".xes.gz")
+        {
+            let log = EventLog::import_from_reader(reader, format)?;
+            Ok((&log).into())
+        } else {
+            Err(EventLogIOError::UnsupportedFormat(format.to_string()))
+        }
+    }
+
+    fn infer_format(path: &Path) -> Option<String> {
+        let p = path.to_string_lossy().to_lowercase();
+        if p.ends_with(".json") {
+            Some("json".to_string())
+        } else {
+            <EventLog as Importable>::infer_format(path)
+        }
+    }
+}
+
+impl Exportable for EventLogActivityProjection {
+    type Error = EventLogIOError;
+
+    fn export_to_writer<W: Write>(&self, writer: W, format: &str) -> Result<(), Self::Error> {
+        if format == "json" || format.ends_with(".json") {
+            serde_json::to_writer(writer, self)?;
+            Ok(())
+        } else {
+            Err(EventLogIOError::UnsupportedFormat(format.to_string()))
+        }
+    }
 }

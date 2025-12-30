@@ -37,23 +37,19 @@ where
                         .create_element("page")
                         .with_attribute(("id", "n0"))
                         .write_inner_content(|writer| {
-                            pn.places.iter().for_each(|(id, place)| {
+                            for (id, place) in &pn.places {
                                 writer
                                     .create_element("place")
                                     .with_attribute(("id", id.to_string().as_str()))
                                     .write_inner_content(|writer| {
-                                        writer
-                                            .create_element("name")
-                                            .write_inner_content(|writer| {
-                                                writer
-                                                    .create_element("text")
-                                                    .write_text_content(BytesText::new(
-                                                        id.to_string().as_str(),
-                                                    ))
-                                                    .unwrap();
+                                        writer.create_element("name").write_inner_content(
+                                            |writer| {
+                                                writer.create_element("text").write_text_content(
+                                                    BytesText::new(id.to_string().as_str()),
+                                                )?;
                                                 OK
-                                            })
-                                            .unwrap();
+                                            },
+                                        )?;
                                         if let Some(initial_marking) = pn.initial_marking.clone() {
                                             if initial_marking.contains_key(&place.into()) {
                                                 let tokens =
@@ -65,39 +61,34 @@ where
                                                             .create_element("text")
                                                             .write_text_content(BytesText::new(
                                                                 tokens.to_string().as_str(),
-                                                            ))
-                                                            .unwrap();
+                                                            ))?;
                                                         OK
-                                                    })
-                                                    .unwrap();
+                                                    })?;
                                             }
                                         }
 
                                         OK
-                                    })
-                                    .unwrap();
-                            });
-                            pn.transitions.iter().for_each(|(id, transition)| {
+                                    })?;
+                            }
+                            for (id, transition) in &pn.transitions {
                                 writer
                                     .create_element("transition")
                                     .with_attribute(("id", id.to_string().as_str()))
                                     .write_inner_content(|writer| {
-                                        writer
-                                            .create_element("name")
-                                            .write_inner_content(|writer| {
-                                                writer
-                                                    .create_element("text")
-                                                    .write_text_content(BytesText::new(
+                                        writer.create_element("name").write_inner_content(
+                                            |writer| {
+                                                writer.create_element("text").write_text_content(
+                                                    BytesText::new(
                                                         transition
                                                             .label
                                                             .clone()
                                                             .unwrap_or("Tau".to_string())
                                                             .as_str(),
-                                                    ))
-                                                    .unwrap();
+                                                    ),
+                                                )?;
                                                 OK
-                                            })
-                                            .unwrap();
+                                            },
+                                        )?;
                                         if transition.label.is_none() {
                                             // TODO: Add  something like <toolspecific tool="ProM" version="6.4" activity="$invisible$" localNodeID="..."/>
                                             writer
@@ -111,14 +102,12 @@ where
                                                         Uuid::new_v4().to_string().as_str(),
                                                     ),
                                                 ])
-                                                .write_empty()
-                                                .unwrap();
+                                                .write_empty()?;
                                         }
                                         OK
-                                    })
-                                    .unwrap();
-                            });
-                            pn.arcs.iter().for_each(|arc| {
+                                    })?;
+                            }
+                            for arc in &pn.arcs {
                                 let (source_id, target_id) = match arc.from_to {
                                     ArcType::PlaceTransition(from, to) => (from, to),
                                     ArcType::TransitionPlace(from, to) => (from, to),
@@ -133,33 +122,28 @@ where
                                     .with_attribute(("source", source_id.to_string().as_str()))
                                     .with_attribute(("target", target_id.to_string().as_str()))
                                     .write_inner_content(|w| {
-                                        w.create_element("inscription")
-                                            .write_inner_content(|w| {
-                                                w.create_element("text")
-                                                    .write_text_content(BytesText::new(
-                                                        arc.weight.to_string().as_str(),
-                                                    ))
-                                                    .unwrap();
+                                        w.create_element("inscription").write_inner_content(
+                                            |w| {
+                                                w.create_element("text").write_text_content(
+                                                    BytesText::new(arc.weight.to_string().as_str()),
+                                                )?;
                                                 OK
-                                            })
-                                            .unwrap();
+                                            },
+                                        )?;
                                         OK
-                                    })
-                                    .unwrap();
-                            });
+                                    })?;
+                            }
                             OK
-                        })
-                        .unwrap();
+                        })?;
 
                     if let Some(final_markings) = pn.final_markings.clone() {
                         writer
                             .create_element("finalmarkings")
                             .write_inner_content(|writer| {
-                                final_markings.iter().for_each(|marking| {
-                                    writer
-                                        .create_element("marking")
-                                        .write_inner_content(|writer| {
-                                            marking.iter().for_each(|(place_id, tokens)| {
+                                for marking in &final_markings {
+                                    writer.create_element("marking").write_inner_content(
+                                        |writer| {
+                                            for (place_id, tokens) in marking {
                                                 writer
                                                     .create_element("place")
                                                     .with_attribute((
@@ -171,25 +155,21 @@ where
                                                             .create_element("text")
                                                             .write_text_content(BytesText::new(
                                                                 tokens.to_string().as_str(),
-                                                            ))
-                                                            .unwrap();
+                                                            ))?;
                                                         OK
-                                                    })
-                                                    .unwrap();
-                                            });
+                                                    })?;
+                                            }
                                             OK
-                                        })
-                                        .unwrap();
-                                });
+                                        },
+                                    )?;
+                                }
                                 OK
-                            })
-                            .unwrap();
+                            })?;
                     }
 
                     // </net>
                     OK
-                })
-                .unwrap();
+                })?;
             OK
         })?;
     Ok(())
@@ -211,7 +191,7 @@ pub fn export_petri_net_to_pnml_path<P: AsRef<std::path::Path>>(
 mod test {
     use crate::{
         core::{
-            event_data::case_centric::xes::import_xes::{import_xes_file, XESImportOptions},
+            event_data::case_centric::xes::import_xes::{import_xes_path, XESImportOptions},
             process_models::case_centric::petri_net::pnml::export_pnml::export_petri_net_to_pnml,
         },
         discovery::case_centric::alphappp::auto_parameters::alphappp_discover_with_auto_parameters,
@@ -224,7 +204,7 @@ mod test {
     #[test]
     fn test_export_pnml() {
         let path = get_test_data_path().join("xes").join("AN1-example.xes");
-        let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
+        let log = import_xes_path(&path, XESImportOptions::default()).unwrap();
         let (_, mut pn) = alphappp_discover_with_auto_parameters(&(&log).into());
         pn.arcs.last_mut().unwrap().weight = 1337;
         let export_path = get_test_data_path().join("export").join("pnml-export.pnml");
@@ -235,7 +215,7 @@ mod test {
     #[test]
     fn test_export_pnml_to_writer() -> Result<(), quick_xml::Error> {
         let path = get_test_data_path().join("xes").join("AN1-example.xes");
-        let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
+        let log = import_xes_path(&path, XESImportOptions::default()).unwrap();
         let (_, mut pn) = alphappp_discover_with_auto_parameters(&(&log).into());
         pn.arcs.last_mut().unwrap().weight = 1337;
         let export_path = get_test_data_path().join("export").join("pnml-export.pnml");

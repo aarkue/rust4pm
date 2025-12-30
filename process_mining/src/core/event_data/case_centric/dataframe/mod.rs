@@ -4,7 +4,7 @@
 use std::{collections::HashSet, time::Instant};
 
 use chrono::DateTime;
-use polars::{prelude::*, series::Series};
+use polars::prelude::*;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::core::{
@@ -296,7 +296,7 @@ mod df_xes_tests {
     use crate::{
         core::event_data::case_centric::{
             dataframe::convert_log_to_dataframe,
-            xes::import_xes::{import_xes_file, XESImportOptions},
+            xes::import_xes::{import_xes_path, XESImportOptions},
         },
         test_utils::get_test_data_path,
     };
@@ -308,7 +308,7 @@ mod df_xes_tests {
         let path = get_test_data_path()
             .join("xes")
             .join("Road_Traffic_Fine_Management_Process.xes.gz");
-        let log = import_xes_file(
+        let log = import_xes_path(
             path,
             XESImportOptions {
                 ..Default::default()

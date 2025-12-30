@@ -1279,7 +1279,7 @@ impl OCPTLeaf {
         if let Some(leaf_label) = leaf_label {
             Self {
                 uuid: Uuid::new_v4(),
-                activity_label: OCPTLeafLabel::Activity(leaf_label.to_string()),
+                activity_label: OCPTLeafLabel::Activity(leaf_label),
                 related_ob_types: HashSet::new(),
                 divergent_ob_types: HashSet::new(),
                 convergent_ob_types: HashSet::new(),

@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 use std::fmt::Display;
 
+use binding_macros::RegistryEntity;
 use chrono::{DateTime, FixedOffset};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::event_data::object_centric::linked_ocel::{
@@ -13,7 +15,7 @@ use crate::core::event_data::object_centric::linked_ocel::{
 ///
 /// Consists of multiple [`OCELEvent`]s and [`OCELObject`]s with corresponding event and object [`OCELType`]s
 ///
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, RegistryEntity)]
 pub struct OCEL {
     /// Event Types in OCEL
     #[serde(rename = "eventTypes")]
@@ -60,7 +62,7 @@ impl OCEL {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, JsonSchema)]
 /// OCEL Event/Object Type
 pub struct OCELType {
     /// Name
@@ -70,7 +72,7 @@ pub struct OCELType {
     pub attributes: Vec<OCELTypeAttribute>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, JsonSchema)]
 /// OCEL Attribute types
 pub struct OCELTypeAttribute {
     /// Name of attribute
@@ -90,7 +92,7 @@ impl OCELTypeAttribute {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema)]
 /// OCEL Event Attributes
 pub struct OCELEventAttribute {
     /// Name of event attribute
@@ -99,7 +101,7 @@ pub struct OCELEventAttribute {
     pub value: OCELAttributeValue,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema)]
 /// OCEL Event
 pub struct OCELEvent {
     /// Event ID
@@ -136,7 +138,7 @@ impl OCELEvent {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, JsonSchema)]
 /// OCEL Relationship (qualified; referring back to an [`OCELObject`])
 pub struct OCELRelationship {
     /// ID of referenced [`OCELObject`]
@@ -156,7 +158,7 @@ impl OCELRelationship {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema)]
 /// OCEL Object
 pub struct OCELObject {
     /// Object ID
@@ -172,7 +174,7 @@ pub struct OCELObject {
     pub relationships: Vec<OCELRelationship>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema)]
 /// OCEL Object Attribute
 ///
 /// Describing a named value _at a certain point in time_
@@ -241,7 +243,7 @@ impl OCELObjectAttribute {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema)]
 #[serde(untagged)]
 /// OCEL Attribute Values
 pub enum OCELAttributeValue {

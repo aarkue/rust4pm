@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     core::event_data::object_centric::{
-        ocel_json::{import_ocel_json_from_path, import_ocel_json_from_slice},
+        ocel_json::{import_ocel_json_path, import_ocel_json_slice},
         ocel_xml::{xml_ocel_export::export_ocel_xml_path, xml_ocel_import::import_ocel_xml_slice},
     },
     test_utils::get_test_data_path,
@@ -23,7 +23,7 @@ fn get_ocel_file_bytes(name: &str) -> Vec<u8> {
 fn test_ocel_xml_import() {
     let log_bytes = &get_ocel_file_bytes("order-management.xml");
     let now = Instant::now();
-    let ocel = import_ocel_xml_slice(log_bytes);
+    let ocel = import_ocel_xml_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
     println!("{obj:?}");
     println!(
@@ -44,7 +44,7 @@ fn test_ocel_xml_import() {
 fn test_order_ocel_json_import() {
     let log_bytes = &get_ocel_file_bytes("order-management.json");
     let now = Instant::now();
-    let ocel = import_ocel_json_from_slice(log_bytes).unwrap();
+    let ocel = import_ocel_json_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
     println!("{obj:?}");
     println!(
@@ -61,7 +61,7 @@ fn test_order_ocel_json_import() {
 fn test_ocel_p2p_xml_import() {
     let log_bytes = &get_ocel_file_bytes("ocel2-p2p.xml");
     let now = Instant::now();
-    let ocel = import_ocel_xml_slice(log_bytes);
+    let ocel = import_ocel_xml_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
     println!("{obj:?}");
     println!(
@@ -78,7 +78,7 @@ fn test_ocel_p2p_xml_import() {
 fn test_ocel_p2p_json_import() {
     let log_bytes = &get_ocel_file_bytes("ocel2-p2p.json");
     let now = Instant::now();
-    let ocel = import_ocel_json_from_slice(log_bytes).unwrap();
+    let ocel = import_ocel_json_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
     println!("{obj:?}");
     println!(
@@ -95,7 +95,7 @@ fn test_ocel_p2p_json_import() {
 fn test_ocel_logistics_xml_import() {
     let log_bytes = &get_ocel_file_bytes("ContainerLogistics.xml");
     let now = Instant::now();
-    let ocel = import_ocel_xml_slice(log_bytes);
+    let ocel = import_ocel_xml_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
     println!("{obj:?}");
     println!(
@@ -116,7 +116,7 @@ fn test_ocel_logistics_xml_import() {
 fn test_ocel_logistics_json_import() {
     let log_bytes = &get_ocel_file_bytes("ContainerLogistics.json");
     let now = Instant::now();
-    let ocel = import_ocel_json_from_slice(log_bytes).unwrap();
+    let ocel = import_ocel_json_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
     println!("{obj:?}");
     println!(
@@ -136,7 +136,7 @@ fn test_ocel_logistics_json_import() {
 //         .join("ocel")
 //         .join("angular_github_commits_ocel.xml");
 //     let now = Instant::now();
-//     let ocel = import_ocel_xml_file(&path);
+//     let ocel = import_ocel_xml_path(&path);
 //     let obj = ocel.objects.first().unwrap();
 //     println!("{:?}", obj);
 //     println!(
@@ -158,7 +158,7 @@ fn test_ocel_logistics_json_import() {
 //         .join("ocel")
 //         .join("angular_github_commits_ocel-EXPORT.json");
 //     let now = Instant::now();
-//     let ocel = import_ocel_json_from_path(path).unwrap();
+//     let ocel = import_ocel_json_path(path).unwrap();
 //     let obj = ocel.objects.first().unwrap();
 //     println!("{:?}", obj);
 //     println!(
@@ -176,7 +176,7 @@ fn test_ocel_logistics_json_import() {
 fn test_ocel_pm4py_log() {
     let log_bytes = &get_ocel_file_bytes("pm4py-ocel20_example.xmlocel");
     let now = Instant::now();
-    let ocel = import_ocel_xml_slice(log_bytes);
+    let ocel = import_ocel_xml_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
     println!("{obj:?}");
     println!(
@@ -191,7 +191,7 @@ fn test_ocel_pm4py_log() {
 fn test_ocel_pm4py_log_json() {
     let now = Instant::now();
     let log_bytes = &get_ocel_file_bytes("pm4py-ocel20_example.jsonocel");
-    let ocel = import_ocel_json_from_slice(log_bytes).unwrap();
+    let ocel = import_ocel_json_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
     println!("{obj:?}");
     println!(
@@ -206,7 +206,7 @@ fn test_ocel_pm4py_log_json() {
 fn test_ocel_order_mangement_log_json() {
     let now = Instant::now();
     let log_bytes = &get_ocel_file_bytes("order-management.json");
-    let ocel = import_ocel_json_from_slice(log_bytes).unwrap();
+    let ocel = import_ocel_json_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
     println!("{obj:?}");
     println!(
@@ -224,7 +224,7 @@ fn test_ocel_order_mangement_log_json() {
     let writer = BufWriter::new(File::create(&ocel_export_path).unwrap());
     serde_json::to_writer(writer, &ocel).unwrap();
 
-    let ocel2 = import_ocel_json_from_path(&ocel_export_path).unwrap();
+    let ocel2 = import_ocel_json_path(&ocel_export_path).unwrap();
 
     assert_eq!(ocel2.objects.len(), 10840);
     assert_eq!(ocel2.events.len(), 21008);
@@ -236,7 +236,7 @@ fn test_ocel_order_mangement_log_json() {
 fn test_ocel_failing_xml() {
     let log_bytes = &get_ocel_file_bytes("ocel-failure.xml");
     let now = Instant::now();
-    let ocel = import_ocel_xml_slice(log_bytes);
+    let ocel = import_ocel_xml_slice(log_bytes).unwrap();
     let obj = ocel.objects.first().unwrap();
     println!("{obj:?}");
     println!(

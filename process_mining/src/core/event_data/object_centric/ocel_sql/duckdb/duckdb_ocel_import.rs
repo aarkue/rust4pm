@@ -185,7 +185,7 @@ pub fn import_ocel_duckdb_from_con(con: Connection) -> Result<OCEL, ::duckdb::Er
                 })
                 .attributes
                 .push(OCELObjectAttribute {
-                    name: changed_field.clone(),
+                    name: changed_field,
                     value: changed_val,
                     time,
                 });

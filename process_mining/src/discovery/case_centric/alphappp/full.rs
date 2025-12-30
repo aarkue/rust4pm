@@ -3,6 +3,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use binding_macros::register_binding;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::{
@@ -58,7 +60,7 @@ pub fn get_current_time_millis() -> u128 {
         .as_millis()
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, JsonSchema)]
 /// Algorithm parameters for Alpha+++
 pub struct AlphaPPPConfig {
     /// Balance threshold (for filtering place candidates)
@@ -87,21 +89,36 @@ impl AlphaPPPConfig {
     }
 }
 
+impl Default for AlphaPPPConfig {
+    fn default() -> Self {
+        Self {
+            balance_thresh: 0.2,
+            fitness_thresh: 0.75,
+            replay_thresh: 0.0,
+            log_repair_skip_df_thresh_rel: 2.0,
+            log_repair_loop_df_thresh_rel: 2.0,
+            absolute_df_clean_thresh: 10,
+            relative_df_clean_thresh: 0.1,
+        }
+    }
+}
+
 ///
 /// Discover a [`PetriNet`] using the Alpha+++ Process Discovery algorithm
 ///
-/// Additionally returns the durations for performance measurements
-///
+#[register_binding(name = "discover_alpha+++")]
 pub fn alphappp_discover_petri_net(
     log_proj: &EventLogActivityProjection,
-    config: AlphaPPPConfig,
-) -> (PetriNet, AlgoDuration) {
-    alphappp_discover_petri_net_with_timing_fn(log_proj, config, &get_current_time_millis)
+    #[bind(default = Default::default())] config: AlphaPPPConfig,
+) -> PetriNet {
+    alphappp_discover_petri_net_with_timing_fn(log_proj, config, &|| 0).0
 }
 
 /// Run Alpha+++ discovery
 ///
 /// Measures [`AlgoDuration`] using the passed `get_time_millis_fn` function
+///
+/// Returns the discovered Petri net as well as performance measurements
 pub fn alphappp_discover_petri_net_with_timing_fn(
     log_proj: &EventLogActivityProjection,
     config: AlphaPPPConfig,

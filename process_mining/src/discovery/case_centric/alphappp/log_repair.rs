@@ -195,7 +195,7 @@ pub fn get_reachable_bf(
                     .collect();
                 if new_paths.is_empty() {
                     // Can't expand any further
-                    dead_ends.insert(path.clone());
+                    dead_ends.insert(path);
                 } else {
                     expanded = true
                 }

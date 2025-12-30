@@ -4,6 +4,7 @@ pub mod constants;
 pub mod dataframe;
 #[doc(hidden)]
 pub(crate) mod event_log_struct;
+pub mod io;
 pub mod macros;
 pub mod utils;
 pub mod xes;

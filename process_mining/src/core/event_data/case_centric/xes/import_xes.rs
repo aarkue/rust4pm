@@ -27,7 +27,7 @@ pub enum XESParseError {
     /// Parsing error: Expected to have a be in a different parsing mode than the current state suggests
     InvalidMode,
     /// IO errror
-    IOError(std::rc::Rc<std::io::Error>),
+    IOError(std::sync::Arc<std::io::Error>),
     /// XML error (e.g., incorrect XML format )
     XMLParsingError(QuickXMLError),
     /// Missing key on XML element (with expected key included)
@@ -49,30 +49,22 @@ impl std::fmt::Display for XESParseError {
 impl std::error::Error for XESParseError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            XESParseError::IOError(e) => Some(e.as_ref()),
+            XESParseError::IOError(e) => Some(e),
             XESParseError::XMLParsingError(e) => Some(e),
             _ => None,
         }
-    }
-
-    fn description(&self) -> &str {
-        "description() is deprecated; use Display"
-    }
-
-    fn cause(&self) -> Option<&dyn std::error::Error> {
-        self.source()
     }
 }
 
 impl From<std::io::Error> for XESParseError {
     fn from(e: std::io::Error) -> Self {
-        Self::IOError(std::rc::Rc::new(e))
+        XESParseError::IOError(std::sync::Arc::new(e))
     }
 }
 
 impl From<QuickXMLError> for XESParseError {
     fn from(e: QuickXMLError) -> Self {
-        Self::XMLParsingError(e)
+        XESParseError::XMLParsingError(e)
     }
 }
 
@@ -141,7 +133,7 @@ where
 ///
 /// Import a XES [`EventLog`] from a file path
 ///
-pub fn import_xes_file<P: AsRef<std::path::Path>>(
+pub fn import_xes_path<P: AsRef<std::path::Path>>(
     path: P,
     options: XESImportOptions,
 ) -> Result<EventLog, XESParseError> {

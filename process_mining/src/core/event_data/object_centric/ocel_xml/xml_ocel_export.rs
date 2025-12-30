@@ -165,7 +165,7 @@ mod ocel_xml_export_test {
 
     use crate::{
         core::event_data::object_centric::ocel_xml::{
-            xml_ocel_export::export_ocel_xml_path, xml_ocel_import::import_ocel_xml_file,
+            xml_ocel_export::export_ocel_xml_path, xml_ocel_import::import_ocel_xml_path,
         },
         test_utils::get_test_data_path,
     };
@@ -176,7 +176,7 @@ mod ocel_xml_export_test {
             .join("ocel")
             .join("order-management.xml");
         let mut now = Instant::now();
-        let ocel = import_ocel_xml_file(&path);
+        let ocel = import_ocel_xml_path(&path).unwrap();
         let obj = ocel.objects.first().unwrap();
         println!("{obj:?}");
         println!(
@@ -203,7 +203,7 @@ mod ocel_xml_export_test {
             now.elapsed()
         );
         now = Instant::now();
-        let ocel2 = import_ocel_xml_file(&export_path);
+        let ocel2 = import_ocel_xml_path(&export_path).unwrap();
         println!(
             "Imported OCEL AGAIN with {} objects and {} events in {:#?}",
             ocel.objects.len(),
@@ -222,7 +222,7 @@ mod ocel_xml_export_test {
     fn export_round_trip_p2p() {
         let path = get_test_data_path().join("ocel").join("ocel2-p2p.xml");
         let mut now = Instant::now();
-        let ocel = import_ocel_xml_file(&path);
+        let ocel = import_ocel_xml_path(&path).unwrap();
         let obj = ocel.objects.first().unwrap();
         println!("{obj:?}");
         println!(
@@ -246,7 +246,7 @@ mod ocel_xml_export_test {
             now.elapsed()
         );
         now = Instant::now();
-        let ocel2 = import_ocel_xml_file(&export_path);
+        let ocel2 = import_ocel_xml_path(&export_path).unwrap();
         println!(
             "Imported OCEL AGAIN with {} objects and {} events in {:#?}",
             ocel.objects.len(),

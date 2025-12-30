@@ -65,8 +65,16 @@ fn read_to_string(x: &mut &[u8]) -> String {
     String::from_utf8_lossy(x).to_string()
 }
 
-fn get_attribute_value(t: &BytesStart<'_>, key: &str) -> String {
-    read_to_string(&mut t.try_get_attribute(key).unwrap().unwrap().value.as_ref())
+fn get_attribute_value(t: &BytesStart<'_>, key: &str) -> Result<String, quick_xml::Error> {
+    match t.try_get_attribute(key)? {
+        Some(attr) => Ok(read_to_string(&mut attr.value.as_ref())),
+        None => Err(quick_xml::Error::Io(std::sync::Arc::new(
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Attribute {} not found", key),
+            ),
+        ))),
+    }
 }
 
 fn parse_attribute_value(
@@ -168,7 +176,10 @@ pub fn parse_date<'a>(
 ///
 /// Import an [`OCEL`] XML file from the given reader
 ///
-pub fn import_ocel_xml<T>(reader: &mut Reader<T>, options: OCELImportOptions) -> OCEL
+pub fn import_ocel_xml<T>(
+    reader: &mut Reader<T>,
+    options: OCELImportOptions,
+) -> Result<OCEL, quick_xml::Error>
 where
     T: BufRead,
 {
@@ -206,8 +217,7 @@ where
                         },
                         Mode::ObjectTypes => match t.name().as_ref() {
                             b"object-type" => {
-                                let name_attr = t.try_get_attribute("name").unwrap().unwrap();
-                                let name = read_to_string(&mut name_attr.value.as_ref());
+                                let name = get_attribute_value(&t, "name")?;
                                 ocel.object_types.push(OCELType {
                                     name,
                                     attributes: Vec::new(),
@@ -218,11 +228,16 @@ where
                         },
                         Mode::ObjectType => match t.name().as_ref() {
                             b"attributes" => current_mode = Mode::ObjectTypeAttributes,
-                            _ => {} // mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            _ => {}
+                        },
+                        Mode::EventType => match t.name().as_ref() {
+                            b"attributes" => current_mode = Mode::EventTypeAttributes,
+                            // mut x => print_to_string(&mut x, current_mode, "EventStart"),
+                            _ => {}
                         },
                         Mode::EventTypes => match t.name().as_ref() {
                             b"event-type" => {
-                                let name = get_attribute_value(&t, "name");
+                                let name = get_attribute_value(&t, "name")?;
                                 ocel.event_types.push(OCELType {
                                     name,
                                     attributes: Vec::new(),
@@ -232,15 +247,10 @@ where
                             // mut x => print_to_string(&mut x, current_mode, "EventStart"),
                             _ => {}
                         },
-                        Mode::EventType => match t.name().as_ref() {
-                            b"attributes" => current_mode = Mode::EventTypeAttributes,
-                            // mut x => print_to_string(&mut x, current_mode, "EventStart"),
-                            _ => {}
-                        },
                         Mode::Objects => match t.name().as_ref() {
                             b"object" => {
-                                let id = get_attribute_value(&t, "id");
-                                let object_type = get_attribute_value(&t, "type");
+                                let id = get_attribute_value(&t, "id")?;
+                                let object_type = get_attribute_value(&t, "type")?;
                                 ocel.objects.push(OCELObject {
                                     id,
                                     object_type,
@@ -260,8 +270,8 @@ where
                                 // Begin O2O; Noop
                             }
                             b"attribute" => {
-                                let name = get_attribute_value(&t, "name");
-                                let time_str = get_attribute_value(&t, "time");
+                                let name = get_attribute_value(&t, "name")?;
+                                let time_str = get_attribute_value(&t, "time")?;
                                 let time = parse_date(&time_str, &options);
                                 match time {
                                     Ok(time_val) => {
@@ -285,15 +295,26 @@ where
                         },
                         Mode::Events => match t.name().as_ref() {
                             b"event" => {
-                                let id = get_attribute_value(&t, "id");
-                                let event_type = get_attribute_value(&t, "type");
-                                let time = get_attribute_value(&t, "time");
+                                let id = get_attribute_value(&t, "id")?;
+                                let event_type = get_attribute_value(&t, "type")?;
+                                let time = get_attribute_value(&t, "time")?;
+                                let time_val = match parse_date(&time, &options) {
+                                    Ok(t) => t,
+                                    Err(e) => {
+                                        return Err(quick_xml::Error::Io(std::sync::Arc::new(
+                                            std::io::Error::new(
+                                                std::io::ErrorKind::InvalidData,
+                                                format!("Invalid date: {}", e),
+                                            ),
+                                        )));
+                                    }
+                                };
                                 ocel.events.push(OCELEvent {
                                     id,
                                     event_type,
                                     attributes: Vec::new(),
                                     relationships: Vec::new(),
-                                    time: parse_date(&time, &options).unwrap(),
+                                    time: time_val,
                                 });
                                 current_mode = Mode::Event
                             }
@@ -305,7 +326,7 @@ where
                                 // Noop
                             }
                             b"attribute" => {
-                                let name = get_attribute_value(&t, "name");
+                                let name = get_attribute_value(&t, "name")?;
                                 ocel.events.last_mut().unwrap().attributes.push(
                                     OCELEventAttribute {
                                         name,
@@ -390,8 +411,8 @@ where
                     quick_xml::events::Event::Empty(t) => match current_mode {
                         Mode::ObjectTypeAttributes => match t.name().as_ref() {
                             b"attribute" => {
-                                let name = get_attribute_value(&t, "name");
-                                let value_type = get_attribute_value(&t, "type");
+                                let name = get_attribute_value(&t, "name")?;
+                                let value_type = get_attribute_value(&t, "type")?;
                                 let object_type = &ocel.object_types.last().unwrap().name;
                                 object_attribute_types.insert(
                                     (object_type.clone(), name.clone()),
@@ -408,8 +429,8 @@ where
                         },
                         Mode::Object => match t.name().as_ref() {
                             b"relationship" => {
-                                let object_id = get_attribute_value(&t, "object-id");
-                                let qualifier = get_attribute_value(&t, "qualifier");
+                                let object_id = get_attribute_value(&t, "object-id")?;
+                                let qualifier = get_attribute_value(&t, "qualifier")?;
                                 let new_rel: OCELRelationship = OCELRelationship {
                                     object_id,
                                     qualifier,
@@ -419,8 +440,8 @@ where
                             // P2P log uses relobj instead of relationship?
                             // TODO: Remove once fixed
                             b"relobj" => {
-                                let object_id = get_attribute_value(&t, "object-id");
-                                let qualifier = get_attribute_value(&t, "qualifier");
+                                let object_id = get_attribute_value(&t, "object-id")?;
+                                let qualifier = get_attribute_value(&t, "qualifier")?;
                                 let new_rel: OCELRelationship = OCELRelationship {
                                     object_id,
                                     qualifier,
@@ -436,8 +457,8 @@ where
 
                             // Empty attributes => null value (?)
                             b"attribute" => {
-                                let name = get_attribute_value(&t, "name");
-                                let time_str = get_attribute_value(&t, "time");
+                                let name = get_attribute_value(&t, "name")?;
+                                let time_str = get_attribute_value(&t, "time")?;
                                 let time = parse_date(&time_str, &options);
                                 match time {
                                     Ok(time_val) => {
@@ -466,8 +487,8 @@ where
                                 // If they are empty => Noop
                             }
                             b"relationship" => {
-                                let object_id = get_attribute_value(&t, "object-id");
-                                let qualifier = get_attribute_value(&t, "qualifier");
+                                let object_id = get_attribute_value(&t, "object-id")?;
+                                let qualifier = get_attribute_value(&t, "qualifier")?;
                                 let new_rel: OCELRelationship = OCELRelationship {
                                     object_id,
                                     qualifier,
@@ -478,8 +499,8 @@ where
                             // TODO: Remove once example logs are updated
                             // Should use relationship instead
                             b"object" => {
-                                let object_id = get_attribute_value(&t, "object-id");
-                                let qualifier = get_attribute_value(&t, "qualifier");
+                                let object_id = get_attribute_value(&t, "object-id")?;
+                                let qualifier = get_attribute_value(&t, "qualifier")?;
                                 let new_rel: OCELRelationship = OCELRelationship {
                                     object_id,
                                     qualifier,
@@ -490,8 +511,8 @@ where
                             // P2P log uses relobj instead of relationship?
                             // TODO: Remove once fixed
                             b"relobj" => {
-                                let object_id = get_attribute_value(&t, "object-id");
-                                let qualifier = get_attribute_value(&t, "qualifier");
+                                let object_id = get_attribute_value(&t, "object-id")?;
+                                let qualifier = get_attribute_value(&t, "qualifier")?;
                                 let new_rel: OCELRelationship = OCELRelationship {
                                     object_id,
                                     qualifier,
@@ -500,7 +521,7 @@ where
                             }
                             // Empty attribute => Null value (?)
                             b"attribute" => {
-                                let name = get_attribute_value(&t, "name");
+                                let name = get_attribute_value(&t, "name")?;
                                 ocel.events.last_mut().unwrap().attributes.push(
                                     OCELEventAttribute {
                                         name,
@@ -524,8 +545,8 @@ where
                         },
                         Mode::EventTypeAttributes => match t.name().as_ref() {
                             b"attribute" => {
-                                let name = get_attribute_value(&t, "name");
-                                let value_type = get_attribute_value(&t, "type");
+                                let name = get_attribute_value(&t, "name")?;
+                                let value_type = get_attribute_value(&t, "type")?;
                                 let event_type = &ocel.event_types.last().unwrap().name;
                                 event_attribute_types.insert(
                                     (event_type.clone(), name.clone()),
@@ -575,45 +596,44 @@ where
                     _ => {}
                 }
             }
-            Err(err) => {
-                if options.verbose {
-                    eprintln!("Error: {err:?}")
-                }
-            }
+            Err(err) => return Err(err),
         }
     }
 
-    ocel
+    Ok(ocel)
 }
 
 ///
 /// Import an [`OCEL`] XML from a byte slice __with__ _custom options_
 ///
-pub fn import_ocel_xml_slice_with(xes_data: &[u8], options: OCELImportOptions) -> OCEL {
+pub fn import_ocel_xml_slice_with(
+    xes_data: &[u8],
+    options: OCELImportOptions,
+) -> Result<OCEL, quick_xml::Error> {
     import_ocel_xml(&mut Reader::from_reader(BufReader::new(xes_data)), options)
 }
 
 ///
 /// Import an [`OCEL`] XML from a filepath __with__ _custom options_
 ///
-pub fn import_ocel_xml_file_with<P: AsRef<std::path::Path>>(
+pub fn import_ocel_xml_path_with<P: AsRef<std::path::Path>>(
     path: P,
     options: OCELImportOptions,
-) -> OCEL {
-    let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path).unwrap();
+) -> Result<OCEL, quick_xml::Error> {
+    let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path)?;
     import_ocel_xml(&mut reader, options)
 }
 
 ///
 /// Import an [`OCEL`] XML from a byte slice with default options
 ///
-pub fn import_ocel_xml_slice(xes_data: &[u8]) -> OCEL {
+pub fn import_ocel_xml_slice(xes_data: &[u8]) -> Result<OCEL, quick_xml::Error> {
     import_ocel_xml_slice_with(xes_data, OCELImportOptions::default())
 }
 
 ///
 /// Import an [`OCEL`] XML from a filepath with default options
 ///
-pub fn import_ocel_xml_file<P: AsRef<std::path::Path>>(path: P) -> OCEL {
-    import_ocel_xml_file_with(path, OCELImportOptions::default())
+pub fn import_ocel_xml_path<P: AsRef<std::path::Path>>(path: P) -> Result<OCEL, quick_xml::Error> {
+    import_ocel_xml_path_with(path, OCELImportOptions::default())
 }

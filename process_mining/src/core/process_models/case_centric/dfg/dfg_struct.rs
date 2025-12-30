@@ -1,4 +1,5 @@
 //! Struct for Directly-Follows Graphs
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{
@@ -6,7 +7,7 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
-use crate::core::{event_data::case_centric::EventLogClassifier, EventLog};
+use crate::{core::EventLog, discovery::case_centric::dfg::discover_dfg};
 
 /// Activity in a directly-follows graph.
 pub type Activity = String;
@@ -17,12 +18,13 @@ pub type Activity = String;
 /// Both, the number of occurrences of activities and of directly follows relations are annotated
 /// with their frequency.
 #[serde_as]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DirectlyFollowsGraph<'a> {
     /// Activities
     pub activities: HashMap<Activity, u32>,
     /// Directly-follows relations
-    #[serde_as(as = "Vec<(_, _)>")]
+    #[serde_as(as = "Vec<((_,_),_)>")]
+    #[schemars(with = "Vec<((String,String),u32)>")]
     pub directly_follows_relations: HashMap<(Cow<'a, str>, Cow<'a, str>), u32>,
     /// Start activities
     pub start_activities: HashSet<Activity>,
@@ -46,32 +48,11 @@ impl<'a> DirectlyFollowsGraph<'a> {
             end_activities: HashSet::new(),
         }
     }
-
-    /// Construct a [`DirectlyFollowsGraph`] from an [`EventLog`] using the specified [`EventLogClassifier`] to derive the 'activity' names
+    /// Discover a [`DirectlyFollowsGraph`] from an [`EventLog`] using the specified [`EventLogClassifier`](crate::core::event_data::case_centric::EventLogClassifier) to derive the 'activity' names
     ///
     /// If there is no special classifier to be used, the default (`&EventLogClassifier::default()`) can also simply be passed in
-    pub fn create_from_log(event_log: &EventLog, classifier: &EventLogClassifier) -> Self {
-        let mut result = Self::new();
-        event_log.traces.iter().for_each(|t| {
-            let mut last_event_identity: Option<String> = None;
-            t.events.iter().for_each(|e| {
-                let curr_event_identity = classifier.get_class_identity(e);
-                result.add_activity(curr_event_identity.clone(), 1);
-
-                if let Some(last_ev_id) = last_event_identity.take() {
-                    result.add_df_relation(last_ev_id.into(), curr_event_identity.clone().into(), 1)
-                } else {
-                    result.add_start_activity(curr_event_identity.clone());
-                }
-
-                last_event_identity = Some(curr_event_identity.clone());
-            });
-            if let Some(last_ev_id) = last_event_identity.take() {
-                result.add_end_activity(last_ev_id);
-            }
-        });
-
-        result
+    pub fn discover(event_log: &EventLog) -> Self {
+        discover_dfg(event_log)
     }
 
     /// Serialize to JSON string.
@@ -132,7 +113,7 @@ impl<'a> DirectlyFollowsGraph<'a> {
     pub fn add_df_relation(&mut self, from: Cow<'a, str>, to: Cow<'a, str>, frequency: u32) {
         *self
             .directly_follows_relations
-            .entry((from.clone(), to.clone()))
+            .entry((from, to))
             .or_default() += frequency;
     }
 
@@ -251,7 +232,7 @@ mod tests {
 }"#;
 
     use crate::{
-        core::event_data::case_centric::xes::import_xes::{import_xes_file, XESImportOptions},
+        core::event_data::case_centric::xes::import_xes::{import_xes_path, XESImportOptions},
         test_utils::get_test_data_path,
     };
 
@@ -297,7 +278,7 @@ mod tests {
     fn reading_dfg_from_event_log_repair_example() {
         let path = get_test_data_path().join("xes").join("RepairExample.xes");
 
-        let log: EventLog = import_xes_file(
+        let log: EventLog = import_xes_path(
             path,
             XESImportOptions {
                 ignore_log_attributes_except: Some(HashSet::default()),
@@ -314,10 +295,8 @@ mod tests {
         )
         .unwrap();
 
-        let classifier = log.classifiers.as_ref().and_then(|c| c.first()).unwrap();
-
         #[allow(unused_variables)]
-        let graph = DirectlyFollowsGraph::create_from_log(&log, classifier);
+        let graph = DirectlyFollowsGraph::discover(&log);
 
         #[cfg(feature = "graphviz-export")]
         {
@@ -336,7 +315,7 @@ mod tests {
             .join("xes")
             .join("Sepsis Cases - Event Log.xes.gz");
 
-        let log: EventLog = import_xes_file(
+        let log: EventLog = import_xes_path(
             path,
             XESImportOptions {
                 ignore_log_attributes_except: Some(HashSet::default()),
@@ -354,7 +333,7 @@ mod tests {
         .unwrap();
 
         #[allow(unused_variables)]
-        let graph = DirectlyFollowsGraph::create_from_log(&log, &EventLogClassifier::default());
+        let graph = DirectlyFollowsGraph::discover(&log);
 
         #[cfg(feature = "graphviz-export")]
         {
@@ -369,7 +348,7 @@ mod tests {
     fn test_dfg_from_an1_example() {
         let path = get_test_data_path().join("xes").join("AN1-example.xes");
 
-        let log: EventLog = import_xes_file(
+        let log: EventLog = import_xes_path(
             path,
             XESImportOptions {
                 ignore_log_attributes_except: Some(HashSet::default()),
@@ -386,7 +365,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = DirectlyFollowsGraph::create_from_log(&log, &EventLogClassifier::default());
+        let graph = DirectlyFollowsGraph::discover(&log);
 
         assert_eq!(graph.activities.len(), 6);
         assert_eq!(graph.directly_follows_relations.len(), 16);

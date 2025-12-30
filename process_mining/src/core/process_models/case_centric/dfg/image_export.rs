@@ -3,6 +3,7 @@
 //! 🔐 Requires the `graphviz-export` feature to be enabled
 use std::{cmp::Ordering, fs::File, io::Write};
 
+use binding_macros::register_binding;
 use graphviz_rust::{
     cmd::Format,
     dot_generator::{attr, edge, graph, id, node, node_id, stmt},
@@ -106,9 +107,10 @@ pub fn graph_to_dot(g: &Graph) -> String {
 /// Export the image of a [`DirectlyFollowsGraph`] as a SVG file
 ///
 /// Also consider using [`DirectlyFollowsGraph::export_svg`] for convenience.
-pub fn export_dfg_image_svg<P: AsRef<std::path::Path>>(
+#[register_binding(stringify_error)]
+pub fn export_dfg_image_svg(
     dfg: &DirectlyFollowsGraph<'_>,
-    path: P,
+    path: impl AsRef<std::path::Path>,
 ) -> Result<(), std::io::Error> {
     export_dfg_image(dfg, path, Format::Svg, None)
 }
@@ -117,11 +119,26 @@ pub fn export_dfg_image_svg<P: AsRef<std::path::Path>>(
 /// Export the image of a [`DirectlyFollowsGraph`] as a PNG file
 ///
 /// Also consider using [`DirectlyFollowsGraph::export_png`] for convenience.
-pub fn export_dfg_image_png<P: AsRef<std::path::Path>>(
+#[register_binding(stringify_error)]
+pub fn export_dfg_image_png(
     dfg: &DirectlyFollowsGraph<'_>,
-    path: P,
+    path: impl AsRef<std::path::Path>,
 ) -> Result<(), std::io::Error> {
     export_dfg_image(dfg, path, Format::Png, Some(2.0))
+}
+
+#[cfg(feature = "bindings")]
+mod private {
+    use binding_macros::register_binding;
+
+    use crate::core::process_models::case_centric::dfg::{
+        image_export::export_dfg_image_png, DirectlyFollowsGraph,
+    };
+
+    #[register_binding]
+    fn export_dfg_png(dfg: DirectlyFollowsGraph<'_>, path: impl AsRef<std::path::Path>) {
+        export_dfg_image_png(&dfg, path).unwrap();
+    }
 }
 
 #[cfg(test)]

@@ -211,7 +211,7 @@ pub fn export_xes_event_log_to_file(
 /// Automatically selects gz-compression if filepath ends with `.gz`
 ///
 /// See also [`export_xes_event_log_to_file`], which accepts a [`File`] and boolean flag for gz-compression.
-pub fn export_xes_event_log_to_file_path<P: AsRef<std::path::Path>>(
+pub fn export_xes_event_log_to_path<P: AsRef<std::path::Path>>(
     log: &EventLog,
     path: P,
 ) -> Result<(), quick_xml::Error> {
@@ -296,7 +296,7 @@ mod export_xes_tests {
             event_log_struct::EventLogExtension,
             xes::{
                 export_xes::{export_xes_event_log, serialize_classifier},
-                import_xes::{import_xes_file, import_xes_slice, XESImportOptions},
+                import_xes::{import_xes_path, import_xes_slice, XESImportOptions},
                 stream_xes::{parse_classifier_key, stream_xes_from_path, XESOuterLogData},
             },
         },
@@ -310,7 +310,7 @@ mod export_xes_tests {
         let path = get_test_data_path()
             .join("xes")
             .join("Sepsis Cases - Event Log.xes.gz");
-        let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
+        let log = import_xes_path(&path, XESImportOptions::default()).unwrap();
         let exported_xes_data: Vec<u8> = Vec::new();
         // let mut writer = Writer::new(exported_xes_data);
         let mut buf_writer = BufWriter::new(exported_xes_data);
@@ -352,7 +352,7 @@ mod export_xes_tests {
         let path = get_test_data_path()
             .join("xes")
             .join("Sepsis Cases - Event Log.xes.gz");
-        let log = import_xes_file(&path, XESImportOptions::default()).unwrap();
+        let log = import_xes_path(&path, XESImportOptions::default()).unwrap();
         let exported_xes_data: Vec<u8> = Vec::new();
         let mut writer = Writer::new(exported_xes_data);
         export_xes_event_log(&mut writer, &log).unwrap();
