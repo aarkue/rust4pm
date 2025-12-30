@@ -3,6 +3,7 @@
 //! Allows easy and efficient access to events, objects, and their relations
 use std::collections::HashMap;
 
+use binding_macros::RegistryEntity;
 use chrono::{DateTime, FixedOffset};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -293,7 +294,7 @@ impl From<ObjectIndex> for EventOrObjectIndex {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, RegistryEntity)]
 /// A slim and linked version of OCEL that allows for convenient usage
 pub struct SlimLinkedOCEL {
     /// Events
@@ -447,6 +448,11 @@ impl SlimLinkedOCEL {
             evtype_to_index,
             obtype_to_index,
         }
+    }
+
+    /// Convert to OCEL
+    pub fn to_ocel(&self) -> OCEL {
+        todo!()
     }
 
     /// Get all event indices

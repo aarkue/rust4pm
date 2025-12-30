@@ -33,7 +33,10 @@
 use crate::core::{
     event_data::{
         case_centric::utils::activity_projection::EventLogActivityProjection,
-        object_centric::{linked_ocel::IndexLinkedOCEL, ocel_struct::OCEL},
+        object_centric::{
+            linked_ocel::{IndexLinkedOCEL, SlimLinkedOCEL},
+            ocel_struct::OCEL,
+        },
     },
     EventLog,
 };
@@ -51,6 +54,7 @@ use std::{str::FromStr, sync::RwLock};
 pub enum RegistryItem {
     EventLogActivityProjection(EventLogActivityProjection),
     IndexLinkedOCEL(IndexLinkedOCEL),
+    SlimLinkedOCEL(SlimLinkedOCEL),
     EventLog(EventLog),
     OCEL(OCEL),
 }
@@ -81,6 +85,7 @@ impl From<OCEL> for RegistryItem {
 pub enum RegistryItemKind {
     EventLogActivityProjection,
     IndexLinkedOCEL,
+    SlimLinkedOCEL,
     EventLog,
     OCEL,
 }
@@ -90,6 +95,7 @@ impl Display for RegistryItemKind {
         let s = match self {
             RegistryItemKind::EventLogActivityProjection => "EventLogActivityProjection",
             RegistryItemKind::IndexLinkedOCEL => "IndexLinkedOCEL",
+            RegistryItemKind::SlimLinkedOCEL => "SlimLinkedOCEL",
             RegistryItemKind::EventLog => "EventLog",
             RegistryItemKind::OCEL => "OCEL",
         };
@@ -101,10 +107,11 @@ impl RegistryItemKind {
     /// Get all kinds of `RegistryItemKind`
     pub fn all_kinds() -> &'static [Self] {
         &[
-            RegistryItemKind::EventLogActivityProjection,
-            RegistryItemKind::IndexLinkedOCEL,
-            RegistryItemKind::EventLog,
             RegistryItemKind::OCEL,
+            RegistryItemKind::EventLogActivityProjection,
+            RegistryItemKind::EventLog,
+            RegistryItemKind::IndexLinkedOCEL,
+            RegistryItemKind::SlimLinkedOCEL,
         ]
     }
 }
@@ -118,6 +125,7 @@ impl std::str::FromStr for RegistryItemKind {
             "IndexLinkedOCEL" => Ok(RegistryItemKind::IndexLinkedOCEL),
             "EventLog" => Ok(RegistryItemKind::EventLog),
             "OCEL" => Ok(RegistryItemKind::OCEL),
+            "SlimLinkedOCEL" => Ok(RegistryItemKind::SlimLinkedOCEL),
             _ => Err(format!("Unknown RegistryItemKind: {}", s)),
         }
     }
@@ -134,6 +142,9 @@ impl RegistryItem {
             RegistryItem::EventLog(log) => serde_json::to_value(log).map_err(|e| e.to_string()),
             RegistryItem::OCEL(ocel) => serde_json::to_value(ocel).map_err(|e| e.to_string()),
             RegistryItem::IndexLinkedOCEL(locel) => {
+                serde_json::to_value(locel).map_err(|e| e.to_string())
+            }
+            RegistryItem::SlimLinkedOCEL(locel) => {
                 serde_json::to_value(locel).map_err(|e| e.to_string())
             }
             RegistryItem::EventLogActivityProjection(proj) => {
@@ -153,6 +164,11 @@ impl RegistryItem {
             RegistryItemKind::OCEL => Ok(RegistryItem::OCEL(
                 OCEL::import_from_path(path).map_err(|e| e.to_string())?,
             )),
+            RegistryItemKind::SlimLinkedOCEL => Ok(RegistryItem::SlimLinkedOCEL({
+                OCEL::import_from_path(path)
+                    .map(|ocel| SlimLinkedOCEL::from_ocel(ocel))
+                    .map_err(|e| e.to_string())?
+            })),
             RegistryItemKind::IndexLinkedOCEL => Ok(RegistryItem::IndexLinkedOCEL(
                 IndexLinkedOCEL::import_from_path(path).map_err(|e| e.to_string())?,
             )),
@@ -181,6 +197,11 @@ impl RegistryItem {
             RegistryItemKind::IndexLinkedOCEL => Ok(RegistryItem::IndexLinkedOCEL(
                 IndexLinkedOCEL::import_from_bytes(data, format).map_err(|e| e.to_string())?,
             )),
+            RegistryItemKind::SlimLinkedOCEL => Ok(RegistryItem::SlimLinkedOCEL({
+                OCEL::import_from_bytes(data, format)
+                    .map(|ocel| SlimLinkedOCEL::from_ocel(ocel))
+                    .map_err(|e| e.to_string())?
+            })),
             RegistryItemKind::EventLogActivityProjection => {
                 Ok(RegistryItem::EventLogActivityProjection(
                     EventLogActivityProjection::import_from_bytes(data, format)
@@ -199,6 +220,7 @@ impl RegistryItem {
             RegistryItem::IndexLinkedOCEL(_) => RegistryItemKind::IndexLinkedOCEL,
             RegistryItem::EventLog(_) => RegistryItemKind::EventLog,
             RegistryItem::OCEL(_) => RegistryItemKind::OCEL,
+            RegistryItem::SlimLinkedOCEL(_) => RegistryItemKind::SlimLinkedOCEL,
         }
     }
 
@@ -209,6 +231,9 @@ impl RegistryItem {
             RegistryItem::EventLog(x) => x.export_to_path(path).map_err(|e| e.to_string()),
             RegistryItem::OCEL(x) => x.export_to_path(path).map_err(|e| e.to_string()),
             RegistryItem::IndexLinkedOCEL(x) => x.export_to_path(path).map_err(|e| e.to_string()),
+            RegistryItem::SlimLinkedOCEL(x) => {
+                x.to_ocel().export_to_path(path).map_err(|e| e.to_string())
+            }
             RegistryItem::EventLogActivityProjection(x) => {
                 x.export_to_path(path).map_err(|e| e.to_string())
             }
@@ -223,6 +248,10 @@ impl RegistryItem {
                 .export_to_writer(&mut bytes, format)
                 .map_err(|e| e.to_string())?,
             RegistryItem::OCEL(x) => x
+                .export_to_writer(&mut bytes, format)
+                .map_err(|e| e.to_string())?,
+            RegistryItem::SlimLinkedOCEL(x) => x
+                .to_ocel()
                 .export_to_writer(&mut bytes, format)
                 .map_err(|e| e.to_string())?,
             RegistryItem::IndexLinkedOCEL(x) => x
@@ -340,7 +369,7 @@ impl From<&Binding> for BindingMeta {
 
 /// Derive Value from Context
 pub trait FromContext<'a>: Sized {
-    /// Ger value from context
+    /// Get value from context
     fn from_context(v: &Value, s: &'a InnerAppState) -> Result<Self, String>;
 }
 
@@ -349,9 +378,22 @@ pub fn extract_param<'a, T: FromContext<'a>>(
     m: &serde_json::Map<String, Value>,
     k: &str,
     s: &'a InnerAppState,
+    default: impl FnOnce() -> Option<T>,
 ) -> Result<T, String> {
-    T::from_context(m.get(k).ok_or_else(|| format!("Missing Argument: {k}"))?, s)
-        .map_err(|e| format!("Invalid Argument: {k}\n{e}"))
+    if let Some(x) = m.get(k) {
+        // If argument is null in JSON, check if a default is given
+        // when yes: Use that, otherwise, fallback to standard parsing
+        if x.is_null() {
+            let d = default();
+            if let Some(d) = d {
+                return Ok(d);
+            }
+        }
+        T::from_context(x, s).map_err(|e| format!("Invalid Argument: {k}\n{e}"))
+    } else {
+        let r = default();
+        r.ok_or_else(|| format!("Missing required argument {k}"))
+    }
 }
 
 // Runtime Extraction

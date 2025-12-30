@@ -2,6 +2,7 @@
 mod preprocess;
 use chrono::{DateTime, Duration, FixedOffset};
 pub use preprocess::{preprocess_ocel, EXIT_EVENT_PREFIX, INIT_EVENT_PREFIX};
+use schemars::JsonSchema;
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
@@ -15,7 +16,9 @@ use crate::core::event_data::object_centric::linked_ocel::slim_linked_ocel::{
 };
 use crate::core::event_data::object_centric::linked_ocel::SlimLinkedOCEL;
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord, JsonSchema,
+)]
 /// OC-DECLARE node (Activity or Object Init/Exit, also see [`preprocess::preprocess_ocel`])
 pub struct OCDeclareNode(String);
 
@@ -37,7 +40,9 @@ impl OCDeclareNode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash, PartialOrd, Ord, JsonSchema,
+)]
 /// OC-DECLARE Constraint arc/edge between two nodes (i.e., activities)
 pub struct OCDeclareArc {
     /// Source node (e.g., triggering activity)
@@ -113,7 +118,9 @@ impl OCDeclareArc {
 /// OC-DECLARE Arc Direction/Type
 ///
 /// Models temporal relationships
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord, JsonSchema,
+)]
 pub enum OCDeclareArcType {
     /// Association: No temporal restrictions
     AS,
@@ -180,7 +187,9 @@ impl OCDeclareArcType {
 }
 
 /// Object Type Association: Direct or O2O Object Types
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord, JsonSchema,
+)]
 #[serde(tag = "type")]
 pub enum ObjectTypeAssociation {
     /// Simple: Direct Object Types involved with an Activity
@@ -278,7 +287,9 @@ impl ObjectTypeAssociation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, Hash, PartialOrd, Ord, JsonSchema,
+)]
 /// Object Involvement Label of an OC-DECLARE arc
 pub struct OCDeclareArcLabel {
     /// Each (for each object of that type separately, there must be the specified number of relevant target events)

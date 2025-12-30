@@ -1,8 +1,10 @@
 //! Discovering OC-DECLARE Models from Object-Centric Event Data
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use binding_macros::register_binding;
 use itertools::Itertools;
 use rayon::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -21,7 +23,7 @@ use crate::{
 /// O2O Mode for OC-DECLARE Discovery
 ///
 /// Determines to what extent object-to-object (O2O) relationships are considered
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum O2OMode {
     /// O2O relationships are not considered at all
     None,
@@ -35,7 +37,7 @@ pub enum O2OMode {
 
 /// Mode for reducing OC-DECLARE constraints
 ///
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum OCDeclareReductionMode {
     /// Do not reduce constraints at all
     None,
@@ -50,7 +52,7 @@ pub enum OCDeclareReductionMode {
 }
 
 /// Options for the automatic discovery of OC-DECLARE constraints
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct OCDeclareDiscoveryOptions {
     /// Noise threshold (i.e., what fraction of events are allowed to violate a discovered constraint)
     pub noise_threshold: f64,
@@ -87,9 +89,10 @@ impl Default for OCDeclareDiscoveryOptions {
 }
 
 /// Discover behavioral OC-DECLARE constraints
+#[register_binding(name = "discover_oc-declare")]
 pub fn discover_behavior_constraints(
     locel: &SlimLinkedOCEL,
-    options: OCDeclareDiscoveryOptions,
+    #[bind(default = Default::default())] options: OCDeclareDiscoveryOptions,
 ) -> Vec<OCDeclareArc> {
     let act_ob_inv: HashMap<String, HashMap<String, ObjectInvolvementCounts>> =
         get_activity_object_involvements(locel);

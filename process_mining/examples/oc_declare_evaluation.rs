@@ -2,10 +2,7 @@ use std::{collections::HashMap, env, fs::File, hint::black_box, path::PathBuf, t
 
 use process_mining::{
     core::{
-        event_data::object_centric::{
-            linked_ocel::SlimLinkedOCEL, ocel_json::import_ocel_json_from_path,
-            ocel_xml::import_ocel_xml_file,
-        },
+        event_data::object_centric::linked_ocel::SlimLinkedOCEL,
         process_models::oc_declare::{
             get_activity_object_involvements, get_object_to_object_involvements,
             get_rev_object_to_object_involvements, OCDeclareArcType, ObjectInvolvementCounts,
@@ -15,6 +12,7 @@ use process_mining::{
         discover_behavior_constraints, reduce_oc_arcs, refine_oc_arcs, O2OMode,
         OCDeclareDiscoveryOptions, OCDeclareReductionMode,
     },
+    Importable, OCEL,
 };
 use serde::{Deserialize, Serialize};
 
@@ -40,16 +38,7 @@ fn main() {
             ];
             for (name, path) in event_logs {
                 println!("Evaluating on {name}.");
-                let ocel = if path
-                    .extension()
-                    .unwrap()
-                    .to_string_lossy()
-                    .ends_with("json")
-                {
-                    import_ocel_json_from_path(path).unwrap()
-                } else {
-                    import_ocel_xml_file(path)
-                };
+                let ocel = OCEL::import_from_path(path).expect("Failed to import OCEL.");
                 let num_evs = ocel.events.len();
                 let num_obs = ocel.objects.len();
                 let num_et = ocel.event_types.len();

@@ -11,6 +11,7 @@ const BIG_TYPES_NAMES: &[&str] = &[
     "EventLogActivityProjection",
     "IndexLinkedOCEL",
     "EventLog",
+    "SlimLinkedOCEL",
     "OCEL",
 ];
 
@@ -224,12 +225,11 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
         };
         if let Some(default_expr) = &opts.default_value {
             quote! {
-                #maybe_ref crate::bindings::extract_param::<#ty_without_ref>(arg_map, #name, state)
-                    .unwrap_or_else(|_| #default_expr)
+                #maybe_ref crate::bindings::extract_param::<#ty_without_ref>(arg_map, #name, state, || Some(#default_expr))?
             }
         } else {
             quote! {
-                #maybe_ref crate::bindings::extract_param::<#ty_without_ref>(arg_map, #name, state)?
+                #maybe_ref crate::bindings::extract_param::<#ty_without_ref>(arg_map, #name, state, || None)?
             }
         }
     });
