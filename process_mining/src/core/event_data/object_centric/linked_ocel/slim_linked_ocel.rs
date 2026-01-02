@@ -11,7 +11,8 @@ use uuid::Uuid;
 
 use crate::core::{
     event_data::object_centric::{
-        OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELRelationship, OCELType,
+        linked_ocel::LinkedOCELAccess, OCELAttributeValue, OCELEvent, OCELEventAttribute,
+        OCELObject, OCELRelationship, OCELType,
     },
     OCEL,
 };
@@ -452,34 +453,36 @@ impl SlimLinkedOCEL {
 
     /// Convert to OCEL
     pub fn to_ocel(&self) -> OCEL {
-        todo!()
+        todo!("TODO!")
     }
 
     /// Get all event indices
     pub fn get_all_evs(&self) -> impl Iterator<Item = EventIndex> {
         (0..self.events.len()).map(EventIndex)
     }
+    /// Get all object indices
+    pub fn get_all_obs(&self) -> impl Iterator<Item = ObjectIndex> {
+        (0..self.objects.len()).map(ObjectIndex)
+    }
     /// Get all events of the spcecified event type
-    pub fn get_evs_of_type<'a>(
+    pub fn get_evs_of_type<'a, 'b>(
         &'a self,
-        event_type: &'a str,
-    ) -> impl Iterator<Item = &'a EventIndex> + use<'a> {
+        event_type: &'b str,
+    ) -> impl Iterator<Item = &'a EventIndex> {
         self.evtype_to_index
             .get(event_type)
             .into_iter()
             .flat_map(|et| &self.events_per_type[*et])
-        // .copied()
     }
     /// Get all objects of the specified object type
-    pub fn get_obs_of_type<'a>(
+    pub fn get_obs_of_type<'a, 'b>(
         &'a self,
-        object_type: &'a str,
-    ) -> impl Iterator<Item = &'a ObjectIndex> + use<'a> {
+        object_type: &'b str,
+    ) -> impl Iterator<Item = &'a ObjectIndex> {
         self.obtype_to_index
             .get(object_type)
             .into_iter()
             .flat_map(|et| &self.objects_per_type[*et])
-        // .copied()
     }
 
     /// Get all object types as strings
@@ -620,4 +623,124 @@ pub struct SlimOCELObject {
     /// E2O (Event-to-Object) relationships
     #[serde(default)]
     pub relationships: Vec<(ObjectIndex, String)>,
+}
+
+impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
+    type EvRetType = EventIndex;
+
+    type ObRetType = ObjectIndex;
+
+    type EvRefType = EventIndex;
+
+    type ObRefType = ObjectIndex;
+
+    fn get_evs_of_type(&'a self, ev_type: &'_ str) -> impl Iterator<Item = &'a Self::EvRetType> {
+        self.get_evs_of_type(ev_type)
+    }
+
+    fn get_obs_of_type(&'a self, ob_type: &'_ str) -> impl Iterator<Item = &'a Self::ObRetType> {
+        self.get_obs_of_type(ob_type)
+    }
+
+    fn get_ev_types(&'a self) -> impl Iterator<Item = &'a str> {
+        self.get_ev_types().map(String::as_str)
+    }
+
+    fn get_ob_types(&'a self) -> impl Iterator<Item = &'a str> {
+        self.get_ob_types().map(String::as_str)
+    }
+
+    fn get_all_evs(&'a self) -> impl Iterator<Item = &'a OCELEvent> {
+        todo!("Not implementable in SlimLinkedOCEL.");
+        #[allow(unreachable_code)]
+        return vec![].into_iter();
+        // self.get_all_evs().map(|ev_index| ev_index.fat_ev(self))
+    }
+
+    fn get_all_obs(&'a self) -> impl Iterator<Item = &'a OCELObject> {
+        todo!("Not implementable in SlimLinkedOCEL.");
+        #[allow(unreachable_code)]
+        return vec![].into_iter();
+    }
+
+    fn get_all_evs_ref(&'a self) -> impl Iterator<Item = &'a Self::EvRefType> {
+        // TODO: Maybe this would be better if it returned owned values?!
+        // Then we could simply use the self.get_all_evs() function
+        self.event_ids_to_index.values()
+    }
+
+    fn get_all_obs_ref(&'a self) -> impl Iterator<Item = &'a Self::ObRefType> {
+        // TODO: Maybe this would be better if it returned owned values?!
+        // Then we could simply use the self.get_all_obs() function
+        self.object_ids_to_index.values()
+    }
+
+    fn get_ev(&'a self, index: &Self::EvRefType) -> &'a OCELEvent {
+        todo!()
+    }
+
+    fn get_ob(
+        &'a self,
+        index: &Self::ObRefType,
+    ) -> &'a crate::core::event_data::object_centric::OCELObject {
+        todo!()
+    }
+
+    fn get_e2o(
+        &'a self,
+        index: &Self::EvRefType,
+    ) -> impl Iterator<Item = (&'a str, &'a Self::ObRetType)> {
+        self.events[index.0]
+            .relationships
+            .iter()
+            .map(|(o_idx, q)| (q.as_str(), o_idx))
+    }
+
+    fn get_e2o_rev(
+        &'a self,
+        index: &Self::ObRefType,
+    ) -> impl Iterator<Item = (&'a str, &'a Self::EvRetType)> {
+        index.get_e2o_rev(self).flat_map(move |e| {
+            self.events[e.0]
+                .relationships
+                .iter()
+                .find(|(o, _q)| o == index)
+                .map(|(_o, q)| (q.as_str(), e))
+        })
+    }
+
+    fn get_o2o(
+        &'a self,
+        index: &Self::ObRefType,
+    ) -> impl Iterator<Item = (&'a str, &'a Self::ObRetType)> {
+        self.objects[index.0]
+            .relationships
+            .iter()
+            .map(|(o_idx, q)| (q.as_str(), o_idx))
+    }
+
+    fn get_o2o_rev(
+        &'a self,
+        index: &Self::ObRefType,
+    ) -> impl Iterator<Item = (&'a str, &'a Self::ObRetType)> {
+        index.get_o2o_rev(self).flat_map(move |o1| {
+            self.objects[o1.0]
+                .relationships
+                .iter()
+                .find(|(o2, _q)| o2 == index)
+                .map(|(_o2, q)| (q.as_str(), o1))
+        })
+    }
+
+    fn get_ev_type(&'a self, ev_type: impl AsRef<str>) -> Option<&'a OCELType> {
+        self.event_types
+            .iter()
+            .find(|et| et.name == ev_type.as_ref())
+    }
+
+    fn get_ob_type(&'a self, ob_type: impl AsRef<str>) -> Option<&'a OCELType> {
+        self.object_types
+            .iter()
+            .find(|ot| ot.name == ob_type.as_ref())
+    }
 }
