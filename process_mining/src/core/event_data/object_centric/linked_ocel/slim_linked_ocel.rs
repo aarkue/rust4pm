@@ -1,7 +1,7 @@
 //! Linked Slim (i.e., less duplicate fields) OCEL
 //!
 //! Allows easy and efficient access to events, objects, and their relations
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use binding_macros::RegistryEntity;
 use chrono::{DateTime, FixedOffset};
@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::core::{
     event_data::object_centric::{
         linked_ocel::LinkedOCELAccess, OCELAttributeValue, OCELEvent, OCELEventAttribute,
-        OCELObject, OCELRelationship, OCELType,
+        OCELObject, OCELObjectAttribute, OCELRelationship, OCELType,
     },
     OCEL,
 };
@@ -265,6 +265,35 @@ impl ObjectIndex {
         let attr_val = ob.attributes.get_mut(index)?;
         Some(attr_val)
     }
+
+    fn fat_ob(&self, locel: &SlimLinkedOCEL) -> OCELObject {
+        let sev = self.get_ob(locel);
+        let ob_type = &locel.object_types[sev.object_type];
+        OCELObject {
+            id: sev.id.clone(),
+            object_type: ob_type.name.clone(),
+            attributes: ob_type
+                .attributes
+                .iter()
+                .enumerate()
+                .flat_map(|(i, at)| {
+                    sev.attributes[i].iter().map(|(t, v)| OCELObjectAttribute {
+                        name: at.name.clone(),
+                        value: v.clone(),
+                        time: *t,
+                    })
+                })
+                .collect(),
+            relationships: sev
+                .relationships
+                .iter()
+                .map(|(o, q)| OCELRelationship {
+                    object_id: locel.objects[o.into_inner()].id.clone(),
+                    qualifier: q.to_string(),
+                })
+                .collect(),
+        }
+    }
 }
 
 impl ObjectIndex {
@@ -465,9 +494,9 @@ impl SlimLinkedOCEL {
         (0..self.objects.len()).map(ObjectIndex)
     }
     /// Get all events of the spcecified event type
-    pub fn get_evs_of_type<'a, 'b>(
+    pub fn get_evs_of_type<'a>(
         &'a self,
-        event_type: &'b str,
+        event_type: &str,
     ) -> impl Iterator<Item = &'a EventIndex> {
         self.evtype_to_index
             .get(event_type)
@@ -475,9 +504,9 @@ impl SlimLinkedOCEL {
             .flat_map(|et| &self.events_per_type[*et])
     }
     /// Get all objects of the specified object type
-    pub fn get_obs_of_type<'a, 'b>(
+    pub fn get_obs_of_type<'a>(
         &'a self,
-        object_type: &'b str,
+        object_type: &str,
     ) -> impl Iterator<Item = &'a ObjectIndex> {
         self.obtype_to_index
             .get(object_type)
@@ -626,19 +655,15 @@ pub struct SlimOCELObject {
 }
 
 impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
-    type EvRetType = EventIndex;
+    type EventRepr = EventIndex;
 
-    type ObRetType = ObjectIndex;
+    type ObjectRepr = ObjectIndex;
 
-    type EvRefType = EventIndex;
-
-    type ObRefType = ObjectIndex;
-
-    fn get_evs_of_type(&'a self, ev_type: &'_ str) -> impl Iterator<Item = &'a Self::EvRetType> {
+    fn get_evs_of_type(&'a self, ev_type: &'_ str) -> impl Iterator<Item = &'a Self::EventRepr> {
         self.get_evs_of_type(ev_type)
     }
 
-    fn get_obs_of_type(&'a self, ob_type: &'_ str) -> impl Iterator<Item = &'a Self::ObRetType> {
+    fn get_obs_of_type(&'a self, ob_type: &'_ str) -> impl Iterator<Item = &'a Self::ObjectRepr> {
         self.get_obs_of_type(ob_type)
     }
 
@@ -650,46 +675,40 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
         self.get_ob_types().map(String::as_str)
     }
 
-    fn get_all_evs(&'a self) -> impl Iterator<Item = &'a OCELEvent> {
-        todo!("Not implementable in SlimLinkedOCEL.");
-        #[allow(unreachable_code)]
-        return vec![].into_iter();
-        // self.get_all_evs().map(|ev_index| ev_index.fat_ev(self))
+    fn get_all_evs(&'a self) -> impl Iterator<Item = Cow<'a, OCELEvent>> {
+        self.get_all_evs()
+            .map(|ev_index| Cow::Owned(ev_index.fat_ev(self)))
     }
 
-    fn get_all_obs(&'a self) -> impl Iterator<Item = &'a OCELObject> {
-        todo!("Not implementable in SlimLinkedOCEL.");
-        #[allow(unreachable_code)]
-        return vec![].into_iter();
+    fn get_all_obs(&'a self) -> impl Iterator<Item = Cow<'a, OCELObject>> {
+        self.get_all_obs()
+            .map(|ob_index| Cow::Owned(ob_index.fat_ob(self)))
     }
 
-    fn get_all_evs_ref(&'a self) -> impl Iterator<Item = &'a Self::EvRefType> {
+    fn get_all_evs_ref(&'a self) -> impl Iterator<Item = &'a Self::EventRepr> {
         // TODO: Maybe this would be better if it returned owned values?!
         // Then we could simply use the self.get_all_evs() function
         self.event_ids_to_index.values()
     }
 
-    fn get_all_obs_ref(&'a self) -> impl Iterator<Item = &'a Self::ObRefType> {
+    fn get_all_obs_ref(&'a self) -> impl Iterator<Item = &'a Self::ObjectRepr> {
         // TODO: Maybe this would be better if it returned owned values?!
         // Then we could simply use the self.get_all_obs() function
         self.object_ids_to_index.values()
     }
 
-    fn get_ev(&'a self, index: &Self::EvRefType) -> &'a OCELEvent {
-        todo!()
+    fn get_ev(&'a self, index: &Self::EventRepr) -> Cow<'a, OCELEvent> {
+        Cow::Owned(index.fat_ev(self))
     }
 
-    fn get_ob(
-        &'a self,
-        index: &Self::ObRefType,
-    ) -> &'a crate::core::event_data::object_centric::OCELObject {
-        todo!()
+    fn get_ob(&'a self, index: &Self::ObjectRepr) -> Cow<'a, OCELObject> {
+        Cow::Owned(index.fat_ob(self))
     }
 
     fn get_e2o(
         &'a self,
-        index: &Self::EvRefType,
-    ) -> impl Iterator<Item = (&'a str, &'a Self::ObRetType)> {
+        index: &Self::EventRepr,
+    ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
         self.events[index.0]
             .relationships
             .iter()
@@ -698,8 +717,8 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
 
     fn get_e2o_rev(
         &'a self,
-        index: &Self::ObRefType,
-    ) -> impl Iterator<Item = (&'a str, &'a Self::EvRetType)> {
+        index: &Self::ObjectRepr,
+    ) -> impl Iterator<Item = (&'a str, &'a Self::EventRepr)> {
         index.get_e2o_rev(self).flat_map(move |e| {
             self.events[e.0]
                 .relationships
@@ -711,8 +730,8 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
 
     fn get_o2o(
         &'a self,
-        index: &Self::ObRefType,
-    ) -> impl Iterator<Item = (&'a str, &'a Self::ObRetType)> {
+        index: &Self::ObjectRepr,
+    ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
         self.objects[index.0]
             .relationships
             .iter()
@@ -721,8 +740,8 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
 
     fn get_o2o_rev(
         &'a self,
-        index: &Self::ObRefType,
-    ) -> impl Iterator<Item = (&'a str, &'a Self::ObRetType)> {
+        index: &Self::ObjectRepr,
+    ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
         index.get_o2o_rev(self).flat_map(move |o1| {
             self.objects[o1.0]
                 .relationships
@@ -742,5 +761,73 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
         self.object_types
             .iter()
             .find(|ot| ot.name == ob_type.as_ref())
+    }
+
+    fn get_ob_type_of(&'a self, object: &Self::ObjectRepr) -> &'a str {
+        object.get_ob_type(self)
+    }
+
+    fn get_ev_type_of(&'a self, event: &Self::EventRepr) -> &'a str {
+        event.get_ev_type(self)
+    }
+
+    fn get_ev_attrs(&'a self, ev: &Self::EventRepr) -> impl Iterator<Item = &'a str> {
+        self.events
+            .get(ev.0)
+            .and_then(|e| self.event_types.get(e.event_type))
+            .iter()
+            .flat_map(|et| &et.attributes)
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    fn get_ev_attr_val(
+        &'a self,
+        ev: &Self::EventRepr,
+        attr_name: impl AsRef<str>,
+    ) -> Option<&'a OCELAttributeValue> {
+        ev.get_attribute_value(attr_name.as_ref(), self)
+    }
+
+    fn get_ob_attrs(&'a self, ob: &Self::ObjectRepr) -> impl Iterator<Item = &'a str> {
+        self.objects
+            .get(ob.0)
+            .and_then(|o| self.object_types.get(o.object_type))
+            .iter()
+            .flat_map(|et| &et.attributes)
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    fn get_ob_attr_vals(
+        &'a self,
+        ob: &Self::ObjectRepr,
+        attr_name: impl AsRef<str>,
+    ) -> impl Iterator<Item = (&'a DateTime<FixedOffset>, &'a OCELAttributeValue)> {
+        ob.get_attribute_value(attr_name.as_ref(), self)
+            .into_iter()
+            .flat_map(|x| x.iter().map(|(a, b)| (a, b)))
+    }
+
+    fn get_ob_id(&'a self, ob: &Self::ObjectRepr) -> &'a str {
+        self.objects[ob.0].id.as_str()
+    }
+
+    fn get_ev_id(&'a self, ev: &Self::EventRepr) -> &'a str {
+        self.events[ev.0].id.as_str()
+    }
+
+    fn get_ev_by_id(&'a self, ev_id: impl AsRef<str>) -> Option<Self::EventRepr> {
+        self.event_ids_to_index.get(ev_id.as_ref()).copied()
+    }
+
+    fn get_ob_by_id(&'a self, ob_id: impl AsRef<str>) -> Option<Self::ObjectRepr> {
+        self.object_ids_to_index.get(ob_id.as_ref()).copied()
+    }
+
+    fn get_ev_time(&'a self, ev: &Self::EventRepr) -> &'a DateTime<FixedOffset> {
+        ev.get_time(self)
     }
 }

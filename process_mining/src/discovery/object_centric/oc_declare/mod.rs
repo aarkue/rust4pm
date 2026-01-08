@@ -130,7 +130,7 @@ pub fn discover_behavior_constraints(
             let act_arcs = get_oi_labels(
                 act1,
                 act2,
-                obj_invs.clone(),
+                obj_invs,
                 direction,
                 &options.counts_for_generation,
                 options.noise_threshold,
@@ -454,7 +454,7 @@ pub fn refine_oc_arcs(
             let oi_labels = get_oi_labels(
                 act1,
                 act2,
-                obj_invs.clone(),
+                obj_invs,
                 OCDeclareArcType::AS,
                 &(Some(1), None),
                 options.noise_threshold,
@@ -643,7 +643,7 @@ pub fn reduce_oc_arcs(mut arcs: Vec<OCDeclareArc>, lossless: bool) -> Vec<OCDecl
     arcs.into_iter()
         .enumerate()
         .filter(|(i, _)| active[*i])
-        .map(|(_, arc)| arc.clone())
+        .map(|(_, arc)| arc)
         .collect()
 }
 

@@ -166,7 +166,7 @@ impl RegistryItem {
             )),
             RegistryItemKind::SlimLinkedOCEL => Ok(RegistryItem::SlimLinkedOCEL({
                 OCEL::import_from_path(path)
-                    .map(|ocel| SlimLinkedOCEL::from_ocel(ocel))
+                    .map(SlimLinkedOCEL::from_ocel)
                     .map_err(|e| e.to_string())?
             })),
             RegistryItemKind::IndexLinkedOCEL => Ok(RegistryItem::IndexLinkedOCEL(
@@ -199,7 +199,7 @@ impl RegistryItem {
             )),
             RegistryItemKind::SlimLinkedOCEL => Ok(RegistryItem::SlimLinkedOCEL({
                 OCEL::import_from_bytes(data, format)
-                    .map(|ocel| SlimLinkedOCEL::from_ocel(ocel))
+                    .map(SlimLinkedOCEL::from_ocel)
                     .map_err(|e| e.to_string())?
             })),
             RegistryItemKind::EventLogActivityProjection => {

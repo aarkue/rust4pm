@@ -26,7 +26,7 @@ pub fn preprocess_ocel(ocel: OCEL) -> SlimLinkedOCEL {
                 .sorted();
             let first_ev = iter.clone().next();
             let first_ev_time = first_ev.unwrap_or_default();
-            let last_ev = iter.clone().last();
+            let last_ev = iter.last();
             let last_ev_time = last_ev.unwrap_or_default();
             vec![
                 OCELEvent {
