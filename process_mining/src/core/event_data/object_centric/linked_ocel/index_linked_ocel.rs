@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{HashMap, HashSet},
     io::{Read, Write},
     ops::Index,
@@ -164,53 +165,53 @@ impl IndexLinkedOCEL {
 impl Index<EventIndex> for IndexLinkedOCEL {
     type Output = OCELEvent;
     fn index(&self, index: EventIndex) -> &Self::Output {
-        self.get_ev(&index)
+        &self.ocel.events[index.0]
     }
 }
 impl Index<&EventIndex> for IndexLinkedOCEL {
     type Output = OCELEvent;
     fn index(&self, index: &EventIndex) -> &Self::Output {
-        self.get_ev(index)
+        &self.ocel.events[index.0]
     }
 }
 impl Index<EventIndex> for &IndexLinkedOCEL {
     type Output = OCELEvent;
     fn index(&self, index: EventIndex) -> &Self::Output {
-        self.get_ev(&index)
+        &self.ocel.events[index.0]
     }
 }
 impl Index<&EventIndex> for &IndexLinkedOCEL {
     type Output = OCELEvent;
     fn index(&self, index: &EventIndex) -> &Self::Output {
-        self.get_ev(index)
+        &self.ocel.events[index.0]
     }
 }
 
 impl Index<ObjectIndex> for IndexLinkedOCEL {
     type Output = OCELObject;
     fn index(&self, index: ObjectIndex) -> &Self::Output {
-        self.get_ob(&index)
+        &self.ocel.objects[index.0]
     }
 }
 
 impl Index<&ObjectIndex> for IndexLinkedOCEL {
     type Output = OCELObject;
     fn index(&self, index: &ObjectIndex) -> &Self::Output {
-        self.get_ob(index)
+        &self.ocel.objects[index.0]
     }
 }
 
 impl Index<ObjectIndex> for &IndexLinkedOCEL {
     type Output = OCELObject;
     fn index(&self, index: ObjectIndex) -> &Self::Output {
-        self.get_ob(&index)
+        &self.ocel.objects[index.0]
     }
 }
 
 impl Index<&ObjectIndex> for &IndexLinkedOCEL {
     type Output = OCELObject;
     fn index(&self, index: &ObjectIndex) -> &Self::Output {
-        self.get_ob(index)
+        &self.ocel.objects[index.0]
     }
 }
 
@@ -351,10 +352,8 @@ impl From<OCEL> for IndexLinkedOCEL {
 }
 
 impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
-    type EvRefType = EventIndex;
-    type ObRefType = ObjectIndex;
-    type EvRetType = EventIndex;
-    type ObRetType = ObjectIndex;
+    type EventRepr = EventIndex;
+    type ObjectRepr = ObjectIndex;
 
     fn get_evs_of_type(&'a self, ev_type: &'_ str) -> impl Iterator<Item = &'a EventIndex> {
         self.events_per_type.get(ev_type).into_iter().flatten()
@@ -364,12 +363,12 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
         self.objects_per_type.get(ob_type).into_iter().flatten()
     }
 
-    fn get_ev(&'a self, index: &EventIndex) -> &'a OCELEvent {
-        &self.ocel.events[index.0]
+    fn get_ev(&'a self, index: &EventIndex) -> Cow<'a, OCELEvent> {
+        Cow::Borrowed(&self.ocel.events[index.0])
     }
 
-    fn get_ob(&'a self, index: &ObjectIndex) -> &'a OCELObject {
-        &self.ocel.objects[index.0]
+    fn get_ob(&'a self, index: &ObjectIndex) -> Cow<'a, OCELObject> {
+        Cow::Borrowed(&self.ocel.objects[index.0])
     }
 
     fn get_e2o(&'a self, index: &EventIndex) -> impl Iterator<Item = (&'a str, &'a ObjectIndex)> {
@@ -418,12 +417,12 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
         self.objects_per_type.keys().map(|k| k.as_str())
     }
 
-    fn get_all_evs(&'a self) -> impl Iterator<Item = &'a OCELEvent> {
-        self.ocel.events.iter()
+    fn get_all_evs(&'a self) -> impl Iterator<Item = Cow<'a, OCELEvent>> {
+        self.ocel.events.iter().map(Cow::Borrowed)
     }
 
-    fn get_all_obs(&'a self) -> impl Iterator<Item = &'a OCELObject> {
-        self.ocel.objects.iter()
+    fn get_all_obs(&'a self) -> impl Iterator<Item = Cow<'a, OCELObject>> {
+        self.ocel.objects.iter().map(Cow::Borrowed)
     }
 
     fn get_all_evs_ref(&'a self) -> impl Iterator<Item = &'a EventIndex> {
@@ -446,6 +445,81 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
             .object_types
             .iter()
             .find(|ot| ot.name == ob_type.as_ref())
+    }
+
+    fn get_ob_type_of(&'a self, object: &Self::ObjectRepr) -> &'a str {
+        &self.ocel.objects[object.0].object_type
+    }
+
+    fn get_ev_type_of(&'a self, event: &Self::EventRepr) -> &'a str {
+        &self.ocel.events[event.0].event_type
+    }
+
+    fn get_ev_attrs(&'a self, ev: &Self::EventRepr) -> impl Iterator<Item = &'a str> {
+        self.ocel.events[ev.0]
+            .attributes
+            .iter()
+            .map(|a| a.name.as_str())
+    }
+
+    fn get_ev_attr_val(
+        &'a self,
+        ev: &Self::EventRepr,
+        attr_name: impl AsRef<str>,
+    ) -> Option<&'a crate::core::event_data::object_centric::OCELAttributeValue> {
+        let attr_name = attr_name.as_ref();
+        self.ocel.events[ev.0]
+            .attributes
+            .iter()
+            .find(|a| a.name == attr_name)
+            .map(|a| &a.value)
+    }
+
+    fn get_ob_attrs(&'a self, ob: &Self::ObjectRepr) -> impl Iterator<Item = &'a str> {
+        self.ocel.objects[ob.0]
+            .attributes
+            .iter()
+            .map(|a| a.name.as_str())
+    }
+
+    fn get_ob_attr_vals(
+        &'a self,
+        ob: &Self::ObjectRepr,
+        attr_name: impl AsRef<str>,
+    ) -> impl Iterator<
+        Item = (
+            &'a chrono::DateTime<chrono::FixedOffset>,
+            &'a crate::core::event_data::object_centric::OCELAttributeValue,
+        ),
+    > {
+        let attr_name = attr_name.as_ref();
+        self.ocel.objects[ob.0]
+            .attributes
+            .iter()
+            .filter(|a| a.name == attr_name)
+            .map(|a| (&a.time, &a.value))
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    fn get_ob_id(&'a self, ob: &Self::ObjectRepr) -> &'a str {
+        self.ocel.objects[ob.0].id.as_str()
+    }
+
+    fn get_ev_id(&'a self, ev: &Self::EventRepr) -> &'a str {
+        self.ocel.objects[ev.0].id.as_str()
+    }
+
+    fn get_ev_by_id(&'a self, ev_id: impl AsRef<str>) -> Option<Self::EventRepr> {
+        self.event_ids_to_index.get(ev_id.as_ref()).copied()
+    }
+
+    fn get_ob_by_id(&'a self, ob_id: impl AsRef<str>) -> Option<Self::ObjectRepr> {
+        self.object_ids_to_index.get(ob_id.as_ref()).copied()
+    }
+
+    fn get_ev_time(&'a self, ev: &Self::EventRepr) -> &'a chrono::DateTime<chrono::FixedOffset> {
+        &self.ocel.events[ev.0].time
     }
 }
 
