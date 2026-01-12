@@ -80,7 +80,7 @@ fn ocel_object_attribute_changes() {
     let ocel = import_ocel_xml_path(ocel_path).unwrap();
     let locel: IndexLinkedOCEL = ocel.into();
     let product = locel.get_obs_of_type("products").next().unwrap();
-    let product = locel.get_ob(product);
+    let product = locel.get_full_ob(product);
     println!("{:#?}", product.attributes);
     let df = object_attribute_changes_to_df(&locel, "products").unwrap();
     println!("{df:#?}");

@@ -689,7 +689,7 @@ pub fn event_type_to_df<'a, I: LinkedOCELAccess<'a>>(
 ) -> Result<DataFrame, PolarsError> {
     let evs: Vec<_> = locel
         .get_evs_of_type(ev_type.as_ref())
-        .map(|ev| locel.get_ev(ev))
+        .map(|ev| locel.get_full_ev(ev))
         .collect();
     let id_series = Series::from_iter(evs.iter().map(|ev| ev.id.as_str()))
         .into_column()
@@ -739,7 +739,7 @@ pub fn object_type_to_df<'a, I: LinkedOCELAccess<'a>>(
 ) -> Result<DataFrame, PolarsError> {
     let obs: Vec<_> = locel
         .get_obs_of_type(ob_type.as_ref())
-        .map(|ob| locel.get_ob(ob))
+        .map(|ob| locel.get_full_ob(ob))
         .collect();
     let id_series = Series::from_iter(obs.iter().map(|ev| ev.id.as_str()))
         .into_column()
@@ -755,10 +755,10 @@ pub fn e2o_to_df<'a, I: LinkedOCELAccess<'a>>(locel: &'a I) -> Result<DataFrame,
     let mut e_ids = StringChunkedBuilder::new("Event ID".into(), 1024);
     let mut o_ids = StringChunkedBuilder::new("Object ID".into(), 1024);
     let mut qualifiers = StringChunkedBuilder::new("Qualifier".into(), 1024);
-    locel.get_all_evs_ref().for_each(|e| {
+    locel.get_all_evs().for_each(|e| {
         locel.get_e2o(e).for_each(|(q, o)| {
-            e_ids.append_value(locel.get_ev(e).id.as_str());
-            o_ids.append_value(locel.get_ob(o).id.as_str());
+            e_ids.append_value(locel.get_full_ev(e).id.as_str());
+            o_ids.append_value(locel.get_full_ob(o).id.as_str());
             qualifiers.append_value(q);
         });
     });
@@ -775,10 +775,10 @@ pub fn o2o_to_df<'a, I: LinkedOCELAccess<'a>>(locel: &'a I) -> Result<DataFrame,
     let mut o1_ids = StringChunkedBuilder::new("From Object ID".into(), 1024);
     let mut o2_ids = StringChunkedBuilder::new("To Object ID".into(), 1024);
     let mut qualifiers = StringChunkedBuilder::new("Qualifier".into(), 1024);
-    locel.get_all_obs_ref().for_each(|o1| {
+    locel.get_all_obs().for_each(|o1| {
         locel.get_o2o(o1).for_each(|(q, o2)| {
-            o1_ids.append_value(locel.get_ob(o1).id.as_str());
-            o2_ids.append_value(locel.get_ob(o2).id.as_str());
+            o1_ids.append_value(locel.get_full_ob(o1).id.as_str());
+            o2_ids.append_value(locel.get_full_ob(o2).id.as_str());
             qualifiers.append_value(q);
         });
     });
@@ -806,8 +806,8 @@ pub fn e2o_to_df_for_types<'a, I: LinkedOCELAccess<'a>>(
     locel.get_evs_of_type(event_type).for_each(|e| {
         locel.get_e2o(e).for_each(|(q, o)| {
             if locel.get_ob_type_of(o) == object_type {
-                e_ids.append_value(locel.get_ev(e).id.as_str());
-                o_ids.append_value(locel.get_ob(o).id.as_str());
+                e_ids.append_value(locel.get_full_ev(e).id.as_str());
+                o_ids.append_value(locel.get_full_ob(o).id.as_str());
                 qualifiers.append_value(q);
             }
         });
@@ -834,8 +834,8 @@ pub fn o2o_to_df_for_types<'a, I: LinkedOCELAccess<'a>>(
     locel.get_obs_of_type(from_object_type).for_each(|o1| {
         locel.get_o2o(o1).for_each(|(q, o2)| {
             if locel.get_ob_type_of(o2) == to_object_type {
-                o1_ids.append_value(locel.get_ob(o1).id.as_str());
-                o2_ids.append_value(locel.get_ob(o2).id.as_str());
+                o1_ids.append_value(locel.get_full_ob(o1).id.as_str());
+                o2_ids.append_value(locel.get_full_ob(o2).id.as_str());
                 qualifiers.append_value(q);
             }
         });
@@ -866,7 +866,7 @@ pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
 ) -> Result<DataFrame, PolarsError> {
     let obs: Vec<_> = locel
         .get_obs_of_type(ob_type.as_ref())
-        .map(|ob| locel.get_ob(ob))
+        .map(|ob| locel.get_full_ob(ob))
         .collect();
     if let Some(ob_type) = locel.get_ob_type(ob_type) {
         let attribute_map: HashMap<_, _> = ob_type

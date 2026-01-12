@@ -29,46 +29,11 @@ pub trait LinkedOCELAccess<'a> {
     /// Return and argument type/representation for objects (i.e., what type is returned when objects are accessed, e.g., through [`LinkedOCELAccess::get_e2o`])
     type ObjectRepr: 'a;
 
-    /// Get all events of the given event type (activity)
-    fn get_evs_of_type(&'a self, ev_type: &'_ str) -> impl Iterator<Item = &'a Self::EventRepr>;
-    /// Get all object of the given object type
-    fn get_obs_of_type(&'a self, ob_type: &'_ str) -> impl Iterator<Item = &'a Self::ObjectRepr>;
+    /// Get all events in the dataset
+    fn get_all_evs(&'a self) -> impl Iterator<Item = &'a Self::EventRepr>;
 
-    /// Get all event types (activities)
-    fn get_ev_types(&'a self) -> impl Iterator<Item = &'a str>;
-    /// Get all object types
-    fn get_ob_types(&'a self) -> impl Iterator<Item = &'a str>;
-
-    /// Get all events
-    ///
-    /// Also see [`LinkedOCELAccess::get_all_evs_ref`].
-    fn get_all_evs(&'a self) -> impl Iterator<Item = Cow<'a, OCELEvent>>;
-    /// Get all objects
-    ///
-    /// Also see [`LinkedOCELAccess::get_all_obs_ref`].
-    fn get_all_obs(&'a self) -> impl Iterator<Item = Cow<'a, OCELObject>>;
-
-    /// Get all event references
-    ///
-    /// In contrast to [`LinkedOCELAccess::get_all_evs`], this does not necessarily return direct event references (i.e., &[`OCELEvent`]), but the linked-access specific representation of events
-    fn get_all_evs_ref(&'a self) -> impl Iterator<Item = &'a Self::EventRepr>;
-
-    /// Get all object references
-    ///
-    /// In contrast to [`LinkedOCELAccess::get_all_obs`], this does not necessarily return direct object references (i.e., &[`OCELObject`]), but the linked-access specific representation of objects
-    fn get_all_obs_ref(&'a self) -> impl Iterator<Item = &'a Self::ObjectRepr>;
-
-    /// Get an event reference based on the linked-access specific representation of an event
-    fn get_ev(&'a self, index: &Self::EventRepr) -> Cow<'a, OCELEvent>;
-
-    /// Get an object reference based on the linked-access specific representation of an object
-    fn get_ob(&'a self, index: &Self::ObjectRepr) -> Cow<'a, OCELObject>;
-    /// Get the object type of an object reference
-    fn get_ob_type_of(&'a self, object: &Self::ObjectRepr) -> &'a str;
-
-    /// Get the event type (i.e., activity) of an event reference
-    fn get_ev_type_of(&'a self, event: &Self::EventRepr) -> &'a str;
-
+    /// Get all objects in the dataset
+    fn get_all_obs(&'a self) -> impl Iterator<Item = &'a Self::ObjectRepr>;
     /// Get all objects related to the given event (through E2O (event-to-object) relations)
     fn get_e2o(
         &'a self,
@@ -87,17 +52,64 @@ pub trait LinkedOCELAccess<'a> {
         index: &Self::ObjectRepr,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)>;
 
-    /// Get all objects inversely related to the given object (through **reverse** O2O (object-to-object) relations)
+    /// Get all objects reversely related to the given object (through **reverse** O2O (object-to-object) relations)
     fn get_o2o_rev(
         &'a self,
         index: &Self::ObjectRepr,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)>;
 
-    /// Get event type ([`OCELType`]) from type name (i.e., activity)
-    fn get_ev_type(&'a self, ev_type: impl AsRef<str>) -> Option<&'a OCELType>;
+    /// Get all objects of a specified type related with the given event
+    fn get_e2o_of_type(
+        &'a self,
+        index: &Self::EventRepr,
+        ob_type: impl AsRef<str>,
+    ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
+        self.get_e2o(index)
+            .filter(move |(_q, o)| self.get_ob_type_of(o) == ob_type.as_ref())
+    }
+    /// Get all events of a specified type associated with the given object (through reverse E2O relations)
+    fn get_e2o_rev_of_type(
+        &'a self,
+        index: &Self::ObjectRepr,
+        ev_type: impl AsRef<str>,
+    ) -> impl Iterator<Item = (&'a str, &'a Self::EventRepr)> {
+        self.get_e2o_rev(index)
+            .filter(move |(_q, o)| self.get_ev_type_of(o) == ev_type.as_ref())
+    }
 
-    /// Get object type ([`OCELType`]) from type name
-    fn get_ob_type(&'a self, ob_type: impl AsRef<str>) -> Option<&'a OCELType>;
+    /// Get all objects of a specified type related with the given object through an O2O relationship (from the given object, i.e., through O2O relations)
+    fn get_o2o_of_type(
+        &'a self,
+        from_obj: &Self::ObjectRepr,
+        to_ob_type: impl AsRef<str>,
+    ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
+        self.get_o2o(from_obj)
+            .filter(move |(_q, o)| self.get_ob_type_of(o) == to_ob_type.as_ref())
+    }
+    /// Get all objects of a specified type that have an O2O relationship _to_ the given object (through _reverse_ O2O relations)
+    fn get_o2o_rev_of_type(
+        &'a self,
+        to_obj: &Self::ObjectRepr,
+        from_ob_type: impl AsRef<str>,
+    ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
+        self.get_o2o_rev(to_obj)
+            .filter(move |(_q, o)| self.get_ob_type_of(o) == from_ob_type.as_ref())
+    }
+
+    /// Get the object type of an object reference
+    fn get_ob_type_of(&'a self, object: &Self::ObjectRepr) -> &'a str;
+
+    /// Get the event type (i.e., activity) of an event reference
+    fn get_ev_type_of(&'a self, event: &Self::EventRepr) -> &'a str;
+
+    /// Get the ID of an object
+    fn get_ob_id(&'a self, ob: &Self::ObjectRepr) -> &'a str;
+
+    /// Get the ID of an event
+    fn get_ev_id(&'a self, ev: &Self::EventRepr) -> &'a str;
+
+    /// Get the timestamp of an event
+    fn get_ev_time(&'a self, ev: &Self::EventRepr) -> &'a DateTime<FixedOffset>;
 
     /// Get the names of all attributes that an event has
     fn get_ev_attrs(&'a self, ev: &Self::EventRepr) -> impl Iterator<Item = &'a str>;
@@ -118,18 +130,83 @@ pub trait LinkedOCELAccess<'a> {
         attr_name: impl AsRef<str>,
     ) -> impl Iterator<Item = (&'a DateTime<FixedOffset>, &'a OCELAttributeValue)>;
 
-    /// Get the ID of an object
-    fn get_ob_id(&'a self, ob: &Self::ObjectRepr) -> &'a str;
-
-    /// Get the ID of an event
-    fn get_ev_id(&'a self, ev: &Self::EventRepr) -> &'a str;
-
     /// Get an event based on its ID
     fn get_ev_by_id(&'a self, ev_id: impl AsRef<str>) -> Option<Self::EventRepr>;
 
     /// Get an object based on its ID
     fn get_ob_by_id(&'a self, ob_id: impl AsRef<str>) -> Option<Self::ObjectRepr>;
 
-    /// Get timestamp of an event
-    fn get_ev_time(&'a self, ev: &Self::EventRepr) -> &'a DateTime<FixedOffset>;
+    /// Get the full (materialized) event, depending on the backing implementation, either as a reference or owned value.
+    /// __Avoid using this function. Depending on the implementation, it might have significant performance overhead.__
+    /// Instead, use specialized functions to access specific fields or properties (e.g., [`Self::get_ev_time`]).
+    fn get_full_ev(&'a self, index: &Self::EventRepr) -> Cow<'a, OCELEvent>;
+
+    /// Get the full (materialized) object, depending on the backing implementation, either as a reference or owned value.
+    /// __Avoid using this function. Depending on the implementation, it might have significant performance overhead.__
+    /// Instead, use specialized functions to access specific fields or properties (e.g., [`Self::get_ob_type_of`]).
+    fn get_full_ob(&'a self, index: &Self::ObjectRepr) -> Cow<'a, OCELObject>;
+
+    /// Get event type specification ([`OCELType`]) from type name (i.e., activity)
+    ///
+    /// Note: If you want to get the type of an specific event, use [`Self::get_ev_type_of`] instead.
+    fn get_ev_type(&'a self, ev_type: impl AsRef<str>) -> Option<&'a OCELType>;
+
+    /// Get object type ([`OCELType`]) from type name
+    ///
+    /// Note: If you want to get the type of an specific object, use [`Self::get_ob_type_of`] instead.
+    fn get_ob_type(&'a self, ob_type: impl AsRef<str>) -> Option<&'a OCELType>;
+
+    /// Get all events of the given event type (activity)
+    fn get_evs_of_type(&'a self, ev_type: &'_ str) -> impl Iterator<Item = &'a Self::EventRepr>;
+    /// Get all object of the given object type
+    fn get_obs_of_type(&'a self, ob_type: &'_ str) -> impl Iterator<Item = &'a Self::ObjectRepr>;
+
+    /// Get all event types (activities)
+    fn get_ev_types(&'a self) -> impl Iterator<Item = &'a str>;
+    /// Get all object types
+    fn get_ob_types(&'a self) -> impl Iterator<Item = &'a str>;
+
+    /// Get the number of objects
+    ///
+    ///
+    /// ## Implementation Note
+    // Implementers might choose to override this function for efficient O(1) runtime.
+    // However, for standard iterators constructed from [`Vec`], the count method already runs in constant time.
+    fn get_num_obs(&'a self) -> usize {
+        self.get_all_obs().count()
+    }
+    // Get the number of events
+    //
+    /// ## Implementation Note
+    // Implementers might choose to override this function for efficient O(1) runtime.
+    // However, for standard iterators constructed from [`Vec`], the count method already runs in constant time.
+    fn get_num_evs(&'a self) -> usize {
+        self.get_all_evs().count()
+    }
+
+    /// Construct [`OCEL`] from this linked version
+    ///
+    /// Note: This conversion might be expensive!
+    fn construct_ocel(&'a self) -> OCEL {
+        OCEL {
+            event_types: self
+                .get_ev_types()
+                .flat_map(|et| self.get_ev_type(et))
+                .cloned()
+                .collect(),
+            object_types: self
+                .get_ob_types()
+                .flat_map(|et| self.get_ob_type(et))
+                .cloned()
+                .collect(),
+            events: self
+                .get_all_evs()
+                .map(|ev| self.get_full_ev(ev).into_owned())
+                .collect(),
+            objects: self
+                .get_all_obs()
+                .map(|ev| self.get_full_ob(ev).into_owned())
+                .collect(),
+        }
+    }
 }

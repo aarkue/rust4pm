@@ -363,11 +363,11 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
         self.objects_per_type.get(ob_type).into_iter().flatten()
     }
 
-    fn get_ev(&'a self, index: &EventIndex) -> Cow<'a, OCELEvent> {
+    fn get_full_ev(&'a self, index: &EventIndex) -> Cow<'a, OCELEvent> {
         Cow::Borrowed(&self.ocel.events[index.0])
     }
 
-    fn get_ob(&'a self, index: &ObjectIndex) -> Cow<'a, OCELObject> {
+    fn get_full_ob(&'a self, index: &ObjectIndex) -> Cow<'a, OCELObject> {
         Cow::Borrowed(&self.ocel.objects[index.0])
     }
 
@@ -417,19 +417,11 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
         self.objects_per_type.keys().map(|k| k.as_str())
     }
 
-    fn get_all_evs(&'a self) -> impl Iterator<Item = Cow<'a, OCELEvent>> {
-        self.ocel.events.iter().map(Cow::Borrowed)
-    }
-
-    fn get_all_obs(&'a self) -> impl Iterator<Item = Cow<'a, OCELObject>> {
-        self.ocel.objects.iter().map(Cow::Borrowed)
-    }
-
-    fn get_all_evs_ref(&'a self) -> impl Iterator<Item = &'a EventIndex> {
+    fn get_all_evs(&'a self) -> impl Iterator<Item = &'a EventIndex> {
         self.event_ids_to_index.values()
     }
 
-    fn get_all_obs_ref(&'a self) -> impl Iterator<Item = &'a ObjectIndex> {
+    fn get_all_obs(&'a self) -> impl Iterator<Item = &'a ObjectIndex> {
         self.object_ids_to_index.values()
     }
 
@@ -581,7 +573,7 @@ mod tests {
         .unwrap();
         let locel = IndexLinkedOCEL::from_ocel(ocel);
         let locel_ref = &locel;
-        if let Some(ev_index) = locel_ref.get_all_evs_ref().next() {
+        if let Some(ev_index) = locel_ref.get_all_evs().next() {
             let ev1: &OCELEvent = &locel[*ev_index];
             let ev2 = &locel[ev_index];
             let ev3 = &locel_ref[ev_index];
@@ -590,7 +582,7 @@ mod tests {
             assert_eq!(ev1, ev3);
             assert_eq!(ev1, ev4);
         };
-        if let Some(ob_index) = locel_ref.get_all_obs_ref().next() {
+        if let Some(ob_index) = locel_ref.get_all_obs().next() {
             let ev1: &OCELObject = &locel[*ob_index];
             let ev2 = &locel[ob_index];
             let ev3 = &locel_ref[ob_index];

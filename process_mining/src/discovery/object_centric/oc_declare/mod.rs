@@ -70,7 +70,7 @@ pub struct OCDeclareDiscoveryOptions {
     pub refinement: bool,
     /// The arrow types to consider when deriving the final constraints
     ///
-    /// Should be non empty!
+    /// Should be non-empty!
     pub considered_arrow_types: HashSet<OCDeclareArcType>,
 }
 impl Default for OCDeclareDiscoveryOptions {

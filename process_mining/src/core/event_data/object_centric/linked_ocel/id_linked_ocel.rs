@@ -17,11 +17,11 @@ impl<'a> LinkedOCELAccess<'a> for IDLinkedOCEL<'a> {
         self.objects_per_type.get(ob_type).into_iter().flatten()
     }
 
-    fn get_ev(&'a self, ev_id: &EventID<'a>) -> Cow<'a, OCELEvent> {
+    fn get_full_ev(&'a self, ev_id: &EventID<'a>) -> Cow<'a, OCELEvent> {
         Cow::Borrowed(*self.events.get(ev_id).unwrap())
     }
 
-    fn get_ob(&'a self, ob_id: &ObjectID<'a>) -> Cow<'a, OCELObject> {
+    fn get_full_ob(&'a self, ob_id: &ObjectID<'a>) -> Cow<'a, OCELObject> {
         Cow::Borrowed(self.objects.get(ob_id).unwrap())
     }
 
@@ -76,20 +76,11 @@ impl<'a> LinkedOCELAccess<'a> for IDLinkedOCEL<'a> {
     fn get_ob_types(&'a self) -> impl Iterator<Item = &'a str> {
         self.objects_per_type.keys().copied()
     }
-
-    fn get_all_evs(&'a self) -> impl Iterator<Item = Cow<'a, OCELEvent>> {
-        self.ocel.events.iter().map(Cow::Borrowed)
-    }
-
-    fn get_all_obs(&'a self) -> impl Iterator<Item = Cow<'a, OCELObject>> {
-        self.ocel.objects.iter().map(Cow::Borrowed)
-    }
-
-    fn get_all_evs_ref(&'a self) -> impl Iterator<Item = &'a EventID<'a>> {
+    fn get_all_evs(&'a self) -> impl Iterator<Item = &'a EventID<'a>> {
         self.events.iter().map(|e| e.0)
     }
 
-    fn get_all_obs_ref(&'a self) -> impl Iterator<Item = &'a ObjectID<'a>> {
+    fn get_all_obs(&'a self) -> impl Iterator<Item = &'a ObjectID<'a>> {
         self.objects.iter().map(|o| o.0)
     }
 

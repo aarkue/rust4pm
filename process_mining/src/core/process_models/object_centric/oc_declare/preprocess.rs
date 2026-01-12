@@ -17,12 +17,12 @@ pub const EXIT_EVENT_PREFIX: &str = "<exit>";
 pub fn preprocess_ocel(ocel: OCEL) -> SlimLinkedOCEL {
     let locel: IndexLinkedOCEL = ocel.into();
     let new_evs = locel
-        .get_all_obs_ref()
+        .get_all_obs()
         .flat_map(|obi| {
-            let ob = locel.get_ob(obi);
+            let ob = locel.get_full_ob(obi);
             let iter = locel
                 .get_e2o_rev(obi)
-                .map(|(_q, e)| locel.get_ev(e).time)
+                .map(|(_q, e)| locel.get_full_ev(e).time)
                 .sorted();
             let first_ev = iter.clone().next();
             let first_ev_time = first_ev.unwrap_or_default();

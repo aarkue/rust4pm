@@ -2,7 +2,9 @@
 use std::sync::atomic::AtomicU32;
 
 use crate::core::{
-    event_data::object_centric::linked_ocel::{slim_linked_ocel::ObjectIndex, SlimLinkedOCEL},
+    event_data::object_centric::linked_ocel::{
+        slim_linked_ocel::ObjectIndex, LinkedOCELAccess, SlimLinkedOCEL,
+    },
     process_models::oc_declare::{
         EventOrSynthetic, OCDeclareArcLabel, OCDeclareArcType, SetFilter,
     },
@@ -66,7 +68,12 @@ fn get_df_or_dp_event_perf<'a>(
         // If no requirements are specified, consider all events
         // TODO: Maybe also consider synthetic events here?
         // But in general, this is not very relevant as there are usually some object requirements
-        Box::new(linked_ocel.get_all_evs().map(EventOrSynthetic::Event))
+        Box::new(
+            linked_ocel
+                .get_all_evs()
+                .copied()
+                .map(EventOrSynthetic::Event),
+        )
     } else {
         match &objs[0] {
             SetFilter::Any(items) => Box::new(items.iter().flat_map(|o| {

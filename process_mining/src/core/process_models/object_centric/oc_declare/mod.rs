@@ -14,7 +14,7 @@ use crate::conformance::oc_declare::{get_for_all_evs_perf, get_for_all_evs_perf_
 use crate::core::event_data::object_centric::linked_ocel::slim_linked_ocel::{
     EventIndex, ObjectIndex,
 };
-use crate::core::event_data::object_centric::linked_ocel::SlimLinkedOCEL;
+use crate::core::event_data::object_centric::linked_ocel::{LinkedOCELAccess, SlimLinkedOCEL};
 
 #[derive(
     Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord, JsonSchema,
@@ -649,9 +649,13 @@ impl EventOrSynthetic {
                 let evs = x.get_e2o_rev(locel);
 
                 if matches!(self, EventOrSynthetic::Init(_)) {
-                    evs.min().copied().unwrap_or(0_usize.into())
+                    evs.min_by_key(|ev| locel.get_ev_time(ev))
+                        .copied()
+                        .unwrap_or(0_usize.into())
                 } else {
-                    evs.max().copied().unwrap_or(0_usize.into())
+                    evs.max_by_key(|ev| locel.get_ev_time(ev))
+                        .copied()
+                        .unwrap_or(0_usize.into())
                 }
             }
         }
