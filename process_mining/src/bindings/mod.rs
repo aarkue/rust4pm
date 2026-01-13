@@ -34,7 +34,7 @@ use crate::core::{
     event_data::{
         case_centric::utils::activity_projection::EventLogActivityProjection,
         object_centric::{
-            linked_ocel::{IndexLinkedOCEL, SlimLinkedOCEL},
+            linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess, SlimLinkedOCEL},
             ocel_struct::OCEL,
         },
     },
@@ -231,9 +231,10 @@ impl RegistryItem {
             RegistryItem::EventLog(x) => x.export_to_path(path).map_err(|e| e.to_string()),
             RegistryItem::OCEL(x) => x.export_to_path(path).map_err(|e| e.to_string()),
             RegistryItem::IndexLinkedOCEL(x) => x.export_to_path(path).map_err(|e| e.to_string()),
-            RegistryItem::SlimLinkedOCEL(x) => {
-                x.to_ocel().export_to_path(path).map_err(|e| e.to_string())
-            }
+            RegistryItem::SlimLinkedOCEL(x) => x
+                .construct_ocel()
+                .export_to_path(path)
+                .map_err(|e| e.to_string()),
             RegistryItem::EventLogActivityProjection(x) => {
                 x.export_to_path(path).map_err(|e| e.to_string())
             }
@@ -251,7 +252,7 @@ impl RegistryItem {
                 .export_to_writer(&mut bytes, format)
                 .map_err(|e| e.to_string())?,
             RegistryItem::SlimLinkedOCEL(x) => x
-                .to_ocel()
+                .construct_ocel()
                 .export_to_writer(&mut bytes, format)
                 .map_err(|e| e.to_string())?,
             RegistryItem::IndexLinkedOCEL(x) => x

@@ -649,11 +649,11 @@ impl EventOrSynthetic {
                 let evs = x.get_e2o_rev(locel);
 
                 if matches!(self, EventOrSynthetic::Init(_)) {
-                    evs.min_by_key(|ev| locel.get_ev_time(ev))
+                    evs.min_by_key(|ev| locel.get_ev_time(*ev))
                         .copied()
                         .unwrap_or(0_usize.into())
                 } else {
-                    evs.max_by_key(|ev| locel.get_ev_time(ev))
+                    evs.max_by_key(|ev| locel.get_ev_time(*ev))
                         .copied()
                         .unwrap_or(0_usize.into())
                 }

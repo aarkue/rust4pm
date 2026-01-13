@@ -1,5 +1,5 @@
 //! OCEL Struct for Efficient Usage of Relations
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
 
 use crate::core::event_data::object_centric::OCELAttributeValue;
 
@@ -30,103 +30,103 @@ pub trait LinkedOCELAccess<'a> {
     type ObjectRepr: 'a;
 
     /// Get all events in the dataset
-    fn get_all_evs(&'a self) -> impl Iterator<Item = &'a Self::EventRepr>;
+    fn get_all_evs(&'a self) -> impl Iterator<Item = Self::EventRepr>;
 
     /// Get all objects in the dataset
-    fn get_all_obs(&'a self) -> impl Iterator<Item = &'a Self::ObjectRepr>;
+    fn get_all_obs(&'a self) -> impl Iterator<Item = Self::ObjectRepr>;
     /// Get all objects related to the given event (through E2O (event-to-object) relations)
     fn get_e2o(
         &'a self,
-        index: &Self::EventRepr,
+        index: impl Borrow<Self::EventRepr>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)>;
 
     /// Get all events to which the given object is related (through the reverse E2O (event-to-object) relations)
     fn get_e2o_rev(
         &'a self,
-        index: &Self::ObjectRepr,
+        index: impl Borrow<Self::ObjectRepr>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::EventRepr)>;
 
     /// Get all objects related to the given object (through O2O (object-to-object) relations)
     fn get_o2o(
         &'a self,
-        index: &Self::ObjectRepr,
+        index: impl Borrow<Self::ObjectRepr>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)>;
 
     /// Get all objects reversely related to the given object (through **reverse** O2O (object-to-object) relations)
     fn get_o2o_rev(
         &'a self,
-        index: &Self::ObjectRepr,
+        index: impl Borrow<Self::ObjectRepr>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)>;
 
     /// Get all objects of a specified type related with the given event
     fn get_e2o_of_type(
         &'a self,
-        index: &Self::EventRepr,
+        index: impl Borrow<Self::EventRepr>,
         ob_type: impl AsRef<str>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
         self.get_e2o(index)
-            .filter(move |(_q, o)| self.get_ob_type_of(o) == ob_type.as_ref())
+            .filter(move |(_q, o)| self.get_ob_type_of(o.borrow()) == ob_type.as_ref())
     }
     /// Get all events of a specified type associated with the given object (through reverse E2O relations)
     fn get_e2o_rev_of_type(
         &'a self,
-        index: &Self::ObjectRepr,
+        index: impl Borrow<Self::ObjectRepr>,
         ev_type: impl AsRef<str>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::EventRepr)> {
         self.get_e2o_rev(index)
-            .filter(move |(_q, o)| self.get_ev_type_of(o) == ev_type.as_ref())
+            .filter(move |(_q, o)| self.get_ev_type_of(o.borrow()) == ev_type.as_ref())
     }
 
     /// Get all objects of a specified type related with the given object through an O2O relationship (from the given object, i.e., through O2O relations)
     fn get_o2o_of_type(
         &'a self,
-        from_obj: &Self::ObjectRepr,
+        from_obj: impl Borrow<Self::ObjectRepr>,
         to_ob_type: impl AsRef<str>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
         self.get_o2o(from_obj)
-            .filter(move |(_q, o)| self.get_ob_type_of(o) == to_ob_type.as_ref())
+            .filter(move |(_q, o)| self.get_ob_type_of(o.borrow()) == to_ob_type.as_ref())
     }
     /// Get all objects of a specified type that have an O2O relationship _to_ the given object (through _reverse_ O2O relations)
     fn get_o2o_rev_of_type(
         &'a self,
-        to_obj: &Self::ObjectRepr,
+        to_obj: impl Borrow<Self::ObjectRepr>,
         from_ob_type: impl AsRef<str>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
         self.get_o2o_rev(to_obj)
-            .filter(move |(_q, o)| self.get_ob_type_of(o) == from_ob_type.as_ref())
+            .filter(move |(_q, o)| self.get_ob_type_of(o.borrow()) == from_ob_type.as_ref())
     }
 
     /// Get the object type of an object reference
-    fn get_ob_type_of(&'a self, object: &Self::ObjectRepr) -> &'a str;
+    fn get_ob_type_of(&'a self, object: impl Borrow<Self::ObjectRepr>) -> &'a str;
 
     /// Get the event type (i.e., activity) of an event reference
-    fn get_ev_type_of(&'a self, event: &Self::EventRepr) -> &'a str;
+    fn get_ev_type_of(&'a self, event: impl Borrow<Self::EventRepr>) -> &'a str;
 
     /// Get the ID of an object
-    fn get_ob_id(&'a self, ob: &Self::ObjectRepr) -> &'a str;
+    fn get_ob_id(&'a self, ob: impl Borrow<Self::ObjectRepr>) -> &'a str;
 
     /// Get the ID of an event
-    fn get_ev_id(&'a self, ev: &Self::EventRepr) -> &'a str;
+    fn get_ev_id(&'a self, ev: impl Borrow<Self::EventRepr>) -> &'a str;
 
     /// Get the timestamp of an event
-    fn get_ev_time(&'a self, ev: &Self::EventRepr) -> &'a DateTime<FixedOffset>;
+    fn get_ev_time(&'a self, ev: impl Borrow<Self::EventRepr>) -> &'a DateTime<FixedOffset>;
 
     /// Get the names of all attributes that an event has
-    fn get_ev_attrs(&'a self, ev: &Self::EventRepr) -> impl Iterator<Item = &'a str>;
+    fn get_ev_attrs(&'a self, ev: impl Borrow<Self::EventRepr>) -> impl Iterator<Item = &'a str>;
     /// Get the value assigned to an event attribute (by name) for an event
     fn get_ev_attr_val(
         &'a self,
-        ev: &Self::EventRepr,
+        ev: impl Borrow<Self::EventRepr>,
         attr_name: impl AsRef<str>,
     ) -> Option<&'a OCELAttributeValue>;
 
     /// Get the names of all attributes that an object has
-    fn get_ob_attrs(&'a self, ob: &Self::ObjectRepr) -> impl Iterator<Item = &'a str>;
+    fn get_ob_attrs(&'a self, ob: impl Borrow<Self::ObjectRepr>) -> impl Iterator<Item = &'a str>;
 
     /// Get the value assigned to an object attribute (by name) for an object
     fn get_ob_attr_vals(
         &'a self,
-        ob: &Self::ObjectRepr,
+        ob: impl Borrow<Self::ObjectRepr>,
         attr_name: impl AsRef<str>,
     ) -> impl Iterator<Item = (&'a DateTime<FixedOffset>, &'a OCELAttributeValue)>;
 
@@ -139,12 +139,12 @@ pub trait LinkedOCELAccess<'a> {
     /// Get the full (materialized) event, depending on the backing implementation, either as a reference or owned value.
     /// __Avoid using this function. Depending on the implementation, it might have significant performance overhead.__
     /// Instead, use specialized functions to access specific fields or properties (e.g., [`Self::get_ev_time`]).
-    fn get_full_ev(&'a self, index: &Self::EventRepr) -> Cow<'a, OCELEvent>;
+    fn get_full_ev(&'a self, index: impl Borrow<Self::EventRepr>) -> Cow<'a, OCELEvent>;
 
     /// Get the full (materialized) object, depending on the backing implementation, either as a reference or owned value.
     /// __Avoid using this function. Depending on the implementation, it might have significant performance overhead.__
     /// Instead, use specialized functions to access specific fields or properties (e.g., [`Self::get_ob_type_of`]).
-    fn get_full_ob(&'a self, index: &Self::ObjectRepr) -> Cow<'a, OCELObject>;
+    fn get_full_ob(&'a self, index: impl Borrow<Self::ObjectRepr>) -> Cow<'a, OCELObject>;
 
     /// Get event type specification ([`OCELType`]) from type name (i.e., activity)
     ///
@@ -201,11 +201,11 @@ pub trait LinkedOCELAccess<'a> {
                 .collect(),
             events: self
                 .get_all_evs()
-                .map(|ev| self.get_full_ev(ev).into_owned())
+                .map(|ev| self.get_full_ev(&ev).into_owned())
                 .collect(),
             objects: self
                 .get_all_obs()
-                .map(|ev| self.get_full_ob(ev).into_owned())
+                .map(|ev| self.get_full_ob(&ev).into_owned())
                 .collect(),
         }
     }

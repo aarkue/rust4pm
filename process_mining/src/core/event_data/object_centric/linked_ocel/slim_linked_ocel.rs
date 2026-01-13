@@ -1,7 +1,10 @@
 //! Linked Slim (i.e., less duplicate fields) OCEL
 //!
 //! Allows easy and efficient access to events, objects, and their relations
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::{Borrow, Cow},
+    collections::HashMap,
+};
 
 use binding_macros::RegistryEntity;
 use chrono::{DateTime, FixedOffset};
@@ -497,11 +500,6 @@ impl SlimLinkedOCEL {
         }
     }
 
-    /// Convert to OCEL
-    pub fn to_ocel(&self) -> OCEL {
-        self.construct_ocel()
-    }
-
     /// Get all events of the spcecified event type
     pub fn get_evs_of_type<'a>(&'a self, event_type: &str) -> impl Iterator<Item = &'a EventIndex> {
         self.evtype_to_index
@@ -510,10 +508,7 @@ impl SlimLinkedOCEL {
             .flat_map(|et| &self.events_per_type[*et])
     }
     /// Get all objects of the specified object type
-    pub fn get_obs_of_type<'a>(
-        &'a self,
-        object_type: &str,
-    ) -> impl Iterator<Item = &'a ObjectIndex> {
+    fn get_obs_of_type<'a>(&'a self, object_type: &str) -> impl Iterator<Item = &'a ObjectIndex> {
         self.obtype_to_index
             .get(object_type)
             .into_iter()
@@ -521,20 +516,12 @@ impl SlimLinkedOCEL {
     }
 
     /// Get all object types as strings
-    pub fn get_ob_types(&self) -> impl Iterator<Item = &String> {
+    fn get_ob_types(&self) -> impl Iterator<Item = &String> {
         self.object_types.iter().map(|ot| &ot.name)
     }
-    /// Get the type struct for an object type
-    pub fn get_ob_type<'a>(&'a self, ob_type: &'a str) -> &'a OCELType {
-        &self.object_types[*self.obtype_to_index.get(ob_type).unwrap()]
-    }
     /// Get all event types as strings
-    pub fn get_ev_types(&self) -> impl Iterator<Item = &String> {
+    fn get_ev_types(&self) -> impl Iterator<Item = &String> {
         self.event_types.iter().map(|et| &et.name)
-    }
-    /// Get the type struct for an event type
-    pub fn get_ev_type<'a>(&'a self, ev_type: &'a str) -> &'a OCELType {
-        &self.event_types[*self.evtype_to_index.get(ev_type).unwrap()]
     }
     /// Add a new event to the OCEL
     ///
@@ -711,27 +698,27 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
         self.get_ob_types().map(String::as_str)
     }
 
-    fn get_all_evs(&'a self) -> impl Iterator<Item = &'a Self::EventRepr> {
-        self.event_ids_to_index.values()
+    fn get_all_evs(&'a self) -> impl Iterator<Item = Self::EventRepr> {
+        (0..self.events.len()).map(EventIndex)
     }
 
-    fn get_all_obs(&'a self) -> impl Iterator<Item = &'a Self::ObjectRepr> {
-        self.object_ids_to_index.values()
+    fn get_all_obs(&'a self) -> impl Iterator<Item = Self::ObjectRepr> {
+        (0..self.objects.len()).map(ObjectIndex)
     }
 
-    fn get_full_ev(&'a self, index: &Self::EventRepr) -> Cow<'a, OCELEvent> {
-        Cow::Owned(index.fat_ev(self))
+    fn get_full_ev(&'a self, index: impl Borrow<Self::EventRepr>) -> Cow<'a, OCELEvent> {
+        Cow::Owned(index.borrow().fat_ev(self))
     }
 
-    fn get_full_ob(&'a self, index: &Self::ObjectRepr) -> Cow<'a, OCELObject> {
-        Cow::Owned(index.fat_ob(self))
+    fn get_full_ob(&'a self, index: impl Borrow<Self::ObjectRepr>) -> Cow<'a, OCELObject> {
+        Cow::Owned(index.borrow().fat_ob(self))
     }
 
     fn get_e2o(
         &'a self,
-        index: &Self::EventRepr,
+        index: impl Borrow<Self::EventRepr>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
-        self.events[index.0]
+        self.events[index.borrow().0]
             .relationships
             .iter()
             .map(|(q, o_idx)| (q.as_str(), o_idx))
@@ -739,22 +726,22 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
 
     fn get_e2o_rev(
         &'a self,
-        index: &Self::ObjectRepr,
+        index: impl Borrow<Self::ObjectRepr>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::EventRepr)> {
-        index.get_e2o_rev(self).flat_map(move |e| {
+        index.borrow().get_e2o_rev(self).flat_map(move |e| {
             self.events[e.0]
                 .relationships
                 .iter()
-                .find(|(_q, o)| o == index)
+                .find(|(_q, o)| o == index.borrow())
                 .map(|(q, _0)| (q.as_str(), e))
         })
     }
 
     fn get_o2o(
         &'a self,
-        index: &Self::ObjectRepr,
+        index: impl Borrow<Self::ObjectRepr>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
-        self.objects[index.0]
+        self.objects[index.borrow().0]
             .relationships
             .iter()
             .map(|(q, o_idx)| (q.as_str(), o_idx))
@@ -762,13 +749,13 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
 
     fn get_o2o_rev(
         &'a self,
-        index: &Self::ObjectRepr,
+        index: impl Borrow<Self::ObjectRepr>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
-        index.get_o2o_rev(self).flat_map(move |o1| {
+        index.borrow().get_o2o_rev(self).flat_map(move |o1| {
             self.objects[o1.0]
                 .relationships
                 .iter()
-                .find(|(_q, o2)| o2 == index)
+                .find(|(_q, o2)| o2 == index.borrow())
                 .map(|(q, _o2)| (q.as_str(), o1))
         })
     }
@@ -785,17 +772,17 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
             .find(|ot| ot.name == ob_type.as_ref())
     }
 
-    fn get_ob_type_of(&'a self, object: &Self::ObjectRepr) -> &'a str {
-        object.get_ob_type(self)
+    fn get_ob_type_of(&'a self, object: impl Borrow<Self::ObjectRepr>) -> &'a str {
+        object.borrow().get_ob_type(self)
     }
 
-    fn get_ev_type_of(&'a self, event: &Self::EventRepr) -> &'a str {
-        event.get_ev_type(self)
+    fn get_ev_type_of(&'a self, event: impl Borrow<Self::EventRepr>) -> &'a str {
+        event.borrow().get_ev_type(self)
     }
 
-    fn get_ev_attrs(&'a self, ev: &Self::EventRepr) -> impl Iterator<Item = &'a str> {
+    fn get_ev_attrs(&'a self, ev: impl Borrow<Self::EventRepr>) -> impl Iterator<Item = &'a str> {
         self.events
-            .get(ev.0)
+            .get(ev.borrow().0)
             .and_then(|e| self.event_types.get(e.event_type))
             .iter()
             .flat_map(|et| &et.attributes)
@@ -806,15 +793,15 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
 
     fn get_ev_attr_val(
         &'a self,
-        ev: &Self::EventRepr,
+        ev: impl Borrow<Self::EventRepr>,
         attr_name: impl AsRef<str>,
     ) -> Option<&'a OCELAttributeValue> {
-        ev.get_attribute_value(attr_name.as_ref(), self)
+        ev.borrow().get_attribute_value(attr_name.as_ref(), self)
     }
 
-    fn get_ob_attrs(&'a self, ob: &Self::ObjectRepr) -> impl Iterator<Item = &'a str> {
+    fn get_ob_attrs(&'a self, ob: impl Borrow<Self::ObjectRepr>) -> impl Iterator<Item = &'a str> {
         self.objects
-            .get(ob.0)
+            .get(ob.borrow().0)
             .and_then(|o| self.object_types.get(o.object_type))
             .iter()
             .flat_map(|et| &et.attributes)
@@ -825,20 +812,21 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
 
     fn get_ob_attr_vals(
         &'a self,
-        ob: &Self::ObjectRepr,
+        ob: impl Borrow<Self::ObjectRepr>,
         attr_name: impl AsRef<str>,
     ) -> impl Iterator<Item = (&'a DateTime<FixedOffset>, &'a OCELAttributeValue)> {
-        ob.get_attribute_value(attr_name.as_ref(), self)
+        ob.borrow()
+            .get_attribute_value(attr_name.as_ref(), self)
             .into_iter()
             .flat_map(|x| x.iter().map(|(a, b)| (a, b)))
     }
 
-    fn get_ob_id(&'a self, ob: &Self::ObjectRepr) -> &'a str {
-        self.objects[ob.0].id.as_str()
+    fn get_ob_id(&'a self, ob: impl Borrow<Self::ObjectRepr>) -> &'a str {
+        self.objects[ob.borrow().0].id.as_str()
     }
 
-    fn get_ev_id(&'a self, ev: &Self::EventRepr) -> &'a str {
-        self.events[ev.0].id.as_str()
+    fn get_ev_id(&'a self, ev: impl Borrow<Self::EventRepr>) -> &'a str {
+        self.events[ev.borrow().0].id.as_str()
     }
 
     fn get_ev_by_id(&'a self, ev_id: impl AsRef<str>) -> Option<Self::EventRepr> {
@@ -849,18 +837,18 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
         self.object_ids_to_index.get(ob_id.as_ref()).copied()
     }
 
-    fn get_ev_time(&'a self, ev: &Self::EventRepr) -> &'a DateTime<FixedOffset> {
-        ev.get_time(self)
+    fn get_ev_time(&'a self, ev: impl Borrow<Self::EventRepr>) -> &'a DateTime<FixedOffset> {
+        ev.borrow().get_time(self)
     }
 
     fn get_e2o_of_type(
         &'a self,
-        index: &Self::EventRepr,
+        index: impl Borrow<Self::EventRepr>,
         ob_type: impl AsRef<str>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
         let ob_type_index = self.obtype_to_index.get(ob_type.as_ref());
         ob_type_index.into_iter().flat_map(move |ot_index| {
-            self.events[index.0]
+            self.events[index.borrow().0]
                 .relationships
                 .iter()
                 .filter(move |(_q, o)| &o.get_ob(self).object_type == ot_index)
@@ -869,12 +857,12 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
     }
     fn get_o2o_of_type(
         &'a self,
-        index: &Self::ObjectRepr,
+        index: impl Borrow<Self::ObjectRepr>,
         ob_type: impl AsRef<str>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
         let ob_type_index = self.obtype_to_index.get(ob_type.as_ref());
         ob_type_index.into_iter().flat_map(move |ot_index| {
-            self.objects[index.0]
+            self.objects[index.borrow().0]
                 .relationships
                 .iter()
                 .filter(move |(_q, o)| &o.get_ob(self).object_type == ot_index)
@@ -884,18 +872,18 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
 
     fn get_e2o_rev_of_type(
         &'a self,
-        index: &Self::ObjectRepr,
+        index: impl Borrow<Self::ObjectRepr>,
         ev_type: impl AsRef<str>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::EventRepr)> {
         let evtype_index = self.evtype_to_index.get(ev_type.as_ref()).unwrap();
         self.e2o_rel_rev
-            .get(index.0)
+            .get(index.borrow().0)
             .into_iter()
             .flat_map(|x| x.get(*evtype_index))
             .flatten()
             .filter_map(move |e| {
                 let rels = &e.get_ev(self).relationships;
-                if let Ok(rel_index) = rels.binary_search_by_key(index, |(_q, o)| *o) {
+                if let Ok(rel_index) = rels.binary_search_by_key(index.borrow(), |(_q, o)| *o) {
                     Some((rels[rel_index].0.as_ref(), e))
                 } else {
                     None
@@ -904,18 +892,18 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
     }
     fn get_o2o_rev_of_type(
         &'a self,
-        to_obj: &Self::ObjectRepr,
+        to_obj: impl Borrow<Self::ObjectRepr>,
         from_ob_type: impl AsRef<str>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
         let obtype_index = self.obtype_to_index.get(from_ob_type.as_ref()).unwrap();
         self.o2o_rel_rev
-            .get(to_obj.0)
+            .get(to_obj.borrow().0)
             .into_iter()
             .flat_map(|x| x.get(*obtype_index))
             .flatten()
             .filter_map(move |o| {
                 let rels = &o.get_ob(self).relationships;
-                if let Ok(rel_index) = rels.binary_search_by_key(to_obj, |(_q, e)| *e) {
+                if let Ok(rel_index) = rels.binary_search_by_key(to_obj.borrow(), |(_q, e)| *e) {
                     Some((rels[rel_index].0.as_ref(), o))
                 } else {
                     None

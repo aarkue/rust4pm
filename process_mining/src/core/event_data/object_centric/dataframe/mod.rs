@@ -756,8 +756,8 @@ pub fn e2o_to_df<'a, I: LinkedOCELAccess<'a>>(locel: &'a I) -> Result<DataFrame,
     let mut o_ids = StringChunkedBuilder::new("Object ID".into(), 1024);
     let mut qualifiers = StringChunkedBuilder::new("Qualifier".into(), 1024);
     locel.get_all_evs().for_each(|e| {
-        locel.get_e2o(e).for_each(|(q, o)| {
-            e_ids.append_value(locel.get_full_ev(e).id.as_str());
+        locel.get_e2o(&e).for_each(|(q, o)| {
+            e_ids.append_value(locel.get_full_ev(&e).id.as_str());
             o_ids.append_value(locel.get_full_ob(o).id.as_str());
             qualifiers.append_value(q);
         });
@@ -776,8 +776,8 @@ pub fn o2o_to_df<'a, I: LinkedOCELAccess<'a>>(locel: &'a I) -> Result<DataFrame,
     let mut o2_ids = StringChunkedBuilder::new("To Object ID".into(), 1024);
     let mut qualifiers = StringChunkedBuilder::new("Qualifier".into(), 1024);
     locel.get_all_obs().for_each(|o1| {
-        locel.get_o2o(o1).for_each(|(q, o2)| {
-            o1_ids.append_value(locel.get_full_ob(o1).id.as_str());
+        locel.get_o2o(&o1).for_each(|(q, o2)| {
+            o1_ids.append_value(locel.get_full_ob(&o1).id.as_str());
             o2_ids.append_value(locel.get_full_ob(o2).id.as_str());
             qualifiers.append_value(q);
         });

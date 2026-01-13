@@ -1,5 +1,5 @@
 use std::{
-    borrow::Cow,
+    borrow::{Borrow, Cow},
     collections::{HashMap, HashSet},
     io::{Read, Write},
     ops::Index,
@@ -363,17 +363,20 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
         self.objects_per_type.get(ob_type).into_iter().flatten()
     }
 
-    fn get_full_ev(&'a self, index: &EventIndex) -> Cow<'a, OCELEvent> {
-        Cow::Borrowed(&self.ocel.events[index.0])
+    fn get_full_ev(&'a self, index: impl Borrow<EventIndex>) -> Cow<'a, OCELEvent> {
+        Cow::Borrowed(&self.ocel.events[index.borrow().0])
     }
 
-    fn get_full_ob(&'a self, index: &ObjectIndex) -> Cow<'a, OCELObject> {
-        Cow::Borrowed(&self.ocel.objects[index.0])
+    fn get_full_ob(&'a self, index: impl Borrow<ObjectIndex>) -> Cow<'a, OCELObject> {
+        Cow::Borrowed(&self.ocel.objects[index.borrow().0])
     }
 
-    fn get_e2o(&'a self, index: &EventIndex) -> impl Iterator<Item = (&'a str, &'a ObjectIndex)> {
+    fn get_e2o(
+        &'a self,
+        index: impl Borrow<EventIndex>,
+    ) -> impl Iterator<Item = (&'a str, &'a ObjectIndex)> {
         self.e2o_rel
-            .get(index.0)
+            .get(index.borrow().0)
             .into_iter()
             .flatten()
             .map(|(q, o)| (q.as_str(), o))
@@ -381,18 +384,21 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
 
     fn get_e2o_rev(
         &'a self,
-        index: &ObjectIndex,
+        index: impl Borrow<ObjectIndex>,
     ) -> impl Iterator<Item = (&'a str, &'a EventIndex)> {
         self.e2o_rel_rev
-            .get(index.0)
+            .get(index.borrow().0)
             .into_iter()
             .flatten()
             .map(|(q, e)| (q.as_str(), e))
     }
 
-    fn get_o2o(&'a self, index: &ObjectIndex) -> impl Iterator<Item = (&'a str, &'a ObjectIndex)> {
+    fn get_o2o(
+        &'a self,
+        index: impl Borrow<ObjectIndex>,
+    ) -> impl Iterator<Item = (&'a str, &'a ObjectIndex)> {
         self.o2o_rel
-            .get(index.0)
+            .get(index.borrow().0)
             .into_iter()
             .flatten()
             .map(|(q, o)| (q.as_str(), o))
@@ -400,10 +406,10 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
 
     fn get_o2o_rev(
         &'a self,
-        index: &ObjectIndex,
+        index: impl Borrow<ObjectIndex>,
     ) -> impl Iterator<Item = (&'a str, &'a ObjectIndex)> {
         self.o2o_rel_rev
-            .get(index.0)
+            .get(index.borrow().0)
             .into_iter()
             .flatten()
             .map(|(q, e)| (q.as_str(), e))
@@ -417,12 +423,12 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
         self.objects_per_type.keys().map(|k| k.as_str())
     }
 
-    fn get_all_evs(&'a self) -> impl Iterator<Item = &'a EventIndex> {
-        self.event_ids_to_index.values()
+    fn get_all_evs(&'a self) -> impl Iterator<Item = EventIndex> {
+        (0..self.ocel.events.len()).map(EventIndex)
     }
 
-    fn get_all_obs(&'a self) -> impl Iterator<Item = &'a ObjectIndex> {
-        self.object_ids_to_index.values()
+    fn get_all_obs(&'a self) -> impl Iterator<Item = ObjectIndex> {
+        (0..self.ocel.objects.len()).map(ObjectIndex)
     }
 
     fn get_ev_type(&'a self, ev_type: impl AsRef<str>) -> Option<&'a OCELType> {
@@ -439,16 +445,16 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
             .find(|ot| ot.name == ob_type.as_ref())
     }
 
-    fn get_ob_type_of(&'a self, object: &Self::ObjectRepr) -> &'a str {
-        &self.ocel.objects[object.0].object_type
+    fn get_ob_type_of(&'a self, object: impl Borrow<Self::ObjectRepr>) -> &'a str {
+        &self.ocel.objects[object.borrow().0].object_type
     }
 
-    fn get_ev_type_of(&'a self, event: &Self::EventRepr) -> &'a str {
-        &self.ocel.events[event.0].event_type
+    fn get_ev_type_of(&'a self, event: impl Borrow<Self::EventRepr>) -> &'a str {
+        &self.ocel.events[event.borrow().0].event_type
     }
 
-    fn get_ev_attrs(&'a self, ev: &Self::EventRepr) -> impl Iterator<Item = &'a str> {
-        self.ocel.events[ev.0]
+    fn get_ev_attrs(&'a self, ev: impl Borrow<Self::EventRepr>) -> impl Iterator<Item = &'a str> {
+        self.ocel.events[ev.borrow().0]
             .attributes
             .iter()
             .map(|a| a.name.as_str())
@@ -456,19 +462,19 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
 
     fn get_ev_attr_val(
         &'a self,
-        ev: &Self::EventRepr,
+        ev: impl Borrow<Self::EventRepr>,
         attr_name: impl AsRef<str>,
     ) -> Option<&'a crate::core::event_data::object_centric::OCELAttributeValue> {
         let attr_name = attr_name.as_ref();
-        self.ocel.events[ev.0]
+        self.ocel.events[ev.borrow().0]
             .attributes
             .iter()
             .find(|a| a.name == attr_name)
             .map(|a| &a.value)
     }
 
-    fn get_ob_attrs(&'a self, ob: &Self::ObjectRepr) -> impl Iterator<Item = &'a str> {
-        self.ocel.objects[ob.0]
+    fn get_ob_attrs(&'a self, ob: impl Borrow<Self::ObjectRepr>) -> impl Iterator<Item = &'a str> {
+        self.ocel.objects[ob.borrow().0]
             .attributes
             .iter()
             .map(|a| a.name.as_str())
@@ -476,7 +482,7 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
 
     fn get_ob_attr_vals(
         &'a self,
-        ob: &Self::ObjectRepr,
+        ob: impl Borrow<Self::ObjectRepr>,
         attr_name: impl AsRef<str>,
     ) -> impl Iterator<
         Item = (
@@ -485,7 +491,7 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
         ),
     > {
         let attr_name = attr_name.as_ref();
-        self.ocel.objects[ob.0]
+        self.ocel.objects[ob.borrow().0]
             .attributes
             .iter()
             .filter(|a| a.name == attr_name)
@@ -494,12 +500,12 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
             .into_iter()
     }
 
-    fn get_ob_id(&'a self, ob: &Self::ObjectRepr) -> &'a str {
-        self.ocel.objects[ob.0].id.as_str()
+    fn get_ob_id(&'a self, ob: impl Borrow<Self::ObjectRepr>) -> &'a str {
+        self.ocel.objects[ob.borrow().0].id.as_str()
     }
 
-    fn get_ev_id(&'a self, ev: &Self::EventRepr) -> &'a str {
-        self.ocel.objects[ev.0].id.as_str()
+    fn get_ev_id(&'a self, ev: impl Borrow<Self::EventRepr>) -> &'a str {
+        self.ocel.objects[ev.borrow().0].id.as_str()
     }
 
     fn get_ev_by_id(&'a self, ev_id: impl AsRef<str>) -> Option<Self::EventRepr> {
@@ -510,8 +516,11 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
         self.object_ids_to_index.get(ob_id.as_ref()).copied()
     }
 
-    fn get_ev_time(&'a self, ev: &Self::EventRepr) -> &'a chrono::DateTime<chrono::FixedOffset> {
-        &self.ocel.events[ev.0].time
+    fn get_ev_time(
+        &'a self,
+        ev: impl Borrow<Self::EventRepr>,
+    ) -> &'a chrono::DateTime<chrono::FixedOffset> {
+        &self.ocel.events[ev.borrow().0].time
     }
 }
 
@@ -574,7 +583,7 @@ mod tests {
         let locel = IndexLinkedOCEL::from_ocel(ocel);
         let locel_ref = &locel;
         if let Some(ev_index) = locel_ref.get_all_evs().next() {
-            let ev1: &OCELEvent = &locel[*ev_index];
+            let ev1: &OCELEvent = &locel[ev_index];
             let ev2 = &locel[ev_index];
             let ev3 = &locel_ref[ev_index];
             let ev4 = &locel_ref[ev_index];
@@ -583,7 +592,7 @@ mod tests {
             assert_eq!(ev1, ev4);
         };
         if let Some(ob_index) = locel_ref.get_all_obs().next() {
-            let ev1: &OCELObject = &locel[*ob_index];
+            let ev1: &OCELObject = &locel[ob_index];
             let ev2 = &locel[ob_index];
             let ev3 = &locel_ref[ob_index];
             let ev4 = &locel_ref[ob_index];

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     conformance::oc_declare::get_for_all_evs_perf_thresh,
     core::{
-        event_data::object_centric::linked_ocel::SlimLinkedOCEL,
+        event_data::object_centric::linked_ocel::{LinkedOCELAccess, SlimLinkedOCEL},
         process_models::oc_declare::{
             get_activity_object_involvements, get_object_to_object_involvements,
             get_rev_object_to_object_involvements, OCDeclareArc, OCDeclareArcLabel,
@@ -103,7 +103,7 @@ pub fn discover_behavior_constraints(
     let acts_to_use = options
         .acts_to_use
         .clone()
-        .unwrap_or_else(|| locel.get_ev_types().cloned().collect());
+        .unwrap_or_else(|| locel.get_ev_types().map(|et| et.to_string()).collect());
     let ret = acts_to_use
         .iter()
         .cartesian_product(acts_to_use.iter())

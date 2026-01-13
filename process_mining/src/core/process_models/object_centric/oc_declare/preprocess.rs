@@ -19,9 +19,9 @@ pub fn preprocess_ocel(ocel: OCEL) -> SlimLinkedOCEL {
     let new_evs = locel
         .get_all_obs()
         .flat_map(|obi| {
-            let ob = locel.get_full_ob(obi);
+            let ob = locel.get_full_ob(&obi);
             let iter = locel
-                .get_e2o_rev(obi)
+                .get_e2o_rev(&obi)
                 .map(|(_q, e)| locel.get_full_ev(e).time)
                 .sorted();
             let first_ev = iter.clone().next();
