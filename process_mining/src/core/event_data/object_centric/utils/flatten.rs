@@ -16,11 +16,11 @@ pub(crate) fn flatten_ocel_on(locel: &IndexLinkedOCEL, object_type: &str) -> Eve
     let mut traces: Vec<_> = locel
         .get_obs_of_type(object_type)
         .map(|ob| {
-            let ob_val = locel.get_ob(ob);
+            let ob_val = locel.get_full_ob(ob);
             let mut events: Vec<_> = locel
                 .get_e2o_rev(ob)
                 .map(|(_q, ev)| {
-                    let ev_val = locel.get_ev(ev);
+                    let ev_val = locel.get_full_ev(ev);
                     let mut xes_ev = Event {
                         attributes: vec![
                             Attribute::new(
