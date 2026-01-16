@@ -684,71 +684,69 @@ pub fn compute_fitness_precision(
         .map(|&ev_type| (ev_type, 0.0))
         .collect::<HashMap<_, _>>();
     let mut prec_per_ev_type = fit_per_ev_type.clone();
-    let mut valid_fit_ev_type_count = 1.0;
-    let mut valid_prec_ev_type_count = 1.0;
+    let mut valid_fit_ev_type_count: usize = 0;
+    let mut valid_prec_ev_type_count: usize = 0;
 
     all_ev_types.iter().for_each(|&ev_type| {
-        let mut fit_pattern_matching = 0.0;
-        let mut prec_pattern_matching = 0.0;
+        let mut fit_pattern_matching: usize = 0;
+        let mut prec_pattern_matching: usize = 0;
 
         pattern
             .iter()
             .for_each(|&(log_ev_type_per_ob_type, model_ev_type_per_ob_type)| {
-                let mut matches_log = 0.0;
-                let mut matches_model = 0.0;
-                let mut matches_log_model = 0.0;
+                let mut matches_log = 0;
+                let mut matches_model = 0;
+                let mut matches_log_model = 0;
 
                 all_ob_types.iter().for_each(|&ob_type| {
                     let in_log: bool = log_ev_type_per_ob_type
                         .get(ob_type)
-                        .unwrap_or(&HashSet::new())
-                        .contains(ev_type);
+                        .is_some_and(|set| set.contains(ev_type));
                     let in_model: bool = model_ev_type_per_ob_type
                         .get(ob_type)
-                        .unwrap_or(&HashSet::new())
-                        .contains(ev_type);
+                        .is_some_and(|set| set.contains(ev_type));
 
                     if in_log && in_model {
-                        matches_log += 1.0;
-                        matches_model += 1.0;
-                        matches_log_model += 1.0;
+                        matches_log += 1;
+                        matches_model += 1;
+                        matches_log_model += 1;
                     } else if in_log {
-                        matches_log += 1.0;
+                        matches_log += 1;
                     } else if in_model {
-                        matches_model += 1.0;
+                        matches_model += 1;
                     }
                 });
 
-                if matches_log != 0.0 {
+                if matches_log != 0 {
                     fit_per_ev_type
                         .get_mut(ev_type)
                         .unwrap()
-                        .add_assign(matches_log_model / matches_log);
-                    fit_pattern_matching += 1.0;
+                        .add_assign(matches_log_model as f64 / matches_log as f64);
+                    fit_pattern_matching += 1;
                 }
 
-                if matches_model != 0.0 {
+                if matches_model != 0 {
                     prec_per_ev_type
                         .get_mut(ev_type)
                         .unwrap()
-                        .add_assign(matches_log_model / matches_model);
-                    prec_pattern_matching += 1.0;
+                        .add_assign(matches_log_model as f64 / matches_model as f64);
+                    prec_pattern_matching += 1;
                 }
             });
 
-        if fit_pattern_matching != 0.0 {
+        if fit_pattern_matching > 0 {
             fit_per_ev_type
                 .get_mut(ev_type)
                 .unwrap()
-                .div_assign(fit_pattern_matching);
-            valid_fit_ev_type_count += 1.0;
+                .div_assign(fit_pattern_matching as f64);
+            valid_fit_ev_type_count += 1;
         }
-        if prec_pattern_matching != 0.0 {
+        if prec_pattern_matching > 0 {
             prec_per_ev_type
                 .get_mut(ev_type)
                 .unwrap()
-                .div_assign(prec_pattern_matching);
-            valid_prec_ev_type_count += 1.0;
+                .div_assign(prec_pattern_matching as f64);
+            valid_prec_ev_type_count += 1;
         }
     });
 
@@ -815,10 +813,9 @@ pub fn compute_fitness_precision(
     fit_per_ev_type.iter().for_each(|(_, fit)| {
         fitness_weighted_ev_types += fit;
     });
-    if valid_fit_ev_type_count > 0.0 {
-        fitness_weighted_ev_types /= valid_fit_ev_type_count;
+    if valid_fit_ev_type_count > 0 {
+        fitness_weighted_ev_types /= valid_fit_ev_type_count as f64;
     }
-
     let mut fitness_weighted_dfr = 0.0;
     fit_per_dfr.iter().for_each(|(_, fit)| {
         fitness_weighted_dfr += fit;
@@ -831,8 +828,8 @@ pub fn compute_fitness_precision(
     prec_per_ev_type.iter().for_each(|(_, prec)| {
         precision_weighted_ev_types += prec;
     });
-    if valid_prec_ev_type_count > 0.0 {
-        precision_weighted_ev_types /= valid_prec_ev_type_count;
+    if valid_prec_ev_type_count > 0 {
+        precision_weighted_ev_types /= valid_prec_ev_type_count as f64;
     }
 
     let mut precision_weighted_dfr = 0.0;
@@ -842,7 +839,6 @@ pub fn compute_fitness_precision(
     if dfr_matches_prec > 0.0 {
         precision_weighted_dfr /= dfr_matches_prec;
     }
-
     (
         (fitness_weighted_ev_types + fitness_weighted_dfr) / 2.0,
         (precision_weighted_ev_types + precision_weighted_dfr) / 2.0,
@@ -851,7 +847,7 @@ pub fn compute_fitness_precision(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use std::{fs::File, time::Instant};
 
     use crate::{
         conformance::object_centric::object_centric_language_abstraction::{
@@ -865,6 +861,8 @@ mod tests {
             OCEL,
         },
         ocel,
+        test_utils::get_test_data_path,
+        Importable,
     };
 
     fn create_test_tree() -> OCPT {
@@ -963,5 +961,59 @@ mod tests {
         println!("Time elapsed is {time_elapsed}ms");
         println!("Fitness: {fitness}");
         println!("Precision: {precision}");
+    }
+    #[test]
+    fn test_two_equal_ocpts() {
+        let ocpt: OCPT = serde_json::from_reader(
+            File::open(get_test_data_path().join("ocpt-discovered-im.json")).unwrap(),
+        )
+        .unwrap();
+        let abstraction1 = OCLanguageAbstraction::create_from_oc_process_tree(&ocpt);
+        let abstraction2 = OCLanguageAbstraction::create_from_oc_process_tree(&ocpt);
+        let (fitness, precision) = compute_fitness_precision(&abstraction1, &abstraction2);
+        println!("fitness={}, precision={}", fitness, precision);
+        assert!(
+            (fitness - 1.0).abs() < f64::EPSILON,
+            "Wrong fitness: got {}!={} <- should be this value",
+            fitness,
+            1.0
+        );
+        assert!(
+            (precision - 1.0).abs() < f64::EPSILON,
+            "Wrong precision: got {}!={} <- should be this value",
+            precision,
+            1.0
+        );
+    }
+    #[test]
+    fn test_ocpt_and_ocel() {
+        let ocpt: OCPT = serde_json::from_reader(
+            File::open(get_test_data_path().join("ocpt-discovered-im.json")).unwrap(),
+        )
+        .unwrap();
+        let ocel = OCEL::import_from_path(
+            get_test_data_path()
+                .join("ocel")
+                .join("order-management.json"),
+        )
+        .unwrap();
+        let locel = IndexLinkedOCEL::from_ocel(ocel.remove_orphan_objects());
+        let abstraction_model = OCLanguageAbstraction::create_from_oc_process_tree(&ocpt);
+        let abstraction_log = OCLanguageAbstraction::create_from_ocel(&locel);
+        let (fitness, precision) = compute_fitness_precision(&abstraction_log, &abstraction_model);
+        println!("fitness={}, precision={}", fitness, precision);
+        assert!(
+            (fitness - 1.0).abs() < f64::EPSILON,
+            "Wrong fitness: got {}!={} <- should be this value",
+            fitness,
+            1.0
+        );
+        const EXPECTED_PRECISION: f64 = 0.6876033057851241;
+        assert!(
+            (precision - EXPECTED_PRECISION).abs() < f64::EPSILON,
+            "Wrong precision: got {}!={} <- should be this value",
+            precision,
+            EXPECTED_PRECISION
+        );
     }
 }
