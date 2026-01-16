@@ -35,7 +35,7 @@ pub struct ExtensionWithMime {
     pub mime: String,
 }
 impl ExtensionWithMime {
-    /// Construct MIME Type
+    /// Construct Extension with MIME Type
     pub fn new(extension: impl Into<String>, mime: impl Into<String>) -> Self {
         Self {
             extension: extension.into(),

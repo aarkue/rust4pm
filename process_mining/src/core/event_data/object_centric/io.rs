@@ -291,7 +291,9 @@ impl Exportable for OCEL {
                 writer, self,
             )
             .map_err(OCELIOError::Xml)
-        } else if format.ends_with("sqlite") || format.ends_with("db") {
+        } else if format.ends_with("sqlite")
+            || (format.ends_with("db") && !format.ends_with("duckdb"))
+        {
             #[cfg(feature = "ocel-sqlite")]
             {
                 let b = export_ocel_sqlite_to_vec(self).map_err(|e| match e {
