@@ -107,7 +107,7 @@ pub trait Importable: Sized {
 
     /// Get known import formats
     ///
-    /// This function can be used to suggest import formats or contruct file chooser filters
+    /// This function can be used to suggest import formats or construct file chooser filters
     fn known_import_formats() -> Vec<ExtensionWithMime>;
 }
 
@@ -178,7 +178,7 @@ pub trait Exportable {
     }
     /// Get known export formats
     ///
-    /// This function can be used to suggest exports formats or contruct file chooser filters
+    /// This function can be used to suggest exports formats or construct file chooser filters
     fn known_export_formats() -> Vec<ExtensionWithMime>;
 }
 
