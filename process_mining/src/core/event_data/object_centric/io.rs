@@ -146,9 +146,9 @@ impl Importable for OCEL {
                     .map_err(OCELIOError::Sqlite)
             }
             #[cfg(not(feature = "ocel-sqlite"))]
-            return Err(OCELIOError::UnsupportedFormat(
+            Err(OCELIOError::UnsupportedFormat(
                 "SQLite support not enabled".to_string(),
-            ));
+            ))
         } else if format.ends_with("duckdb") {
             Err(OCELIOError::UnsupportedFormat(
                 "DuckDB import from reader not supported".to_string(),
