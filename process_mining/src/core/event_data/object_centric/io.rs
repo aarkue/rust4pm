@@ -3,6 +3,7 @@
 use std::io::{Read, Write};
 use std::path::Path;
 
+#[cfg(feature = "ocel-sqlite")]
 use crate::core::event_data::object_centric::ocel_sql::export_ocel_sqlite_to_vec;
 #[cfg(any(feature = "ocel-duckdb", feature = "ocel-sqlite"))]
 use crate::core::event_data::object_centric::ocel_sql::DatabaseError;
@@ -115,7 +116,7 @@ impl Importable for OCEL {
     }
 
     fn import_from_reader_with_options<R: Read>(
-        mut reader: R,
+        #[allow(unused_mut)] mut reader: R,
         format: &str,
         _: Self::ImportOptions,
     ) -> Result<Self, Self::Error> {
@@ -272,7 +273,7 @@ impl Exportable for OCEL {
 
     fn export_to_writer_with_options<W: Write>(
         &self,
-        mut writer: W,
+        #[allow(unused_mut)] mut writer: W,
         format: &str,
         _: Self::ExportOptions,
     ) -> Result<(), Self::Error> {
@@ -292,9 +293,7 @@ impl Exportable for OCEL {
                 DatabaseError::DUCKDB(e) => OCELIOError::DuckDB(e),
             })?;
             writer.write_all(&b)?;
-            Err(OCELIOError::UnsupportedFormat(
-                "SQLite export to writer not supported".to_string(),
-            ))
+            Ok(())
         } else if format.ends_with("duckdb") {
             Err(OCELIOError::UnsupportedFormat(
                 "DuckDB export to writer not supported".to_string(),
