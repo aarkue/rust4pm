@@ -71,7 +71,7 @@ impl Importable for PetriNet {
         format: &str,
         _: Self::ImportOptions,
     ) -> Result<Self, Self::Error> {
-        if format == "pnml" || format.ends_with(".pnml") {
+        if format.ends_with("pnml") {
             let mut buf_reader = std::io::BufReader::new(reader);
             import_pnml_reader(&mut buf_reader).map_err(PetriNetIOError::Pnml)
         } else {
@@ -94,7 +94,7 @@ impl Exportable for PetriNet {
         format: &str,
         _: Self::ExportOptions,
     ) -> Result<(), Self::Error> {
-        if format == "pnml" || format.ends_with(".pnml") {
+        if format.ends_with("pnml") {
             export_petri_net_to_pnml(self, writer).map_err(PetriNetIOError::Xml)
         } else {
             Err(PetriNetIOError::UnsupportedFormat(format.to_string()))

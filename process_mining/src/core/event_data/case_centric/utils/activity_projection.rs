@@ -318,15 +318,11 @@ impl Importable for EventLogActivityProjection {
         format: &str,
         _: Self::ImportOptions,
     ) -> Result<Self, Self::Error> {
-        if format == "json" || format.ends_with(".json") {
+        if format.ends_with("json") {
             let reader = std::io::BufReader::new(reader);
             let res: Self = serde_json::from_reader(reader)?;
             Ok(res)
-        } else if format == "xes"
-            || format == "xes.gz"
-            || format.ends_with(".xes")
-            || format.ends_with(".xes.gz")
-        {
+        } else if format.ends_with("xes") || format.ends_with("xes.gz") {
             let log = EventLog::import_from_reader(reader, format)?;
             Ok((&log).into())
         } else {
@@ -362,7 +358,7 @@ impl Exportable for EventLogActivityProjection {
         format: &str,
         _: Self::ExportOptions,
     ) -> Result<(), Self::Error> {
-        if format == "json" || format.ends_with(".json") {
+        if format.ends_with("json") {
             serde_json::to_writer(writer, self)?;
             Ok(())
         } else {

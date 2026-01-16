@@ -1,7 +1,6 @@
 //! IO implementations for `EventLog`
 
 use std::io::{BufReader, Read, Write};
-use std::path::Path;
 
 use crate::core::event_data::case_centric::xes::export_xes::export_xes_event_log;
 use crate::core::event_data::case_centric::xes::import_xes::{
@@ -97,17 +96,6 @@ impl Importable for EventLog {
                 import_xes(buf_reader, options).map_err(EventLogIOError::Xes)
             }
             _ => Err(EventLogIOError::UnsupportedFormat(format.to_string())),
-        }
-    }
-
-    fn infer_format(path: &Path) -> Option<String> {
-        let p = path.to_string_lossy().to_lowercase();
-        if p.ends_with(".xes.gz") {
-            Some("xes.gz".to_string())
-        } else {
-            path.extension()
-                .and_then(|e| e.to_str())
-                .map(|s| s.to_lowercase())
         }
     }
 

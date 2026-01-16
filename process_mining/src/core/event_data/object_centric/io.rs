@@ -116,15 +116,16 @@ impl Importable for OCEL {
     }
 
     fn import_from_reader_with_options<R: Read>(
-        #[allow(unused_mut)] mut reader: R,
+        #[cfg(feature = "ocel-sqlite")] mut reader: R,
+        #[cfg(not(feature = "ocel-sqlite"))] reader: R,
         format: &str,
         _: Self::ImportOptions,
     ) -> Result<Self, Self::Error> {
-        if format == "json" || format.ends_with(".json") || format.ends_with(".jsonocel") {
+        if format.ends_with("json") || format.ends_with("jsonocel") {
             let reader = std::io::BufReader::new(reader);
             let ocel: OCEL = serde_json::from_reader(reader)?;
             Ok(ocel)
-        } else if format == "xml" || format.ends_with(".xml") || format.ends_with(".xmlocel") {
+        } else if format.ends_with("xml") || format.ends_with("xmlocel") {
             let reader = std::io::BufReader::new(reader);
             let mut xml_reader = quick_xml::Reader::from_reader(reader);
             let ocel =
@@ -134,7 +135,9 @@ impl Importable for OCEL {
                 )
                 .map_err(OCELIOError::Xml)?;
             Ok(ocel)
-        } else if format == "sqlite" || format.ends_with(".sqlite") || format.ends_with(".db") {
+        } else if format.ends_with("sqlite")
+            || (format.ends_with("db") && !format.ends_with("duckdb"))
+        {
             #[cfg(feature = "ocel-sqlite")]
             {
                 let mut b = Vec::new();
@@ -146,7 +149,7 @@ impl Importable for OCEL {
             return Err(OCELIOError::UnsupportedFormat(
                 "SQLite support not enabled".to_string(),
             ));
-        } else if format == "duckdb" || format.ends_with(".duckdb") {
+        } else if format.ends_with("duckdb") {
             Err(OCELIOError::UnsupportedFormat(
                 "DuckDB import from reader not supported".to_string(),
             ))
@@ -167,7 +170,7 @@ impl Importable for OCEL {
             )
         })?;
 
-        if format == "sqlite" || format.ends_with(".sqlite") || format.ends_with(".db") {
+        if format.ends_with("sqlite") || (format.ends_with("db") && !format.ends_with("duckdb")) {
             #[cfg(feature = "ocel-sqlite")]
             return crate::core::event_data::object_centric::ocel_sql::import_ocel_sqlite_from_path(path)
                 .map_err(OCELIOError::Sqlite);
@@ -175,7 +178,7 @@ impl Importable for OCEL {
             return Err(OCELIOError::UnsupportedFormat(
                 "SQLite support not enabled".to_string(),
             ));
-        } else if format == "duckdb" || format.ends_with(".duckdb") {
+        } else if format.ends_with("duckdb") {
             #[cfg(feature = "ocel-duckdb")]
             return crate::core::event_data::object_centric::ocel_sql::import_ocel_duckdb_from_path(path)
                 .map_err(OCELIOError::DuckDB);
@@ -234,7 +237,7 @@ impl Exportable for OCEL {
             )
         })?;
 
-        if format == "sqlite" || format.ends_with(".sqlite") || format.ends_with(".db") {
+        if format.ends_with("sqlite") || (format.ends_with("db") && !format.ends_with("duckdb")) {
             #[cfg(feature = "ocel-sqlite")]
             return crate::core::event_data::object_centric::ocel_sql::export_ocel_sqlite_to_path(
                 self, path,
@@ -249,7 +252,7 @@ impl Exportable for OCEL {
             return Err(OCELIOError::UnsupportedFormat(
                 "SQLite support not enabled".to_string(),
             ));
-        } else if format == "duckdb" || format.ends_with(".duckdb") {
+        } else if format.ends_with("duckdb") {
             #[cfg(feature = "ocel-duckdb")]
             {
                 crate::core::event_data::object_centric::ocel_sql::export_ocel_duckdb_to_path(
@@ -275,14 +278,15 @@ impl Exportable for OCEL {
 
     fn export_to_writer_with_options<W: Write>(
         &self,
-        #[allow(unused_mut)] mut writer: W,
+        #[cfg(feature = "ocel-sqlite")] mut writer: W,
+        #[cfg(not(feature = "ocel-sqlite"))] writer: W,
         format: &str,
         _: Self::ExportOptions,
     ) -> Result<(), Self::Error> {
-        if format == "json" || format.ends_with(".json") || format.ends_with(".jsonocel") {
+        if format.ends_with("json") || format.ends_with("jsonocel") {
             serde_json::to_writer(writer, self)?;
             Ok(())
-        } else if format == "xml" || format.ends_with(".xml") || format.ends_with(".xmlocel") {
+        } else if format.ends_with("xml") || format.ends_with("xmlocel") {
             crate::core::event_data::object_centric::ocel_xml::xml_ocel_export::export_ocel_xml(
                 writer, self,
             )

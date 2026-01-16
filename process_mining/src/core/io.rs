@@ -132,7 +132,7 @@ pub trait Exportable {
         self.export_to_writer_with_options(writer, format, Self::ExportOptions::default())
     }
 
-    /// Export to a file path, optionally specifying the format and import options.
+    /// Export to a file path, optionally specifying the format and export options.
     fn export_to_path_with_options<P: AsRef<Path>>(
         &self,
         path: P,
