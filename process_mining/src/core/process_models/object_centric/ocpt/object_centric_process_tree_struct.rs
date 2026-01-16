@@ -205,7 +205,7 @@ pub enum OCPTOperatorType {
 ///
 /// Object-centric process tree struct that contains [`OCPTNode`] as root
 ///
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct OCPT {
     /// The root of the object-centric process tree
     pub root: OCPTNode,
