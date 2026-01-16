@@ -86,13 +86,13 @@ impl Importable for EventLog {
                 let log: EventLog = serde_json::from_reader(reader)?;
                 Ok(log)
             }
-            _ if format.ends_with("xes") => {
-                let buf_reader = BufReader::new(reader);
-                import_xes(buf_reader, options).map_err(EventLogIOError::Xes)
-            }
             _ if format.ends_with("xes.gz") => {
                 let gz = flate2::read::GzDecoder::new(reader);
                 let buf_reader = BufReader::new(gz);
+                import_xes(buf_reader, options).map_err(EventLogIOError::Xes)
+            }
+            _ if format.ends_with("xes") => {
+                let buf_reader = BufReader::new(reader);
                 import_xes(buf_reader, options).map_err(EventLogIOError::Xes)
             }
             _ => Err(EventLogIOError::UnsupportedFormat(format.to_string())),
