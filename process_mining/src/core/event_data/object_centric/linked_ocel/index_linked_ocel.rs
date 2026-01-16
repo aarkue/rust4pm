@@ -9,9 +9,9 @@ use binding_macros::RegistryEntity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::event_data::object_centric::io::OCELIOError;
 use crate::core::event_data::object_centric::ocel_struct::{OCELEvent, OCELObject, OCELType, OCEL};
 use crate::core::io::{Exportable, Importable};
+use crate::core::{event_data::object_centric::io::OCELIOError, io::ExtensionWithMime};
 
 use super::LinkedOCELAccess;
 
@@ -451,8 +451,13 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
 
 impl Importable for IndexLinkedOCEL {
     type Error = OCELIOError;
+    type ImportOptions = ();
 
-    fn import_from_reader<R: Read>(reader: R, format: &str) -> Result<Self, Self::Error> {
+    fn import_from_reader_with_options<R: Read>(
+        reader: R,
+        format: &str,
+        _: Self::ImportOptions,
+    ) -> Result<Self, Self::Error> {
         if format == "json" || format.ends_with(".json") {
             let reader = std::io::BufReader::new(reader);
             let res: Self = serde_json::from_reader(reader)?;
@@ -473,18 +478,36 @@ impl Importable for IndexLinkedOCEL {
             <OCEL as Importable>::infer_format(path)
         }
     }
+
+    fn known_import_formats() -> Vec<crate::core::io::ExtensionWithMime> {
+        let mut ocel_formats = <OCEL as Importable>::known_import_formats();
+        ocel_formats.push(ExtensionWithMime::new("ocel.json", "application/json"));
+        ocel_formats
+    }
 }
 
 impl Exportable for IndexLinkedOCEL {
     type Error = OCELIOError;
+    type ExportOptions = ();
 
-    fn export_to_writer<W: Write>(&self, writer: W, format: &str) -> Result<(), Self::Error> {
+    fn export_to_writer_with_options<W: Write>(
+        &self,
+        writer: W,
+        format: &str,
+        _: Self::ExportOptions,
+    ) -> Result<(), Self::Error> {
         if format == "json" || format.ends_with(".json") {
             serde_json::to_writer(writer, self)?;
             Ok(())
         } else {
             self.ocel.export_to_writer(writer, format)
         }
+    }
+
+    fn known_export_formats() -> Vec<ExtensionWithMime> {
+        let mut ocel_formats = <OCEL as Exportable>::known_export_formats();
+        ocel_formats.push(ExtensionWithMime::new("ocel.json", "application/json"));
+        ocel_formats
     }
 }
 #[cfg(test)]

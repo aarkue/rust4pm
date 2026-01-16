@@ -8,7 +8,7 @@ use crate::core::event_data::case_centric::xes::import_xes::{
     import_xes, XESImportOptions, XESParseError,
 };
 use crate::core::event_data::case_centric::EventLog;
-use crate::core::io::{Exportable, Importable};
+use crate::core::io::{Exportable, ExtensionWithMime, Importable};
 
 /// Error type for `EventLog` IO operations
 #[derive(Debug)]
@@ -75,8 +75,13 @@ impl From<quick_xml::Error> for EventLogIOError {
 
 impl Importable for EventLog {
     type Error = EventLogIOError;
+    type ImportOptions = XESImportOptions;
 
-    fn import_from_reader<R: Read>(reader: R, format: &str) -> Result<Self, Self::Error> {
+    fn import_from_reader_with_options<R: Read>(
+        reader: R,
+        format: &str,
+        options: Self::ImportOptions,
+    ) -> Result<Self, Self::Error> {
         match format {
             _ if format.ends_with("json") => {
                 let log: EventLog = serde_json::from_reader(reader)?;
@@ -84,12 +89,12 @@ impl Importable for EventLog {
             }
             _ if format.ends_with("xes") => {
                 let buf_reader = BufReader::new(reader);
-                import_xes(buf_reader, XESImportOptions::default()).map_err(EventLogIOError::Xes)
+                import_xes(buf_reader, options).map_err(EventLogIOError::Xes)
             }
             _ if format.ends_with("xes.gz") => {
                 let gz = flate2::read::GzDecoder::new(reader);
                 let buf_reader = BufReader::new(gz);
-                import_xes(buf_reader, XESImportOptions::default()).map_err(EventLogIOError::Xes)
+                import_xes(buf_reader, options).map_err(EventLogIOError::Xes)
             }
             _ => Err(EventLogIOError::UnsupportedFormat(format.to_string())),
         }
@@ -105,12 +110,26 @@ impl Importable for EventLog {
                 .map(|s| s.to_lowercase())
         }
     }
+
+    fn known_import_formats() -> Vec<ExtensionWithMime> {
+        vec![
+            ExtensionWithMime::new("xes", "application/xml"),
+            ExtensionWithMime::new("xes.gz", "application/gzip"),
+            ExtensionWithMime::new("json", "application/json"),
+        ]
+    }
 }
 
 impl Exportable for EventLog {
     type Error = EventLogIOError;
+    type ExportOptions = ();
 
-    fn export_to_writer<W: Write>(&self, writer: W, format: &str) -> Result<(), Self::Error> {
+    fn export_to_writer_with_options<W: Write>(
+        &self,
+        writer: W,
+        format: &str,
+        _: Self::ExportOptions,
+    ) -> Result<(), Self::Error> {
         if format.ends_with("json") {
             serde_json::to_writer(writer, self)?;
             Ok(())
@@ -125,5 +144,13 @@ impl Exportable for EventLog {
         } else {
             Err(EventLogIOError::UnsupportedFormat(format.to_string()))
         }
+    }
+
+    fn known_export_formats() -> Vec<ExtensionWithMime> {
+        vec![
+            ExtensionWithMime::new("xes", "application/xml"),
+            ExtensionWithMime::new("xes.gz", "application/gzip"),
+            ExtensionWithMime::new("json", "application/json"),
+        ]
     }
 }

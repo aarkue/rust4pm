@@ -2,7 +2,7 @@
 
 use std::io::{Read, Write};
 
-use crate::core::io::{Exportable, Importable};
+use crate::core::io::{Exportable, ExtensionWithMime, Importable};
 use crate::core::process_models::case_centric::petri_net::pnml::export_pnml::export_petri_net_to_pnml;
 use crate::core::process_models::case_centric::petri_net::pnml::import_pnml::{
     import_pnml_reader, PNMLParseError,
@@ -64,8 +64,13 @@ impl From<quick_xml::Error> for PetriNetIOError {
 
 impl Importable for PetriNet {
     type Error = PetriNetIOError;
+    type ImportOptions = ();
 
-    fn import_from_reader<R: Read>(reader: R, format: &str) -> Result<Self, Self::Error> {
+    fn import_from_reader_with_options<R: Read>(
+        reader: R,
+        format: &str,
+        _: Self::ImportOptions,
+    ) -> Result<Self, Self::Error> {
         if format == "pnml" || format.ends_with(".pnml") {
             let mut buf_reader = std::io::BufReader::new(reader);
             import_pnml_reader(&mut buf_reader).map_err(PetriNetIOError::Pnml)
@@ -73,16 +78,30 @@ impl Importable for PetriNet {
             Err(PetriNetIOError::UnsupportedFormat(format.to_string()))
         }
     }
+
+    fn known_import_formats() -> Vec<crate::core::io::ExtensionWithMime> {
+        vec![ExtensionWithMime::new("pnml", "text/plain")]
+    }
 }
 
 impl Exportable for PetriNet {
     type Error = PetriNetIOError;
+    type ExportOptions = ();
 
-    fn export_to_writer<W: Write>(&self, writer: W, format: &str) -> Result<(), Self::Error> {
+    fn export_to_writer_with_options<W: Write>(
+        &self,
+        writer: W,
+        format: &str,
+        _: Self::ExportOptions,
+    ) -> Result<(), Self::Error> {
         if format == "pnml" || format.ends_with(".pnml") {
             export_petri_net_to_pnml(self, writer).map_err(PetriNetIOError::Xml)
         } else {
             Err(PetriNetIOError::UnsupportedFormat(format.to_string()))
         }
+    }
+
+    fn known_export_formats() -> Vec<ExtensionWithMime> {
+        vec![ExtensionWithMime::new("pnml", "text/plain")]
     }
 }

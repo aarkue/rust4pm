@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::event_data::case_centric::io::EventLogIOError;
-use crate::core::io::{Exportable, Importable};
+use crate::core::io::{Exportable, ExtensionWithMime, Importable};
 use crate::core::{
     event_data::case_centric::{
         constants::ACTIVITY_NAME, xes::stream_xes::XESParsingTraceStream, Attribute,
@@ -311,8 +311,13 @@ impl ActivityProjectionDFG {
 
 impl Importable for EventLogActivityProjection {
     type Error = EventLogIOError;
+    type ImportOptions = ();
 
-    fn import_from_reader<R: Read>(reader: R, format: &str) -> Result<Self, Self::Error> {
+    fn import_from_reader_with_options<R: Read>(
+        reader: R,
+        format: &str,
+        _: Self::ImportOptions,
+    ) -> Result<Self, Self::Error> {
         if format == "json" || format.ends_with(".json") {
             let reader = std::io::BufReader::new(reader);
             let res: Self = serde_json::from_reader(reader)?;
@@ -337,17 +342,35 @@ impl Importable for EventLogActivityProjection {
             <EventLog as Importable>::infer_format(path)
         }
     }
+
+    fn known_import_formats() -> Vec<crate::core::io::ExtensionWithMime> {
+        vec![
+            ExtensionWithMime::new("json", "application/json"),
+            ExtensionWithMime::new("xes", "application/xml"),
+            ExtensionWithMime::new("xes.gz", "application/gzip"),
+        ]
+    }
 }
 
 impl Exportable for EventLogActivityProjection {
     type Error = EventLogIOError;
+    type ExportOptions = ();
 
-    fn export_to_writer<W: Write>(&self, writer: W, format: &str) -> Result<(), Self::Error> {
+    fn export_to_writer_with_options<W: Write>(
+        &self,
+        writer: W,
+        format: &str,
+        _: Self::ExportOptions,
+    ) -> Result<(), Self::Error> {
         if format == "json" || format.ends_with(".json") {
             serde_json::to_writer(writer, self)?;
             Ok(())
         } else {
             Err(EventLogIOError::UnsupportedFormat(format.to_string()))
         }
+    }
+
+    fn known_export_formats() -> Vec<ExtensionWithMime> {
+        vec![ExtensionWithMime::new("json", "application/json")]
     }
 }
