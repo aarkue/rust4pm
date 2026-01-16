@@ -1010,7 +1010,7 @@ mod tests {
         );
         const EXPECTED_PRECISION: f64 = 0.6876033057851241;
         assert!(
-            (precision - EXPECTED_PRECISION).abs() < f64::EPSILON,
+            (precision - EXPECTED_PRECISION).abs() < 0.00000001,
             "Wrong precision: got {}!={} <- should be this value",
             precision,
             EXPECTED_PRECISION

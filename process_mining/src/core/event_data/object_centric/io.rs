@@ -251,15 +251,17 @@ impl Exportable for OCEL {
             ));
         } else if format == "duckdb" || format.ends_with(".duckdb") {
             #[cfg(feature = "ocel-duckdb")]
-            return crate::core::event_data::object_centric::ocel_sql::export_ocel_duckdb_to_path(
-                self, path,
-            )
-            .map_err(|e| match e {
-                #[cfg(feature = "ocel-sqlite")]
-                DatabaseError::SQLITE(e) => OCELIOError::Sqlite(e),
-                #[cfg(feature = "ocel-duckdb")]
-                DatabaseError::DUCKDB(e) => OCELIOError::DuckDB(e),
-            });
+            {
+                crate::core::event_data::object_centric::ocel_sql::export_ocel_duckdb_to_path(
+                    self, path,
+                )
+                .map_err(|e| match e {
+                    #[cfg(feature = "ocel-sqlite")]
+                    DatabaseError::SQLITE(e) => OCELIOError::Sqlite(e),
+                    #[cfg(feature = "ocel-duckdb")]
+                    DatabaseError::DUCKDB(e) => OCELIOError::DuckDB(e),
+                })
+            }
             #[cfg(not(feature = "ocel-duckdb"))]
             return Err(OCELIOError::UnsupportedFormat(
                 "DuckDB support not enabled".to_string(),
@@ -286,14 +288,21 @@ impl Exportable for OCEL {
             )
             .map_err(OCELIOError::Xml)
         } else if format.ends_with("sqlite") || format.ends_with("db") {
-            let b = export_ocel_sqlite_to_vec(self).map_err(|e| match e {
-                #[cfg(feature = "ocel-sqlite")]
-                DatabaseError::SQLITE(e) => OCELIOError::Sqlite(e),
-                #[cfg(feature = "ocel-duckdb")]
-                DatabaseError::DUCKDB(e) => OCELIOError::DuckDB(e),
-            })?;
-            writer.write_all(&b)?;
-            Ok(())
+            #[cfg(feature = "ocel-sqlite")]
+            {
+                let b = export_ocel_sqlite_to_vec(self).map_err(|e| match e {
+                    #[cfg(feature = "ocel-sqlite")]
+                    DatabaseError::SQLITE(e) => OCELIOError::Sqlite(e),
+                    #[cfg(feature = "ocel-duckdb")]
+                    DatabaseError::DUCKDB(e) => OCELIOError::DuckDB(e),
+                })?;
+                writer.write_all(&b)?;
+                Ok(())
+            }
+            #[cfg(not(feature = "ocel-sqlite"))]
+            return Err(OCELIOError::UnsupportedFormat(
+                "SQLite support not enabled".to_string(),
+            ));
         } else if format.ends_with("duckdb") {
             Err(OCELIOError::UnsupportedFormat(
                 "DuckDB export to writer not supported".to_string(),
