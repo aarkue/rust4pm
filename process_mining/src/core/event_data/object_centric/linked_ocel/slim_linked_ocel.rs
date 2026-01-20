@@ -55,12 +55,7 @@ impl EventIndex {
     }
     /// Get the event type of the event referenced through this event index
     pub fn get_ev_type<'a>(&self, locel: &'a SlimLinkedOCEL) -> &'a String {
-        unsafe {
-            &locel
-                .event_types
-                .get_unchecked(locel.events.get_unchecked(self.0).event_type)
-                .name
-        }
+        &locel.event_types[locel.events[self.0].event_type].name
     }
     /// Get the timestamp of this event
     pub fn get_time<'a>(&self, locel: &'a SlimLinkedOCEL) -> &'a DateTime<FixedOffset> {
@@ -95,7 +90,7 @@ impl EventIndex {
         let attr_val = ev.attributes.get(index)?;
         Some(attr_val)
     }
-    /// Get a mutuable reference to the attribute value of this event, specified by the attribute name
+    /// Get a mutable reference to the attribute value of this event, specified by the attribute name
     ///
     /// Returns [`None`] if there is no such attribute.
     pub fn get_attribute_value_mut<'a>(
@@ -112,7 +107,7 @@ impl EventIndex {
         let attr_val = ev.attributes.get_mut(index)?;
         Some(attr_val)
     }
-    /// Get 'fat' version of Event (i.e., with all fields expanded, with a structure similiar to the OCEL 2.0 specification)
+    /// Get 'fat' version of Event (i.e., with all fields expanded, with a structure similar to the OCEL 2.0 specification)
     pub fn fat_ev(&self, locel: &SlimLinkedOCEL) -> OCELEvent {
         let sev = self.get_ev(locel);
         let ev_type = &locel.event_types[sev.event_type];
@@ -500,7 +495,7 @@ impl SlimLinkedOCEL {
         }
     }
 
-    /// Get all events of the spcecified event type
+    /// Get all events of the specified event type
     pub fn get_evs_of_type<'a>(&'a self, event_type: &str) -> impl Iterator<Item = &'a EventIndex> {
         self.evtype_to_index
             .get(event_type)

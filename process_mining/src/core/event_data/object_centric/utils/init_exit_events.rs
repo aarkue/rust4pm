@@ -1,4 +1,4 @@
-//! Functionality related to artifical init/exit events per object
+//! Functionality related to artificial init/exit events per object
 //! which mark the (implicit) creation or destruction of the object.
 use itertools::Itertools;
 

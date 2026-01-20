@@ -52,7 +52,7 @@ pub trait LinkedOCELAccess<'a> {
         index: impl Borrow<Self::ObjectRepr>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)>;
 
-    /// Get all objects reversely related to the given object (through **reverse** O2O (object-to-object) relations)
+    /// Get all objects (in reverse) related to the given object (through **reverse** O2O (object-to-object) relations)
     fn get_o2o_rev(
         &'a self,
         index: impl Borrow<Self::ObjectRepr>,
