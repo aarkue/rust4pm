@@ -15,7 +15,7 @@ use crate::{
             get_activity_object_involvements, get_object_to_object_involvements,
             get_rev_object_to_object_involvements, OCDeclareArc, OCDeclareArcLabel,
             OCDeclareArcType, OCDeclareNode, ObjectInvolvementCounts, ObjectTypeAssociation,
-            ALL_OC_DECLARE_ARC_TYPES, EXIT_EVENT_PREFIX, INIT_EVENT_PREFIX,
+            ALL_OC_DECLARE_ARC_TYPES,
         },
     },
 };
@@ -108,16 +108,6 @@ pub fn discover_behavior_constraints(
         .iter()
         .cartesian_product(acts_to_use.iter())
         .par_bridge()
-        .filter(|(act1, act2)| {
-            if act1.starts_with(INIT_EVENT_PREFIX)
-                || act1.starts_with(EXIT_EVENT_PREFIX)
-                || act2.starts_with(INIT_EVENT_PREFIX)
-                || act2.starts_with(EXIT_EVENT_PREFIX)
-            {
-                return false;
-            }
-            true
-        })
         .flat_map(|(act1, act2)| {
             let obj_invs = get_direct_or_indirect_object_involvements(
                 act1,

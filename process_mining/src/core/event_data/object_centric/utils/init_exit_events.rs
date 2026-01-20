@@ -1,8 +1,10 @@
+//! Functionality related to artifical init/exit events per object
+//! which mark the (implicit) creation or destruction of the object.
 use itertools::Itertools;
 
 use crate::core::{
     event_data::object_centric::{
-        linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess, SlimLinkedOCEL},
+        linked_ocel::{LinkedOCELAccess, SlimLinkedOCEL},
         OCELEvent, OCELRelationship, OCELType,
     },
     OCEL,
@@ -13,9 +15,20 @@ pub const INIT_EVENT_PREFIX: &str = "<init>";
 /// Activity Prefix for EXIT events (i.e., the destruction of an object)
 pub const EXIT_EVENT_PREFIX: &str = "<exit>";
 
-/// Preprocess an OCEL for OC-DECLARE, adding init and exit events for objects
-pub fn preprocess_ocel(ocel: OCEL) -> SlimLinkedOCEL {
-    let locel: IndexLinkedOCEL = ocel.into();
+/// Add artificial init/exit events to an OCEL
+///
+///
+/// - `<init>` events are added for each object, exactly or slightly before the time they first occur in an event
+/// - `<exit>` events are added for each object, exactly or slightly after the time they last occur in an event
+///
+/// For an object of type `order` the activities are then called `<init> order` or `<exit> order`, respectively.
+///
+/// __Note: This processing is no longer necessary for OC-DECLARE discovery and conformance checking__
+///
+/// This function remains, as it might be useful for other applications.
+///
+pub fn add_init_exit_events_to_ocel(ocel: OCEL) -> OCEL {
+    let locel = SlimLinkedOCEL::from_ocel(ocel);
     let new_evs = locel
         .get_all_obs()
         .flat_map(|obi| {
@@ -52,7 +65,7 @@ pub fn preprocess_ocel(ocel: OCEL) -> SlimLinkedOCEL {
             ]
         })
         .collect_vec();
-    let mut ocel = locel.into_inner();
+    let mut ocel = locel.construct_ocel();
     ocel.event_types
         .extend(ocel.object_types.iter().flat_map(|ot| {
             vec![
@@ -67,5 +80,5 @@ pub fn preprocess_ocel(ocel: OCEL) -> SlimLinkedOCEL {
             ]
         }));
     ocel.events.extend(new_evs);
-    SlimLinkedOCEL::from_ocel(ocel)
+    ocel
 }

@@ -1,7 +1,8 @@
 //! OC-DECLARE Object-Centric Declarative Process Models
-mod preprocess;
+pub use crate::core::event_data::object_centric::utils::init_exit_events::{
+    add_init_exit_events_to_ocel, EXIT_EVENT_PREFIX, INIT_EVENT_PREFIX,
+};
 use chrono::{DateTime, Duration, FixedOffset};
-pub use preprocess::{preprocess_ocel, EXIT_EVENT_PREFIX, INIT_EVENT_PREFIX};
 use schemars::JsonSchema;
 
 use std::collections::{HashMap, HashSet};
@@ -19,7 +20,7 @@ use crate::core::event_data::object_centric::linked_ocel::{LinkedOCELAccess, Sli
 #[derive(
     Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord, JsonSchema,
 )]
-/// OC-DECLARE node (Activity or Object Init/Exit, also see [`preprocess::preprocess_ocel`])
+/// OC-DECLARE node (Activity or Object Init/Exit)
 pub struct OCDeclareNode(String);
 
 impl<'a> From<&'a OCDeclareNode> for &'a String {
