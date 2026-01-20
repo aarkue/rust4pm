@@ -1,4 +1,4 @@
-# process_mining
+# `process_mining`
 
 A Rust library for Process Mining, providing efficient data structures and algorithms for working with event data.
 
@@ -32,7 +32,7 @@ For more details, see the [Examples README](examples/README.md).
 
 - **Event Data Support**:
   - **XES**: Import and export of IEEE XES event logs.
-  - **OCEL 2.0**: Full support for Object-Centric Event Logs (JSON, XML, SQLite, and also an unofficial DuckDB format).
+  - **OCEL 2.0**: Full support for Object-Centric Event Logs (`JSON`, `XML`, `SQLite`, and also an unofficial `DuckDB` format).
 - **Process Discovery**:
   - Directly-Follows Graphs (DFG)
   - Alpha Miner
