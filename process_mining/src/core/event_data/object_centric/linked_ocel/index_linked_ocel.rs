@@ -505,7 +505,7 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
     }
 
     fn get_ev_id(&'a self, ev: impl Borrow<Self::EventRepr>) -> &'a str {
-        self.ocel.objects[ev.borrow().0].id.as_str()
+        self.ocel.events[ev.borrow().0].id.as_str()
     }
 
     fn get_ev_by_id(&'a self, ev_id: impl AsRef<str>) -> Option<Self::EventRepr> {

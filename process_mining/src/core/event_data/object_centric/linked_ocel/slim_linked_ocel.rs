@@ -544,7 +544,9 @@ impl SlimLinkedOCEL {
         if self.event_ids_to_index.contains_key(&id) {
             return None;
         }
-        let new_ev_index = EventIndex(self.events.len() + 1);
+        let new_ev_index = EventIndex(self.events.len());
+        self.event_ids_to_index.insert(id.clone(), new_ev_index);
+        self.events_per_type.get_mut(*etype)?.push(new_ev_index);
         // Relationships should be sorted
         relationships.sort_by_key(|(_q, o)| *o);
         for (_q, o) in &relationships {
@@ -578,7 +580,9 @@ impl SlimLinkedOCEL {
         if self.object_ids_to_index.contains_key(&id) {
             return None;
         }
-        let new_ob_index = ObjectIndex(self.objects.len() + 1);
+        let new_ob_index = ObjectIndex(self.objects.len());
+        self.object_ids_to_index.insert(id.clone(), new_ob_index);
+        self.objects_per_type.get_mut(*otype)?.push(new_ob_index);
         // Relationships should be sorted
         relationships.sort_by_key(|(_q, o)| *o);
         for (_q, o) in &relationships {
