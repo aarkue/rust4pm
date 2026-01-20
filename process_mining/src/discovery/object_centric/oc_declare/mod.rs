@@ -206,8 +206,8 @@ pub fn get_oi_labels<'a>(
             // It IS a viable candidate!
             // Also test Each/All:
             if is_multiple {
+                // Otherwise, do not need to bother with differentiating Each/All!
                 ret.push(any_label.clone());
-                // All is also valid!
                 // Next, test Each:
                 let each_label = OCDeclareArcLabel {
                     all: vec![],
@@ -224,14 +224,13 @@ pub fn get_oi_labels<'a>(
                     noise_threshold,
                 );
                 if each_sat {
-                    // All is also valid!
+                    // Each is also valid!
                     ret.push(each_label);
                     let all_label = OCDeclareArcLabel {
                         all: any_label.any.clone(),
                         any: vec![],
                         each: vec![],
                     };
-                    // Otherwise, do not need to bother with differentiating Each/All!
                     let all_sat = get_for_all_evs_perf_thresh(
                         act1,
                         act2,
@@ -246,7 +245,8 @@ pub fn get_oi_labels<'a>(
                     }
                 }
             } else {
-                // Not multiple? Then add as each
+                // Not multiple? Then add as Each
+                // This is a preference/choice, of course All would also hold on the input data
                 let each_label = OCDeclareArcLabel {
                     each: any_label.any.clone(),
                     any: vec![],
