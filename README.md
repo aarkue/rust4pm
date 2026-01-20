@@ -1,5 +1,5 @@
 <div align="center">
-<h1>Rust4PM</h1>
+<h1><strong>Rust4PM</strong>: Rust for Process Mining</h1>
   <p><strong><code>process_mining</code> Rust Crate</strong></p>
   <p>
     <a href="https://crates.io/crates/process_mining">
@@ -9,6 +9,7 @@
 	<a href="https://docs.rs/process_mining"">
         <img src="https://img.shields.io/badge/docs.rs-process_mining-blue" alt="Documentation"/></a>
   </p>
+<img src="logo.png" width="300" alt="Rust4PM Logo: A crab with a miner hat hitting a bunch of stone cubes with a pickaxe."/>
 </div>
 
 
