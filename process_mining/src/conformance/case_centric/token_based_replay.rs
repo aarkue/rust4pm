@@ -1,6 +1,7 @@
 //! Token-based Replay on Petri Nets
 #[cfg(feature = "token-based-replay")]
-use binding_macros::register_binding;
+use macros_process_mining::register_binding;
+#[cfg(feature = "token-based-replay")]
 use nalgebra::{DMatrix, DVector};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

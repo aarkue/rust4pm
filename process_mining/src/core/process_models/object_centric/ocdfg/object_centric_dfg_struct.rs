@@ -1,4 +1,4 @@
-use binding_macros::register_binding;
+use macros_process_mining::register_binding;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

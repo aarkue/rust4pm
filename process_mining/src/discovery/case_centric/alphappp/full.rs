@@ -3,7 +3,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use binding_macros::register_binding;
+use macros_process_mining::register_binding;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

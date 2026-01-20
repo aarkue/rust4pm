@@ -362,15 +362,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "binding_macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.98",
-]
-
-[[package]]
 name = "bitflags"
 version = "2.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1926,6 +1917,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "macros_process_mining"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.98",
+]
+
+[[package]]
 name = "matrixmultiply"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2890,7 +2890,6 @@ dependencies = [
 name = "process_mining"
 version = "0.4.0"
 dependencies = [
- "binding_macros",
  "chrono",
  "duckdb",
  "flate2",
@@ -2898,6 +2897,7 @@ dependencies = [
  "inventory",
  "itertools",
  "kuzu",
+ "macros_process_mining",
  "nalgebra",
  "ordered-float",
  "petgraph",

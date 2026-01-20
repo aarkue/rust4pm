@@ -1,5 +1,5 @@
-use binding_macros::RegistryEntity;
 use chrono::{DateTime, FixedOffset};
+use macros_process_mining::RegistryEntity;
 use ordered_float::OrderedFloat;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -510,6 +510,7 @@ impl Trace {
 /// Event log consisting of a list of [`Trace`]s and log [`Attributes`]
 ///
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, RegistryEntity, JsonSchema)]
+
 pub struct EventLog {
     /// Top-level attributes
     pub attributes: Attributes,

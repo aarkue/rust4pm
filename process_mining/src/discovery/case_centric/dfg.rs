@@ -1,6 +1,6 @@
 //! Discover [`DirectlyFollowsGraph`]s from Data
 
-use binding_macros::register_binding;
+use macros_process_mining::register_binding;
 
 use crate::core::{
     event_data::case_centric::EventLogClassifier,

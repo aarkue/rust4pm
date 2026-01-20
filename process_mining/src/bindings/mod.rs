@@ -40,6 +40,7 @@ use crate::core::{
     },
     EventLog,
 };
+use macros_process_mining::register_binding;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -513,23 +514,23 @@ pub fn get_fn_binding(id: &str) -> Option<&'static Binding> {
 }
 
 /// Get the number of objects in an [`OCEL`]
-#[binding_macros::register_binding]
+#[register_binding]
 pub fn num_objects(ocel: &IndexLinkedOCEL) -> usize {
     ocel.get_ocel_ref().objects.len()
 }
 /// Get the number of events in an [`OCEL`]
-#[binding_macros::register_binding]
+#[register_binding]
 pub fn num_events(ocel: &IndexLinkedOCEL) -> usize {
     ocel.get_ocel_ref().events.len()
 }
 
 /// Convert an [`OCEL`] to an [`IndexLinkedOCEL`]
-#[binding_macros::register_binding]
+#[register_binding]
 pub fn index_link_ocel(ocel: &OCEL) -> IndexLinkedOCEL {
     IndexLinkedOCEL::from_ocel(ocel.clone())
 }
 
-#[binding_macros::register_binding]
+#[register_binding]
 /// This is a test function.
 ///
 /// **This should be bold**, *this is italic*, `and this code`.
@@ -550,7 +551,7 @@ mod tests {
         let variant_names: HashSet<String> = variants.iter().map(|v| v.to_string()).collect();
 
         // Get the list of types from the macro crate
-        let macro_types: &[&str] = binding_macros::big_types_list!();
+        let macro_types: &[&str] = macros_process_mining::big_types_list!();
         let macro_type_names: HashSet<String> = macro_types.iter().map(|s| s.to_string()).collect();
 
         // Check for consistency
@@ -567,7 +568,7 @@ mod tests {
         for variant in &variant_names {
             assert!(
                 macro_type_names.contains(variant),
-                "RegistryItem has variant '{}' which is missing in binding_macros::BIG_TYPES_NAMES",
+                "RegistryItem has variant '{}' which is missing in macros_process_mining::BIG_TYPES_NAMES",
                 variant
             );
         }
@@ -575,7 +576,7 @@ mod tests {
         assert_eq!(
             variant_names.len(),
             macro_type_names.len(),
-            "Mismatch in number of types between RegistryItem and binding_macros"
+            "Mismatch in number of types between RegistryItem and macros_process_mining"
         );
     }
 }

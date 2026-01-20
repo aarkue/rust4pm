@@ -6,7 +6,7 @@ use std::{
     path::Path,
 };
 
-use binding_macros::RegistryEntity;
+use macros_process_mining::RegistryEntity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

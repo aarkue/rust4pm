@@ -1,8 +1,8 @@
-# binding_macros
+# `macros_process_mining`
 
 **Note: This crate is intended for internal use only.**
 
-`binding_macros` provides the procedural macros required by the `rust4pm` project.
+`macros_process_mining` provides the procedural macros required by the `rust4pm` project.
 
 These macros (i.e., `register_binding`) automatically register an annotated function for dynamic introspection and execution, effectively creating dynamic function bindings.
 This functionality, for example, powers the CLI.

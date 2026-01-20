@@ -5,7 +5,7 @@
 //! Cases with the same activity trace are aggregated as frequencies.
 use std::collections::{HashMap, HashSet};
 
-use binding_macros::{register_binding, RegistryEntity};
+use macros_process_mining::{register_binding, RegistryEntity};
 use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

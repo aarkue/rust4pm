@@ -6,9 +6,9 @@ use std::{
     collections::HashMap,
 };
 
-use binding_macros::RegistryEntity;
 use chrono::{DateTime, FixedOffset};
 use itertools::Itertools;
+use macros_process_mining::RegistryEntity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

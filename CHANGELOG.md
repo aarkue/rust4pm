@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## `process_mining` 0.4.0
 
 ### Restructuring (Current)
 - **Unified IO Traits**: Introduced `Importable` and `Exportable` traits in `process_mining::core::io` to standardize import and export operations across different data structures.
@@ -23,6 +23,7 @@
 - **Token-Based Replay**: Implemented token-based replay on Petri nets.
 - **Incidence Matrices**: Added incidence matrices for Petri nets.
 - **Event Log Macros**: Implemented macros for easier event log creation.
+- **OC-DECLARE**: Object-centric declarative process models, with discovery and conformance checking.
 
 ### Changed
 - **Exposed Fields**: Exposed `OCLanguageAbstraction` fields.

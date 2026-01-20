@@ -3,13 +3,13 @@
 //! 🔐 Requires the `graphviz-export` feature to be enabled
 use std::{cmp::Ordering, fs::File, io::Write};
 
-use binding_macros::register_binding;
 use graphviz_rust::{
     cmd::Format,
     dot_generator::{attr, edge, graph, id, node, node_id, stmt},
     dot_structures::*,
     printer::{DotPrinter, PrinterContext},
 };
+use macros_process_mining::register_binding;
 use uuid::Uuid;
 
 use crate::core::process_models::case_centric::dfg::dfg_struct::DirectlyFollowsGraph;
@@ -129,7 +129,8 @@ pub fn export_dfg_image_png(
 
 #[cfg(feature = "bindings")]
 mod private {
-    use binding_macros::register_binding;
+
+    use macros_process_mining::register_binding;
 
     use crate::core::process_models::case_centric::dfg::{
         image_export::export_dfg_image_png, DirectlyFollowsGraph,

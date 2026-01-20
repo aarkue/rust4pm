@@ -1,8 +1,8 @@
 //! Discovering OC-DECLARE Models from Object-Centric Event Data
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use binding_macros::register_binding;
 use itertools::Itertools;
+use macros_process_mining::register_binding;
 use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

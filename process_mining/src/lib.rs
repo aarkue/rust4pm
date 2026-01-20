@@ -6,8 +6,7 @@
     clippy::redundant_clone,
     clippy::clone_on_copy
 )]
-// #![allow(clippy::needless_doctest_main)]
-#![doc = include_str!("../../README.md")]
+#![doc = include_str!("../README.md")]
 
 pub mod core;
 
@@ -23,7 +22,7 @@ pub use core::io::{Exportable, Importable};
 // Re-export main structs for convenience
 pub use core::{EventLog, PetriNet, OCEL};
 
-/// Bindings (WIP)
+/// Bindings
 pub mod bindings;
 
 /// Used for internal testing

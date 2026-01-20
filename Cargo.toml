@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
 
-members = ["binding_macros",
+members = ["macros_process_mining",
 	"process_mining", "r4pm",
 ]

@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::fmt::Display;
 
-use binding_macros::RegistryEntity;
 use chrono::{DateTime, FixedOffset};
+use macros_process_mining::RegistryEntity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
