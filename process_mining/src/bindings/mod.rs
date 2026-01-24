@@ -35,6 +35,7 @@ use crate::core::{
         case_centric::utils::activity_projection::EventLogActivityProjection,
         object_centric::{linked_ocel::IndexLinkedOCEL, ocel_struct::OCEL},
     },
+    io::ExtensionWithMime,
     EventLog,
 };
 use schemars::JsonSchema;
@@ -106,6 +107,29 @@ impl RegistryItemKind {
             RegistryItemKind::EventLog,
             RegistryItemKind::OCEL,
         ]
+    }
+
+    /// Get known import formats
+    pub fn known_import_formats(&self) -> Vec<ExtensionWithMime> {
+        match self {
+            RegistryItemKind::EventLogActivityProjection => {
+                EventLogActivityProjection::known_import_formats()
+            }
+            RegistryItemKind::IndexLinkedOCEL => IndexLinkedOCEL::known_import_formats(),
+            RegistryItemKind::EventLog => EventLog::known_import_formats(),
+            RegistryItemKind::OCEL => OCEL::known_import_formats(),
+        }
+    }
+    /// Get known export formats
+    pub fn known_export_formats(&self) -> Vec<ExtensionWithMime> {
+        match self {
+            RegistryItemKind::EventLogActivityProjection => {
+                EventLogActivityProjection::known_export_formats()
+            }
+            RegistryItemKind::IndexLinkedOCEL => IndexLinkedOCEL::known_export_formats(),
+            RegistryItemKind::EventLog => EventLog::known_export_formats(),
+            RegistryItemKind::OCEL => OCEL::known_export_formats(),
+        }
     }
 }
 
