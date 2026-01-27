@@ -4,5 +4,7 @@
 pub mod case_centric;
 pub mod object_centric;
 
+pub mod timestamp_utils;
+
 #[cfg(test)]
 mod tests;

@@ -3,11 +3,8 @@ use crate::core::event_data::object_centric::ocel_struct::{
     OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute,
     OCELRelationship, OCELTypeAttribute,
 };
+use crate::core::event_data::timestamp_utils::parse_timestamp;
 use std::{collections::HashMap, ffi::CString};
-
-use crate::core::event_data::object_centric::ocel_xml::xml_ocel_import::{
-    parse_date, OCELImportOptions,
-};
 
 use super::super::*;
 use chrono::FixedOffset;
@@ -20,8 +17,7 @@ fn try_get_column_date_val(
     let dt = r.get::<_, DateTime<FixedOffset>>(column_name);
     dt.or_else(|_e| {
         r.get::<_, String>(column_name).and_then(|dt_str| {
-            parse_date(&dt_str, &OCELImportOptions::default())
-                .map_err(|_e| rusqlite::Error::InvalidQuery)
+            parse_timestamp(&dt_str, None, false).map_err(|_e| rusqlite::Error::InvalidQuery)
         })
     })
 }

@@ -21,9 +21,14 @@ This folder contains example usages of the `process_mining` crate.
 
 ## Object-Centric Process Mining
 
-- **`ocel_stats.rs`**: Imports an OCEL (XML/JSON) and prints basic statistics.
+- **`ocel_stats.rs`**: Imports an OCEL and prints basic statistics.
   ```bash
   cargo run --example ocel_stats -- <path_to_ocel.xml>
+  ```
+
+- **`ocel_csv_export.rs`**: Imports an OCEL and exports it to CSV format.
+  ```bash
+  cargo run --example ocel_csv_export -- <path_to_ocel.xml> [output.ocel.csv]
   ```
 
 - **`ocel_duckdb_export.rs`**: Imports an OCEL and exports it to a DuckDB database.

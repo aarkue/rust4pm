@@ -1,5 +1,17 @@
 # Changelog
 
+
+## Unreleased
+- Added CSV format support for OCEL:
+  - Added Importer/Exporter for CSV OCEL file format
+  - Added CSV file format to OCEL io trait + known formats (as `.ocel.csv`)
+- Combined/Deduped timestamp-related parsing functionality across files
+- Implemented `Null` as default `OCELAttributeValue`
+
+### Breaking Changes / Migration Guide
+- The `From<OCELAttributeValue>` implementation for `OCELAttributeType` was removed. Instead, use the `get_type` function on `OCELAttributeValue` to retrieve its type.
+- Updates related to io module for CSV parsing (e.g., new error variant in `OCELIOError`)
+
 ## `process_mining` 0.4.0
 
 ### Restructuring (Current)
