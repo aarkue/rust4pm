@@ -3,15 +3,16 @@ use std::{
     io::{BufRead, BufReader},
 };
 
-use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use quick_xml::{events::BytesStart, Reader};
 use serde::{Deserialize, Serialize};
 
-use crate::core::event_data::object_centric::ocel_struct::{
-    OCELAttributeType, OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject,
-    OCELObjectAttribute, OCELRelationship, OCELType, OCELTypeAttribute, OCEL,
+use crate::core::event_data::{
+    object_centric::ocel_struct::{
+        OCELAttributeType, OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject,
+        OCELObjectAttribute, OCELRelationship, OCELType, OCELTypeAttribute, OCEL,
+    },
+    timestamp_utils::parse_timestamp,
 };
-
 ///
 /// Options for OCEL Import
 ///
@@ -104,9 +105,11 @@ fn parse_attribute_value(
             .map_err(|e| format!("{e}"))
             .map(OCELAttributeValue::Boolean),
         OCELAttributeType::Null => Ok(OCELAttributeValue::Null),
-        OCELAttributeType::Time => parse_date(&value, options)
-            .map_err(|e| e.to_string())
-            .map(OCELAttributeValue::Time),
+        OCELAttributeType::Time => {
+            parse_timestamp(&value, options.date_format.as_deref(), options.verbose)
+                .map_err(|e| e.to_string())
+                .map(OCELAttributeValue::Time)
+        }
     };
     match res {
         Ok(attribute_val) => attribute_val,
@@ -119,58 +122,6 @@ fn parse_attribute_value(
             OCELAttributeValue::Null
         }
     }
-}
-
-///
-/// Parse Date from string, trying multiple different formats
-///
-/// Additionally, a date format can be passed as a parameter
-///
-pub fn parse_date<'a>(
-    time: &'a str,
-    options: &OCELImportOptions,
-) -> Result<DateTime<FixedOffset>, &'a str> {
-    if let Some(date_format) = &options.date_format {
-        if let Ok(dt) = DateTime::parse_from_str(time, date_format) {
-            return Ok(dt);
-        }
-    }
-    if let Ok(dt) = DateTime::parse_from_rfc3339(time) {
-        return Ok(dt);
-    }
-    if let Ok(dt) = DateTime::parse_from_rfc2822(time) {
-        return Ok(dt);
-    }
-    // eprintln!("Encountered weird datetime format: {:?}", time);
-
-    // Some logs have this date: "2023-10-06 09:30:21.890421"
-    // Assuming that this is UTC
-    if let Ok(dt) = NaiveDateTime::parse_from_str(time, "%F %T%.f") {
-        return Ok(dt.and_utc().into());
-    }
-
-    // Also handle "2024-10-02T07:55:15.348555" as well as "2022-01-09T15:00:00"
-    // Assuming UTC time zone
-    if let Ok(dt) = NaiveDateTime::parse_from_str(time, "%FT%T%.f") {
-        return Ok(dt.and_utc().into());
-    }
-
-    // export_path
-    if let Ok(dt) = NaiveDateTime::parse_from_str(time, "%F %T UTC") {
-        return Ok(dt.and_utc().into());
-    }
-
-    // Who made me do this? 🫣
-    // Some logs have this date: "Mon Apr 03 2023 12:08:18 GMT+0200 (Mitteleuropäische Sommerzeit)"
-    // Below ignores the first "Mon " part (%Z) parses the rest (only if "GMT") and then parses the timezone (+0200)
-    // The rest of the input is ignored
-    if let Ok((dt, _)) = DateTime::parse_and_remainder(time, "%Z %b %d %Y %T GMT%z") {
-        return Ok(dt);
-    }
-    if options.verbose {
-        eprintln!("Failed to parse date: {time}");
-    }
-    Err("Unexpected Date Format")
 }
 
 ///
@@ -272,7 +223,11 @@ where
                             b"attribute" => {
                                 let name = get_attribute_value(&t, "name")?;
                                 let time_str = get_attribute_value(&t, "time")?;
-                                let time = parse_date(&time_str, &options);
+                                let time = parse_timestamp(
+                                    &time_str,
+                                    options.date_format.as_deref(),
+                                    options.verbose,
+                                );
                                 match time {
                                     Ok(time_val) => {
                                         ocel.objects.last_mut().unwrap().attributes.push(
@@ -298,7 +253,11 @@ where
                                 let id = get_attribute_value(&t, "id")?;
                                 let event_type = get_attribute_value(&t, "type")?;
                                 let time = get_attribute_value(&t, "time")?;
-                                let time_val = match parse_date(&time, &options) {
+                                let time_val = match parse_timestamp(
+                                    &time,
+                                    options.date_format.as_deref(),
+                                    options.verbose,
+                                ) {
                                     Ok(t) => t,
                                     Err(e) => {
                                         return Err(quick_xml::Error::Io(std::sync::Arc::new(
@@ -459,7 +418,11 @@ where
                             b"attribute" => {
                                 let name = get_attribute_value(&t, "name")?;
                                 let time_str = get_attribute_value(&t, "time")?;
-                                let time = parse_date(&time_str, &options);
+                                let time = parse_timestamp(
+                                    &time_str,
+                                    options.date_format.as_deref(),
+                                    options.verbose,
+                                );
                                 match time {
                                     Ok(time_val) => {
                                         ocel.objects.last_mut().unwrap().attributes.push(

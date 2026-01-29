@@ -36,6 +36,7 @@ uuid = {version = "1.16.0", features = ["v4", "serde"]}
 macros_process_mining = { path = "../macros_process_mining", version = "0.1.0" }
 schemars = { version = "1.1.0", features = ["chrono04", "uuid1"]}
 inventory = { version = "0.3", optional = true }
+csv = "1.4.0"
 
 [features]
 

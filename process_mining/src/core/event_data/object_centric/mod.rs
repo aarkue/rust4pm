@@ -14,6 +14,7 @@ pub mod graph_db;
 pub mod io;
 pub mod linked_ocel;
 pub mod macros;
+pub mod ocel_csv;
 pub mod ocel_json;
 pub mod ocel_sql;
 pub(crate) mod ocel_struct;
