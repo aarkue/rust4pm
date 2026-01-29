@@ -262,7 +262,6 @@ pub enum OCELAttributeValue {
     Null,
 }
 
-
 impl Display for OCELAttributeValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
