@@ -229,7 +229,7 @@ impl Exportable for OCEL {
 
     fn infer_format(path: &Path) -> Option<String> {
         let p = path.to_string_lossy().to_lowercase();
-        if p.ends_with(".ocel.csv") {
+        if p.ends_with(".ocel.csv") || p.ends_with(".csv") {
             Some("ocel.csv".to_string())
         } else if p.ends_with(".json") || p.ends_with(".jsonocel") {
             Some("json".to_string())
