@@ -445,7 +445,7 @@ pub fn resolve_argument(
     arg_name: &str,
     value: Value,
     schema: &Value,
-    state: &mut AppState,
+    state: &AppState,
 ) -> Result<Value, String> {
     let schema_obj = schema.as_object().ok_or("Invalid schema")?;
 
