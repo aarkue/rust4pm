@@ -556,6 +556,12 @@ pub fn index_link_ocel(ocel: &OCEL) -> IndexLinkedOCEL {
     IndexLinkedOCEL::from_ocel(ocel.clone())
 }
 
+/// Convert an [`OCEL`] to an [`SlimLinkedOCEL`]
+#[register_binding]
+pub fn slim_link_ocel(ocel: &OCEL) -> SlimLinkedOCEL {
+    SlimLinkedOCEL::from_ocel(ocel.clone())
+}
+
 #[register_binding]
 /// This is a test function.
 ///
@@ -567,8 +573,18 @@ pub fn test_some_inputs(s: String, n: usize, i: i32, f: f64, b: bool) -> String 
 
 #[cfg(test)]
 mod tests {
+    use crate::test_utils::get_test_data_path;
+
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn export_bindings() {
+        let bindings = list_functions_meta();
+        let file = std::fs::File::create(get_test_data_path().join("export").join("bindings.json"))
+            .unwrap();
+        serde_json::to_writer_pretty(&file, &bindings).unwrap();
+    }
 
     #[test]
     fn test_consistent_registry_item_variants() {
