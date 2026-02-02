@@ -399,7 +399,9 @@ pub fn import_ocel_csv_with_options(
                             },
                         );
                         // Ensure object type is in registry (even with no attributes)
-                        object_type_attrs.entry(ot_name.clone()).or_default();
+                        if !object_type_attrs.contains_key(ot_name) {
+                            object_type_attrs.insert(ot_name.clone(), HashMap::new());
+                        }
                     }
 
                     // Handle inline JSON attributes
@@ -461,6 +463,10 @@ pub fn import_ocel_csv_with_options(
             })
             .collect();
 
+        // Ensure event type is in registry (even with no attributes)
+        if !event_type_attrs.contains_key(&event_type) {
+            event_type_attrs.insert(event_type.clone(), HashMap::new());
+        }
         // Collect event attributes
         let mut attrs: Vec<OCELEventAttribute> = Vec::new();
         for (col_idx, col) in columns.iter().enumerate() {
