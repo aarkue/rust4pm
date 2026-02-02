@@ -1,5 +1,10 @@
 # Changelog
 
+## `process_mining` 0.4.1
+- Added `verbose` option to `XESImportOptions`, defaulting to true
+  - Note: Technically this is a breaking change, however the recommended way to use `XESImportOptions` is non-exhaustive with default fallback:
+    - e.g., ```XESImportOptions {verbose: false, ..Default::default()}```
+
 ## `process_mining` 0.4.0
 
 ### Restructuring (Current)

@@ -4,6 +4,7 @@ A Rust library for Process Mining, providing efficient data structures and algor
 
 [![Crates.io](https://img.shields.io/crates/v/process_mining.svg)](https://crates.io/crates/process_mining)
 [![Docs.rs](https://img.shields.io/badge/docs.rs-process_mining-blue)](https://docs.rs/process_mining/)
+[![Docs.rs](https://img.shields.io/badge/GitHub-Rust4PM-teal)](https://github.com/aarkue/rust4pm)
 
 ## Module Structure
 
@@ -36,8 +37,12 @@ For more details, see the [Examples README](examples/README.md).
 - **Process Discovery**:
   - Directly-Follows Graphs (DFG)
   - Alpha Miner
+  - Object-Centric DFG
+  - OC-DECLARE Constraints with Synchronization
 - **Process Models**:
   - Petri Nets (import/export PNML, export to SVG/PNG via Graphviz)
+  - (Object-Centric) Process Trees
+  - OC-DECLARE Models
 - **Performance**: Built with Rust for high performance and memory safety.
 
 ## Documentation
