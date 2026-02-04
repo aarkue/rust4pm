@@ -541,13 +541,37 @@ pub fn get_fn_binding(id: &str) -> Option<&'static Binding> {
 
 /// Get the number of objects in an [`OCEL`]
 #[register_binding]
-pub fn num_objects(ocel: &IndexLinkedOCEL) -> usize {
-    ocel.get_ocel_ref().objects.len()
+pub fn num_objects<'a>(ocel: &'a impl LinkedOCELAccess<'a>) -> usize {
+    ocel.get_num_obs()
 }
 /// Get the number of events in an [`OCEL`]
 #[register_binding]
-pub fn num_events(ocel: &IndexLinkedOCEL) -> usize {
-    ocel.get_ocel_ref().events.len()
+pub fn num_events<'a>(ocel: &'a impl LinkedOCELAccess<'a>) -> usize {
+    ocel.get_num_evs()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+/// Statistics on the event and object types of an OCEL
+///
+pub struct OCELTypeStats {
+    /// Number of events per event type/activity
+    pub event_type_counts: HashMap<String, usize>,
+    /// Number of objects per object type
+    pub object_type_counts: HashMap<String, usize>,
+}
+#[register_binding]
+/// Compute statistics on object/event types in the OCEL
+pub fn ocel_type_stats<'a>(ocel: &'a impl LinkedOCELAccess<'a>) -> OCELTypeStats {
+    OCELTypeStats {
+        event_type_counts: ocel
+            .get_ev_types()
+            .map(|et| (et.to_string(), ocel.get_evs_of_type(et).count()))
+            .collect(),
+        object_type_counts: ocel
+            .get_ob_types()
+            .map(|ot| (ot.to_string(), ocel.get_obs_of_type(ot).count()))
+            .collect(),
+    }
 }
 
 /// Convert an [`OCEL`] to an [`IndexLinkedOCEL`]

@@ -63,6 +63,9 @@ impl Fold for LifetimeStripper {
                         syn::parse_quote!(std::path::PathBuf)
                     }
                     "AsRef < str >" => syn::parse_quote!(String),
+                    "LinkedOCELAccess < 'a >" => syn::parse_quote!(
+                        crate::core::event_data::object_centric::linked_ocel::SlimLinkedOCEL
+                    ),
                     _ => {
                         return fold::fold_type(self, ty);
                     }

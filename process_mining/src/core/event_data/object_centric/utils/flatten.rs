@@ -1,26 +1,33 @@
 //!  Functionality to Flatten OCEL on an Object Type
+use macros_process_mining::register_binding;
+
 use crate::core::{
     event_data::{
         case_centric::event_log_struct::{
             Attribute, AttributeValue, Event, Trace, XESEditableAttribute,
         },
-        object_centric::{
-            linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess},
-            ocel_struct::OCELAttributeValue,
-        },
+        object_centric::{linked_ocel::LinkedOCELAccess, ocel_struct::OCELAttributeValue},
     },
     EventLog,
 };
 
-pub(crate) fn flatten_ocel_on(locel: &IndexLinkedOCEL, object_type: &str) -> EventLog {
-    let mut traces: Vec<_> = locel
-        .get_obs_of_type(object_type)
+#[register_binding]
+/// Flatten an OCEL on a specific object type, resulting in a case-centric Event Log
+/// For each object of the specified type, a trace is created containing all events related to that object,
+/// ordered by their timestamp.
+///
+pub fn flatten_ocel_on<'a>(
+    ocel: &'a impl LinkedOCELAccess<'a>,
+    object_type: impl AsRef<str>,
+) -> EventLog {
+    let mut traces: Vec<_> = ocel
+        .get_obs_of_type(object_type.as_ref())
         .map(|ob| {
-            let ob_val = locel.get_full_ob(ob);
-            let mut events: Vec<_> = locel
+            let ob_val = ocel.get_full_ob(ob);
+            let mut events: Vec<_> = ocel
                 .get_e2o_rev(ob)
                 .map(|(_q, ev)| {
-                    let ev_val = locel.get_full_ev(ev);
+                    let ev_val = ocel.get_full_ev(ev);
                     let mut xes_ev = Event {
                         attributes: vec![
                             Attribute::new(

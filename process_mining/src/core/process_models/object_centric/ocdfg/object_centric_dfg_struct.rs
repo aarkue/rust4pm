@@ -51,12 +51,14 @@ impl<'a> OCDirectlyFollowsGraph<'a> {
 /// Construct a [`OCDirectlyFollowsGraph`] from an [`IndexLinkedOCEL`]
 ///
 #[register_binding]
-pub fn discover_dfg_from_locel(locel: &IndexLinkedOCEL) -> OCDirectlyFollowsGraph<'_> {
+pub fn discover_dfg_from_locel<'a>(
+    ocel: &'a impl LinkedOCELAccess<'a>,
+) -> OCDirectlyFollowsGraph<'a> {
     let mut result = OCDirectlyFollowsGraph::new();
 
     // For each object type: flatten the OCEL on the object type and discover its DFG
-    locel.get_ob_types().for_each(|ob_type| {
-        let event_log: EventLog = flatten_ocel_on(locel, ob_type);
+    ocel.get_ob_types().for_each(|ob_type| {
+        let event_log: EventLog = flatten_ocel_on(ocel, ob_type);
 
         let object_type_dfg = DirectlyFollowsGraph::discover(&event_log);
 
