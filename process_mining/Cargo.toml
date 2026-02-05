@@ -1,6 +1,6 @@
 [package]
 name = "process_mining"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Process Mining library for working with (object-centric) event data"
@@ -33,7 +33,7 @@ serde = {version = "1.0.188", features = ["derive"]}
 serde_with = { version = "3.16.0", features = ["std", "macros", "schemars_1"]}
 tempfile = "3"
 uuid = {version = "1.16.0", features = ["v4", "serde"]}
-macros_process_mining = { path = "../macros_process_mining", version = "0.1.0" }
+macros_process_mining = { path = "../macros_process_mining", version = "0.4.4" }
 schemars = { version = "1.1.0", features = ["chrono04", "uuid1"]}
 inventory = { version = "0.3", optional = true }
 csv = "1.4.0"

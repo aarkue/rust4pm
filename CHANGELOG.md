@@ -1,5 +1,7 @@
 # Changelog
 
+## `process_mining` 0.4.4
+- Fix version mismatch in macros crate
 
 ## `process_mining` 0.4.3
 - Fix: typo in function name: `oc_declare_conformace` -> `oc_declare_conformance` (**Breaking**)
