@@ -409,7 +409,7 @@ impl SlimLinkedOCEL {
                 let ev_type = &ocel.event_types[evtype_index];
                 SlimOCELEvent {
                     id: e.id,
-                    event_type: *evtype_to_index.get(&e.event_type).unwrap(),
+                    event_type: evtype_index,
                     time: e.time,
                     attributes: ev_type
                         .attributes

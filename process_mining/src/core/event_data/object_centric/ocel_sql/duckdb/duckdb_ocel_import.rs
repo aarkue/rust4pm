@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
-use crate::core::event_data::object_centric::{
-    ocel_struct::{
+use crate::core::event_data::{
+    object_centric::ocel_struct::{
         OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute,
         OCELRelationship, OCELTypeAttribute, OCEL,
     },
-    ocel_xml::xml_ocel_import::{parse_date, OCELImportOptions},
+    timestamp_utils::parse_timestamp,
 };
 
 use super::super::*;
@@ -16,13 +16,9 @@ fn try_get_column_date_val(
     r: &Row<'_>,
     column_name: &str,
 ) -> Result<DateTime<FixedOffset>, ::duckdb::Error> {
-    // let dt = r.get::<_, DateTime<chrono::Local>>(column_name);
-    // dt.or_else(|_e| {
     r.get::<_, String>(column_name).and_then(|dt_str| {
-        parse_date(&dt_str, &OCELImportOptions::default())
-            .map_err(|_e| ::duckdb::Error::InvalidQuery)
+        parse_timestamp(&dt_str, None, false).map_err(|_e| ::duckdb::Error::InvalidQuery)
     })
-    // })
 }
 
 fn get_row_attribute_value(

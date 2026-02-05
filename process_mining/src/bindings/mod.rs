@@ -38,6 +38,7 @@ use crate::core::{
             ocel_struct::OCEL,
         },
     },
+    io::ExtensionWithMime,
     EventLog,
 };
 use macros_process_mining::register_binding;
@@ -114,6 +115,31 @@ impl RegistryItemKind {
             RegistryItemKind::IndexLinkedOCEL,
             RegistryItemKind::SlimLinkedOCEL,
         ]
+    }
+
+    /// Get known import formats
+    pub fn known_import_formats(&self) -> Vec<ExtensionWithMime> {
+        match self {
+            RegistryItemKind::EventLogActivityProjection => {
+                EventLogActivityProjection::known_import_formats()
+            }
+            RegistryItemKind::IndexLinkedOCEL => IndexLinkedOCEL::known_import_formats(),
+            RegistryItemKind::EventLog => EventLog::known_import_formats(),
+            RegistryItemKind::OCEL => OCEL::known_import_formats(),
+            RegistryItemKind::SlimLinkedOCEL => OCEL::known_import_formats(),
+        }
+    }
+    /// Get known export formats
+    pub fn known_export_formats(&self) -> Vec<ExtensionWithMime> {
+        match self {
+            RegistryItemKind::EventLogActivityProjection => {
+                EventLogActivityProjection::known_export_formats()
+            }
+            RegistryItemKind::IndexLinkedOCEL => IndexLinkedOCEL::known_export_formats(),
+            RegistryItemKind::EventLog => EventLog::known_export_formats(),
+            RegistryItemKind::OCEL => OCEL::known_export_formats(),
+            RegistryItemKind::SlimLinkedOCEL => OCEL::known_export_formats(),
+        }
     }
 }
 
@@ -419,7 +445,7 @@ pub fn resolve_argument(
     arg_name: &str,
     value: Value,
     schema: &Value,
-    state: &mut AppState,
+    state: &AppState,
 ) -> Result<Value, String> {
     let schema_obj = schema.as_object().ok_or("Invalid schema")?;
 
@@ -530,6 +556,12 @@ pub fn index_link_ocel(ocel: &OCEL) -> IndexLinkedOCEL {
     IndexLinkedOCEL::from_ocel(ocel.clone())
 }
 
+/// Convert an [`OCEL`] to an [`SlimLinkedOCEL`]
+#[register_binding]
+pub fn slim_link_ocel(ocel: &OCEL) -> SlimLinkedOCEL {
+    SlimLinkedOCEL::from_ocel(ocel.clone())
+}
+
 #[register_binding]
 /// This is a test function.
 ///
@@ -541,8 +573,18 @@ pub fn test_some_inputs(s: String, n: usize, i: i32, f: f64, b: bool) -> String 
 
 #[cfg(test)]
 mod tests {
+    use crate::test_utils::get_test_data_path;
+
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn export_bindings() {
+        let bindings = list_functions_meta();
+        let file = std::fs::File::create(get_test_data_path().join("export").join("bindings.json"))
+            .unwrap();
+        serde_json::to_writer_pretty(&file, &bindings).unwrap();
+    }
 
     #[test]
     fn test_consistent_registry_item_variants() {

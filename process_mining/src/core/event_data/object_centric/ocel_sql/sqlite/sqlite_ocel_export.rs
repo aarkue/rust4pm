@@ -13,6 +13,9 @@ pub fn export_ocel_sqlite_to_path<P: AsRef<std::path::Path>>(
     ocel: &OCEL,
     path: P,
 ) -> Result<(), DatabaseError> {
+    if path.as_ref().exists() {
+        let _ = std::fs::remove_file(&path);
+    }
     let con = Connection::open(path)?;
     export_ocel_to_sql_con(&con, ocel)
 }

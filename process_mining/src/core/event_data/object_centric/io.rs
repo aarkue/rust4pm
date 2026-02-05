@@ -3,6 +3,7 @@
 use std::io::{Read, Write};
 use std::path::Path;
 
+use crate::core::event_data::object_centric::ocel_csv::OCELCSVImportError;
 #[cfg(feature = "ocel-sqlite")]
 use crate::core::event_data::object_centric::ocel_sql::export_ocel_sqlite_to_vec;
 #[cfg(any(feature = "ocel-duckdb", feature = "ocel-sqlite"))]
@@ -20,6 +21,8 @@ pub enum OCELIOError {
     Json(serde_json::Error),
     /// XML Parsing Error
     Xml(quick_xml::Error),
+    /// CSV Parsing Error
+    Csv(OCELCSVImportError),
     /// `SQLite` Error
     #[cfg(feature = "ocel-sqlite")]
     Sqlite(rusqlite::Error),
@@ -38,6 +41,7 @@ impl std::fmt::Display for OCELIOError {
             OCELIOError::Io(e) => write!(f, "IO Error: {}", e),
             OCELIOError::Json(e) => write!(f, "JSON Error: {}", e),
             OCELIOError::Xml(e) => write!(f, "XML Error: {}", e),
+            OCELIOError::Csv(e) => write!(f, "CSV Error: {}", e),
             #[cfg(feature = "ocel-sqlite")]
             OCELIOError::Sqlite(e) => write!(f, "SQLite Error: {}", e),
             #[cfg(feature = "ocel-duckdb")]
@@ -54,6 +58,7 @@ impl std::error::Error for OCELIOError {
             OCELIOError::Io(e) => Some(e),
             OCELIOError::Json(e) => Some(e),
             OCELIOError::Xml(e) => Some(e),
+            OCELIOError::Csv(e) => Some(e),
             #[cfg(feature = "ocel-sqlite")]
             OCELIOError::Sqlite(e) => Some(e),
             #[cfg(feature = "ocel-duckdb")]
@@ -82,6 +87,12 @@ impl From<quick_xml::Error> for OCELIOError {
     }
 }
 
+impl From<OCELCSVImportError> for OCELIOError {
+    fn from(e: OCELCSVImportError) -> Self {
+        OCELIOError::Csv(e)
+    }
+}
+
 #[cfg(feature = "ocel-sqlite")]
 impl From<rusqlite::Error> for OCELIOError {
     fn from(e: rusqlite::Error) -> Self {
@@ -102,7 +113,9 @@ impl Importable for OCEL {
 
     fn infer_format(path: &Path) -> Option<String> {
         let p = path.to_string_lossy().to_lowercase();
-        if p.ends_with(".json") || p.ends_with(".jsonocel") {
+        if p.ends_with(".csv") {
+            Some("ocel.csv".to_string())
+        } else if p.ends_with(".json") || p.ends_with(".jsonocel") {
             Some("json".to_string())
         } else if p.ends_with(".xml") || p.ends_with(".xmlocel") {
             Some("xml".to_string())
@@ -134,6 +147,10 @@ impl Importable for OCEL {
                     OCELImportOptions::default(),
                 )
                 .map_err(OCELIOError::Xml)?;
+            Ok(ocel)
+        } else if format.ends_with("ocel.csv") {
+            let ocel = crate::core::event_data::object_centric::ocel_csv::import_ocel_csv(reader)
+                .map_err(OCELIOError::Csv)?;
             Ok(ocel)
         } else if format.ends_with("sqlite")
             || (format.ends_with("db") && !format.ends_with("duckdb"))
@@ -197,6 +214,7 @@ impl Importable for OCEL {
         vec![
             ExtensionWithMime::new("json", "application/json"),
             ExtensionWithMime::new("xml", "application/xml"),
+            ExtensionWithMime::new("ocel.csv", "text/csv"),
             #[cfg(feature = "ocel-sqlite")]
             ExtensionWithMime::new("sqlite", "application/x-sqlite3"),
             #[cfg(feature = "ocel-duckdb")]
@@ -211,7 +229,9 @@ impl Exportable for OCEL {
 
     fn infer_format(path: &Path) -> Option<String> {
         let p = path.to_string_lossy().to_lowercase();
-        if p.ends_with(".json") || p.ends_with(".jsonocel") {
+        if p.ends_with(".ocel.csv") || p.ends_with(".csv") {
+            Some("ocel.csv".to_string())
+        } else if p.ends_with(".json") || p.ends_with(".jsonocel") {
             Some("json".to_string())
         } else if p.ends_with(".xml") || p.ends_with(".xmlocel") {
             Some("xml".to_string())
@@ -291,6 +311,9 @@ impl Exportable for OCEL {
                 writer, self,
             )
             .map_err(OCELIOError::Xml)
+        } else if format.ends_with("ocel.csv") {
+            crate::core::event_data::object_centric::ocel_csv::export_ocel_csv(writer, self)
+                .map_err(|e| OCELIOError::Other(e.to_string()))
         } else if format.ends_with("sqlite")
             || (format.ends_with("db") && !format.ends_with("duckdb"))
         {
@@ -322,6 +345,7 @@ impl Exportable for OCEL {
         vec![
             ExtensionWithMime::new("json", "application/json"),
             ExtensionWithMime::new("xml", "application/xml"),
+            ExtensionWithMime::new("ocel.csv", "text/csv"),
             #[cfg(feature = "ocel-sqlite")]
             ExtensionWithMime::new("sqlite", "application/x-sqlite3"),
             #[cfg(feature = "ocel-duckdb")]

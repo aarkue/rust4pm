@@ -243,7 +243,7 @@ impl OCELObjectAttribute {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, Default)]
 #[serde(untagged)]
 /// OCEL Attribute Values
 pub enum OCELAttributeValue {
@@ -258,6 +258,7 @@ pub enum OCELAttributeValue {
     /// String
     String(String),
     /// Placeholder for invalid values
+    #[default]
     Null,
 }
 
@@ -272,6 +273,20 @@ impl Display for OCELAttributeValue {
             OCELAttributeValue::Null => String::default(), //"INVALID_VALUE".to_string(),
         };
         write!(f, "{s}")
+    }
+}
+
+impl OCELAttributeValue {
+    /// Get attribute type of an attribute value
+    pub fn get_type(&self) -> OCELAttributeType {
+        match self {
+            OCELAttributeValue::Time(_) => OCELAttributeType::Time,
+            OCELAttributeValue::Integer(_) => OCELAttributeType::Integer,
+            OCELAttributeValue::Float(_) => OCELAttributeType::Float,
+            OCELAttributeValue::Boolean(_) => OCELAttributeType::Boolean,
+            OCELAttributeValue::String(_) => OCELAttributeType::String,
+            OCELAttributeValue::Null => OCELAttributeType::Null,
+        }
     }
 }
 
@@ -328,7 +343,7 @@ impl<T: Into<OCELAttributeValue>> From<Option<T>> for OCELAttributeValue {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 /// _Types_ of attribute values in OCEL2
 pub enum OCELAttributeType {
     /// String
@@ -381,19 +396,6 @@ impl OCELAttributeType {
             "integer" => OCELAttributeType::Integer,
             "time" => OCELAttributeType::Time,
             _ => OCELAttributeType::Null,
-        }
-    }
-}
-
-impl From<&OCELAttributeValue> for OCELAttributeType {
-    fn from(value: &OCELAttributeValue) -> Self {
-        match value {
-            OCELAttributeValue::Time(_) => OCELAttributeType::Time,
-            OCELAttributeValue::Integer(_) => OCELAttributeType::Integer,
-            OCELAttributeValue::Float(_) => OCELAttributeType::Float,
-            OCELAttributeValue::Boolean(_) => OCELAttributeType::Boolean,
-            OCELAttributeValue::String(_) => OCELAttributeType::String,
-            OCELAttributeValue::Null => OCELAttributeType::Null,
         }
     }
 }

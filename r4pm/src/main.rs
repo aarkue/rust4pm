@@ -68,7 +68,7 @@ fn main() -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-    let mut state = bindings::AppState::default();
+    let state = bindings::AppState::default();
 
     let func_name = &args[1];
     let binding = *functions
@@ -92,7 +92,7 @@ fn main() -> ExitCode {
                     let initial_value = serde_json::Value::String(value_str.to_string());
 
                     // Resolve the argument using the bindings helper
-                    match bindings::resolve_argument(arg_name, initial_value, schema, &mut state) {
+                    match bindings::resolve_argument(arg_name, initial_value, schema, &state) {
                         Ok(resolved_value) => {
                             params.insert(arg_name.to_string(), resolved_value);
                         }
