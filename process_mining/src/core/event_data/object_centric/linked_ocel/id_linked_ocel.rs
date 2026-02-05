@@ -3,9 +3,8 @@ use std::{
     collections::HashMap,
 };
 
-use crate::core::event_data::object_centric::ocel_struct::{OCELEvent, OCELObject, OCELType, OCEL};
-
 use super::LinkedOCELAccess;
+use crate::core::event_data::object_centric::ocel_struct::{OCELEvent, OCELObject, OCELType, OCEL};
 
 impl<'a> LinkedOCELAccess<'a> for IDLinkedOCEL<'a> {
     // Represent objects and events by (String) ID

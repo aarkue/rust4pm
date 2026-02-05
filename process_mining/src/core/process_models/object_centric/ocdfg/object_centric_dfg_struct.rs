@@ -4,10 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::core::{
-    event_data::object_centric::{
-        linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess},
-        utils::flatten::flatten_ocel_on,
-    },
+    event_data::object_centric::{linked_ocel::LinkedOCELAccess, utils::flatten::flatten_ocel_on},
     process_models::case_centric::dfg::dfg_struct::DirectlyFollowsGraph,
     EventLog,
 };
@@ -35,8 +32,8 @@ impl<'a> OCDirectlyFollowsGraph<'a> {
     ///
     /// Construct a [`OCDirectlyFollowsGraph`] from an [`IndexLinkedOCEL`]
     ///
-    pub fn create_from_locel(locel: &'a IndexLinkedOCEL) -> Self {
-        discover_dfg_from_locel(locel)
+    pub fn create_from_ocel(locel: &'a impl LinkedOCELAccess<'a>) -> Self {
+        discover_dfg_from_ocel(locel)
     }
 
     ///
@@ -51,7 +48,7 @@ impl<'a> OCDirectlyFollowsGraph<'a> {
 /// Construct a [`OCDirectlyFollowsGraph`] from an [`IndexLinkedOCEL`]
 ///
 #[register_binding]
-pub fn discover_dfg_from_locel<'a>(
+pub fn discover_dfg_from_ocel<'a>(
     ocel: &'a impl LinkedOCELAccess<'a>,
 ) -> OCDirectlyFollowsGraph<'a> {
     let mut result = OCDirectlyFollowsGraph::new();
