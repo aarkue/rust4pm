@@ -1,6 +1,7 @@
 //! Functionality related to artificial init/exit events per object
 //! which mark the (implicit) creation or destruction of the object.
 use itertools::Itertools;
+use macros_process_mining::register_binding;
 
 use crate::core::{
     event_data::object_centric::{
@@ -27,6 +28,7 @@ pub const EXIT_EVENT_PREFIX: &str = "<exit>";
 ///
 /// This function remains, as it might be useful for other applications.
 ///
+#[register_binding]
 pub fn add_init_exit_events_to_ocel(ocel: OCEL) -> OCEL {
     let locel = SlimLinkedOCEL::from_ocel(ocel);
     let new_evs = locel

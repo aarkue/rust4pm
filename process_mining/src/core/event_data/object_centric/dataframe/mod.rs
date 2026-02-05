@@ -17,9 +17,10 @@ use polars::{
     series::Series,
 };
 
-use crate::core::event_data::object_centric::ocel_struct::{OCELAttributeValue, OCEL};
-
-use super::linked_ocel::LinkedOCELAccess;
+use crate::core::event_data::object_centric::{
+    linked_ocel::LinkedOCELAccess,
+    ocel_struct::{OCELAttributeValue, OCEL},
+};
 
 #[cfg(test)]
 mod tests;

@@ -350,7 +350,7 @@ impl OCLanguageAbstraction {
     pub fn create_from_ocel(locel: &IndexLinkedOCEL) -> Self {
         // Computes the directly-follows graphs for all object types
         let directly_follows_graph: OCDirectlyFollowsGraph<'_> =
-            OCDirectlyFollowsGraph::create_from_locel(locel);
+            OCDirectlyFollowsGraph::create_from_ocel(locel);
 
         // Sets up the result hashmaps
         let mut start_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>> = HashMap::new();

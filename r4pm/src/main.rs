@@ -71,10 +71,12 @@ fn main() -> ExitCode {
     let state = bindings::AppState::default();
 
     let func_name = &args[1];
-    let binding = *functions
-        .iter()
-        .find(|f| f.name == func_name)
-        .expect("Unknown function name!");
+    let binding = functions.iter().find(|f| f.name == func_name);
+    if binding.is_none() {
+        println!("Unknown function: {func_name}");
+        return ExitCode::FAILURE;
+    }
+    let binding = binding.unwrap();
     let required_fn_args: HashSet<String> = ((binding.required_args)()).into_iter().collect();
     print_function_info(binding, &required_fn_args);
     let fn_args = (binding.args)();

@@ -88,8 +88,8 @@ impl Default for OCDeclareDiscoveryOptions {
     }
 }
 
-/// Discover behavioral OC-DECLARE constraints
-#[register_binding(name = "discover_oc-declare")]
+/// Discover behavioral OC-DECLARE constraints from the given OCEL
+#[register_binding(name = "discover_oc_declare")]
 pub fn discover_behavior_constraints(
     locel: &SlimLinkedOCEL,
     #[bind(default = Default::default())] options: OCDeclareDiscoveryOptions,

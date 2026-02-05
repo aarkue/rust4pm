@@ -157,7 +157,7 @@ fn ocel_attribute_type_to_kuzu_dtype(attr_type: &str) -> &'static str {
         OCELAttributeType::Null => "NULL",
     }
 }
-/// WIP
+/// Export an OCEL to a (strictly typed) kuzu database
 #[cfg(feature = "dataframes")]
 pub fn export_ocel_to_kuzudb_typed<'a, P: AsRef<Path>>(
     db_path: P,
