@@ -1,16 +1,32 @@
 # Changelog
 
 
-## Unreleased
-- Added CSV format support for OCEL:
+## Unreleased (v0.4.1)
+- **New OCEL CSV Format**
+  - Added CSV format support for OCEL:
   - Added Importer/Exporter for CSV OCEL file format
   - Added CSV file format to OCEL io trait + known formats (as `.ocel.csv`)
-- Combined/Deduped timestamp-related parsing functionality across files
-- Implemented `Null` as default `OCELAttributeValue`
+- **Bindings Improvements**:
+  - Exposed OC-DECLARE conformance function (`oc_declare_conformace`) to bindings
+  - Renamed `discover_oc-declare` binding to `discover_oc_declare` (**Breaking for Bindings**)
+  - Renamed `discover_dfg_from_locel` to `discover_dfg_from_ocel` (**Breaking**)
+  - Added `SlimLinkedOCEL` <-> `OCEL` conversion support in bindings
+  - Implemented `LinkedOCELAccess` trait support in bindings macro for more generic functions
+  - Added `ocel_type_stats` binding to compute event/object type statistics
+  - Exposed `flatten_ocel_on` function to bindings for flattening OCEL on object types
+  - Exposed `add_init_exit_events_to_ocel` function to bindings
+- **Other Fixes and Improvements**:
+  - Fixed SQLite/DuckDB export to remove existing file before export (prevents UNIQUE constraint errors)
+  - Combined/Deduped timestamp-related parsing functionality across files
+  - Implemented `Null` as default `OCELAttributeValue`
+- **Internal Improvements**:
+  - Updated `rusqlite` and related dependencies
+  - Improved CLI in `r4pm`
 
 ### Breaking Changes / Migration Guide
 - The `From<OCELAttributeValue>` implementation for `OCELAttributeType` was removed. Instead, use the `get_type` function on `OCELAttributeValue` to retrieve its type.
 - Updates related to io module for CSV parsing (e.g., new error variant in `OCELIOError`)
+- Renamed binding `discover_oc-declare` to `discover_oc_declare`
 
 ## `process_mining` 0.4.0
 
