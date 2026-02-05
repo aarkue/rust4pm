@@ -3074,7 +3074,7 @@ dependencies = [
 
 [[package]]
 name = "r4pm"
-version = "0.1.0"
+version = "0.4.4"
 dependencies = [
  "anstyle",
  "process_mining",
