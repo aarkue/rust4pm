@@ -68,7 +68,7 @@ impl From<QuickXMLError> for XESParseError {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 ///
 ///
 /// Options for XES Import
@@ -98,6 +98,23 @@ pub struct XESImportOptions {
     ///   * If no value is present or it is invalid, the global default event attribute value with the provided key will be used (if it exists)
     ///   * if no valid timestamp is available from the event or the global default, it will be sorted before all other events (in stable ordering)
     pub sort_events_with_timestamp_key: Option<String>,
+    /// Verbose output during parsing
+    /// * If true: Print warnings and error messages to stdout
+    /// * If false: Suppress all warnings and error messages
+    pub verbose: bool,
+}
+
+impl Default for XESImportOptions {
+    fn default() -> Self {
+        XESImportOptions {
+            ignore_log_attributes_except: None,
+            ignore_trace_attributes_except: None,
+            ignore_event_attributes_except: None,
+            date_format: None,
+            sort_events_with_timestamp_key: None,
+            verbose: true,
+        }
+    }
 }
 ///
 /// Construct a `HashSet<Vec<u8>>` from a _collection_ of String, &str, ...

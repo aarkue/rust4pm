@@ -1,6 +1,5 @@
 # Changelog
 
-
 ## Unreleased
 - Added CSV format support for OCEL:
   - Added Importer/Exporter for CSV OCEL file format
@@ -11,6 +10,11 @@
 ### Breaking Changes / Migration Guide
 - The `From<OCELAttributeValue>` implementation for `OCELAttributeType` was removed. Instead, use the `get_type` function on `OCELAttributeValue` to retrieve its type.
 - Updates related to io module for CSV parsing (e.g., new error variant in `OCELIOError`)
+
+## `process_mining` 0.4.1
+- Added `verbose` option to `XESImportOptions`, defaulting to true
+  - Note: Technically this is a breaking change, however the recommended way to use `XESImportOptions` is non-exhaustive with default fallback:
+    - e.g., ```XESImportOptions {verbose: false, ..Default::default()}```
 
 ## `process_mining` 0.4.0
 
