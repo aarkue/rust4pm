@@ -611,8 +611,12 @@ mod tests {
     #[test]
     fn export_bindings() {
         let bindings = list_functions_meta();
-        let file = std::fs::File::create(get_test_data_path().join("export").join("bindings.json"))
-            .unwrap();
+        let file = std::fs::File::create(
+            get_test_data_path()
+                .join("export")
+                .join(format!("bindings-v{}.json", env!("CARGO_PKG_VERSION"))),
+        )
+        .unwrap();
         serde_json::to_writer_pretty(&file, &bindings).unwrap();
     }
 

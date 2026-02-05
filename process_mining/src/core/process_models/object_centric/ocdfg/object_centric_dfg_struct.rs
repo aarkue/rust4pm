@@ -30,7 +30,7 @@ impl<'a> OCDirectlyFollowsGraph<'a> {
     }
 
     ///
-    /// Construct a [`OCDirectlyFollowsGraph`] from an [`IndexLinkedOCEL`]
+    /// Construct an [`OCDirectlyFollowsGraph`] from an OCEL
     ///
     pub fn create_from_ocel(locel: &'a impl LinkedOCELAccess<'a>) -> Self {
         discover_dfg_from_ocel(locel)
@@ -45,7 +45,7 @@ impl<'a> OCDirectlyFollowsGraph<'a> {
 }
 
 ///
-/// Construct a [`OCDirectlyFollowsGraph`] from an [`IndexLinkedOCEL`]
+/// Construct an [`OCDirectlyFollowsGraph`] from an OCEL
 ///
 #[register_binding]
 pub fn discover_dfg_from_ocel<'a>(
