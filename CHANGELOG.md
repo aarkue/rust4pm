@@ -1,7 +1,7 @@
 # Changelog
 
 
-## Unreleased (v0.4.1)
+## Unreleased (v0.4.2)
 - **New OCEL CSV Format**
   - Added CSV format support for OCEL:
   - Added Importer/Exporter for CSV OCEL file format
