@@ -6,11 +6,12 @@ use crate::core::{
         slim_linked_ocel::ObjectIndex, LinkedOCELAccess, SlimLinkedOCEL,
     },
     process_models::oc_declare::{
-        EventOrSynthetic, OCDeclareArcLabel, OCDeclareArcType, SetFilter,
+        EventOrSynthetic, OCDeclareArc, OCDeclareArcLabel, OCDeclareArcType, SetFilter,
     },
 };
 
 use chrono::{DateTime, FixedOffset};
+use macros_process_mining::register_binding;
 use rayon::prelude::*;
 
 /// Get all events of the given event type satisfying the filters
@@ -280,4 +281,19 @@ pub fn get_for_ev_perf(
             }
         }
     })
+}
+
+#[register_binding]
+/// Returns the confidence conformance of an OC-DECLARE arc on the given OCEL
+///
+/// Returns a value from 0.0 (all source events violate this constraint) to 1.0 (all source events satisfy this constraint)
+pub fn oc_declare_conformace(ocel: &SlimLinkedOCEL, arc: &OCDeclareArc) -> f64 {
+    1.0 - get_for_all_evs_perf(
+        arc.from.as_str(),
+        arc.to.as_str(),
+        &arc.label,
+        &arc.arc_type,
+        &arc.counts,
+        ocel,
+    )
 }

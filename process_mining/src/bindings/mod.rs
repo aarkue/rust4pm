@@ -304,6 +304,12 @@ impl RegistryItem {
             (RegistryItem::IndexLinkedOCEL(locel), RegistryItemKind::OCEL) => {
                 Ok(RegistryItem::OCEL(locel.get_ocel_ref().clone()))
             }
+            (RegistryItem::SlimLinkedOCEL(locel), RegistryItemKind::OCEL) => {
+                Ok(RegistryItem::OCEL(locel.construct_ocel()))
+            }
+            (RegistryItem::OCEL(ocel), RegistryItemKind::SlimLinkedOCEL) => Ok(
+                RegistryItem::SlimLinkedOCEL(SlimLinkedOCEL::from_ocel(ocel.clone())),
+            ),
             _ => Err(format!("Cannot convert {} to {}", self.kind(), target_kind)),
         }
     }
