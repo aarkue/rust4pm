@@ -1,5 +1,9 @@
 # Changelog
 
+
+## `process_mining` 0.4.3
+- Fix: typo in function name: `oc_declare_conformace` -> `oc_declare_conformance` (**Breaking**)
+
 ## `process_mining` 0.4.2
 - **New OCEL CSV Format**
   - Added CSV format support for OCEL:

@@ -287,7 +287,7 @@ pub fn get_for_ev_perf(
 /// Returns the confidence conformance of an OC-DECLARE arc on the given OCEL
 ///
 /// Returns a value from 0.0 (all source events violate this constraint) to 1.0 (all source events satisfy this constraint)
-pub fn oc_declare_conformace(ocel: &SlimLinkedOCEL, arc: &OCDeclareArc) -> f64 {
+pub fn oc_declare_conformance(ocel: &SlimLinkedOCEL, arc: &OCDeclareArc) -> f64 {
     1.0 - get_for_all_evs_perf(
         arc.from.as_str(),
         arc.to.as_str(),
