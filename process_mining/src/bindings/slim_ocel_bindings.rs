@@ -17,16 +17,16 @@ use crate::core::OCEL;
 // ── Creation ──────────────────────────────────────────────────────────
 
 /// Create a new empty [`SlimLinkedOCEL`]
-#[register_binding(name = "new")]
-fn slim_ocel_new() -> SlimLinkedOCEL {
+#[register_binding]
+fn locel_new() -> SlimLinkedOCEL {
     SlimLinkedOCEL::new()
 }
 
 // ── Type Management ───────────────────────────────────────────────────
 
 /// Add a new event type to a [`SlimLinkedOCEL`]
-#[register_binding(name = "add_event_type")]
-fn slim_ocel_add_event_type(
+#[register_binding]
+fn locel_add_event_type(
     ocel: &mut SlimLinkedOCEL,
     event_type: String,
     #[bind(default)] attributes: Vec<OCELTypeAttribute>,
@@ -35,8 +35,8 @@ fn slim_ocel_add_event_type(
 }
 
 /// Add a new object type to a [`SlimLinkedOCEL`]
-#[register_binding(name = "add_object_type")]
-fn slim_ocel_add_object_type(
+#[register_binding]
+fn locel_add_object_type(
     ocel: &mut SlimLinkedOCEL,
     object_type: String,
     #[bind(default)] attributes: Vec<OCELTypeAttribute>,
@@ -50,8 +50,8 @@ fn slim_ocel_add_object_type(
 ///
 /// The attribute order must match the attributes defined on the corresponding event type.
 /// Returns the [`EventIndex`] of the newly added event, or `None` if the event type is unknown or the id is already taken.
-#[register_binding(name = "add_event")]
-fn slim_ocel_add_event(
+#[register_binding]
+fn locel_add_event(
     ocel: &mut SlimLinkedOCEL,
     event_type: String,
     time: DateTime<FixedOffset>,
@@ -66,8 +66,8 @@ fn slim_ocel_add_event(
 ///
 /// The attribute order must match the attributes defined on the corresponding object type.
 /// Returns the [`ObjectIndex`] of the newly added object, or `None` if the object type is unknown or the id is already taken.
-#[register_binding(name = "add_object")]
-fn slim_ocel_add_object(
+#[register_binding]
+fn locel_add_object(
     ocel: &mut SlimLinkedOCEL,
     object_type: String,
     #[bind(default)] id: Option<String>,
@@ -80,8 +80,8 @@ fn slim_ocel_add_object(
 // ── Relationship Management ───────────────────────────────────────────
 
 /// Add an E2O (event-to-object) relationship with the specified qualifier
-#[register_binding(name = "add_e2o")]
-fn slim_ocel_add_e2o(
+#[register_binding]
+fn locel_add_e2o(
     ocel: &mut SlimLinkedOCEL,
     event: EventIndex,
     object: ObjectIndex,
@@ -91,8 +91,8 @@ fn slim_ocel_add_e2o(
 }
 
 /// Add an O2O (object-to-object) relationship with the specified qualifier
-#[register_binding(name = "add_o2o")]
-fn slim_ocel_add_o2o(
+#[register_binding]
+fn locel_add_o2o(
     ocel: &mut SlimLinkedOCEL,
     from_obj: ObjectIndex,
     to_obj: ObjectIndex,
@@ -102,144 +102,144 @@ fn slim_ocel_add_o2o(
 }
 
 /// Remove the E2O relationship between the given event and object
-#[register_binding(name = "delete_e2o")]
-fn slim_ocel_delete_e2o(ocel: &mut SlimLinkedOCEL, event: EventIndex, object: ObjectIndex) {
+#[register_binding]
+fn locel_delete_e2o(ocel: &mut SlimLinkedOCEL, event: EventIndex, object: ObjectIndex) {
     ocel.delete_e2o(&event, &object);
 }
 
 /// Remove the O2O relationship between the given objects
-#[register_binding(name = "delete_o2o")]
-fn slim_ocel_delete_o2o(ocel: &mut SlimLinkedOCEL, from_obj: ObjectIndex, to_obj: ObjectIndex) {
+#[register_binding]
+fn locel_delete_o2o(ocel: &mut SlimLinkedOCEL, from_obj: ObjectIndex, to_obj: ObjectIndex) {
     ocel.delete_o2o(&from_obj, &to_obj);
 }
 
 // ── Read Access (LinkedOCELAccess) ────────────────────────────────────
 
 /// Get all event type names
-#[register_binding(name = "get_ev_types")]
-fn slim_ocel_get_ev_types(ocel: &SlimLinkedOCEL) -> Vec<String> {
+#[register_binding]
+fn locel_get_ev_types(ocel: &SlimLinkedOCEL) -> Vec<String> {
     ocel.get_ev_types().map(str::to_string).collect()
 }
 
 /// Get all object type names
-#[register_binding(name = "get_ob_types")]
-fn slim_ocel_get_ob_types(ocel: &SlimLinkedOCEL) -> Vec<String> {
+#[register_binding]
+fn locel_get_ob_types(ocel: &SlimLinkedOCEL) -> Vec<String> {
     ocel.get_ob_types().map(str::to_string).collect()
 }
 
 /// Get the event type specification for a given type name
-#[register_binding(name = "get_ev_type")]
-fn slim_ocel_get_ev_type(ocel: &SlimLinkedOCEL, ev_type: String) -> Option<OCELType> {
+#[register_binding]
+fn locel_get_ev_type(ocel: &SlimLinkedOCEL, ev_type: String) -> Option<OCELType> {
     ocel.get_ev_type(&ev_type).cloned()
 }
 
 /// Get the object type specification for a given type name
-#[register_binding(name = "get_ob_type")]
-fn slim_ocel_get_ob_type(ocel: &SlimLinkedOCEL, ob_type: String) -> Option<OCELType> {
+#[register_binding]
+fn locel_get_ob_type(ocel: &SlimLinkedOCEL, ob_type: String) -> Option<OCELType> {
     ocel.get_ob_type(&ob_type).cloned()
 }
 
 /// Get all event indices of a given event type
-#[register_binding(name = "get_evs_of_type")]
-fn slim_ocel_get_evs_of_type(ocel: &SlimLinkedOCEL, ev_type: String) -> Vec<EventIndex> {
+#[register_binding]
+fn locel_get_evs_of_type(ocel: &SlimLinkedOCEL, ev_type: String) -> Vec<EventIndex> {
     ocel.get_evs_of_type(&ev_type).copied().collect()
 }
 
 /// Get all object indices of a given object type
-#[register_binding(name = "get_obs_of_type")]
-fn slim_ocel_get_obs_of_type(ocel: &SlimLinkedOCEL, ob_type: String) -> Vec<ObjectIndex> {
+#[register_binding]
+fn locel_get_obs_of_type(ocel: &SlimLinkedOCEL, ob_type: String) -> Vec<ObjectIndex> {
     ocel.get_obs_of_type(&ob_type).copied().collect()
 }
 
 /// Get an event index by its ID
-#[register_binding(name = "get_ev_by_id")]
-fn slim_ocel_get_ev_by_id(ocel: &SlimLinkedOCEL, ev_id: String) -> Option<EventIndex> {
+#[register_binding]
+fn locel_get_ev_by_id(ocel: &SlimLinkedOCEL, ev_id: String) -> Option<EventIndex> {
     ocel.get_ev_by_id(&ev_id)
 }
 
 /// Get an object index by its ID
-#[register_binding(name = "get_ob_by_id")]
-fn slim_ocel_get_ob_by_id(ocel: &SlimLinkedOCEL, ob_id: String) -> Option<ObjectIndex> {
+#[register_binding]
+fn locel_get_ob_by_id(ocel: &SlimLinkedOCEL, ob_id: String) -> Option<ObjectIndex> {
     ocel.get_ob_by_id(&ob_id)
 }
 
 /// Get the ID of an event
-#[register_binding(name = "get_ev_id")]
-fn slim_ocel_get_ev_id(ocel: &SlimLinkedOCEL, ev: EventIndex) -> String {
+#[register_binding]
+fn locel_get_ev_id(ocel: &SlimLinkedOCEL, ev: EventIndex) -> String {
     ocel.get_ev_id(&ev).to_string()
 }
 
 /// Get the ID of an object
-#[register_binding(name = "get_ob_id")]
-fn slim_ocel_get_ob_id(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> String {
+#[register_binding]
+fn locel_get_ob_id(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> String {
     ocel.get_ob_id(&ob).to_string()
 }
 
 /// Get the event type (activity) of an event
-#[register_binding(name = "get_ev_type_of")]
-fn slim_ocel_get_ev_type_of(ocel: &SlimLinkedOCEL, ev: EventIndex) -> String {
+#[register_binding]
+fn locel_get_ev_type_of(ocel: &SlimLinkedOCEL, ev: EventIndex) -> String {
     ocel.get_ev_type_of(&ev).to_string()
 }
 
 /// Get the object type of an object
-#[register_binding(name = "get_ob_type_of")]
-fn slim_ocel_get_ob_type_of(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> String {
+#[register_binding]
+fn locel_get_ob_type_of(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> String {
     ocel.get_ob_type_of(&ob).to_string()
 }
 
 /// Get the timestamp of an event
-#[register_binding(name = "get_ev_time")]
-fn slim_ocel_get_ev_time(ocel: &SlimLinkedOCEL, ev: EventIndex) -> DateTime<FixedOffset> {
+#[register_binding]
+fn locel_get_ev_time(ocel: &SlimLinkedOCEL, ev: EventIndex) -> DateTime<FixedOffset> {
     *ocel.get_ev_time(&ev)
 }
 
 /// Get the E2O (event-to-object) relationships of an event as (qualifier, `object_index`) pairs
-#[register_binding(name = "get_e2o")]
-fn slim_ocel_get_e2o(ocel: &SlimLinkedOCEL, ev: EventIndex) -> Vec<(String, ObjectIndex)> {
+#[register_binding]
+fn locel_get_e2o(ocel: &SlimLinkedOCEL, ev: EventIndex) -> Vec<(String, ObjectIndex)> {
     ocel.get_e2o(&ev)
         .map(|(q, o)| (q.to_string(), *o))
         .collect()
 }
 
 /// Get the reverse E2O relationships of an object as (qualifier, `event_index`) pairs
-#[register_binding(name = "get_e2o_rev")]
-fn slim_ocel_get_e2o_rev(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<(String, EventIndex)> {
+#[register_binding]
+fn locel_get_e2o_rev(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<(String, EventIndex)> {
     ocel.get_e2o_rev(&ob)
         .map(|(q, e)| (q.to_string(), *e))
         .collect()
 }
 
 /// Get the O2O (object-to-object) relationships of an object as (qualifier, `object_index`) pairs
-#[register_binding(name = "get_o2o")]
-fn slim_ocel_get_o2o(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<(String, ObjectIndex)> {
+#[register_binding]
+fn locel_get_o2o(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<(String, ObjectIndex)> {
     ocel.get_o2o(&ob)
         .map(|(q, o)| (q.to_string(), *o))
         .collect()
 }
 
 /// Get the reverse O2O relationships of an object as (qualifier, `object_index`) pairs
-#[register_binding(name = "get_o2o_rev")]
-fn slim_ocel_get_o2o_rev(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<(String, ObjectIndex)> {
+#[register_binding]
+fn locel_get_o2o_rev(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<(String, ObjectIndex)> {
     ocel.get_o2o_rev(&ob)
         .map(|(q, o)| (q.to_string(), *o))
         .collect()
 }
 
 /// Get the full materialized event (with expanded type, attributes, and relationships)
-#[register_binding(name = "get_full_ev")]
-fn slim_ocel_get_full_ev(ocel: &SlimLinkedOCEL, ev: EventIndex) -> OCELEvent {
+#[register_binding]
+fn locel_get_full_ev(ocel: &SlimLinkedOCEL, ev: EventIndex) -> OCELEvent {
     ocel.get_full_ev(&ev).into_owned()
 }
 
 /// Get the full materialized object (with expanded type, attributes, and relationships)
-#[register_binding(name = "get_full_ob")]
-fn slim_ocel_get_full_ob(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> OCELObject {
+#[register_binding]
+fn locel_get_full_ob(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> OCELObject {
     ocel.get_full_ob(&ob).into_owned()
 }
 
 /// Get the value of a specific event attribute by name
-#[register_binding(name = "get_ev_attr_val")]
-fn slim_ocel_get_ev_attr_val(
+#[register_binding]
+fn locel_get_ev_attr_val(
     ocel: &SlimLinkedOCEL,
     ev: EventIndex,
     attr_name: String,
@@ -248,8 +248,8 @@ fn slim_ocel_get_ev_attr_val(
 }
 
 /// Get all values (with timestamps) of a specific object attribute by name
-#[register_binding(name = "get_ob_attr_vals")]
-fn slim_ocel_get_ob_attr_vals(
+#[register_binding]
+fn locel_get_ob_attr_vals(
     ocel: &SlimLinkedOCEL,
     ob: ObjectIndex,
     attr_name: String,
@@ -260,7 +260,7 @@ fn slim_ocel_get_ob_attr_vals(
 }
 
 /// Reconstruct a full [`OCEL`] from a [`SlimLinkedOCEL`]
-#[register_binding(name = "construct_ocel")]
-fn slim_ocel_construct_ocel(ocel: &SlimLinkedOCEL) -> OCEL {
+#[register_binding]
+fn locel_construct_ocel(ocel: &SlimLinkedOCEL) -> OCEL {
     ocel.construct_ocel()
 }

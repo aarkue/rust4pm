@@ -1963,7 +1963,7 @@ dependencies = [
 
 [[package]]
 name = "macros_process_mining"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2933,7 +2933,7 @@ dependencies = [
 
 [[package]]
 name = "process_mining"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "chrono",
  "csv",
@@ -3074,7 +3074,7 @@ dependencies = [
 
 [[package]]
 name = "r4pm"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anstyle",
  "process_mining",

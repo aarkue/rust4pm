@@ -1,5 +1,9 @@
 # Changelog
 
+
+## 0.5.1
+- Rename bindings function for SlimLinkedOCEL bindings (not breaking, as 0.5.0 bindings were not published yet)
+
 ## 0.5.0
 - Fix SlimLinkedOCEL addObject function (previously did not correctly expand the reverse E2O/O2O reference array)
 - Change error type of OCEL XML import to `OCELIOError` 
