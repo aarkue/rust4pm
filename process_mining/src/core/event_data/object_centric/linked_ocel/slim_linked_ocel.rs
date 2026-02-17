@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::core::{
     event_data::object_centric::{
         linked_ocel::LinkedOCELAccess, OCELAttributeValue, OCELEvent, OCELEventAttribute,
-        OCELObject, OCELObjectAttribute, OCELRelationship, OCELType,
+        OCELObject, OCELObjectAttribute, OCELRelationship, OCELType, OCELTypeAttribute,
     },
     OCEL,
 };
@@ -518,6 +518,38 @@ impl SlimLinkedOCEL {
     fn get_ev_types(&self) -> impl Iterator<Item = &String> {
         self.event_types.iter().map(|et| &et.name)
     }
+
+    /// Add a new event type to the OCEL, with the specified attributes
+    pub fn add_event_type(&mut self, event_type: &str, attributes: Vec<OCELTypeAttribute>) {
+        if self.evtype_to_index.contains_key(event_type) {
+            return;
+        }
+        let new_index = self.event_types.len();
+        self.evtype_to_index
+            .insert(event_type.to_string(), new_index);
+        self.events_per_type.push(Vec::new());
+        self.event_types.push(OCELType {
+            name: event_type.to_string(),
+            attributes,
+        });
+        self.e2o_rel_rev.iter_mut().for_each(|x| x.push(Vec::new()));
+    }
+    /// Add a new object type to the OCEL, with the specified attributes
+    pub fn add_object_type(&mut self, object_type: &str, attributes: Vec<OCELTypeAttribute>) {
+        if self.obtype_to_index.contains_key(object_type) {
+            return;
+        }
+        let new_index = self.object_types.len();
+        self.obtype_to_index
+            .insert(object_type.to_string(), new_index);
+        self.objects_per_type.push(Vec::new());
+        self.object_types.push(OCELType {
+            name: object_type.to_string(),
+            attributes,
+        });
+        self.o2o_rel_rev.iter_mut().for_each(|x| x.push(Vec::new()));
+    }
+
     /// Add a new event to the OCEL
     ///
     /// Returns the newly added [`EventIndex`]
@@ -576,6 +608,10 @@ impl SlimLinkedOCEL {
             return None;
         }
         let new_ob_index = ObjectIndex(self.objects.len());
+        self.e2o_rel_rev
+            .push(vec![Vec::new(); self.events_per_type.len()]);
+        self.o2o_rel_rev
+            .push(vec![Vec::new(); self.objects_per_type.len()]);
         self.object_ids_to_index.insert(id.clone(), new_ob_index);
         self.objects_per_type.get_mut(*otype)?.push(new_ob_index);
         // Relationships should be sorted
