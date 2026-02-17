@@ -8,11 +8,11 @@ use syn::{AngleBracketedGenericArguments, GenericArgument, Type, TypeReference};
 
 /// Name of big data types, which are handled over app state instead of being (de-)serialized
 const BIG_TYPES_NAMES: &[&str] = &[
-    "EventLogActivityProjection",
-    "IndexLinkedOCEL",
     "EventLog",
-    "SlimLinkedOCEL",
     "OCEL",
+    "EventLogActivityProjection",
+    "SlimLinkedOCEL",
+    "IndexLinkedOCEL",
 ];
 
 /// Removes/elide lifetimes and other special cases (i.e., certain generics) from types
@@ -83,10 +83,22 @@ fn strip_lifetimes(ty: Type) -> Type {
     stripper.fold_type(ty)
 }
 
+/// Find the longest matching big type name that is a suffix of the given string.
+///
+/// Using the longest match avoids ambiguity when one type name is a suffix of another
+/// (e.g., "OCEL" is a suffix of "SlimLinkedOCEL").
+fn longest_big_type_match(s: &str) -> Option<String> {
+    BIG_TYPES_NAMES
+        .iter()
+        .filter(|tn| s.ends_with(**tn))
+        .max_by_key(|tn| tn.len())
+        .map(|s| s.to_string())
+}
+
 fn is_big_type_ref(ty: &Type) -> bool {
     if matches!(ty, Type::Reference(_)) {
         let ty_str = quote::quote!(#ty).to_string();
-        BIG_TYPES_NAMES.iter().any(|tn| ty_str.ends_with(tn))
+        longest_big_type_match(&ty_str).is_some()
     } else {
         false
     }
@@ -94,10 +106,23 @@ fn is_big_type_ref(ty: &Type) -> bool {
 
 fn is_big_type(ty: &Type) -> Option<String> {
     let ty_str = quote::quote!(#ty).to_string();
-    BIG_TYPES_NAMES
-        .iter()
-        .find(|tn| ty_str.ends_with(**tn))
-        .map(|s| s.to_string())
+    longest_big_type_match(&ty_str)
+}
+
+/// Check if a type is a mutable reference to a big type (e.g., `&mut SlimLinkedOCEL`)
+/// Returns the big type name if it is.
+fn is_mut_big_type_ref(ty: &Type) -> Option<String> {
+    if let Type::Reference(TypeReference {
+        mutability: Some(_),
+        elem,
+        ..
+    }) = ty
+    {
+        let elem_str = quote::quote!(#elem).to_string();
+        longest_big_type_match(&elem_str)
+    } else {
+        None
+    }
 }
 
 #[derive(Default)]
@@ -207,20 +232,26 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
                     }
                     x => x.clone(),
                 };
+                let mut_big_type_name = is_mut_big_type_ref(&ty_no_life);
                 (
                     arg_name,
                     ty_no_life,
                     change_from_ref,
                     type_without_ref,
                     arg_opts,
+                    mut_big_type_name,
                 )
             }
             _ => panic!("Self not supported"),
         })
         .collect();
 
-    // 1. Extraction Logic
-    let extractions = args_info.iter().map(|(name, _ty, is_ref, ty_without_ref, opts)| {
+    let has_any_mut_big_type = args_info
+        .iter()
+        .any(|(.., mut_big_type_name)| mut_big_type_name.is_some());
+
+    // 1. Extraction Logic (for non-mut-big-type path)
+    let extractions = args_info.iter().map(|(name, _ty, is_ref, ty_without_ref, opts, _)| {
         let maybe_ref = if *is_ref {
             quote! {&}
         } else {
@@ -238,10 +269,10 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
     });
 
     // 2. Schema Logic
-    let schema_gens = args_info.iter().map(|(name, _ty, _is_ref, ty_without_ref, _)| {
+    let schema_gens = args_info.iter().map(|(name, _ty, _is_ref, ty_without_ref, _, _)| {
         if is_big_type_ref(ty_without_ref) {
              let ty_str = quote::quote!(#ty_without_ref).to_string();
-             let type_name = BIG_TYPES_NAMES.iter().find(|tn| ty_str.ends_with(**tn)).unwrap();
+             let type_name = longest_big_type_match(&ty_str).unwrap();
              quote! {
                  args_schema.push((#name.to_string(), serde_json::json!({
                     "type": "string",
@@ -284,11 +315,102 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
 
     let required_arg_names = args_info
         .iter()
-        .filter(|(_, _, _, _, opts)| opts.default_value.is_none())
-        .map(|(name, _, _, _, _)| name);
+        .filter(|(_, _, _, _, opts, _)| opts.default_value.is_none())
+        .map(|(name, _, _, _, _, _)| name);
 
     // 4. Generate the Execution Logic
-    let execution_block = if let Some(type_name) = is_big_type(&ret_type) {
+    let extractions: Vec<_> = extractions.collect();
+
+    let serialization_logic = if attrs.debug_output {
+        quote! {
+            let final_result = format!("{:?}", result);
+            serde_json::to_value(final_result).map_err(|e| e.to_string())
+        }
+    } else if attrs.stringify_error {
+        quote! {
+            let final_result = result.map_err(|e| e.to_string());
+            serde_json::to_value(final_result).map_err(|e| e.to_string())
+        }
+    } else {
+        quote! {
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+    };
+
+    let execution_block = if has_any_mut_big_type {
+        // Mutable big type path: use write lock
+        // 1. Generate JSON extractions for non-mut-big-type params (no state needed)
+        let json_extractions: Vec<_> = args_info
+            .iter()
+            .filter(|(.., mut_name)| mut_name.is_none())
+            .map(|(name, _ty, is_ref, ty_without_ref, opts, _)| {
+                let param_ident = format_ident!("__param_{}", name);
+                let maybe_ref = if *is_ref {
+                    quote! { & }
+                } else {
+                    quote! {}
+                };
+                if let Some(default_expr) = &opts.default_value {
+                    quote! {
+                        let #param_ident = #maybe_ref crate::bindings::extract_param_json::<#ty_without_ref>(arg_map, #name, || Some(#default_expr))?;
+                    }
+                } else {
+                    quote! {
+                        let #param_ident = #maybe_ref crate::bindings::extract_param_json::<#ty_without_ref>(arg_map, #name, || None)?;
+                    }
+                }
+            })
+            .collect();
+
+        // 2. Generate mutable big type extractions from state
+        let mut_extractions: Vec<_> = args_info
+            .iter()
+            .filter_map(|(name, _ty, _is_ref, _ty_without_ref, _opts, mut_name)| {
+                let type_name = mut_name.as_ref()?;
+                let param_ident = format_ident!("__param_{}", name);
+                let variant_ident = format_ident!("{}", type_name);
+                Some(quote! {
+                    let #param_ident = {
+                        let __id = arg_map.get(#name).and_then(|v| v.as_str())
+                            .ok_or_else(|| format!("Missing required argument {}", #name))?;
+                        match __state_guard.get_mut(__id)
+                            .ok_or_else(|| format!("Item '{}' not found", __id))? {
+                            crate::bindings::RegistryItem::#variant_ident(inner) => inner,
+                            _ => return Err(format!("ID '{}' is not a {}", __id, #type_name)),
+                        }
+                    };
+                })
+            })
+            .collect();
+
+        // 3. Generate call arguments in original order
+        let call_args: Vec<_> = args_info
+            .iter()
+            .map(|(name, ..)| {
+                let param_ident = format_ident!("__param_{}", name);
+                quote! { #param_ident }
+            })
+            .collect();
+
+        let mut_serialization = if let Some(type_name) = is_big_type(&ret_type) {
+            let variant_ident = format_ident!("{}", type_name);
+            quote! {
+                let id = format!("res_{}", uuid::Uuid::new_v4());
+                __state_guard.insert(id.clone(), crate::bindings::RegistryItem::#variant_ident(result));
+                serde_json::to_value(id).map_err(|e| e.to_string())
+            }
+        } else {
+            serialization_logic.clone()
+        };
+
+        quote! {
+            #(#json_extractions)*
+            let mut __state_guard = state_lock.items.write().map_err(|e| e.to_string())?;
+            #(#mut_extractions)*
+            let result = #fn_ident( #(#call_args),* );
+            #mut_serialization
+        }
+    } else if let Some(type_name) = is_big_type(&ret_type) {
         let variant_ident = format_ident!("{}", type_name);
         quote! {
             let result = {
@@ -301,22 +423,6 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
             serde_json::to_value(id).map_err(|e| e.to_string())
         }
     } else {
-        let serialization_logic = if attrs.debug_output {
-            quote! {
-                let final_result = format!("{:?}", result);
-                serde_json::to_value(final_result).map_err(|e| e.to_string())
-            }
-        } else if attrs.stringify_error {
-            quote! {
-                let final_result = result.map_err(|e| e.to_string());
-                serde_json::to_value(final_result).map_err(|e| e.to_string())
-            }
-        } else {
-            quote! {
-                serde_json::to_value(result).map_err(|e| e.to_string())
-            }
-        };
-
         quote! {
             let state_guard = state_lock.items.read().map_err(|e| e.to_string())?;
             let state = &*state_guard;

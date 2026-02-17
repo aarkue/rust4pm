@@ -1,6 +1,6 @@
 [package]
 name = "r4pm"
-version = "0.4.4"
+version = "0.5.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Process Mining CLI for working with (object-centric) event data"
@@ -8,8 +8,8 @@ homepage = "https://rust4pm.aarkue.eu"
 repository = "https://github.com/aarkue/rust4pm"
 
 [dependencies]
-process_mining = { path = "../process_mining", features = ["bindings", "ocel-sqlite", "graphviz-export"], version = "0.4.4"}
+process_mining = { version = "0.5.0", path = "../process_mining", features = ["bindings", "ocel-sqlite", "graphviz-export"] }
 serde_json = "1.0.105"
-serde = {version = "1.0.188", features = ["derive"]}
+serde = { version = "1.0.188", features = ["derive"] }
 anstyle = "1.0.13"
 

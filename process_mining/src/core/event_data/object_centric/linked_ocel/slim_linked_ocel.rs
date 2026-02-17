@@ -363,9 +363,8 @@ pub struct SlimLinkedOCEL {
     obtype_to_index: HashMap<String, usize>,
 }
 impl SlimLinkedOCEL {
-
-    /// Create a new empty SlimLinkedOCEL
-    /// 
+    /// Create a new empty `SlimLinkedOCEL`
+    ///
     /// After creation, new event/object types as well as event/object instances can be added to it.
     pub fn new() -> Self {
         Self::default()
@@ -558,7 +557,7 @@ impl SlimLinkedOCEL {
     }
 
     /// Add a new event to the OCEL
-    /// 
+    ///
     /// The attribute order must match the attributes defined on the corresponding event type.
     /// E.g., if `price` and `weight` are defined as event attributes on the event type
     /// (in that order), the first element corresponds to the `price` and the second
@@ -608,7 +607,7 @@ impl SlimLinkedOCEL {
     /// the first attribute array should contain all `price` attribute values
     /// (with their timestamps) and the second array should contain all `weight`
     /// attribute values (with their timestamps)
-    /// 
+    ///
     /// Returns the newly added [`ObjectIndex`]
     /// or None if the object type is unknown or the id is already taken
     ///

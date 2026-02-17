@@ -6,8 +6,9 @@ use macros_process_mining::RegistryEntity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::event_data::object_centric::linked_ocel::{
-    index_linked_ocel::ObjectIndex, IndexLinkedOCEL,
+use crate::core::event_data::{
+    case_centric::AttributeValue,
+    object_centric::linked_ocel::{index_linked_ocel::ObjectIndex, IndexLinkedOCEL},
 };
 
 ///
@@ -62,7 +63,7 @@ impl OCEL {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, JsonSchema)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
 /// OCEL Event/Object Type
 pub struct OCELType {
     /// Name
@@ -247,14 +248,14 @@ impl OCELObjectAttribute {
 #[serde(untagged)]
 /// OCEL Attribute Values
 pub enum OCELAttributeValue {
-    /// `DateTime`
-    Time(DateTime<FixedOffset>),
     /// Integer
     Integer(i64),
     /// Float
     Float(f64),
     /// Boolean
     Boolean(bool),
+    /// `DateTime`
+    Time(DateTime<FixedOffset>),
     /// String
     String(String),
     /// Placeholder for invalid values
@@ -286,6 +287,40 @@ impl OCELAttributeValue {
             OCELAttributeValue::Boolean(_) => OCELAttributeType::Boolean,
             OCELAttributeValue::String(_) => OCELAttributeType::String,
             OCELAttributeValue::Null => OCELAttributeType::Null,
+        }
+    }
+}
+
+impl From<AttributeValue> for OCELAttributeValue {
+    /// Convert an [`AttributeValue`] to an [`OCELAttributeValue`]
+    ///
+    /// The conversion is not entirely lossless, in particular values that cannot be represented
+    /// as OCEL attributes are converted to String (either directly, or as debug string).
+    fn from(value: AttributeValue) -> Self {
+        match value {
+            AttributeValue::String(s) => Self::String(s),
+            AttributeValue::Date(date_time) => Self::Time(date_time),
+            AttributeValue::Int(i) => Self::Integer(i),
+            AttributeValue::Float(f) => Self::Float(f),
+            AttributeValue::Boolean(b) => Self::Boolean(b),
+            AttributeValue::ID(uuid) => Self::String(uuid.to_string()),
+            AttributeValue::List(attributes) => Self::String(format!("{:?}", attributes)),
+            AttributeValue::Container(attributes) => Self::String(format!("{:?}", attributes)),
+            AttributeValue::None() => Self::Null,
+        }
+    }
+}
+
+impl From<OCELAttributeValue> for AttributeValue {
+    /// Convert an [`OCELAttributeValue`] to an [`AttributeValue`]
+    fn from(value: OCELAttributeValue) -> AttributeValue {
+        match value {
+            OCELAttributeValue::String(s) => AttributeValue::String(s),
+            OCELAttributeValue::Integer(i) => AttributeValue::Int(i),
+            OCELAttributeValue::Float(f) => AttributeValue::Float(f),
+            OCELAttributeValue::Boolean(b) => AttributeValue::Boolean(b),
+            OCELAttributeValue::Time(date_time) => AttributeValue::Date(date_time),
+            OCELAttributeValue::Null => AttributeValue::None(),
         }
     }
 }

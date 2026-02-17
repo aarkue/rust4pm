@@ -81,6 +81,11 @@ impl From<OCEL> for RegistryItem {
         Self::OCEL(value)
     }
 }
+impl From<SlimLinkedOCEL> for RegistryItem {
+    fn from(value: SlimLinkedOCEL) -> Self {
+        Self::SlimLinkedOCEL(value)
+    }
+}
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[allow(missing_docs)]
@@ -110,10 +115,10 @@ impl RegistryItemKind {
     pub fn all_kinds() -> &'static [Self] {
         &[
             RegistryItemKind::OCEL,
-            RegistryItemKind::EventLogActivityProjection,
             RegistryItemKind::EventLog,
-            RegistryItemKind::IndexLinkedOCEL,
+            RegistryItemKind::EventLogActivityProjection,
             RegistryItemKind::SlimLinkedOCEL,
+            RegistryItemKind::IndexLinkedOCEL,
         ]
     }
 
@@ -430,6 +435,27 @@ pub fn extract_param<'a, T: FromContext<'a>>(
     }
 }
 
+/// Extract a JSON-deserializable parameter without requiring state access.
+///
+/// Used by the `#[register_binding]` macro for functions with `&mut` big type parameters,
+/// where non-big-type arguments are extracted before acquiring the write lock.
+pub fn extract_param_json<T: serde::de::DeserializeOwned>(
+    m: &serde_json::Map<String, Value>,
+    k: &str,
+    default: impl FnOnce() -> Option<T>,
+) -> Result<T, String> {
+    if let Some(x) = m.get(k) {
+        if x.is_null() {
+            if let Some(d) = default() {
+                return Ok(d);
+            }
+        }
+        serde_json::from_value(x.clone()).map_err(|e| format!("Invalid Argument: {k}\n{e}"))
+    } else {
+        default().ok_or_else(|| format!("Missing required argument {k}"))
+    }
+}
+
 // Runtime Extraction
 // If a type is Deserialize, we can extract it from JSON.
 impl<'a, T> FromContext<'a> for T
@@ -544,6 +570,8 @@ pub fn list_functions_meta() -> Vec<BindingMeta> {
 pub fn get_fn_binding(id: &str) -> Option<&'static Binding> {
     inventory::iter::<Binding>.into_iter().find(|b| b.id == id)
 }
+
+mod slim_ocel_bindings;
 
 /// Get the number of objects in an [`OCEL`]
 #[register_binding]

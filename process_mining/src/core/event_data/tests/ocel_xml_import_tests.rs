@@ -6,8 +6,12 @@ use std::{
 
 use crate::{
     core::event_data::object_centric::{
+        io::OCELIOError,
         ocel_json::{import_ocel_json_path, import_ocel_json_slice},
-        ocel_xml::{xml_ocel_export::export_ocel_xml_path, xml_ocel_import::import_ocel_xml_slice},
+        ocel_xml::{
+            import_ocel_xml_path, xml_ocel_export::export_ocel_xml_path,
+            xml_ocel_import::import_ocel_xml_slice,
+        },
     },
     test_utils::get_test_data_path,
 };
@@ -38,6 +42,13 @@ fn test_ocel_xml_import() {
         .join("export")
         .join("order-management-export.xml");
     export_ocel_xml_path(&ocel, &export_path).unwrap();
+}
+
+#[test]
+fn test_xes_as_ocel_xml_import() {
+    let xes_path = get_test_data_path().join("xes").join("small-example.xes");
+    let ocel = import_ocel_xml_path(xes_path);
+    assert!(matches!(ocel, Result::Err(OCELIOError::Other(_))));
 }
 
 #[test]

@@ -1,12 +1,22 @@
 # Changelog
 
-## `process_mining` 0.4.4
+## 0.5.0
+- Fix SlimLinkedOCEL addObject function (previously did not correctly expand the reverse E2O/O2O reference array)
+- Change error type of OCEL XML import to `OCELIOError` 
+(**Breaking**), return error if XML does not contain any event or object types
+  - Added related test (`test_xes_as_ocel_xml_import`) to ensure xes files are not correctly imported as OCEL
+- Implement `Default` for SlimLinkedOCEL, add `new` function for SlimLinkedOCEL
+- Expose SlimLinkedOCEL binding functions (e.g., for adding events/objects, getting relations, etc.)
+- Implement From<...> for (bi-directional) conversion between (XES) `AttributeValue`s to `OCELAttributeValue`s
+- Remove `Hash` derive from `OCELType` (**Breaking**)
+
+## 0.4.4
 - Fix version mismatch in macros crate
 
-## `process_mining` 0.4.3
+## 0.4.3
 - Fix: typo in function name: `oc_declare_conformace` -> `oc_declare_conformance` (**Breaking**)
 
-## `process_mining` 0.4.2
+## 0.4.2
 - **New OCEL CSV Format**
   - Added CSV format support for OCEL:
   - Added Importer/Exporter for CSV OCEL file format
@@ -33,12 +43,12 @@
 - Updates related to io module for CSV parsing (e.g., new error variant in `OCELIOError`)
 - Renamed binding `discover_oc-declare` to `discover_oc_declare`
 
-## `process_mining` 0.4.1
+## 0.4.1
 - Added `verbose` option to `XESImportOptions`, defaulting to true
   - Note: Technically this is a breaking change, however the recommended way to use `XESImportOptions` is non-exhaustive with default fallback:
     - e.g., ```XESImportOptions {verbose: false, ..Default::default()}```
 
-## `process_mining` 0.4.0
+## 0.4.0
 
 ### Restructuring (Current)
 - **Unified IO Traits**: Introduced `Importable` and `Exportable` traits in `process_mining::core::io` to standardize import and export operations across different data structures.

@@ -7,9 +7,12 @@ use quick_xml::{events::BytesStart, Reader};
 use serde::{Deserialize, Serialize};
 
 use crate::core::event_data::{
-    object_centric::ocel_struct::{
-        OCELAttributeType, OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject,
-        OCELObjectAttribute, OCELRelationship, OCELType, OCELTypeAttribute, OCEL,
+    object_centric::{
+        io::OCELIOError,
+        ocel_struct::{
+            OCELAttributeType, OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject,
+            OCELObjectAttribute, OCELRelationship, OCELType, OCELTypeAttribute, OCEL,
+        },
     },
     timestamp_utils::parse_timestamp,
 };
@@ -130,7 +133,7 @@ fn parse_attribute_value(
 pub fn import_ocel_xml<T>(
     reader: &mut Reader<T>,
     options: OCELImportOptions,
-) -> Result<OCEL, quick_xml::Error>
+) -> Result<OCEL, OCELIOError>
 where
     T: BufRead,
 {
@@ -149,6 +152,7 @@ where
     let mut object_attribute_types: HashMap<(String, String), OCELAttributeType> = HashMap::new();
     // Event Type, Attribute Name => Attribute Type
     let mut event_attribute_types: HashMap<(String, String), OCELAttributeType> = HashMap::new();
+    let mut has_object_or_event_types_decl = false;
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(r) => {
@@ -160,8 +164,14 @@ where
                             _ => {} // mut x => print_to_string(&mut x, current_mode, "EventStart"),
                         },
                         Mode::Log => match t.name().as_ref() {
-                            b"object-types" => current_mode = Mode::ObjectTypes,
-                            b"event-types" => current_mode = Mode::EventTypes,
+                            b"object-types" => {
+                                current_mode = Mode::ObjectTypes;
+                                has_object_or_event_types_decl = true
+                            }
+                            b"event-types" => {
+                                current_mode = Mode::EventTypes;
+                                has_object_or_event_types_decl = true
+                            }
                             b"objects" => current_mode = Mode::Objects,
                             b"events" => current_mode = Mode::Events,
                             _ => {} // mut x => print_to_string(&mut x, current_mode, "EventStart"),
@@ -260,11 +270,11 @@ where
                                 ) {
                                     Ok(t) => t,
                                     Err(e) => {
-                                        return Err(quick_xml::Error::Io(std::sync::Arc::new(
-                                            std::io::Error::new(
+                                        return Err(OCELIOError::Xml(quick_xml::Error::Io(
+                                            std::sync::Arc::new(std::io::Error::new(
                                                 std::io::ErrorKind::InvalidData,
                                                 format!("Invalid date: {}", e),
-                                            ),
+                                            )),
                                         )));
                                     }
                                 };
@@ -559,10 +569,12 @@ where
                     _ => {}
                 }
             }
-            Err(err) => return Err(err),
+            Err(err) => return Err(err.into()),
         }
     }
-
+    if !has_object_or_event_types_decl {
+        return Err(OCELIOError::Other("No object or event types".to_string()));
+    }
     Ok(ocel)
 }
 
@@ -572,7 +584,7 @@ where
 pub fn import_ocel_xml_slice_with(
     xes_data: &[u8],
     options: OCELImportOptions,
-) -> Result<OCEL, quick_xml::Error> {
+) -> Result<OCEL, OCELIOError> {
     import_ocel_xml(&mut Reader::from_reader(BufReader::new(xes_data)), options)
 }
 
@@ -582,7 +594,7 @@ pub fn import_ocel_xml_slice_with(
 pub fn import_ocel_xml_path_with<P: AsRef<std::path::Path>>(
     path: P,
     options: OCELImportOptions,
-) -> Result<OCEL, quick_xml::Error> {
+) -> Result<OCEL, OCELIOError> {
     let mut reader: Reader<BufReader<std::fs::File>> = Reader::from_file(path)?;
     import_ocel_xml(&mut reader, options)
 }
@@ -590,13 +602,13 @@ pub fn import_ocel_xml_path_with<P: AsRef<std::path::Path>>(
 ///
 /// Import an [`OCEL`] XML from a byte slice with default options
 ///
-pub fn import_ocel_xml_slice(xes_data: &[u8]) -> Result<OCEL, quick_xml::Error> {
+pub fn import_ocel_xml_slice(xes_data: &[u8]) -> Result<OCEL, OCELIOError> {
     import_ocel_xml_slice_with(xes_data, OCELImportOptions::default())
 }
 
 ///
 /// Import an [`OCEL`] XML from a filepath with default options
 ///
-pub fn import_ocel_xml_path<P: AsRef<std::path::Path>>(path: P) -> Result<OCEL, quick_xml::Error> {
+pub fn import_ocel_xml_path<P: AsRef<std::path::Path>>(path: P) -> Result<OCEL, OCELIOError> {
     import_ocel_xml_path_with(path, OCELImportOptions::default())
 }

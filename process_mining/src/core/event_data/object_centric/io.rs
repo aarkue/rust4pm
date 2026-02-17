@@ -145,8 +145,7 @@ impl Importable for OCEL {
                 crate::core::event_data::object_centric::ocel_xml::xml_ocel_import::import_ocel_xml(
                     &mut xml_reader,
                     OCELImportOptions::default(),
-                )
-                .map_err(OCELIOError::Xml)?;
+                )?;
             Ok(ocel)
         } else if format.ends_with("ocel.csv") {
             let ocel = crate::core::event_data::object_centric::ocel_csv::import_ocel_csv(reader)
