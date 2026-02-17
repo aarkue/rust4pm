@@ -335,7 +335,7 @@ fn sorted_insert<T, B: Ord>(vec: &mut Vec<T>, to_add: T, mut f: impl FnMut(&T) -
         vec.insert(index, to_add);
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, RegistryEntity)]
+#[derive(Debug, Clone, Serialize, Deserialize, RegistryEntity, Default)]
 /// A slim and linked version of OCEL that allows for convenient usage
 pub struct SlimLinkedOCEL {
     /// Events
@@ -363,6 +363,13 @@ pub struct SlimLinkedOCEL {
     obtype_to_index: HashMap<String, usize>,
 }
 impl SlimLinkedOCEL {
+
+    /// Create a new empty SlimLinkedOCEL
+    /// 
+    /// After creation, new event/object types as well as event/object instances can be added to it.
+    pub fn new() -> Self {
+        Self::default()
+    }
     /// Convert an unlinked [`OCEL`] to a [`SlimLinkedOCEL`]
     ///
     pub fn from_ocel(mut ocel: OCEL) -> Self {
@@ -519,6 +526,11 @@ impl SlimLinkedOCEL {
         self.event_types.iter().map(|et| &et.name)
     }
     /// Add a new event to the OCEL
+    /// 
+    /// The attribute order must match the attributes defined on the corresponding event type.
+    /// E.g., if `price` and `weight` are defined as event attributes on the event type
+    /// (in that order), the first element corresponds to the `price` and the second
+    /// element to the `weight`.
     ///
     /// Returns the newly added [`EventIndex`]
     /// or None if the event type is unknown or the id is already taken
@@ -559,6 +571,12 @@ impl SlimLinkedOCEL {
     }
     /// Add a new object to the OCEL
     ///
+    /// The attribute order must match the attributes defined on the corresponding object type.
+    /// E.g., if the object type has attributes `price` and `weight` (in that order),
+    /// the first attribute array should contain all `price` attribute values
+    /// (with their timestamps) and the second array should contain all `weight`
+    /// attribute values (with their timestamps)
+    /// 
     /// Returns the newly added [`ObjectIndex`]
     /// or None if the object type is unknown or the id is already taken
     ///
