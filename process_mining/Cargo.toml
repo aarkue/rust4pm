@@ -1,6 +1,6 @@
 [package]
 name = "process_mining"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Process Mining library for working with (object-centric) event data"
@@ -14,7 +14,7 @@ rust-version = "1.77"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-macros_process_mining = { version = "0.5.1", path = "../macros_process_mining" }
+macros_process_mining = { version = "0.5.2", path = "../macros_process_mining" }
 chrono = { version = "0.4.40", features = ["serde"] }
 duckdb = { version = "1.2.1", optional = true, features = ["chrono"]}
 flate2 = "1.1.1"

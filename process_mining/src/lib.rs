@@ -8,13 +8,9 @@
 )]
 #![doc = include_str!("../README.md")]
 
-pub mod core;
-
-/// Conformance Checking
-///
-/// Conformance checking techniques typically compare the behavior of a process model with
-/// event data.
+pub mod analysis;
 pub mod conformance;
+pub mod core;
 pub mod discovery;
 
 pub use core::io::{Exportable, Importable};

@@ -41,26 +41,14 @@ pub fn flatten_ocel_on<'a>(
                         ],
                     };
 
-                    xes_ev
-                        .attributes
-                        .extend(ev_val.attributes.iter().flat_map(|at| {
-                            let xes_attr_val: Option<AttributeValue> = match &at.value {
-                                OCELAttributeValue::Integer(i) => Some(AttributeValue::Int(*i)),
-                                OCELAttributeValue::Float(f) => Some(AttributeValue::Float(*f)),
-                                OCELAttributeValue::String(s) => {
-                                    Some(AttributeValue::String(s.clone()))
-                                }
-                                // OCELAttributeValue::Time(date_time) => None,
-                                // OCELAttributeValue::Boolean(_) => todo!(),
-                                // OCELAttributeValue::Null => todo!(),
-                                _ => None,
-                            };
-                            xes_attr_val.map(|v| Attribute {
-                                key: at.name.clone(),
-                                value: v,
-                                own_attributes: None,
-                            })
-                        }));
+                    xes_ev.attributes.extend(ev_val.attributes.iter().map(|at| {
+                        let xes_attr_val: AttributeValue = at.value.clone().into();
+                        Attribute {
+                            key: at.name.clone(),
+                            value: xes_attr_val,
+                            own_attributes: None,
+                        }
+                    }));
 
                     xes_ev
                 })

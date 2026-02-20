@@ -300,13 +300,14 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
         ret_type = syn::parse_quote!(String);
     } else if attrs.stringify_error {
         // If stringify_error is set, we expect a Result<T, E> (or io::Result<T>).
-        // We need to transform the schema type to Result<T, String>.
+        // We unwrap the Result and use only the Ok type for the schema,
+        // since errors are propagated via the handler's Result return.
         if let Type::Path(tp) = &ret_type {
             if let Some(segment) = tp.path.segments.last() {
                 // Heuristic: If it looks like a Result (std or io), grab the first generic arg (Ok type)
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                     if let Some(ok_type) = args.args.first() {
-                        ret_type = syn::parse_quote!(::std::result::Result<#ok_type, String>);
+                        ret_type = syn::parse_quote!(#ok_type);
                     }
                 }
             }
@@ -328,8 +329,8 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
         }
     } else if attrs.stringify_error {
         quote! {
-            let final_result = result.map_err(|e| e.to_string());
-            serde_json::to_value(final_result).map_err(|e| e.to_string())
+            let ok_result = result.map_err(|e| e.to_string())?;
+            serde_json::to_value(ok_result).map_err(|e| e.to_string())
         }
     } else {
         quote! {

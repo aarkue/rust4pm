@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.2
+
+- New `analysis` module with reusable analysis functions (also exposed as bindings ;))
+  - `analysis::case_centric::dotted_chart`: Configurable multi-axis dotted chart generation (`DottedChartOptions`)
+  - `analysis::case_centric::event_timestamp_histogram`: Aggregate event timestamps into bins grouped by activity (`EventTimestampOptions`)
+  - `analysis::object_centric::object_attribute_changes`: Extract time-stamped attribute change history for an OCEL object
 
 ## 0.5.1
 - Rename bindings function for SlimLinkedOCEL bindings (not breaking, as 0.5.0 bindings were not published yet)
