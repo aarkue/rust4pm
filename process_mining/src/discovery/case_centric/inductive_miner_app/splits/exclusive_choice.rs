@@ -1,3 +1,18 @@
+//! Utility for splitting an event log according to an exclusive choice cut.
+//! 
+//! 
+//! # Implementation Notes
+//! This implementation adopts the xor-split algorithm as implemented in
+//! the ProM framework (`InductiveMiner`), originally written in Java.
+//!
+//! Reference:
+//! - Leemans, S.J.J., Fahland, D., van der Aalst, W.M.P.:
+//!   "Discovering Block-Structured Process Models from Event Logs – A Constructive Approach."
+//!   Application of Concurrency to System Design (ACSD), 2013.
+//! - Leemans S.J.J., "Robust process mining with guarantees", Ph.D. Thesis, Eindhoven
+//!   University of Technology, 09.05.2017
+//! - ProM source code:
+//!   https://github.com/promworkbench/InductiveMiner/blob/main/src/org/processmining/plugins/inductiveminer2/framework/logsplitter/LogSplitterXorFiltering.java
 use std::collections::HashMap;
 use crate::core::event_data::case_centric::EventLogClassifier;
 use crate::core::process_models::process_tree::OperatorType::ExclusiveChoice;
@@ -5,17 +20,6 @@ use crate::discovery::case_centric::inductive_miner_app::cut_finder::cut::Cut;
 use crate::discovery::case_centric::inductive_miner_app::splits::split::Split;
 use crate::EventLog;
 
-/// This implementation follows the xor-split algorithm as implemented in
-/// the ProM framework (`InductiveMiner`), originally written in Java.
-///
-/// Reference:
-/// - Leemans, S.J.J., Fahland, D., van der Aalst, W.M.P.:
-///   "Discovering Block-Structured Process Models from Event Logs – A Constructive Approach."
-///   Application of Concurrency to System Design (ACSD), 2013.
-/// - Leemans S.J.J., "Robust process mining with guarantees", Ph.D. Thesis, Eindhoven
-///   University of Technology, 09.05.2017
-/// - ProM source code:
-///   https://github.com/promworkbench/InductiveMiner/blob/main/src/org/processmining/plugins/inductiveminer2/framework/logsplitter/LogSplitterXorFiltering.java
 
 
 
@@ -131,6 +135,7 @@ pub fn xor_split<'a>(log: &EventLog, activity_classifier: &EventLogClassifier, c
     Some(Split::new(ExclusiveChoice, result))
 }
 
+#[cfg(test)]
 mod tests_xor_split{
     use std::collections::HashSet;
     use crate::core::chrono::Utc;
@@ -139,7 +144,7 @@ mod tests_xor_split{
     use crate::core::process_models::process_tree::OperatorType::ExclusiveChoice;
     use crate::discovery::case_centric::inductive_miner_app::cut_finder::cut::Cut;
     use crate::discovery::case_centric::inductive_miner_app::cut_finder::exclusive_choice::exclusive_choice_cut_wrapper;
-    use crate::discovery::case_centric::inductive_miner_app::splits::exclusice_choice::xor_split;
+    use crate::discovery::case_centric::inductive_miner_app::splits::exclusive_choice::xor_split;
     use crate::event_log;
 
     #[test]
@@ -158,7 +163,7 @@ mod tests_xor_split{
         let x = xor_split(&log, &EventLogClassifier::default(), cut);
         assert!(x.is_some());
         let x = x.unwrap();
-        assert_eq!(x.len(), 2);
+        assert_eq!(x.sub_logs.len(), 2);
     }
 
     #[test]

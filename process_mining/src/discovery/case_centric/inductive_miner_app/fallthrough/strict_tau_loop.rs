@@ -1,3 +1,12 @@
+//! Strict tau loop fallthrough detection utilities.
+//!
+//! This module implements the **strict tau loop fallthrough** used by the Inductive Miner.
+//!
+//! A strict tau loop assumes that a new iteration of the process starts **only when a start activity
+//! directly follows an end activity** within the same trace. Such a pattern suggest that the process
+//! silently returned to the beginning of the workflow via a tau transition between iterations.
+
+
 use crate::core::event_data::case_centric::EventLogClassifier;
 use crate::core::process_models::process_tree::Node;
 use crate::core::process_models::process_tree::OperatorType::Loop;
@@ -7,6 +16,16 @@ use crate::discovery::case_centric::inductive_miner_app::fallthrough::fallthroug
 use crate::discovery::case_centric::inductive_miner_app::structures::parameter::Parameters;
 use crate::EventLog;
 
+/// Splits traces in the event log according to the semantics of a **strict tau loop fallthrough**.
+///
+/// A trace is split whenever an **end activity** is immediately followed by a **start activity**.
+/// This pattern indicates that one iteration of the process has completed and a new iteration begins
+/// via an implicit silent transition.
+///
+/// Empty traces may appear in the resulting log if a split occurs at the beginning of a trace segment.
+///
+/// # Returns
+/// A new [EventLog] where traces are split by the above described logic.
 fn split_log_according_to_strict_tau(log: EventLog, classifier: &EventLogClassifier) -> EventLog{
     let dfg = discover_dfg_with_classifier(&log, classifier);
     let mut result_log = log.clone_without_traces();
@@ -44,7 +63,22 @@ fn split_log_according_to_strict_tau(log: EventLog, classifier: &EventLogClassif
     result_log
 }
 
+/// Attempt to detect  and apply the **strict tau loop fallthrough**.
+/// The log is transformed by using [split_log_according_to_strict_tau].
+/// If the operation increased the number of traces in the log, it indicates that the traces contained
+/// implicit restarts of the process.
 ///
+/// In that case, a loop operator is constructed where:
+/// 
+/// - the **do part** represents a single iteration of the process
+/// - the **redo part** 
+/// 
+/// The resulting loop node and transformed event log are returned.
+/// 
+/// # Returns
+/// - [StrictTauLoop] if stric loop behavior is detected
+/// - [Return] is a silent transition
+
 fn strict_tau_loop(log: EventLog, classifier: &EventLogClassifier) -> Fallthrough {
     let k = log.traces.len();
     let log = split_log_according_to_strict_tau(log, classifier);
@@ -80,7 +114,7 @@ pub fn strict_tau_loop_wrapper(log: EventLog, classifier: &EventLogClassifier, _
 }
 
 
-
+#[cfg(test)]
 mod test_strict_tau_loop{
     use crate::core::event_data::case_centric::EventLogClassifier;
     use crate::discovery::case_centric::inductive_miner_app::fallthrough::fallthrough::Fallthrough;

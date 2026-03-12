@@ -1,3 +1,4 @@
+//! This module contains a struct used for representing a found cut by specifying the found partitions and cut type.
 use std::borrow::Cow;
 use std::collections::HashSet;
 use crate::core::process_models::process_tree::OperatorType;
@@ -7,8 +8,8 @@ use crate::core::process_models::process_tree::OperatorType;
 /// specific cut operator (e.g. sequence, xor etc.)
 #[derive(Debug, PartialEq)]
 pub struct Cut<'a>{
-    operator: OperatorType, // define what operator this cut is about
-    partitions: Vec<HashSet<Cow<'a, str>>>,
+    pub operator: OperatorType, // define what operator this cut is about
+    pub partitions: Vec<HashSet<Cow<'a, str>>>,
 }
 
 impl<'a> Cut<'a>{
@@ -26,10 +27,6 @@ impl<'a> Cut<'a>{
         self.partitions.len()
     }
 
-    /// Returns an iterator over the partitions of this cut.
-    pub fn get_iter(&self) -> std::slice::Iter<'_, HashSet<Cow<'_, str>>> {
-        self.partitions.iter()
-    }
 
     /// Consumes the cut and returns the partitions of this cut.
     pub fn get_own(self) -> Vec<HashSet<Cow<'a, str>>> {
@@ -46,21 +43,5 @@ impl<'a> Cut<'a>{
     pub fn is_empty(&self) -> bool{
         self.partitions.is_empty()
     }
-
-
-
-    /// Converts this cut into an owned version with `'static` lifetime.
-    ///
-    /// All activity labels are cloned into owned `String`s.
-    /// This is useful when the cut must outlive the original event log data.
-    pub fn to_owned_cut(&self) ->Cut<'static>{
-        let owned_partitions = self.partitions.iter().map(|partition|{
-            partition.iter().map(|cow| Cow::Owned(cow.to_string())).collect()
-        }).collect::<Vec<HashSet<Cow<'static, str>>>>();
-
-        Cut{
-            operator: self.operator,
-            partitions: owned_partitions,
-        }
-    }
+    
 }

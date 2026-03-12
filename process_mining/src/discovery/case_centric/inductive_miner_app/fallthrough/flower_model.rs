@@ -1,3 +1,7 @@
+//! Flower model fall through utilities.
+//!
+//! This module implements the flower model fallthrough as a last resort fallthrough.
+
 use crate::core::event_data::case_centric::EventLogClassifier;
 use crate::core::process_models::process_tree::{Node, OperatorType};
 use crate::discovery::case_centric::dfg::discover_dfg_with_classifier;
@@ -35,7 +39,7 @@ pub fn flower_model(log: EventLog, event_log_classifier: &EventLogClassifier) ->
     FlowerModel(flower_node_root)
 }
 
-
+#[cfg(test)]
 mod test_flower_model {
     use crate::core::event_data::case_centric::EventLogClassifier;
     use crate::core::process_models::process_tree::{Node, OperatorType};

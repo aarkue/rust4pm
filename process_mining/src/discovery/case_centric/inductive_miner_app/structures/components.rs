@@ -1,4 +1,18 @@
-/// This implementation is inspired by the component structure in
+//! Component management utilities.
+//!
+//! This module provides a lightweight structure for maintaining connected components (partitions) of
+//! a set of nodes. Each node belongs to exactly one component and components can be merged dynamically.
+//!
+//! The structure is primarily used to represent partitions of activities during algorithms for finding
+//! cuts in event logs.
+//!
+//! # Implementation notes
+//!
+//! This is a port of the component structure implementation in the ProM framework ((`InductiveMiner`), originally written in Java.
+//! - ProM source code:
+//! https://github.com/promworkbench/InductiveMiner/blob/main/src/org/processmining/plugins/inductiveminer2/helperclasses/graphs/IntComponents.java
+
+/// Port of the component structure implementation in
 /// the ProM framework (`InductiveMiner`), originally written in Java.
 ///
 /// - ProM source code:
@@ -8,6 +22,13 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
+
+/// Maintains a partition of nodes into components.
+///
+/// Each node belongs to exactly one component. Components can be merged, queried and converted back
+/// into explicit sets of nodes.
+///
+/// Internally, nodes are mapped to integer indices to allow for efficient component operations.
 #[derive(Debug)]
 pub struct Components<'a> {
     components: Vec<usize>,             // component index of each node, get node index from map
@@ -17,6 +38,8 @@ pub struct Components<'a> {
 
 
 impl<'a> Components<'a> {
+
+    /// Creates a new component structure where each node initially forms its own component.
     pub fn new(nodes: &[Cow<'a, str>]) -> Self {
         let mut node2index = HashMap::new();
         // every node gets it own index in the beginning
@@ -33,47 +56,31 @@ impl<'a> Components<'a> {
         }
     }
 
-    pub fn from(partitions: &Vec<HashSet<Cow<'a, str>>>) -> Self {
-        let mut node2index = HashMap::new();
-        let mut node_number: usize = 0;
 
-        for part in partitions.iter() {
-            for act in part.iter() {
-                node2index.insert(act.clone(), node_number);
-                node_number += 1;
-            }
-        }
-
-        let mut components = vec![0;node_number];
-
-
-        let mut node_number: usize = 0;
-        for (component_number, part) in partitions.iter().enumerate() {
-            for _ in part.iter(){
-                components[node_number] = component_number;
-                node_number += 1;
-            }
-        }
-
-        Self{components, node2index, number_of_components: partitions.len()}
-
-    }
-
-
+    /// Returns the component index of a given node.
+    ///
+    /// Panics if the node is not contained in the component structure.
     pub fn component_of(&self, node: &str) -> usize {
         self.components[self.node2index[node]]
     }
 
+    /// Returns whether the nodes 'a' and 'b' are in the same component.
     pub fn same_component(&self, a: &str, b: &str) -> bool {
         self.component_of(a) == self.component_of(b)
     }
 
+    /// Merges the components containing the nodes 'a' and 'b'.
+    ///
+    /// If both nodes already are in the same component, the structure remains unchanged.
     pub fn merge_components_of(&mut self, a: &str, b: &str) {
         let ca = self.component_of(a);
         let cb = self.component_of(b);
         self.merge_components(ca, cb);
     }
 
+    /// Merge two components identified by their indices.
+    ///
+    /// All nodes belonging to the component 'ca' are reassigned to the component 'cb'.
     pub fn merge_components(&mut self, ca: usize, cb: usize) {
         if ca == cb {
             return;
@@ -90,6 +97,10 @@ impl<'a> Components<'a> {
         }
     }
 
+    /// Returns the current partitioning of nodes as explicit sets.
+    ///
+    /// Each element of the returned vector represents a component containing the nodes belonging
+    /// to that component.
     pub fn get_components(&self) -> Vec<HashSet<Cow<'a, str>>> {
         let mut result: Vec<HashSet<Cow<'a, str>>> = Vec::new();
         let mut map: HashMap<usize, usize> = HashMap::new();

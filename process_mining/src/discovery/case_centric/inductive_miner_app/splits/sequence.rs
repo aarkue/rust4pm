@@ -1,14 +1,17 @@
-/// This implementation follows the sequence-split algorithm as implemented in
-/// the ProM framework (`InductiveMiner`), originally written in Java.
-///
-/// Reference:
-/// - Leemans, S.J.J., Fahland, D., van der Aalst, W.M.P.:
-///   "Discovering Block-Structured Process Models from Event Logs – A Constructive Approach."
-///   Application of Concurrency to System Design (ACSD), 2013.
-/// - Leemans S.J.J., "Robust process mining with guarantees", Ph.D. Thesis, Eindhoven
-///   University of Technology, 09.05.2017
-/// - ProM source code:
-///   https://github.com/promworkbench/InductiveMiner/blob/main/src/org/processmining/plugins/inductiveminer2/framework/logsplitter/LogSplitterSequenceFiltering.javang
+//! Utility for resolving sequence cuts into sequence splits.
+//! 
+//! # Implementation Notes
+//! Port of the sequence-split algorithm as implemented in
+//! the ProM framework (`InductiveMiner`), originally written in Java.
+//!
+//! # Reference:
+//! - Leemans, S.J.J., Fahland, D., van der Aalst, W.M.P.:
+//!   "Discovering Block-Structured Process Models from Event Logs – A Constructive Approach."
+//!   Application of Concurrency to System Design (ACSD), 2013.
+//! - Leemans S.J.J., "Robust process mining with guarantees", Ph.D. Thesis, Eindhoven
+//!   University of Technology, 09.05.2017
+//! - ProM source code:
+//!   https://github.com/promworkbench/InductiveMiner/blob/main/src/org/processmining/plugins/inductiveminer2/framework/logsplitter/LogSplitterSequenceFiltering.javang
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ops::Deref;
@@ -131,7 +134,7 @@ pub fn sequence_split<'a>(
     Some(Split::new(Sequence, result))
 }
 
-#[allow(unused_imports)]
+#[cfg(test)]
 mod test_sequence_split {
     use std::collections::HashSet;
     use crate::core::chrono::Utc;
@@ -139,7 +142,7 @@ mod test_sequence_split {
     use crate::core::process_models::dfg::DirectlyFollowsGraph;
     use crate::discovery::case_centric::inductive_miner_app::cut_finder::sequence_cut::sequence_cut_wrapper;
     use crate::discovery::case_centric::inductive_miner_app::splits::sequence::sequence_split;
-    use crate::{event, event_log};
+    use crate::event_log;
 
     #[test]
     fn test_sequence_split() {
@@ -154,7 +157,6 @@ mod test_sequence_split {
         assert!(cut.is_some());
         let cut = cut.unwrap();
 
-        println!("Cut: {:?}", cut);
         let split = sequence_split(&log, &EventLogClassifier::default(), cut);
         assert!(split.is_some());
 
@@ -225,7 +227,6 @@ mod test_sequence_split {
         assert!(cut.is_some());
         let split = sequence_split(&log, &EventLogClassifier::default(), cut.unwrap());
         assert!(split.is_some());
-        println!("{:?}", split.unwrap().get_own());
 
     }
 

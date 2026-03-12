@@ -1,3 +1,14 @@
+//! Activity Concurrent fallthrough detection utilities.
+//!
+//! This module implements the **activity concurrent** fallthrough used by the inductive miner.
+//!
+//! The activity concurrent fallthrough assumes concurrent behavior when a single activity in the event log
+//! can occur independently of the ordering of the other activities. In such a case, the activity is
+//! considered to run in parallel with the remaining behavior of the log.
+//!
+//! When this pattern is detected, the activity is separated from the log and modeled as executing
+//! concurrently with the rest of the process.
+
 use crate::core::event_data::case_centric::EventLogClassifier;
 use crate::core::process_models::process_tree::{Node, OperatorType};
 use crate::discovery::case_centric::dfg::discover_dfg_with_classifier;
@@ -137,6 +148,7 @@ pub fn activity_concurrent_wrapper(log: EventLog,
     activity_concurrent(log, event_log_classifier, parameters)
 }
 
+#[cfg(test)]
 mod test_activity_concurrent {
     use std::collections::HashSet;
     use crate::core::event_data::case_centric::EventLogClassifier;
@@ -153,8 +165,6 @@ mod test_activity_concurrent {
                         let a0 = event_log_classifier.get_class_identity(e0);
                         let a1 = event_log_classifier.get_class_identity(e1);
                         if a0 != a1 {
-                            println!("Two activities did not match{:?}", (a0, a1));
-
                             return false;
                         }
                     }
@@ -192,7 +202,7 @@ mod test_activity_concurrent {
         assert!(events_equal(&log1, &ex1, &classifier));
         assert!(events_equal(&log2, &ex2, &classifier));
         let ActivityConcurrent(node, log1, split)= activity_concurrent(log, &classifier, &HashSet::new()) else { return assert!(false); };
-        assert!(!log1.traces.is_empty() && !split.is_empty());
+        assert!(!log1.traces.is_empty() && !split.sub_logs.is_empty());
         let ex_node = Node::new_operator(OperatorType::Concurrency);
         assert_eq!(node, ex_node);
 

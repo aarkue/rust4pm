@@ -1,14 +1,18 @@
-/// This implementation follows the Loop cut finder algorithm as implemented in
-/// the ProM framework (`InductiveMiner`), originally written in Java.
-///
-/// Reference:
-/// - Leemans, S.J.J., Fahland, D., van der Aalst, W.M.P.:
-///   "Discovering Block-Structured Process Models from Event Logs – A Constructive Approach."
-///   Application of Concurrency to System Design (ACSD), 2013.
-/// - Leemans S.J.J., "Robust process mining with guarantees", Ph.D. Thesis, Eindhoven
-///   University of Technology, 09.05.2017
-/// - ProM source code:
-///   https://github.com/promworkbench/InductiveMiner/blob/main/src/org/processmining/plugins/inductiveminer2/framework/cutfinders/CutFinderIMLoop.java
+//! Utility for detecting a loop cut in a Directly Follows Graph.
+//! 
+//! 
+//! # Implementation Notes
+//! This implementation ports the Loop cut finder algorithm as implemented in
+//! the ProM framework (`InductiveMiner`), originally written in Java.
+//!
+//! Reference:
+//! - Leemans, S.J.J., Fahland, D., van der Aalst, W.M.P.:
+//!   "Discovering Block-Structured Process Models from Event Logs – A Constructive Approach."
+//!   Application of Concurrency to System Design (ACSD), 2013.
+//! - Leemans S.J.J., "Robust process mining with guarantees", Ph.D. Thesis, Eindhoven
+//!   University of Technology, 09.05.2017
+//! - ProM source code:
+//!   https://github.com/promworkbench/InductiveMiner/blob/main/src/org/processmining/plugins/inductiveminer2/framework/cutfinders/CutFinderIMLoop.java
 use std::borrow::Cow;
 use std::collections::HashSet;
 use crate::core::process_models::dfg::DirectlyFollowsGraph;
@@ -141,10 +145,10 @@ pub fn redo_loop_cut_wrapper<'a>(dfg: &'a DirectlyFollowsGraph<'_>) -> Option<Cu
 
 }
 
-#[allow(unused_imports)]
+#[cfg(test)]
 mod test_redo_loop_cut{
     use std::collections::HashMap;
-    use crate::{event_log, trace, event};
+    use crate::event_log;
     use crate::core::process_models::dfg::DirectlyFollowsGraph;
     use crate::core::process_models::process_tree::OperatorType;
     use crate::discovery::case_centric::inductive_miner_app::cut_finder::cut::Cut;
@@ -236,8 +240,6 @@ mod test_redo_loop_cut{
             );
         dfg.start_activities = HashSet::from(["a".to_string(), "b".to_string()]);
         dfg.end_activities = HashSet::from(["c".to_string()]);
-
-        println!("Found component: {:?}", redo_loop_cut(&dfg));
     }
 
 
@@ -254,14 +256,20 @@ mod test_redo_loop_cut{
         let dfg = DirectlyFollowsGraph::discover(&log);
         let cut = redo_loop_cut_wrapper(&dfg);
         assert!(cut.is_some());
+        let cut = cut.unwrap();
+        assert_eq!(cut.len(), 3);
+        assert_eq!(cut.operator, OperatorType::Loop);
+        assert!(
+            cut.partitions == vec![HashSet::from(["a".into(), "b".into()]),
+                                   HashSet::from(["c".into()]),
+                                   HashSet::from(["d".into()])]
+            ||
+            cut.partitions == vec![HashSet::from(["a".into(), "b".into()]),
+                                   HashSet::from(["d".into()]),
+                                   HashSet::from(["c".into()])]
 
-        //expect a cut of three partitions
-        let expectations = Cut::new(OperatorType::Loop, vec![
-            HashSet::from(["a".into(), "b".into()]),
-            HashSet::from(["c".into()]),
-            HashSet::from(["d".into()])
-        ]);
-        assert_eq!(cut.unwrap(), expectations);
+        );
+        
     }
 
     #[test]

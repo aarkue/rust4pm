@@ -1,3 +1,4 @@
+//! This module contains the basic split used for representing found splits in the Inductive Miner Algorithm.
 use crate::core::process_models::process_tree::OperatorType;
 use crate::EventLog;
 
@@ -8,19 +9,15 @@ use crate::EventLog;
 /// - 'operator' : ['ImOperator'] defining the split type
 /// - 'sub_logs': a vector containing all new logs
 pub struct Split{
-    operator: OperatorType,
-    sub_logs: Vec<EventLog>,
+    pub operator: OperatorType,
+    pub sub_logs: Vec<EventLog>,
 }
 
 impl Split{
     pub fn new(operator: OperatorType, sub_logs: Vec<EventLog>) -> Split{
         Self{operator, sub_logs}
     }
-
-    pub fn len(&self) -> usize {
-        self.sub_logs.len()
-    }
-
+    
     pub fn get_own(self) -> Vec<EventLog>{
         self.sub_logs
     }
@@ -29,7 +26,4 @@ impl Split{
         self.operator
     }
 
-    pub fn is_empty(&self) -> bool{
-        self.sub_logs.is_empty()
-    }
 }

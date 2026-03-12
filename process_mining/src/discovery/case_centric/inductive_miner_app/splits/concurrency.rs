@@ -1,3 +1,4 @@
+//! Utility for splitting an event log according to a concurrency split.
 use std::borrow::Cow;
 use std::collections::HashSet;
 use crate::core::event_data::case_centric::EventLogClassifier;
@@ -55,14 +56,14 @@ pub fn and_split<'a>(log: &EventLog, activity_classifier: &EventLogClassifier, c
 }
 
 
-#[allow(unused_imports)]
+#[cfg(test)]
 mod test_and_split{
     use crate::core::chrono::Utc;
     use crate::core::event_data::case_centric::EventLogClassifier;
     use crate::core::process_models::dfg::DirectlyFollowsGraph;
     use crate::discovery::case_centric::inductive_miner_app::cut_finder::concurrent::concurrent_cut_wrapper;
     use crate::discovery::case_centric::inductive_miner_app::splits::concurrency::and_split;
-    use crate::{event_log, EventLog};
+    use crate::event_log;
 
     #[test]
     fn test_simple_and_cut_and_split(){

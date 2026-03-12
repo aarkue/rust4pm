@@ -1,22 +1,4 @@
-//**
-// This Code is based on the paper:
-//
-// Discovering Block-Structured Process Models From Event Logs - A Constructive Approach
-//          by S.J.J. Leemans, D. Fahland, and W.M.P. van der Aalst
-//
-//
-// The algorithm works by recursively identifying splits in the process behavior,
-// constructing a hierarchical representation (in case of a process tree).
-//
-// There are typically four split conditions:
-//
-// 1. Exclusive choice (xor)
-// 2. Sequence
-// 3. Concurrent (parallel)
-// 4. Loop
-//
-// If a split condition is matched, an accordingly named cut function is used to cut the log,
-// the algorithm continues recursively.
+//! Utility for detecting an exclusive choice cut in a given Directly Follows Graph
 
 use crate::discovery::case_centric::inductive_miner_app::cut_finder::cut::Cut;
 use std::borrow::Cow;
@@ -127,12 +109,11 @@ pub fn exclusive_choice_cut_wrapper<'a>(dfg: &'a DirectlyFollowsGraph<'_>) -> Op
 }
 
 
-#[allow(unused_imports)]
+#[cfg(test)]
 mod tests {
-    use crate::core::event_data::case_centric::EventLogClassifier;
     use crate::core::process_models::dfg::DirectlyFollowsGraph;
     use crate::discovery::case_centric::inductive_miner_app::cut_finder::exclusive_choice::exclusive_choice_cut_wrapper;
-    use crate::{event, event_log, trace};
+    use crate::event_log;
 
 
     #[test]
@@ -156,8 +137,8 @@ mod tests {
         // Expect two components: {"b","d"} and {"e","c"}
         //
         assert_eq!(cut.len(), 2);
-        assert!(cut.get_iter().any(|comp| comp.contains("b")));
-        assert!(cut.get_iter().any(|comp| comp.contains("c")));
+        assert!(cut.partitions.iter().any(|comp| comp.contains("b")));
+        assert!(cut.partitions.iter().any(|comp| comp.contains("c")));
     }
 
     // Case 2: XOR with 3 different branches
@@ -171,9 +152,9 @@ mod tests {
 
         // Expect three components: one with b, one with c, one with d
         assert_eq!(cut.len(), 3);
-        assert!(cut.get_iter().any(|comp| comp.contains("b")));
-        assert!(cut.get_iter().any(|comp| comp.contains("c")));
-        assert!(cut.get_iter().any(|comp| comp.contains("d")));
+        assert!(cut.partitions.iter().any(|comp| comp.contains("b")));
+        assert!(cut.partitions.iter().any(|comp| comp.contains("c")));
+        assert!(cut.partitions.iter().any(|comp| comp.contains("d")));
     }
 
     // Case 3: No XOR (sequence only)
@@ -206,9 +187,9 @@ mod tests {
 
         // Expect 3 disjoint components
         assert_eq!(cut.len(), 3);
-        assert!(cut.get_iter().any(|comp| comp.contains("a")));
-        assert!(cut.get_iter().any(|comp| comp.contains("e")));
-        assert!(cut.get_iter().any(|comp| comp.contains("f")));
+        assert!(cut.partitions.iter().any(|comp| comp.contains("a")));
+        assert!(cut.partitions.iter().any(|comp| comp.contains("e")));
+        assert!(cut.partitions.iter().any(|comp| comp.contains("f")));
     }
 
     #[test]

@@ -1,3 +1,7 @@
+//! Fallthrough detection utilities for the Inductive Miner.
+//!
+//! This module contains utilities of the fallthrough rules used by the Inductive Miner when no
+//! standard cut can be discovered in the event log.
 use crate::core::event_data::case_centric::EventLogClassifier;
 use crate::discovery::case_centric::inductive_miner_app::fallthrough::activity_concurrent::activity_concurrent_wrapper;
 use crate::discovery::case_centric::inductive_miner_app::fallthrough::activity_once_per_trace::activity_once_per_trace_wrapper;
@@ -21,13 +25,13 @@ mod tau_loop;
 
 /// Applies the sequence of *fallthrough rules* used by the Inductive Miner to an event log.
 ///
-/// This function iteratively evaluates predefined fallthroughs in the following order:
-/// - Empty Traces
-/// - Activity Once Per Trace
-/// - Activity Concurrent
-/// - Strict Tau Loop
-/// - Tau Loop
-/// - Flower Model
+/// This function iteratively evaluates predefined fallthrough in the following order:
+/// - [empty_traces]
+/// - [activity_once_per_trace]
+/// - [activity_concurrent]
+/// - [strict_tau_loop]
+/// - [tau_loop]
+/// - [flower_model]
 ///
 /// Whether a Fallthrough is applied at all, is controlled by the provided parameters.
 /// Note, that the Flower Model is applied nevertheless.

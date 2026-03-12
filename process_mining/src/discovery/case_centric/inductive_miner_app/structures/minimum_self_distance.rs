@@ -1,4 +1,7 @@
-use crate::{event_log, trace, EventLog};
+//! Utilities for determining the minimum self distance of a given activity in a given trace
+//! or activity sequence.
+
+use crate::EventLog;
 use std::collections::{HashMap, HashSet};
 use crate::core::event_data::case_centric::{EventLogClassifier, Trace};
 use crate::core::process_models::dfg::Activity;
@@ -141,131 +144,141 @@ impl MinimumSelfDistance {
 }
 
 
-#[test]
-fn test_extract_interleaving_activities() {
-    let t = trace!("a", "b", "c", "d", "e", "f");
-    let s = MinimumSelfDistance::extract_interleaving_activities(0, 6, &t, &EventLogClassifier::default());
-    assert_eq!(s, HashSet::from(["b".into(), "c".into(), "d".into(), "e".into(), "f".into()]));
-}
-#[test]
-fn test_extract_from_empty_trace() {
-    let t = trace!();
-    let s = MinimumSelfDistance::extract_interleaving_activities(0, 6, &t, &EventLogClassifier::default());
-    assert!(s.is_empty());}
+#[cfg(test)]
+mod test_min_dist{
+    use std::collections::HashSet;
+    use crate::core::event_data::case_centric::EventLogClassifier;
+    use crate::discovery::case_centric::inductive_miner_app::structures::minimum_self_distance::MinimumSelfDistance;
+    use crate::{event_log, trace};
 
-// ------------ Tests using binary events
-#[test]
-fn test_one_loop_distance() {
-    let t = trace!("a", "b", "a");
+    #[test]
+    fn test_extract_interleaving_activities() {
+        let t = trace!("a", "b", "c", "d", "e", "f");
+        let s = MinimumSelfDistance::extract_interleaving_activities(0, 6, &t, &EventLogClassifier::default());
+        assert_eq!(s, HashSet::from(["b".into(), "c".into(), "d".into(), "e".into(), "f".into()]));
+    }
+    #[test]
+    fn test_extract_from_empty_trace() {
+        let t = trace!();
+        let s = MinimumSelfDistance::extract_interleaving_activities(0, 6, &t, &EventLogClassifier::default());
+        assert!(s.is_empty());}
 
-    let r = MinimumSelfDistance::minimum_distances_trace(&t, &EventLogClassifier::default());
-    assert!(r.contains_key("a"));
-    assert_eq!(r.get("a").unwrap().0, 1);
-    assert!(r.get("a").unwrap().1.contains("b"));
-}
+    // ------------ Tests using binary events
+    #[test]
+    fn test_one_loop_distance() {
+        let t = trace!("a", "b", "a");
 
-#[test]
-fn test_loop_zero_distance(){
-    let t = trace!("a","a");
+        let r = MinimumSelfDistance::minimum_distances_trace(&t, &EventLogClassifier::default());
+        assert!(r.contains_key("a"));
+        assert_eq!(r.get("a").unwrap().0, 1);
+        assert!(r.get("a").unwrap().1.contains("b"));
+    }
 
-    let r = MinimumSelfDistance::minimum_distances_trace(&t, &EventLogClassifier::default());
-    assert!(r.contains_key("a"));
-    assert_eq!(r.get("a").unwrap().0, 0);
-    assert!(r.get("a").unwrap().1.is_empty());
-}
+    #[test]
+    fn test_loop_zero_distance(){
+        let t = trace!("a","a");
 
-#[test]
-fn test_retrieve_smaller_later_loop(){
-    let t = trace!("a", "b", "b", "a", "b", "b", "b", "a", "b", "a");
+        let r = MinimumSelfDistance::minimum_distances_trace(&t, &EventLogClassifier::default());
+        assert!(r.contains_key("a"));
+        assert_eq!(r.get("a").unwrap().0, 0);
+        assert!(r.get("a").unwrap().1.is_empty());
+    }
 
-    let r = MinimumSelfDistance::minimum_distances_trace(&t, &EventLogClassifier::default());
-    assert!(r.contains_key("a"));
-    assert_eq!(r.get("a").unwrap().0, 1);
-    assert!(r.get("a").unwrap().1.contains("b"));
+    #[test]
+    fn test_retrieve_smaller_later_loop(){
+        let t = trace!("a", "b", "b", "a", "b", "b", "b", "a", "b", "a");
 
-    // trivial, b should have 0 minimum self distance in this example
-    assert!(r.contains_key("b"));
-    assert_eq!(r.get("b").unwrap().0, 0);
-    assert!(r.get("b").unwrap().1.is_empty());
-}
+        let r = MinimumSelfDistance::minimum_distances_trace(&t, &EventLogClassifier::default());
+        assert!(r.contains_key("a"));
+        assert_eq!(r.get("a").unwrap().0, 1);
+        assert!(r.get("a").unwrap().1.contains("b"));
 
-
-// -------------------------------- Test using more than two different activities
-
-#[test]
-fn test_complex_trace(){
-    let t = trace!("a", "b", "d", "e", "a", "d", "g", "g", "d","b", "f", "a", "c");
-    let r = MinimumSelfDistance::minimum_distances_trace(&t, &EventLogClassifier::default());
-
-    // check if loops are contained
-    assert!(r.contains_key("a"));
-    assert_eq!(r.get("a").unwrap().0, 3);
-    assert_eq!(r.get("a").unwrap().1, HashSet::from(["b".into(), "d".into(), "e".into()]));
+        // trivial, b should have 0 minimum self distance in this example
+        assert!(r.contains_key("b"));
+        assert_eq!(r.get("b").unwrap().0, 0);
+        assert!(r.get("b").unwrap().1.is_empty());
+    }
 
 
-    assert!(r.contains_key("b"));
-    assert_eq!(r.get("b").unwrap().0, 7);
-    assert_eq!(r.get("b").unwrap().1, HashSet::from(["a".into(), "e".into(), "d".into(), "g".into()]));
+    // -------------------------------- Test using more than two different activities
 
-    assert!(!r.contains_key("c"));
+    #[test]
+    fn test_complex_trace(){
+        let t = trace!("a", "b", "d", "e", "a", "d", "g", "g", "d","b", "f", "a", "c");
+        let r = MinimumSelfDistance::minimum_distances_trace(&t, &EventLogClassifier::default());
 
-    // special case, because there are two loops with same minimum distance two
-    assert!(r.contains_key("d"));
-    assert_eq!(r.get("d").unwrap().0, 2);
-    // merged activities
-    assert_eq!(r.get("d").unwrap().1, HashSet::from(["e".into(), "a".into(), "g".into()]));
-
-
-    // not appearing twice
-    assert!(!r.contains_key("e"));
-    assert!(!r.contains_key("f"));
-
-    // only one trace where g follows after g
-    assert!(r.contains_key("g"));
-    assert_eq!(r.get("g").unwrap().0, 0);
-    assert!(r.get("g").unwrap().1.is_empty());
-}
+        // check if loops are contained
+        assert!(r.contains_key("a"));
+        assert_eq!(r.get("a").unwrap().0, 3);
+        assert_eq!(r.get("a").unwrap().1, HashSet::from(["b".into(), "d".into(), "e".into()]));
 
 
-#[test]
-fn test_empty_log(){
-    let log = event_log!();
-    let r = MinimumSelfDistance::minimum_distances_interleave(&log, &EventLogClassifier::default());
+        assert!(r.contains_key("b"));
+        assert_eq!(r.get("b").unwrap().0, 7);
+        assert_eq!(r.get("b").unwrap().1, HashSet::from(["a".into(), "e".into(), "d".into(), "g".into()]));
 
-    assert!(r.is_empty());
-}
+        assert!(!r.contains_key("c"));
 
-#[test]
-fn test_zero_loops_log(){
-    let log = event_log!(["a", "a"], ["b", "b"]);
-    let r = MinimumSelfDistance::minimum_distances_interleave(&log, &EventLogClassifier::default());
+        // special case, because there are two loops with same minimum distance two
+        assert!(r.contains_key("d"));
+        assert_eq!(r.get("d").unwrap().0, 2);
+        // merged activities
+        assert_eq!(r.get("d").unwrap().1, HashSet::from(["e".into(), "a".into(), "g".into()]));
 
-    assert!(r.contains_key("a"));
-    assert_eq!(r.get("a").unwrap().0, 0);
 
-    assert!(r.contains_key("b"));
-    assert_eq!(r.get("b").unwrap().0, 0);
-}
+        // not appearing twice
+        assert!(!r.contains_key("e"));
+        assert!(!r.contains_key("f"));
 
-#[test]
-fn test_find_smaller_loop(){
-    let log = event_log!(["a", "a"], ["a", "b", "a"]);
-    let r = MinimumSelfDistance::minimum_distances_interleave(&log, &EventLogClassifier::default());
+        // only one trace where g follows after g
+        assert!(r.contains_key("g"));
+        assert_eq!(r.get("g").unwrap().0, 0);
+        assert!(r.get("g").unwrap().1.is_empty());
+    }
 
-    assert!(r.contains_key("a"));
-    assert_eq!(r.get("a").unwrap().0, 0);
 
-    assert!(!r.contains_key("b"));
-}
+    #[test]
+    fn test_empty_log(){
+        let log = event_log!();
+        let r = MinimumSelfDistance::minimum_distances_interleave(&log, &EventLogClassifier::default());
 
-#[test]
-fn test_merge_relations(){
-    let log = event_log!(["a", "c", "a"], ["a", "b", "a"]);
-    let r = MinimumSelfDistance::minimum_distances_interleave(&log, &EventLogClassifier::default());
+        assert!(r.is_empty());
+    }
 
-    assert!(r.contains_key("a"));
-    assert_eq!(r.get("a").unwrap().0, 1);
-    assert_eq!(r.get("a").unwrap().1, HashSet::from(["b".into(), "c".into()]));
+    #[test]
+    fn test_zero_loops_log(){
+        let log = event_log!(["a", "a"], ["b", "b"]);
+        let r = MinimumSelfDistance::minimum_distances_interleave(&log, &EventLogClassifier::default());
+
+        assert!(r.contains_key("a"));
+        assert_eq!(r.get("a").unwrap().0, 0);
+
+        assert!(r.contains_key("b"));
+        assert_eq!(r.get("b").unwrap().0, 0);
+    }
+
+    #[test]
+    fn test_find_smaller_loop(){
+        let log = event_log!(["a", "a"], ["a", "b", "a"]);
+        let r = MinimumSelfDistance::minimum_distances_interleave(&log, &EventLogClassifier::default());
+
+        assert!(r.contains_key("a"));
+        assert_eq!(r.get("a").unwrap().0, 0);
+
+        assert!(!r.contains_key("b"));
+    }
+
+    #[test]
+    fn test_merge_relations(){
+        let log = event_log!(["a", "c", "a"], ["a", "b", "a"]);
+        let r = MinimumSelfDistance::minimum_distances_interleave(&log, &EventLogClassifier::default());
+
+        assert!(r.contains_key("a"));
+        assert_eq!(r.get("a").unwrap().0, 1);
+        assert_eq!(r.get("a").unwrap().1, HashSet::from(["b".into(), "c".into()]));
+    }
+
+
 }
 
 

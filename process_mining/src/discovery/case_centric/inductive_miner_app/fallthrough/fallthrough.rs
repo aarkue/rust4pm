@@ -1,3 +1,5 @@
+//! Fallthrough labels
+
 use std::mem::discriminant;
 use crate::core::process_models::process_tree::Node;
 use crate::discovery::case_centric::inductive_miner_app::splits::split::Split;

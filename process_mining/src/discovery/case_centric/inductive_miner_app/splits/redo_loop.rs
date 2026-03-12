@@ -1,3 +1,19 @@
+//! Utility for splitting a log according to a loop cut
+//!
+//!
+//! # Implementation Notes
+//! This implementation adopts the loop-splitting algorithm as implemented in
+//! the ProM framework (`InductiveMiner`), originally written in Java.
+//!
+//! Reference:
+//! - Leemans, S.J.J., Fahland, D., van der Aalst, W.M.P.:
+//!   "Discovering Block-Structured Process Models from Event Logs – A Constructive Approach."
+//!   Application of Concurrency to System Design (ACSD), 2013.
+//! - Leemans S.J.J., "Robust process mining with guarantees", Ph.D. Thesis, Eindhoven
+//!   University of Technology, 09.05.2017
+//! - ProM source code:
+//!   https://github.com/promworkbench/InductiveMiner/blob/main/src/org/processmining/plugins/inductiveminer2/framework/logsplitter/LogSplitterLoop.java
+
 use std::collections::HashMap;
 use crate::EventLog;
 use crate::core::event_data::case_centric::EventLogClassifier;
@@ -52,7 +68,7 @@ pub fn loop_split<'a>(log: &EventLog, classifier: &EventLogClassifier, cut: Cut<
         //each sublogs gets one clean trace
         let mut sub_trace = trace.clone_without_events();
 
-        let mut last_partition: Option<usize> = None; // init to None to signal the start of a new trace
+        let mut last_partition: Option<usize> = None; // init too None to signal the start of a new trace
 
         for event in &trace.events {
             let activity = classifier.get_class_identity(event);
@@ -91,14 +107,13 @@ pub fn loop_split<'a>(log: &EventLog, classifier: &EventLogClassifier, cut: Cut<
     Some(Split::new(Loop, result))
 }
 
-#[allow(unused_imports)]
+#[cfg(test)]
 mod test_loop_split {
-    use crate::core::chrono::Utc;
     use crate::core::event_data::case_centric::EventLogClassifier;
     use crate::core::process_models::dfg::DirectlyFollowsGraph;
     use crate::discovery::case_centric::inductive_miner_app::cut_finder::loop_cut::redo_loop_cut_wrapper;
     use crate::discovery::case_centric::inductive_miner_app::splits::redo_loop::loop_split;
-    use crate::{event, event_log, trace};
+    use crate::event_log;
     use crate::EventLog;
 
     fn events_equal(log: &EventLog, o_log: &EventLog, event_log_classifier: EventLogClassifier) -> bool {
@@ -109,8 +124,6 @@ mod test_loop_split {
                         let a0 = event_log_classifier.get_class_identity(e0);
                         let a1 = event_log_classifier.get_class_identity(e1);
                         if a0 != a1 {
-                            println!("Two activities did not match{:?}", (a0, a1));
-
                             return false;
                         }
                     }
@@ -134,7 +147,7 @@ mod test_loop_split {
         let split = loop_split(&log, &EventLogClassifier::default(), cut.unwrap());
         assert!(split.is_some());
         let split = split.unwrap();
-        assert_eq!(split.len(), 2);
+        assert_eq!(split.sub_logs.len(), 2);
 
         // created expected event logs
         let do_log = event_log!(
@@ -190,10 +203,9 @@ mod test_loop_split {
         let split = loop_split(&log, &EventLogClassifier::default(), cut.unwrap());
         assert!(split.is_some());
         let split = split.unwrap();
-        assert_eq!(split.len(), 2);
+        assert_eq!(split.sub_logs.len(), 2);
 
         for log in split.get_own() {
-            println!("{:#?}", log);
             if log.traces.len() == do_log.traces.len() {
                 // expected length of 6
                 assert!(events_equal(&log, &do_log, EventLogClassifier::default()));

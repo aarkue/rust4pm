@@ -1,3 +1,5 @@
+//! Empty traces fallthrough detection utilities.
+
 use crate::core::event_data::case_centric::EventLogClassifier;
 use crate::core::process_models::process_tree::{Node, OperatorType};
 use crate::discovery::case_centric::inductive_miner_app::fallthrough::fallthrough::Fallthrough;
@@ -7,9 +9,10 @@ use crate::EventLog;
 
 /// Checks whether the empty traces fallthrough applies to a given log,
 /// it applies when the log contains empty traces.
-/// If so a Process node with operator instance xor is returned, having an empty leaf as child if
-/// there is at least one empty trace in the log,
-/// the other non-empty logs have to processed in another recursion of the IM Algorithm.
+/// 
+/// # Returns
+/// - [EmptyTraces] if the event log contained empty traces 
+/// - [Return] if the event log contained no empty traces
  fn empty_traces(mut log: EventLog, _event_log_classifier: &EventLogClassifier) -> Fallthrough {
     let len_before = log.traces.len();
     log.traces = log.traces.into_iter().filter(|trace| !trace.events.is_empty()).collect();
@@ -38,7 +41,7 @@ pub fn empty_traces_wrapper(log: EventLog, _event_log_classifier: &EventLogClass
     empty_traces(log, _event_log_classifier)
 }
 
-
+#[cfg(test)]
 mod test_empty_traces_ft{
     use crate::{event_log, event};
     use crate::core::event_data::case_centric::EventLogClassifier;

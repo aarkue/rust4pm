@@ -1,14 +1,17 @@
-/// This implementation (ot the function parallel cut) follows the parallel cut algorithm as implemented in
-/// the ProM framework (`InductiveMiner`), originally written in Java.
-///
-/// Reference:
-/// - Leemans, S.J.J., Fahland, D., van der Aalst, W.M.P.:
-///   "Discovering Block-Structured Process Models from Event Logs – A Constructive Approach."
-///   Application of Concurrency to System Design (ACSD), 2013.
-/// - Leemans S.J.J., "Robust process mining with guarantees", Ph.D. Thesis, Eindhoven
-///   University of Technology, 09.05.2017
-/// - ProM source code:
-///  https://github.com/promworkbench/InductiveMiner/blob/main/src/org/processmining/plugins/inductiveminer2/framework/cutfinders/CutFinderIMConcurrent.java
+//! Utility for detecting a concurrency cut in a given Directly Follows Graph. 
+//! 
+//! This implementation ports the parallel cut algorithm as implemented in
+//! the ProM framework (`InductiveMiner`), originally written in Java.
+//!
+//! Reference:
+//! - Leemans, S.J.J., Fahland, D., van der Aalst, W.M.P.:
+//!   "Discovering Block-Structured Process Models from Event Logs – A Constructive Approach."
+//!   Application of Concurrency to System Design (ACSD), 2013.
+//! - Leemans S.J.J., "Robust process mining with guarantees", Ph.D. Thesis, Eindhoven
+//!   University of Technology, 09.05.2017
+//! - ProM source code:
+//!  https://github.com/promworkbench/InductiveMiner/blob/main/src/org/processmining/plugins/inductiveminer2/framework/cutfinders/CutFinderIMConcurrent.java
+
 use std::borrow::Cow;
 use std::collections::HashSet;
 use crate::core::process_models::dfg::DirectlyFollowsGraph;
@@ -192,6 +195,7 @@ pub fn concurrent_cut_wrapper<'a>(dfg: &'a DirectlyFollowsGraph<'_>, mindist: Op
     }
 }
 
+#[cfg(test)]
 mod test_parallel_cut {
     use std::borrow::Cow;
     use std::collections::{HashMap, HashSet};
@@ -227,7 +231,6 @@ mod test_parallel_cut {
             &event_log!(["a", "b", "c"], ["b", "a", "c"])
         );
         let cut = concurrent_cut(&dfg, &None);
-        println!("CUT {:?}", cut);
     }
 
     #[test]
@@ -236,7 +239,6 @@ mod test_parallel_cut {
             &event_log!(["a", "b"], ["b", "a"])
         );
         let cut = concurrent_cut_wrapper(&dfg, None);
-        println!("CUT {:?}", cut);
         assert!(cut.is_some());
         assert_eq!(cut.unwrap().len(), 2);
     }
@@ -260,8 +262,8 @@ mod test_parallel_cut {
         let parts = cut.unwrap();
         assert_eq!(parts.len(), 3);
 
-        let flattened: HashSet<Cow<'_, str>> = parts
-            .get_iter()
+        let flattened: HashSet<Cow<'_, str>> = parts.partitions
+            .iter()
             .flat_map(|p| p.iter().map(|s| s.clone()))
             .collect();
 

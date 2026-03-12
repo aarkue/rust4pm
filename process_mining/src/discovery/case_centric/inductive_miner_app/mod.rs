@@ -1,9 +1,9 @@
 //! inductive miner discovery algorithm
 
+use base_cases::{find_base_case, BaseCases};
 use crate::core::event_data::case_centric::EventLogClassifier;
 use crate::core::process_models::process_tree::{Node, ProcessTree};
 use crate::discovery::case_centric::dfg::discover_dfg_with_classifier;
-use crate::discovery::case_centric::inductive_miner_app::base_cases::base_cases::{find_base_case, BaseCases};
 use crate::discovery::case_centric::inductive_miner_app::cut_finder::cut::Cut;
 use crate::discovery::case_centric::inductive_miner_app::cut_finder::find_cut;
 use crate::discovery::case_centric::inductive_miner_app::fallthrough::apply_fallthrough;
@@ -181,9 +181,9 @@ pub fn build_tree(log: EventLog, event_log_classifier: &EventLogClassifier, para
 mod tests {
 
     use crate::core::event_data::case_centric::EventLogClassifier;
-    use crate::core::process_models::process_tree::{Node};
+    use crate::core::process_models::process_tree::Node;
     use crate::core::process_models::process_tree::OperatorType::{ExclusiveChoice, Loop};
-    use crate::discovery::case_centric::inductive_miner_app::{inductive_miner_default_parameters};
+    use crate::discovery::case_centric::inductive_miner_app::inductive_miner_default_parameters;
     use crate::event_log;
 
     #[test]

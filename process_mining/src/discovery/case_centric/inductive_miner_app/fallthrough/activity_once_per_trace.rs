@@ -1,7 +1,15 @@
-
+//! Activity once per trace detection utilities.
+//!
+//! This module implements the **activity once per trace** used by the inductive miner.
+//!
+//! The fallthrough applies when an activity occurs **exactly once in every trace of the event log**.
+//! In this case, the activity is assumed to execute independently of the rest of the process.
+//!
+//! When such an activity is detected, it is removed from the event log and modeled as running in
+//! parallel with the remaining behavior of the process.
 use std::collections::HashMap;
 use crate::core::event_data::case_centric::EventLogClassifier;
-use crate::{event_log, EventLog};
+use crate::EventLog;
 use crate::core::process_models::process_tree::{Node, OperatorType};
 use crate::discovery::case_centric::inductive_miner_app::fallthrough::fallthrough::Fallthrough;
 use crate::discovery::case_centric::inductive_miner_app::fallthrough::fallthrough::Fallthrough::{ActivityOncePerTrace, Return};
@@ -34,14 +42,6 @@ fn remove_activity_from_log(
     log
 }
 
-#[test]
-fn test_remove_activity_with_empty_trace() {
-    let log = event_log!([], ["a"], ["a", "b"]);
-    let r = remove_activity_from_log(log, &EventLogClassifier::default(), "a".to_string());
-
-    let expected = event_log!([], [], ["b"],);
-    assert_eq!(r, expected);
-}
 
 /// Helper struct to count the occurrences of each activity in the whole log and in every trace.
 /// In 'trace_activities' each index corresponds to a trace at the same index in the event log.
@@ -164,13 +164,24 @@ pub fn activity_once_per_trace_wrapper(
     activity_once_per_trace(log, event_log_classifier)
 }
 
+
+#[cfg(test)]
 mod test_activity_once_per_trace {
     use crate::{event_log, EventLog};
     use crate::core::event_data::case_centric::EventLogClassifier;
     use crate::core::process_models::process_tree::{Node, OperatorType};
-    use crate::discovery::case_centric::inductive_miner_app::fallthrough::activity_once_per_trace::activity_once_per_trace;
+    use crate::discovery::case_centric::inductive_miner_app::fallthrough::activity_once_per_trace::{activity_once_per_trace, remove_activity_from_log};
     use crate::discovery::case_centric::inductive_miner_app::fallthrough::fallthrough::Fallthrough;
     use crate::discovery::case_centric::inductive_miner_app::fallthrough::fallthrough::Fallthrough::{ActivityOncePerTrace, Return};
+
+    #[test]
+    fn test_remove_activity_with_empty_trace() {
+        let log = event_log!([], ["a"], ["b", "a"]); // b as first event intentionally to get the same timestamp as for the expected one
+        let r = remove_activity_from_log(log, &EventLogClassifier::default(), "a".to_string());
+
+        let expected = event_log!([], [], ["b"],);
+        assert_eq!(r, expected);
+    }
 
     fn events_equal(log: &EventLog, o_log: &EventLog, event_log_classifier: &EventLogClassifier) -> bool {
         if log.traces.len() == o_log.traces.len() {
@@ -180,8 +191,6 @@ mod test_activity_once_per_trace {
                         let a0 = event_log_classifier.get_class_identity(e0);
                         let a1 = event_log_classifier.get_class_identity(e1);
                         if a0 != a1 {
-                            println!("Two activities did not match{:?}", (a0, a1));
-
                             return false;
                         }
                     }

@@ -1,3 +1,5 @@
+//! This module contains algorithms for detecting a cut in a given Directly Follows Graph.
+
 use crate::core::event_data::case_centric::EventLogClassifier;
 use crate::core::process_models::dfg::DirectlyFollowsGraph;
 use crate::discovery::case_centric::inductive_miner_app::cut_finder::concurrent::concurrent_cut_wrapper;
@@ -50,7 +52,7 @@ pub fn find_cut<'a>(dfg: &'a DirectlyFollowsGraph<'_>, log: &EventLog, event_log
     }
 }
 
-
+#[cfg(test)]
 mod test_cut_finder{
     use std::collections::HashSet;
     use crate::{

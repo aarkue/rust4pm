@@ -1,8 +1,11 @@
+//! This module contains utilities for splitting an event log according to either exclusive choice, 
+//! sequence, loop or concurrency cut.
+
 use crate::core::event_data::case_centric::EventLogClassifier;
 use crate::core::process_models::process_tree::OperatorType;
 use crate::discovery::case_centric::inductive_miner_app::cut_finder::cut::Cut;
 use crate::discovery::case_centric::inductive_miner_app::splits::concurrency::and_split;
-use crate::discovery::case_centric::inductive_miner_app::splits::exclusice_choice::xor_split;
+use crate::discovery::case_centric::inductive_miner_app::splits::exclusive_choice::xor_split;
 use crate::discovery::case_centric::inductive_miner_app::splits::redo_loop::loop_split;
 use crate::discovery::case_centric::inductive_miner_app::splits::sequence::sequence_split;
 use crate::discovery::case_centric::inductive_miner_app::splits::split::Split;
@@ -10,7 +13,7 @@ use crate::EventLog;
 
 mod concurrency;
 mod sequence;
-mod exclusice_choice;
+mod exclusive_choice;
 mod redo_loop;
 pub mod split;
 
@@ -59,7 +62,7 @@ fn splitting<'a>(log: &EventLog, classifier: &EventLogClassifier, cut: Cut<'a>) 
     }
 }
 
-
+#[cfg(test)]
 mod test_splits{
     use std::collections::HashSet;
     use crate::core::event_data::case_centric::EventLogClassifier;

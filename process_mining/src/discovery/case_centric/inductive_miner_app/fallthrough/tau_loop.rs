@@ -1,3 +1,10 @@
+//! Tau loop fallthrough detection utilities.
+//!
+//! This module implements the **tau loop fallthrough** used by the Inductive Miner.
+//! A tau loop is assumed when a trace appears to restart without an explicit visible transition
+//! between the end of one iteration and the beginning of the next.
+
+
 use crate::core::event_data::case_centric::EventLogClassifier;
 use crate::core::process_models::process_tree::Node;
 use crate::core::process_models::process_tree::OperatorType::Loop;
@@ -54,7 +61,18 @@ fn split_log_according_to_tau_loop(log: EventLog, classifier: &EventLogClassifie
     result_log
 }
 
-/// Attempts to apply the 'tau_loop' Fallthrough by
+/// Attempts to apply the 'tau_loop' fallthrough.
+///
+/// The algorithm first splits the log using [split_log_according_to_tau_loop].
+/// If this operation increases the number of traces, it indicates that traces contained implicit
+/// restarts. In that case, a loop operator is created where:
+///
+/// - the **do part** represent one iteration of the process
+/// - the **redo part** is a silent transition (tau)
+///
+/// # Returns
+/// - [Fallthrough::TauLoop] if the log split indicates loop behavior
+/// - [Fallthrough::Return] if the log split indicates no loop behavior
 fn tau_loop(log: EventLog, classifier: &EventLogClassifier) -> Fallthrough {
     let k = log.traces.len();
     let log = split_log_according_to_tau_loop(log, classifier);
@@ -88,7 +106,7 @@ pub fn tau_loop_wrapper(log: EventLog, classifier: &EventLogClassifier, _:&Param
 }
 
 
-
+#[cfg(test)]
 mod test_tau_loop{
     use crate::core::event_data::case_centric::EventLogClassifier;
     use crate::discovery::case_centric::inductive_miner_app::fallthrough::fallthrough::Fallthrough::TauLoop;

@@ -1,3 +1,5 @@
+//! Utility for detecting a sequence cut in a Directly Follows Graph.
+
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use crate::core::process_models::dfg::{Activity, DirectlyFollowsGraph};
@@ -59,22 +61,6 @@ fn reaches_any_transitive(a: &HashSet<Cow<'_, str>>, b: &HashSet<Cow<'_, str>>,
     false
 }
 
-
-/// Helper function which calculates whether every activity in a set a can reach every activity in another set b.
-fn reaches_all_transitive(a: &HashSet<Cow<'_, str>>, b: &HashSet<Cow<'_, str>>,
-                          idx_map: &HashMap<String, usize>,
-                          matrix: &Vec<Vec<bool>>) -> bool {
-    for act_a in a {
-        for act_b in b {
-            if let (Some(&idx_a), Some(&idx_b)) = (idx_map.get(act_a.as_ref()), idx_map.get(act_b.as_ref())) {
-                if !matrix[idx_a][idx_b] {
-                    return false;
-                }
-            }
-        }
-    }
-    true
-}
 
 
 /// Calculates Activity Sequences in a given Directly Follows Graph.
@@ -176,16 +162,14 @@ pub fn sequence_cut_wrapper<'a>(dfg: &'a DirectlyFollowsGraph<'_>, _parameters: 
     }
 }
 
-#[allow(unused_imports)]
+#[cfg(test)]
 mod test_sequence_cut{
     use std::borrow::Cow;
     use crate::discovery::case_centric::inductive_miner_app::cut_finder::sequence_cut::calc_sequences;
     use std::collections::HashSet;
-    use crate::core::event_data::case_centric::EventLogClassifier;
     use crate::core::process_models::dfg::DirectlyFollowsGraph;
-    use crate::discovery::case_centric::dfg::discover_dfg;
     use crate::discovery::case_centric::inductive_miner_app::cut_finder::sequence_cut::{ sequence_cut_wrapper};
-    use crate::{event_log, trace, event};
+    use crate::{event_log};
     #[test]
     fn test_single_activity(){
         let dfg = DirectlyFollowsGraph::discover(&event_log!(["a"]));
@@ -199,7 +183,6 @@ mod test_sequence_cut{
         let input = event_log!(["a", "b", "c"], ["d"]);
         let dfg = DirectlyFollowsGraph::discover(&input);
         let result = sequence_cut_wrapper(&dfg, &HashSet::new());
-        println!("{:?}", result);
         assert!(result.is_some());
         assert_eq!(result.unwrap().get_own().len(), 3);
 
