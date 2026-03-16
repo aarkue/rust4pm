@@ -46,6 +46,7 @@ Whenever a new version of the Rust4PM project is released, the following steps h
 3. Run all tests, check formatting and clippy lints. Also build the documentation.
   - `cargo clippy --all-targets --all-features --fix --allow-staged`
   - `cargo clippy --all-targets --all-features -- -D warnings`
+  - `cargo test --verbose --all-features`
   - `cargo fmt --all --check`
   - `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
 4. Publish the new macro crate version (first) and then the new `process_mining` version (second) to crates.io

@@ -25,6 +25,12 @@ enum Mode {
 }
 
 fn read_to_string(x: &mut &[u8]) -> String {
+    if let Ok(x_str) = std::str::from_utf8(x) {
+        if let Ok(unescaped) = quick_xml::escape::unescape(x_str) {
+            return unescaped.into_owned();
+        }
+        return x_str.to_string();
+    }
     String::from_utf8_lossy(x).to_string()
 }
 
