@@ -562,7 +562,10 @@ where
                             );
                         }
                         _ => {
-                            println!("Got text in unexpected mode {current_mode:?}");
+                            // Remove to not flood output for extended OCELs
+                            // if options.verbose {
+                            //     println!("Got text in unexpected mode {current_mode:?}");
+                            // }
                         }
                     },
                     quick_xml::events::Event::Eof => break,

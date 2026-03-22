@@ -49,6 +49,7 @@ Whenever a new version of the Rust4PM project is released, the following steps h
   - `cargo test --verbose --all-features`
   - `cargo fmt --all --check`
   - `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
+  - All checks at once: `export RUSTDOCFLAGS="-D warnings" && cargo clippy --all-targets --all-features -- -D warnings && cargo test --verbose --all-features && cargo fmt --all --check && cargo doc --all-features --no-deps`
 4. Publish the new macro crate version (first) and then the new `process_mining` version (second) to crates.io
 5. Build the Python bindings and publish the updated version to PyPi
 6. Export a updated bindings json file (`cargo test export_bindings --features bindings,dataframes,ocel-sqlite`) and add the new version to the docs ([rust4pm.aarkue.eu](https://rust4pm.aarkue.eu/))

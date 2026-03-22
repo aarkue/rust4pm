@@ -963,6 +963,28 @@ pub fn stream_xes_file_gz<'a>(
 }
 
 ///
+/// Stream XES [`Trace`]s from a [`BufRead`]
+///
+/// If `is_gzipped` is true, this de-compresses the buffer for gzipped data (e.g., `.xes.gz`).
+///
+/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [`Trace`]s
+///
+pub fn stream_xes_bufread<'a>(
+    input: impl BufRead + 'a,
+    is_gzipped: bool,
+    options: XESImportOptions,
+) -> Result<XESParsingStreamAndLogData<'a>, XESParseError> {
+    if is_gzipped {
+        let dec = GzDecoder::new(input);
+        XESParsingTraceStream::try_new(
+            Box::new(Reader::from_reader(Box::new(BufReader::new(dec)))),
+            options,
+        )
+    } else {
+        XESParsingTraceStream::try_new(Box::new(Reader::from_reader(Box::new(input))), options)
+    }
+}
+///
 /// Stream XES [`Trace`]s from path (auto-detecting gz compression from file extension)
 ///
 /// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [`Trace`]s
