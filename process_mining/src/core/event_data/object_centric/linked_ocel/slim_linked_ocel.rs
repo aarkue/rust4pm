@@ -4,6 +4,8 @@
 use std::{
     borrow::{Borrow, Cow},
     collections::HashMap,
+    io::{Read, Write},
+    path::Path,
 };
 
 use chrono::{DateTime, FixedOffset};
@@ -13,12 +15,17 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::core::{
-    event_data::object_centric::{
-        linked_ocel::LinkedOCELAccess, OCELAttributeValue, OCELEvent, OCELEventAttribute,
-        OCELObject, OCELObjectAttribute, OCELRelationship, OCELType, OCELTypeAttribute,
+use crate::{
+    core::{
+        event_data::object_centric::{
+            io::OCELIOError, linked_ocel::LinkedOCELAccess, OCELAttributeValue, OCELEvent,
+            OCELEventAttribute, OCELObject, OCELObjectAttribute, OCELRelationship, OCELType,
+            OCELTypeAttribute,
+        },
+        io::ExtensionWithMime,
+        OCEL,
     },
-    OCEL,
+    Exportable, Importable,
 };
 
 /// An Event Index
@@ -961,5 +968,45 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
                     None
                 }
             })
+    }
+}
+
+impl Importable for SlimLinkedOCEL {
+    type Error = OCELIOError;
+    type ImportOptions = ();
+
+    fn import_from_reader_with_options<R: Read>(
+        reader: R,
+        format: &str,
+        _: Self::ImportOptions,
+    ) -> Result<Self, Self::Error> {
+        let ocel = OCEL::import_from_reader(reader, format)?;
+        Ok(SlimLinkedOCEL::from_ocel(ocel))
+    }
+
+    fn infer_format(path: &Path) -> Option<String> {
+        <OCEL as Importable>::infer_format(path)
+    }
+
+    fn known_import_formats() -> Vec<crate::core::io::ExtensionWithMime> {
+        <OCEL as Importable>::known_import_formats()
+    }
+}
+
+impl Exportable for SlimLinkedOCEL {
+    type Error = OCELIOError;
+    type ExportOptions = ();
+
+    fn export_to_writer_with_options<W: Write>(
+        &self,
+        writer: W,
+        format: &str,
+        _: Self::ExportOptions,
+    ) -> Result<(), Self::Error> {
+        self.construct_ocel().export_to_writer(writer, format)
+    }
+
+    fn known_export_formats() -> Vec<ExtensionWithMime> {
+        <OCEL as Exportable>::known_export_formats()
     }
 }

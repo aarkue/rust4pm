@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.4
+
+- Add `stream_xes_bufread` function for streaming XES traces from a `BufRead` (supports gzipped input)
+- Remove noisy `println!` in OCEL XML import for extended OCELs
+
+## 0.5.3
+
+- Parse XES version from log element
+- Fix some missing unescapes in XML-based imports (XES, PNML)
+
 ## 0.5.2
 
 - New `analysis` module with reusable analysis functions (also exposed as bindings ;))
