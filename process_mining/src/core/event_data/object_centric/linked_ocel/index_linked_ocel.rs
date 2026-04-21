@@ -533,31 +533,16 @@ impl Importable for IndexLinkedOCEL {
         format: &str,
         _: Self::ImportOptions,
     ) -> Result<Self, Self::Error> {
-        if format.ends_with("json") {
-            let reader = std::io::BufReader::new(reader);
-            let res: Self = serde_json::from_reader(reader)?;
-            Ok(res)
-        } else {
-            let ocel = OCEL::import_from_reader(reader, format)?;
-            Ok(IndexLinkedOCEL::from_ocel(ocel))
-        }
+        let ocel = OCEL::import_from_reader(reader, format)?;
+        Ok(IndexLinkedOCEL::from_ocel(ocel))
     }
 
     fn infer_format(path: &Path) -> Option<String> {
-        let p = path.to_string_lossy().to_lowercase();
-        if p.ends_with(".ocel.json") {
-            Some("ocel.json".to_string())
-        } else if p.ends_with(".json") {
-            Some("json".to_string())
-        } else {
-            <OCEL as Importable>::infer_format(path)
-        }
+        <OCEL as Importable>::infer_format(path)
     }
 
     fn known_import_formats() -> Vec<crate::core::io::ExtensionWithMime> {
-        let mut ocel_formats = <OCEL as Importable>::known_import_formats();
-        ocel_formats.push(ExtensionWithMime::new("ocel.json", "application/json"));
-        ocel_formats
+        <OCEL as Importable>::known_import_formats()
     }
 }
 
@@ -571,18 +556,11 @@ impl Exportable for IndexLinkedOCEL {
         format: &str,
         _: Self::ExportOptions,
     ) -> Result<(), Self::Error> {
-        if format.ends_with("json") {
-            serde_json::to_writer(writer, self)?;
-            Ok(())
-        } else {
-            self.ocel.export_to_writer(writer, format)
-        }
+        self.ocel.export_to_writer(writer, format)
     }
 
     fn known_export_formats() -> Vec<ExtensionWithMime> {
-        let mut ocel_formats = <OCEL as Exportable>::known_export_formats();
-        ocel_formats.push(ExtensionWithMime::new("ocel.json", "application/json"));
-        ocel_formats
+        <OCEL as Exportable>::known_export_formats()
     }
 }
 #[cfg(test)]

@@ -8,7 +8,7 @@ use std::{
 };
 
 /// Options for CSV OCEL Export
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct OCELCSVExportOptions {
     /// Whether to include O2O relationships in the export
     pub include_o2o: bool,
@@ -16,6 +16,16 @@ pub struct OCELCSVExportOptions {
     pub include_object_attribute_changes: bool,
     /// Date format for timestamps (default: RFC3339)
     pub date_format: Option<String>,
+}
+
+impl Default for OCELCSVExportOptions {
+    fn default() -> Self {
+        Self {
+            include_o2o: true,
+            include_object_attribute_changes: true,
+            date_format: None,
+        }
+    }
 }
 
 /// Error type for CSV export
@@ -335,7 +345,12 @@ pub fn export_ocel_csv_to_string_with_options(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::event_data::object_centric::ocel_csv::import_ocel_csv;
+    use crate::core::event_data::object_centric::{
+        ocel_csv::import_ocel_csv,
+        ocel_struct::{
+            OCELEvent, OCELObjectAttribute, OCELRelationship, OCELType, OCELTypeAttribute,
+        },
+    };
 
     #[test]
     fn test_roundtrip() {
@@ -349,5 +364,63 @@ e4,send order,2026-01-26T09:57:28+0000,o1,i1/i2,yes,"#;
         let reimported = import_ocel_csv(exported.as_bytes()).unwrap();
         assert_eq!(ocel.events.len(), reimported.events.len());
         assert_eq!(ocel.objects.len(), reimported.objects.len());
+    }
+
+    /// Regression: object attributes with an "initial value" timestamp (not matching any event
+    /// time) must survive a default CSV roundtrip.
+    #[test]
+    fn test_initial_object_attribute_survives_roundtrip() {
+        let initial_time: DateTime<FixedOffset> = DateTime::UNIX_EPOCH.into();
+        let event_time: DateTime<FixedOffset> =
+            DateTime::parse_from_rfc3339("2024-05-01T10:00:00+00:00").unwrap();
+        let ocel = OCEL {
+            event_types: vec![OCELType {
+                name: "place order".into(),
+                attributes: vec![],
+            }],
+            object_types: vec![OCELType {
+                name: "item".into(),
+                attributes: vec![OCELTypeAttribute {
+                    name: "price".into(),
+                    value_type: "float".into(),
+                }],
+            }],
+            events: vec![OCELEvent {
+                id: "e1".into(),
+                event_type: "place order".into(),
+                time: event_time,
+                attributes: vec![],
+                relationships: vec![OCELRelationship {
+                    object_id: "i1".into(),
+                    qualifier: "is in".into(),
+                }],
+            }],
+            objects: vec![OCELObject {
+                id: "i1".into(),
+                object_type: "item".into(),
+                attributes: vec![OCELObjectAttribute {
+                    name: "price".into(),
+                    value: OCELAttributeValue::Float(4.3),
+                    time: initial_time,
+                }],
+                relationships: vec![],
+            }],
+        };
+
+        let exported = export_ocel_csv_to_string(&ocel).unwrap();
+        let reimported = import_ocel_csv(exported.as_bytes()).unwrap();
+
+        let item = reimported
+            .objects
+            .iter()
+            .find(|o| o.id == "i1")
+            .expect("item i1 must survive roundtrip");
+        let price = item
+            .attributes
+            .iter()
+            .find(|a| a.name == "price")
+            .expect("price attribute must survive roundtrip");
+        assert_eq!(price.value, OCELAttributeValue::Float(4.3));
+        assert_eq!(price.time, initial_time);
     }
 }
