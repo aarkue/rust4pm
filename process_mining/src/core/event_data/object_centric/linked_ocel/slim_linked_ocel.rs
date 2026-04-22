@@ -126,12 +126,13 @@ impl EventIndex {
                 .attributes
                 .iter()
                 .enumerate()
-                .map(|(i, at)| {
-                    let val = &sev.attributes[i];
-                    OCELEventAttribute {
-                        name: at.name.clone(),
-                        value: val.clone(),
-                    }
+                .map(|(i, at)| OCELEventAttribute {
+                    name: at.name.clone(),
+                    value: sev
+                        .attributes
+                        .get(i)
+                        .cloned()
+                        .unwrap_or(OCELAttributeValue::Null),
                 })
                 .collect(),
             relationships: sev
@@ -231,18 +232,23 @@ impl ObjectIndex {
         // .copied()
     }
     /// Get reverse E2O relationships of all events with the specified event type
+    ///
+    /// Returns an empty iterator if the event type is unknown or the object index is out of bounds.
     pub fn get_e2o_rev_of_evtype<'a>(
         &self,
         locel: &'a SlimLinkedOCEL,
         evtype: &'a str,
     ) -> impl Iterator<Item = &'a EventIndex> + use<'a> {
-        let evtype_index = locel.evtype_to_index.get(evtype).unwrap();
-        locel
-            .e2o_rel_rev
-            .get(self.0)
-            .into_iter()
-            .flat_map(|x| x.get(*evtype_index))
-            .flatten()
+        let evtype_index = locel.evtype_to_index.get(evtype).copied();
+        let ob_idx = self.0;
+        evtype_index.into_iter().flat_map(move |ei| {
+            locel
+                .e2o_rel_rev
+                .get(ob_idx)
+                .into_iter()
+                .flat_map(move |x| x.get(ei))
+                .flatten()
+        })
     }
     /// Get attribute values of this object, specified by the attribute name
     ///
@@ -290,11 +296,15 @@ impl ObjectIndex {
                 .iter()
                 .enumerate()
                 .flat_map(|(i, at)| {
-                    sev.attributes[i].iter().map(|(t, v)| OCELObjectAttribute {
-                        name: at.name.clone(),
-                        value: v.clone(),
-                        time: *t,
-                    })
+                    sev.attributes
+                        .get(i)
+                        .into_iter()
+                        .flatten()
+                        .map(|(t, v)| OCELObjectAttribute {
+                            name: at.name.clone(),
+                            value: v.clone(),
+                            time: *t,
+                        })
                 })
                 .collect(),
             relationships: sev
@@ -343,7 +353,10 @@ fn sorted_insert<T, B: Ord>(vec: &mut Vec<T>, to_add: T, mut f: impl FnMut(&T) -
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, RegistryEntity, Default)]
-/// A slim and linked version of OCEL that allows for convenient usage
+/// An object-centric event log where events and objects are referenced by integer indices
+/// ([`EventIndex`] / [`ObjectIndex`]) returned from the `add_*` methods, and each indexed
+/// event/object is an instance of an event/object type (activity / object class) declared
+/// beforehand with an ordered list of attributes.
 pub struct SlimLinkedOCEL {
     /// Events
     events: Vec<SlimOCELEvent>,
@@ -581,7 +594,7 @@ impl SlimLinkedOCEL {
         event_type: &str,
         time: DateTime<FixedOffset>,
         id: Option<String>,
-        attributes: Vec<OCELAttributeValue>,
+        mut attributes: Vec<OCELAttributeValue>,
         mut relationships: Vec<(String, ObjectIndex)>,
     ) -> Option<EventIndex> {
         let etype = self.evtype_to_index.get(event_type)?;
@@ -598,6 +611,19 @@ impl SlimLinkedOCEL {
             // Special case: As the event is newly appended and thus currently has the highest index, we know that when added to the end, the E2O-rev list is still sorted
             self.e2o_rel_rev[o.0][*etype].push(new_ev_index);
         }
+        // Pad (or truncate) attributes to expected length; warn on mismatch
+        let expected_attr_len = self.event_types[*etype].attributes.len();
+        if attributes.len() != expected_attr_len {
+            eprintln!(
+                "[rust4pm] warning: event_type '{}' expects {} attribute value(s), got {}. \
+                 Padding with Null / truncating. Ensure attribute order matches `add_event_type`.",
+                event_type,
+                expected_attr_len,
+                attributes.len()
+            );
+        }
+        attributes.resize_with(expected_attr_len, || OCELAttributeValue::Null);
+
         self.events.push(SlimOCELEvent {
             id,
             event_type: *etype,
@@ -623,7 +649,7 @@ impl SlimLinkedOCEL {
         &mut self,
         object_type: &str,
         id: Option<String>,
-        attributes: Vec<Vec<(DateTime<FixedOffset>, OCELAttributeValue)>>,
+        mut attributes: Vec<Vec<(DateTime<FixedOffset>, OCELAttributeValue)>>,
         mut relationships: Vec<(String, ObjectIndex)>,
     ) -> Option<ObjectIndex> {
         let otype = self.obtype_to_index.get(object_type)?;
@@ -641,9 +667,22 @@ impl SlimLinkedOCEL {
         // Relationships should be sorted
         relationships.sort_by_key(|(_q, o)| *o);
         for (_q, o) in &relationships {
-            // Special case: As the object is newly appended and thus currently has the highest index, we know that when added to the end, the E2O-rev list is still sorted
+            // Special case: As the object is newly appended and thus currently has the highest index, we know that when added to the end, the O2O-rev list is still sorted
             self.o2o_rel_rev[o.0][*otype].push(new_ob_index);
         }
+        // Pad (or truncate) attributes to expected length; warn on mismatch
+        let expected_attr_len = self.object_types[*otype].attributes.len();
+        if attributes.len() != expected_attr_len {
+            eprintln!(
+                "[rust4pm] warning: object_type '{}' expects {} attribute list(s), got {}. \
+                 Padding with empty / truncating. Ensure attribute order matches `add_object_type`.",
+                object_type,
+                expected_attr_len,
+                attributes.len()
+            );
+        }
+        attributes.resize_with(expected_attr_len, Vec::new);
+
         self.objects.push(SlimOCELObject {
             id,
             object_type: *otype,
@@ -652,45 +691,96 @@ impl SlimLinkedOCEL {
         });
         Some(new_ob_index)
     }
-    /// Add an E2O relationship between the passed event and object, with the specified qualifier
-    pub fn add_e2o(&mut self, event: EventIndex, object: ObjectIndex, qualifier: String) {
-        let evtype_index = event.get_ev(self).event_type;
+    /// Add an E2O relationship between the passed event and object, with the specified qualifier.
+    ///
+    /// Multiple relationships between the same `(event, object)` pair are allowed as long as their
+    /// qualifiers differ; re-adding an exact `(event, object, qualifier)` triple is a no-op.
+    ///
+    /// Returns `true` on success, `false` if either index is out of bounds (with a stderr warning).
+    pub fn add_e2o(&mut self, event: EventIndex, object: ObjectIndex, qualifier: String) -> bool {
+        if event.0 >= self.events.len() || object.0 >= self.objects.len() {
+            eprintln!(
+                "[rust4pm] warning: add_e2o called with invalid index(es) (event={}, object={}); ignored",
+                event.0, object.0
+            );
+            return false;
+        }
+        let evtype_index = self.events[event.0].event_type;
         sorted_insert(&mut self.e2o_rel_rev[object.0][evtype_index], event, |x| *x);
-        sorted_insert(
-            &mut self.events[event.0].relationships,
-            (qualifier, object),
-            |(_q, o)| *o,
-        );
+        let rels = &mut self.events[event.0].relationships;
+        if !rels.iter().any(|(q, o)| o == &object && q == &qualifier) {
+            let insert_pos = rels.partition_point(|(_q, o)| o < &object);
+            rels.insert(insert_pos, (qualifier, object));
+        }
+        true
     }
-    /// Add an O2O relationship between the passed objects, with the specified qualifier
-    pub fn add_o2o(&mut self, from_obj: ObjectIndex, to_obj: ObjectIndex, qualifier: String) {
-        let from_obj_type_index = from_obj.get_ob(self).object_type;
+    /// Add an O2O relationship from `from_obj` to `to_obj`, with the specified qualifier.
+    ///
+    /// Multiple relationships between the same `(from_obj, to_obj)` pair are allowed as long as
+    /// their qualifiers differ; re-adding an exact `(from_obj, to_obj, qualifier)` triple is a no-op.
+    ///
+    /// Returns `true` on success, `false` if either index is out of bounds (with a stderr warning).
+    pub fn add_o2o(
+        &mut self,
+        from_obj: ObjectIndex,
+        to_obj: ObjectIndex,
+        qualifier: String,
+    ) -> bool {
+        if from_obj.0 >= self.objects.len() || to_obj.0 >= self.objects.len() {
+            eprintln!(
+                "[rust4pm] warning: add_o2o called with invalid index(es) (from_obj={}, to_obj={}); ignored",
+                from_obj.0, to_obj.0
+            );
+            return false;
+        }
+        let from_obj_type_index = self.objects[from_obj.0].object_type;
         sorted_insert(
             &mut self.o2o_rel_rev[to_obj.0][from_obj_type_index],
             from_obj,
             |x| *x,
         );
-        sorted_insert(
-            &mut self.objects[from_obj.0].relationships,
-            (qualifier, to_obj),
-            |(_q, o)| *o,
-        );
+        let rels = &mut self.objects[from_obj.0].relationships;
+        if !rels.iter().any(|(q, o)| o == &to_obj && q == &qualifier) {
+            let insert_pos = rels.partition_point(|(_q, o)| o < &to_obj);
+            rels.insert(insert_pos, (qualifier, to_obj));
+        }
+        true
     }
-    /// Remove the E2O relationship between the passed event and object from the `LinkedOCEL`
-    pub fn delete_e2o(&mut self, event: &EventIndex, object: &ObjectIndex) {
-        let evtype_index = event.get_ev(self).event_type;
+    /// Remove all E2O relationships between the passed event and object (across every qualifier).
+    ///
+    /// Returns `true` on success, `false` if either index is out of bounds (with a stderr warning).
+    pub fn delete_e2o(&mut self, event: &EventIndex, object: &ObjectIndex) -> bool {
+        if event.0 >= self.events.len() || object.0 >= self.objects.len() {
+            eprintln!(
+                "[rust4pm] warning: delete_e2o called with invalid index(es) (event={}, object={}); ignored",
+                event.0, object.0
+            );
+            return false;
+        }
+        let evtype_index = self.events[event.0].event_type;
         self.e2o_rel_rev[object.0][evtype_index].retain(|e| e != event);
         self.events[event.0]
             .relationships
             .retain(|(_q, o)| o != object);
+        true
     }
-    /// Remove the O2O relationship between the passed objects from the `LinkedOCEL`
-    pub fn delete_o2o(&mut self, from_obj: &ObjectIndex, to_obj: &ObjectIndex) {
-        let from_obj_type = from_obj.get_ob(self).object_type;
+    /// Remove all O2O relationships from `from_obj` to `to_obj` (across every qualifier).
+    ///
+    /// Returns `true` on success, `false` if either index is out of bounds (with a stderr warning).
+    pub fn delete_o2o(&mut self, from_obj: &ObjectIndex, to_obj: &ObjectIndex) -> bool {
+        if from_obj.0 >= self.objects.len() || to_obj.0 >= self.objects.len() {
+            eprintln!(
+                "[rust4pm] warning: delete_o2o called with invalid index(es) (from_obj={}, to_obj={}); ignored",
+                from_obj.0, to_obj.0
+            );
+            return false;
+        }
+        let from_obj_type = self.objects[from_obj.0].object_type;
         self.o2o_rel_rev[to_obj.0][from_obj_type].retain(|e| e != from_obj);
         self.objects[from_obj.0]
             .relationships
             .retain(|(_q, o)| o != to_obj);
+        true
     }
 }
 impl From<OCEL> for SlimLinkedOCEL {
@@ -723,15 +813,15 @@ pub struct SlimOCELEvent {
 /// Some fields (i.e., `object_type` and relationships) are modified for easier and memory-efficient usage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlimOCELObject {
-    /// Event ID
+    /// Object ID
     pub id: String,
-    /// Event Type (referring back to the `name` of an [`OCELType`])
+    /// Object Type (referring back to the `name` of an [`OCELType`])
     #[serde(rename = "type")]
     pub object_type: usize,
-    /// Event attributes
+    /// Object attributes (each inner [`Vec`] holds the time-indexed values for one declared attribute)
     #[serde(default)]
     pub attributes: Vec<Vec<(DateTime<FixedOffset>, OCELAttributeValue)>>,
-    /// E2O (Event-to-Object) relationships
+    /// O2O (Object-to-Object) relationships
     #[serde(default)]
     pub relationships: Vec<(String, ObjectIndex)>,
 }
@@ -787,12 +877,14 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
         &'a self,
         index: impl Borrow<Self::ObjectRepr>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::EventRepr)> {
+        // `relationships` is sorted by object index; could use partition_point if lists grow large.
+        let target = *index.borrow();
         index.borrow().get_e2o_rev(self).flat_map(move |e| {
             self.events[e.0]
                 .relationships
                 .iter()
-                .find(|(_q, o)| o == index.borrow())
-                .map(|(q, _0)| (q.as_str(), e))
+                .filter(move |(_q, o)| *o == target)
+                .map(move |(q, _)| (q.as_str(), e))
         })
     }
 
@@ -810,12 +902,13 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
         &'a self,
         index: impl Borrow<Self::ObjectRepr>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
+        let target = *index.borrow();
         index.borrow().get_o2o_rev(self).flat_map(move |o1| {
             self.objects[o1.0]
                 .relationships
                 .iter()
-                .find(|(_q, o2)| o2 == index.borrow())
-                .map(|(q, _o2)| (q.as_str(), o1))
+                .filter(move |(_q, o2)| *o2 == target)
+                .map(move |(q, _)| (q.as_str(), o1))
         })
     }
 
@@ -934,40 +1027,46 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
         index: impl Borrow<Self::ObjectRepr>,
         ev_type: impl AsRef<str>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::EventRepr)> {
-        let evtype_index = self.evtype_to_index.get(ev_type.as_ref()).unwrap();
-        self.e2o_rel_rev
-            .get(index.borrow().0)
-            .into_iter()
-            .flat_map(|x| x.get(*evtype_index))
-            .flatten()
-            .filter_map(move |e| {
-                let rels = &e.get_ev(self).relationships;
-                if let Ok(rel_index) = rels.binary_search_by_key(index.borrow(), |(_q, o)| *o) {
-                    Some((rels[rel_index].0.as_ref(), e))
-                } else {
-                    None
-                }
-            })
+        let evtype_index = self.evtype_to_index.get(ev_type.as_ref()).copied();
+        let ob_idx = index.borrow().0;
+        let target = *index.borrow();
+        evtype_index.into_iter().flat_map(move |ei| {
+            self.e2o_rel_rev
+                .get(ob_idx)
+                .into_iter()
+                .flat_map(move |x| x.get(ei))
+                .flatten()
+                .flat_map(move |e| {
+                    e.get_ev(self)
+                        .relationships
+                        .iter()
+                        .filter(move |(_q, o)| *o == target)
+                        .map(move |(q, _)| (q.as_str(), e))
+                })
+        })
     }
     fn get_o2o_rev_of_type(
         &'a self,
         to_obj: impl Borrow<Self::ObjectRepr>,
         from_ob_type: impl AsRef<str>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::ObjectRepr)> {
-        let obtype_index = self.obtype_to_index.get(from_ob_type.as_ref()).unwrap();
-        self.o2o_rel_rev
-            .get(to_obj.borrow().0)
-            .into_iter()
-            .flat_map(|x| x.get(*obtype_index))
-            .flatten()
-            .filter_map(move |o| {
-                let rels = &o.get_ob(self).relationships;
-                if let Ok(rel_index) = rels.binary_search_by_key(to_obj.borrow(), |(_q, e)| *e) {
-                    Some((rels[rel_index].0.as_ref(), o))
-                } else {
-                    None
-                }
-            })
+        let obtype_index = self.obtype_to_index.get(from_ob_type.as_ref()).copied();
+        let ob_idx = to_obj.borrow().0;
+        let target = *to_obj.borrow();
+        obtype_index.into_iter().flat_map(move |oi| {
+            self.o2o_rel_rev
+                .get(ob_idx)
+                .into_iter()
+                .flat_map(move |x| x.get(oi))
+                .flatten()
+                .flat_map(move |o| {
+                    o.get_ob(self)
+                        .relationships
+                        .iter()
+                        .filter(move |(_q, e)| *e == target)
+                        .map(move |(q, _)| (q.as_str(), o))
+                })
+        })
     }
 }
 
