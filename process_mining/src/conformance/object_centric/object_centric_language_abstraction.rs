@@ -605,7 +605,9 @@ pub fn change_ob_type_as_key(
 pub fn compute_rel_ob_types(
     related_ob_type_per_ev_type: &HashMap<EventType, HashSet<ObjectType>>,
 ) -> HashSet<ObjectType> {
-    related_ob_type_per_ev_type.values().flat_map(|ob_types| ob_types.clone())
+    related_ob_type_per_ev_type
+        .values()
+        .flat_map(|ob_types| ob_types.clone())
         .collect()
 }
 
@@ -631,7 +633,9 @@ pub fn compute_fitness_precision(
         .collect::<HashSet<_>>();
 
     let all_ev_types: HashSet<&EventType> = log_abstraction
-        .directly_follows_ev_types_per_ob_type.values().flat_map(|dfr| {
+        .directly_follows_ev_types_per_ob_type
+        .values()
+        .flat_map(|dfr| {
             let mut dfr_ev_types: HashSet<&EventType> = HashSet::new();
 
             dfr.iter().for_each(|(from, to)| {

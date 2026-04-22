@@ -40,7 +40,9 @@ impl OCEL {
         let locel: IndexLinkedOCEL = IndexLinkedOCEL::from(self);
 
         let objects_with_e2o = locel
-            .e2o_rev_et.values().flat_map(|o2e_set| o2e_set.keys().cloned())
+            .e2o_rev_et
+            .values()
+            .flat_map(|o2e_set| o2e_set.keys().cloned())
             .collect::<HashSet<_>>();
 
         let mut underlying_ocel = locel.into_inner();
