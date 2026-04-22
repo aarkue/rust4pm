@@ -312,7 +312,7 @@ pub fn combine_constraints<'a>(
         old.retain(|a: &OCDeclareArcLabel| {
             !new_res.iter().any(|a2| a != a2 && a.is_dominated_by(a2))
         });
-        old.extend(new_res.clone().into_iter());
+        old.extend(new_res.clone());
         act_arcs = new_res
             .iter()
             .filter(|a| !new_res.iter().any(|a2| *a != a2 && a.is_dominated_by(a2)))
