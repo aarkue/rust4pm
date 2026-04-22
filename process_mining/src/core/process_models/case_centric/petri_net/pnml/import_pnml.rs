@@ -208,11 +208,10 @@ where
                     current_mode = Mode::Arc;
                 }
                 // Handle weighted arcs
-                b"inscription" => {
-                    if current_mode == Mode::Arc {
+                b"inscription"
+                    if current_mode == Mode::Arc => {
                         current_mode = Mode::ArcInscription;
                     }
-                }
                 // For handling silent transitions
                 b"toolspecific" => {
                     if let Some(attr) = b.try_get_attribute("activity").unwrap_or_default().as_ref()
@@ -236,13 +235,12 @@ where
                     current_mode = Mode::InitialMarking;
                 }
                 b"finalmarkings" => current_mode = Mode::FinalMarkings,
-                b"marking" => {
-                    if current_mode == Mode::FinalMarkings {
+                b"marking"
+                    if current_mode == Mode::FinalMarkings => {
                         current_mode = Mode::FinalMarkingsMarking;
                         // Add new final marking
                         final_markings.push(HashMap::new());
                     }
-                }
                 b"name" => match current_mode {
                     Mode::Place => current_mode = Mode::PlaceName,
                     Mode::Transition => current_mode = Mode::TransitionName,
@@ -269,11 +267,10 @@ where
                 }
                 b"finalmarkings" => current_mode = Mode::Net,
                 b"marking" => current_mode = Mode::FinalMarkings,
-                b"inscription" => {
-                    if current_mode == Mode::ArcInscription {
+                b"inscription"
+                    if current_mode == Mode::ArcInscription => {
                         current_mode = Mode::Arc
                     }
-                }
                 b"arc" => {
                     current_mode = Mode::Net;
                 }

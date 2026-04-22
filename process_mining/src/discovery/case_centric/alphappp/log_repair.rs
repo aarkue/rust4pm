@@ -114,7 +114,7 @@ pub fn add_artificial_acts_for_skips(
     let mut new_art_acts_sorted: Vec<(usize, usize)> =
         new_artificial_acts.clone().into_iter().collect();
     let mut new_acts: Vec<String> = Vec::new();
-    new_art_acts_sorted.sort_by(|(_, new_act1), (_, new_acts2)| new_act1.cmp(new_acts2));
+    new_art_acts_sorted.sort_by_key(|(_, new_act1)| *new_act1);
     for (a, new_act) in new_art_acts_sorted {
         let act_name = format!("{}skip_after_{}", SILENT_ACT_PREFIX, ret.activities[a]);
         ret.activities.push(act_name.clone());
