@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.5
+
+- `SlimLinkedOCEL` and bindings:
+  - `add_event` / `add_object` pad or truncate `attributes` to the declared length with a warning, instead of causing out-of-bounds panics later
+  - `add_e2o` / `add_o2o` / `delete_e2o` / `delete_o2o` return `bool`; invalid indices warn and return `false` instead of panicking
+  - Multiple qualifiers between the same `(event, object)` or `(from, to)` pair are kept, and reverse lookups return every qualifier
+  - `fat_ev` / `fat_ob` fall back to `Null` / empty attribute on missing positional values
+  - Drop `unwrap()`s on unknown type names in reverse-type lookups
+  - Expanded docstrings on `slim_ocel_bindings` for the auto-generated Python API docs
+- `Importable` / `Exportable` for `SlimLinkedOCEL` aligned with the `OCEL` versions
+- OCEL import/export supports `.gz` for all formats
+- Better defaults for OCEL 2.0 CSV export
+
 ## 0.5.4
 
 - Add `stream_xes_bufread` function for streaming XES traces from a `BufRead` (supports gzipped input)
