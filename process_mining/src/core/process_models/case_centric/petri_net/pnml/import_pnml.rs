@@ -3,6 +3,7 @@ use std::{collections::HashMap, io::BufRead};
 use uuid::Uuid;
 
 use crate::core::{
+    io::read_xml_text_unescaped,
     process_models::case_centric::petri_net::petri_net_struct::{ArcType, Marking, PlaceID},
     PetriNet,
 };
@@ -22,16 +23,6 @@ enum Mode {
     FinalMarkingMarkingPlace,
     Arc,
     ArcInscription,
-}
-
-fn read_to_string(x: &mut &[u8]) -> String {
-    if let Ok(x_str) = std::str::from_utf8(x) {
-        if let Ok(unescaped) = quick_xml::escape::unescape(x_str) {
-            return unescaped.into_owned();
-        }
-        return x_str.to_string();
-    }
-    String::from_utf8_lossy(x).to_string()
 }
 
 ///
@@ -148,7 +139,7 @@ where
                 b"place" => {
                     if current_mode == Mode::FinalMarkingsMarking {
                         // Final Marking place
-                        let id_ref = read_to_string(
+                        let id_ref = read_xml_text_unescaped(
                             &mut b
                                 .try_get_attribute("idref")
                                 .unwrap_or_default()
@@ -166,7 +157,7 @@ where
                             .try_get_attribute("id")
                             .unwrap_or_default()
                             .ok_or(PNMLParseError::MissingKey("id"))?;
-                        let place_id_str = read_to_string(&mut place_id.value.as_ref());
+                        let place_id_str = read_xml_text_unescaped(&mut place_id.value.as_ref());
                         let uuid = Uuid::new_v4();
                         current_id = Some(uuid);
                         id_map.insert(place_id_str, uuid);
@@ -179,14 +170,14 @@ where
                         .try_get_attribute("id")
                         .unwrap_or_default()
                         .ok_or(PNMLParseError::MissingKey("id"))?;
-                    let trans_id_str = read_to_string(&mut trans_id.value.as_ref());
+                    let trans_id_str = read_xml_text_unescaped(&mut trans_id.value.as_ref());
                     let uuid = Uuid::new_v4();
                     current_id = Some(uuid);
                     id_map.insert(trans_id_str, uuid);
                     pn.add_transition(Some(String::new()), Some(uuid));
                 }
                 b"arc" => {
-                    let source_id = read_to_string(
+                    let source_id = read_xml_text_unescaped(
                         &mut b
                             .try_get_attribute("source")
                             .unwrap_or_default()
@@ -194,7 +185,7 @@ where
                             .value
                             .as_ref(),
                     );
-                    let target_id = read_to_string(
+                    let target_id = read_xml_text_unescaped(
                         &mut b
                             .try_get_attribute("target")
                             .unwrap_or_default()
@@ -277,7 +268,7 @@ where
                 _ => {}
             },
             quick_xml::events::Event::Text(t) => {
-                let text = read_to_string(&mut t.as_ref());
+                let text = read_xml_text_unescaped(&mut t.as_ref());
                 match current_mode {
                     Mode::TransitionName => {
                         if let Some(trans) = current_id.and_then(|id| pn.transitions.get_mut(&id)) {
@@ -318,7 +309,9 @@ where
             quick_xml::events::Event::Eof => break,
             _ => {}
         }
-    }
+
+    
+        buf.clear();}
 
     if !encountered_pnml_tag {
         return Err(PNMLParseError::NoPNMLTag);

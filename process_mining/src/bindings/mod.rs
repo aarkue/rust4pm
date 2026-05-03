@@ -177,7 +177,8 @@ impl RegistryItem {
                 serde_json::to_value(locel).map_err(|e| e.to_string())
             }
             RegistryItem::SlimLinkedOCEL(locel) => {
-                serde_json::to_value(locel).map_err(|e| e.to_string())
+                let ocel = locel.construct_ocel();
+                serde_json::to_value(ocel).map_err(|e| e.to_string())
             }
             RegistryItem::EventLogActivityProjection(proj) => {
                 serde_json::to_value(proj).map_err(|e| e.to_string())

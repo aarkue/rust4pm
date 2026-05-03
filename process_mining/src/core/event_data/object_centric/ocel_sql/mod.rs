@@ -2,6 +2,8 @@
 //!
 //! 🔐 Requires the `ocel-sqlite` or `ocel-duckdb` feature to be enabled.
 #![cfg(not(all(not(feature = "ocel-duckdb"), not(feature = "ocel-sqlite"))))]
+use std::borrow::Cow;
+
 use chrono::DateTime;
 
 pub(crate) const OCEL_ID_COLUMN: &str = "ocel_id";
@@ -184,279 +186,352 @@ impl<'a> DatabaseConnection<'a> {
         }
     }
 
-    /// Add rows for all OCEL objects to specified database table
-    pub(crate) fn add_objects<I>(&self, table_name: &str, objects: I) -> Result<(), DatabaseError>
+    /// Insert one `(id, type)` row per item into `table_name`. Used by both
+    /// [`add_objects`] (`(id, object_type)`) and [`add_events`] (`(id, event_type)`).
+    fn add_id_type_rows<'b, T, I, F>(
+        &self,
+        table_name: &str,
+        items: I,
+        extract: F,
+    ) -> Result<(), DatabaseError>
     where
-        I: IntoIterator<Item = &'a super::ocel_struct::OCELObject>,
+        T: Clone + 'b,
+        I: IntoIterator<Item = Cow<'b, T>>,
+        F: for<'r> Fn(&'r T) -> [&'r String; 2],
     {
-        let object_values = objects.into_iter().map(|o| [&o.id, &o.object_type]);
         match self {
             #[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => {
-                for ov in object_values {
-                    connection
-                        .execute(&format!(r#"INSERT INTO "{table_name}" VALUES (?,?)"#), ov)?;
+                for item in items {
+                    connection.execute(
+                        &format!(r#"INSERT INTO "{table_name}" VALUES (?,?)"#),
+                        extract(&item),
+                    )?;
                 }
                 Ok(())
             }
             #[cfg(feature = "ocel-duckdb")]
             DatabaseConnection::DUCKDB(connection) => {
                 let mut ap = connection.appender(table_name)?;
-                Ok(ap.append_rows(object_values)?)
-            }
-        }
-    }
-    /// Add rows for all OCEL objects to specified database table
-    pub(crate) fn add_events<I>(&self, table_name: &str, events: I) -> Result<(), DatabaseError>
-    where
-        I: IntoIterator<Item = &'a super::ocel_struct::OCELEvent>,
-    {
-        let event_values = events.into_iter().map(|o| [&o.id, &o.event_type]);
-        match self {
-            #[cfg(feature = "ocel-sqlite")]
-            DatabaseConnection::SQLITE(connection) => {
-                for ov in event_values {
-                    connection
-                        .execute(&format!(r#"INSERT INTO "{table_name}" VALUES (?,?)"#), ov)?;
+                for item in items {
+                    ap.append_row(extract(&item))?;
                 }
                 Ok(())
-            }
-            #[cfg(feature = "ocel-duckdb")]
-            DatabaseConnection::DUCKDB(connection) => {
-                let mut ap = connection.appender(table_name)?;
-                Ok(ap.append_rows(event_values)?)
             }
         }
     }
 
+    pub(crate) fn add_objects<'b, I>(
+        &self,
+        table_name: &str,
+        objects: I,
+    ) -> Result<(), DatabaseError>
+    where
+        I: IntoIterator<Item = Cow<'b, super::ocel_struct::OCELObject>>,
+    {
+        self.add_id_type_rows(table_name, objects, |o| [&o.id, &o.object_type])
+    }
+
+    pub(crate) fn add_events<'b, I>(&self, table_name: &str, events: I) -> Result<(), DatabaseError>
+    where
+        I: IntoIterator<Item = Cow<'b, super::ocel_struct::OCELEvent>>,
+    {
+        self.add_id_type_rows(table_name, events, |e| [&e.id, &e.event_type])
+    }
+
     /// Add rows for all object changes for _objects of one type_ to the specified database table (e.g., `objects_Orders`)
-    pub(crate) fn add_object_changes_for_type<I>(
+    pub(crate) fn add_object_changes_for_type<'b, I>(
         &self,
         table_name: &str,
         object_type: &OCELType,
         objects: I,
     ) -> Result<(), DatabaseError>
     where
-        I: IntoIterator<Item = &'a super::ocel_struct::OCELObject>,
+        I: IntoIterator<Item = Cow<'b, super::ocel_struct::OCELObject>>,
     {
-        let object_values = objects.into_iter().flat_map(|o| {
-            let initial_vals: Vec<_> = object_type
-                .attributes
-                .iter()
-                .map(|a| {
-                    let initial_val = o
-                        .attributes
-                        .iter()
-                        .find(|oa| oa.name == a.name && oa.time == DateTime::UNIX_EPOCH);
-                    initial_val.map(|v| v.value.to_string())
-                })
-                .collect();
-            // let v = if initial_vals.is_empty() {
-            //     Vec::default()
-            // } else {
-            let v = vec![(
-                o.id.clone(),
-                None,
-                DateTime::UNIX_EPOCH.to_rfc3339(),
-                initial_vals,
-            )];
-            // };
-            v.into_iter().chain(
-                o.attributes
-                    .iter()
-                    .filter(|a| a.time != DateTime::UNIX_EPOCH)
-                    .map(|a| {
-                        let vals: Vec<_> = object_type
-                            .attributes
-                            .iter()
-                            .map(|ot_attr| {
-                                if a.name == ot_attr.name {
-                                    Some(a.value.to_string())
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        (
-                            o.id.clone(),
-                            Some(a.name.to_string()),
-                            a.time.to_rfc3339(),
-                            vals,
-                        )
-                    }),
-            )
-        });
         match self {
             #[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => {
-                for (o_id, changed_field, time, values) in object_values {
-                    let values: Vec<_> = values
-                        .into_iter()
-                        .map(|v| v.map(|v| format!("'{v}'")).unwrap_or("NULL".to_string()))
-                        .collect();
-                    let mut attr_vals = values.join(", ");
-                    if !attr_vals.is_empty() {
-                        attr_vals.insert_str(0, ", ");
-                    }
-                    connection.execute(
-                        &format!(
-                            r#"INSERT INTO "{table_name}" VALUES (?,?,{}{})"#,
-                            &changed_field
-                                .map(|f| format!("'{f}'"))
-                                .unwrap_or("NULL".to_string()),
-                            attr_vals
-                        ),
-                        [&o_id, &time],
-                    )?;
+                for o in objects {
+                    write_object_changes_sqlite(connection, table_name, object_type, &o)?;
                 }
                 Ok(())
             }
             #[cfg(feature = "ocel-duckdb")]
             DatabaseConnection::DUCKDB(connection) => {
                 let mut ap = connection.appender(table_name)?;
-                let object_values: Vec<_> = object_values.collect();
-                let x = object_values.iter().map(|ov| {
-                    let chained: Vec<_> = vec![
-                        &ov.0 as &dyn ::duckdb::ToSql,
-                        &ov.2 as &dyn ::duckdb::ToSql,
-                        &ov.1 as &dyn ::duckdb::ToSql,
-                    ]
-                    .into_iter()
-                    .chain(ov.3.iter().map(|v| v as &dyn ::duckdb::ToSql))
-                    .collect();
-
-                    ::duckdb::appender_params_from_iter(chained)
-                });
-                ap.append_rows(x).unwrap();
+                for o in objects {
+                    write_object_changes_duckdb(&mut ap, object_type, &o)?;
+                }
                 Ok(())
             }
         }
     }
 
-    pub(crate) fn add_event_attributes_for_type<I>(
+    pub(crate) fn add_event_attributes_for_type<'b, I>(
         &self,
         table_name: &str,
         event_type: &OCELType,
         events: I,
     ) -> Result<(), DatabaseError>
     where
-        I: IntoIterator<Item = &'a super::ocel_struct::OCELEvent>,
+        I: IntoIterator<Item = Cow<'b, super::ocel_struct::OCELEvent>>,
     {
-        let event_values = events.into_iter().map(|o| {
-            let values: Vec<_> = event_type
-                .attributes
-                .iter()
-                .map(|a| {
-                    let val = o.attributes.iter().find(|oa| oa.name == a.name);
-                    val.map(|v| v.value.to_string())
-                })
-                .collect();
-            // let v = if initial_vals.is_empty() {
-            //     Vec::default()
-            // } else {
-
-            (o.id.clone(), o.time.to_rfc3339(), values)
-        });
         match self {
             #[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => {
-                for (e_id, time, values) in event_values {
-                    let values: Vec<_> = values
-                        .into_iter()
-                        .map(|v| v.map(|v| format!("'{v}'")).unwrap_or("NULL".to_string()))
-                        .collect();
-                    let mut attr_vals = values.join(", ");
-                    if !attr_vals.is_empty() {
-                        attr_vals.insert_str(0, ", ");
-                    }
-                    connection.execute(
-                        &format!(r#"INSERT INTO "{table_name}" VALUES (?,?{attr_vals})"#),
-                        [&e_id, &time],
-                    )?;
+                for e in events {
+                    write_event_attrs_sqlite(connection, table_name, event_type, &e)?;
                 }
                 Ok(())
             }
-
             #[cfg(feature = "ocel-duckdb")]
             DatabaseConnection::DUCKDB(connection) => {
                 let mut ap = connection.appender(table_name)?;
-                let event_values: Vec<_> = event_values.collect();
-                let x = event_values.iter().map(|ov| {
-                    let chained: Vec<_> =
-                        vec![&ov.0 as &dyn ::duckdb::ToSql, &ov.1 as &dyn ::duckdb::ToSql]
-                            .into_iter()
-                            .chain(ov.2.iter().map(|v| v as &dyn ::duckdb::ToSql))
-                            .collect();
-
-                    ::duckdb::appender_params_from_iter(chained)
-                });
-                ap.append_rows(x).unwrap();
+                for e in events {
+                    write_event_attrs_duckdb(&mut ap, event_type, &e)?;
+                }
                 Ok(())
             }
         }
     }
 
-    /// Add rows for all OCEL objects to specified database table
-    pub(crate) fn add_o2o_relationships<I>(
+    /// Insert one `(source_id, target_object_id, qualifier)` row per relationship.
+    /// Used by both [`add_o2o_relationships`] and [`add_e2o_relationships`].
+    fn add_relationship_rows<'b, T, I, F>(
+        &self,
+        table_name: &str,
+        items: I,
+        extract: F,
+    ) -> Result<(), DatabaseError>
+    where
+        T: Clone + 'b,
+        I: IntoIterator<Item = Cow<'b, T>>,
+        F: for<'r> Fn(&'r T) -> (&'r String, &'r [super::ocel_struct::OCELRelationship]),
+    {
+        match self {
+            #[cfg(feature = "ocel-sqlite")]
+            DatabaseConnection::SQLITE(connection) => {
+                for item in items {
+                    let (id, rels) = extract(&item);
+                    for r in rels {
+                        connection.execute(
+                            &format!(r#"INSERT INTO "{table_name}" VALUES (?,?,?)"#),
+                            [id, &r.object_id, &r.qualifier],
+                        )?;
+                    }
+                }
+                Ok(())
+            }
+            #[cfg(feature = "ocel-duckdb")]
+            DatabaseConnection::DUCKDB(connection) => {
+                let mut ap = connection.appender(table_name)?;
+                for item in items {
+                    let (id, rels) = extract(&item);
+                    for r in rels {
+                        ap.append_row([id, &r.object_id, &r.qualifier])?;
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    pub(crate) fn add_o2o_relationships<'b, I>(
         &self,
         table_name: &str,
         objects: I,
     ) -> Result<(), DatabaseError>
     where
-        I: IntoIterator<Item = &'a super::ocel_struct::OCELObject>,
+        I: IntoIterator<Item = Cow<'b, super::ocel_struct::OCELObject>>,
     {
-        let object_values = objects.into_iter().flat_map(|o| {
-            o.relationships
-                .iter()
-                .map(|r| [&o.id, &r.object_id, &r.qualifier])
-        });
-        match self {
-            #[cfg(feature = "ocel-sqlite")]
-            DatabaseConnection::SQLITE(connection) => {
-                for ov in object_values {
-                    connection
-                        .execute(&format!(r#"INSERT INTO "{table_name}" VALUES (?,?,?)"#), ov)?;
-                }
-                Ok(())
-            }
-            #[cfg(feature = "ocel-duckdb")]
-            DatabaseConnection::DUCKDB(connection) => {
-                let mut ap = connection.appender(table_name)?;
-                Ok(ap.append_rows(object_values)?)
-            }
-        }
+        self.add_relationship_rows(table_name, objects, |o| (&o.id, &o.relationships))
     }
 
-    /// Add rows for all OCEL objects to specified database table
-    pub(crate) fn add_e2o_relationships<I>(
+    pub(crate) fn add_e2o_relationships<'b, I>(
         &self,
         table_name: &str,
         events: I,
     ) -> Result<(), DatabaseError>
     where
-        I: IntoIterator<Item = &'a super::ocel_struct::OCELEvent>,
+        I: IntoIterator<Item = Cow<'b, super::ocel_struct::OCELEvent>>,
     {
-        let event_values = events.into_iter().flat_map(|o| {
-            o.relationships
-                .iter()
-                .map(|r| [&o.id, &r.object_id, &r.qualifier])
-        });
-        match self {
-            #[cfg(feature = "ocel-sqlite")]
-            DatabaseConnection::SQLITE(connection) => {
-                for ov in event_values {
-                    connection
-                        .execute(&format!(r#"INSERT INTO "{table_name}" VALUES (?,?,?)"#), ov)?;
-                }
-                Ok(())
-            }
-            #[cfg(feature = "ocel-duckdb")]
-            DatabaseConnection::DUCKDB(connection) => {
-                let mut ap = connection.appender(table_name)?;
-                Ok(ap.append_rows(event_values)?)
-            }
-        }
+        self.add_relationship_rows(table_name, events, |e| (&e.id, &e.relationships))
     }
+}
+
+#[cfg(feature = "ocel-sqlite")]
+fn write_object_changes_sqlite(
+    connection: &rusqlite::Connection,
+    table_name: &str,
+    object_type: &OCELType,
+    o: &super::ocel_struct::OCELObject,
+) -> Result<(), DatabaseError> {
+    let initial_vals: Vec<_> = object_type
+        .attributes
+        .iter()
+        .map(|a| {
+            o.attributes
+                .iter()
+                .find(|oa| oa.name == a.name && oa.time == DateTime::UNIX_EPOCH)
+                .map(|v| format!("'{}'", v.value))
+                .unwrap_or_else(|| "NULL".to_string())
+        })
+        .collect();
+    let mut attr_vals = initial_vals.join(", ");
+    if !attr_vals.is_empty() {
+        attr_vals.insert_str(0, ", ");
+    }
+    connection.execute(
+        &format!(r#"INSERT INTO "{table_name}" VALUES (?,?,NULL{attr_vals})"#),
+        [&o.id, &DateTime::UNIX_EPOCH.to_rfc3339()],
+    )?;
+
+    for a in o
+        .attributes
+        .iter()
+        .filter(|a| a.time != DateTime::UNIX_EPOCH)
+    {
+        let vals: Vec<_> = object_type
+            .attributes
+            .iter()
+            .map(|ot_attr| {
+                if a.name == ot_attr.name {
+                    format!("'{}'", a.value)
+                } else {
+                    "NULL".to_string()
+                }
+            })
+            .collect();
+        let mut attr_vals = vals.join(", ");
+        if !attr_vals.is_empty() {
+            attr_vals.insert_str(0, ", ");
+        }
+        connection.execute(
+            &format!(
+                r#"INSERT INTO "{table_name}" VALUES (?,?,'{}'{attr_vals})"#,
+                a.name
+            ),
+            [&o.id, &a.time.to_rfc3339()],
+        )?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "ocel-duckdb")]
+fn write_object_changes_duckdb(
+    ap: &mut ::duckdb::Appender<'_>,
+    object_type: &OCELType,
+    o: &super::ocel_struct::OCELObject,
+) -> Result<(), DatabaseError> {
+    let initial_vals: Vec<Option<String>> = object_type
+        .attributes
+        .iter()
+        .map(|a| {
+            o.attributes
+                .iter()
+                .find(|oa| oa.name == a.name && oa.time == DateTime::UNIX_EPOCH)
+                .map(|v| v.value.to_string())
+        })
+        .collect();
+    let unix = DateTime::UNIX_EPOCH.to_rfc3339();
+    let no_field: Option<String> = None;
+    let chained: Vec<&dyn ::duckdb::ToSql> = vec![
+        &o.id as &dyn ::duckdb::ToSql,
+        &unix as &dyn ::duckdb::ToSql,
+        &no_field as &dyn ::duckdb::ToSql,
+    ]
+    .into_iter()
+    .chain(initial_vals.iter().map(|v| v as &dyn ::duckdb::ToSql))
+    .collect();
+    ap.append_row(::duckdb::appender_params_from_iter(chained))?;
+
+    for a in o
+        .attributes
+        .iter()
+        .filter(|a| a.time != DateTime::UNIX_EPOCH)
+    {
+        let vals: Vec<Option<String>> = object_type
+            .attributes
+            .iter()
+            .map(|ot_attr| {
+                if a.name == ot_attr.name {
+                    Some(a.value.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let time_str = a.time.to_rfc3339();
+        let name_opt: Option<String> = Some(a.name.clone());
+        let chained: Vec<&dyn ::duckdb::ToSql> = vec![
+            &o.id as &dyn ::duckdb::ToSql,
+            &time_str as &dyn ::duckdb::ToSql,
+            &name_opt as &dyn ::duckdb::ToSql,
+        ]
+        .into_iter()
+        .chain(vals.iter().map(|v| v as &dyn ::duckdb::ToSql))
+        .collect();
+        ap.append_row(::duckdb::appender_params_from_iter(chained))?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "ocel-sqlite")]
+fn write_event_attrs_sqlite(
+    connection: &rusqlite::Connection,
+    table_name: &str,
+    event_type: &OCELType,
+    e: &super::ocel_struct::OCELEvent,
+) -> Result<(), DatabaseError> {
+    let vals: Vec<_> = event_type
+        .attributes
+        .iter()
+        .map(|a| {
+            e.attributes
+                .iter()
+                .find(|ea| ea.name == a.name)
+                .map(|v| format!("'{}'", v.value))
+                .unwrap_or_else(|| "NULL".to_string())
+        })
+        .collect();
+    let mut attr_vals = vals.join(", ");
+    if !attr_vals.is_empty() {
+        attr_vals.insert_str(0, ", ");
+    }
+    connection.execute(
+        &format!(r#"INSERT INTO "{table_name}" VALUES (?,?{attr_vals})"#),
+        [&e.id, &e.time.to_rfc3339()],
+    )?;
+    Ok(())
+}
+
+#[cfg(feature = "ocel-duckdb")]
+fn write_event_attrs_duckdb(
+    ap: &mut ::duckdb::Appender<'_>,
+    event_type: &OCELType,
+    e: &super::ocel_struct::OCELEvent,
+) -> Result<(), DatabaseError> {
+    let vals: Vec<Option<String>> = event_type
+        .attributes
+        .iter()
+        .map(|a| {
+            e.attributes
+                .iter()
+                .find(|ea| ea.name == a.name)
+                .map(|v| v.value.to_string())
+        })
+        .collect();
+    let time_str = e.time.to_rfc3339();
+    let chained: Vec<&dyn ::duckdb::ToSql> = vec![
+        &e.id as &dyn ::duckdb::ToSql,
+        &time_str as &dyn ::duckdb::ToSql,
+    ]
+    .into_iter()
+    .chain(vals.iter().map(|v| v as &dyn ::duckdb::ToSql))
+    .collect();
+    ap.append_row(::duckdb::appender_params_from_iter(chained))?;
+    Ok(())
 }
 
 #[cfg(test)]

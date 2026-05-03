@@ -2933,13 +2933,14 @@ dependencies = [
 
 [[package]]
 name = "process_mining"
-version = "0.5.5"
+version = "0.5.6"
 dependencies = [
  "chrono",
  "csv",
  "duckdb",
  "flate2",
  "graphviz-rust",
+ "hashbrown 0.15.2",
  "inventory",
  "itertools",
  "kuzu",
