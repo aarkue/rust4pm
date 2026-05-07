@@ -38,7 +38,7 @@ pub fn export_process_tree_image<P: AsRef<std::path::Path>>(
 }
 
 ///
-/// Creates the GraphViz code for a [`Node`] and expects a [`Uuid`] that is consistent
+/// Creates the `Graphviz` code for a [`Node`] and expects a [`Uuid`] that is consistent
 /// throughout the graph
 ///
 fn tree_node_to_gviz_node(node: &process_tree_struct::Node, node_id: Uuid) -> Stmt {
@@ -49,7 +49,7 @@ fn tree_node_to_gviz_node(node: &process_tree_struct::Node, node_id: Uuid) -> St
 }
 
 ///
-/// Creates the GraphViz code for a [`Operator`] and expects a [`Uuid`] that is consistent
+/// Creates the `Graphviz` code for a [`Operator`] and expects a [`Uuid`] that is consistent
 /// throughout the graph
 ///
 fn operator_to_node(op: &Operator, op_id: Uuid) -> Stmt {
@@ -62,7 +62,7 @@ fn operator_to_node(op: &Operator, op_id: Uuid) -> Stmt {
 }
 
 ///
-/// Creates the GraphViz code for a [`Leaf`] and expects a [`Uuid`] that is consistent
+/// Creates the `Graphviz` code for a [`Leaf`] and expects a [`Uuid`] that is consistent
 /// throughout the graph
 ///
 fn leaf_to_node(leaf: &Leaf, leaf_id: Uuid) -> Stmt {
@@ -78,7 +78,7 @@ fn leaf_to_node(leaf: &Leaf, leaf_id: Uuid) -> Stmt {
 }
 
 ///
-/// Creates the GraphViz code for an edge between two process tree [`Node`]s and expects two [`Uuid`]
+/// Creates the `Graphviz` code for an edge between two process tree [`Node`]s and expects two [`Uuid`]
 /// that are consistent throughout the graph for creating the edge
 ///
 fn arc_to_edge(from: Uuid, to: Uuid) -> Stmt {
