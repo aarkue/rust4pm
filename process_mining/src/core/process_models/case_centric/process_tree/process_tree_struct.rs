@@ -262,7 +262,7 @@ impl Operator {
     /// adds them to the input [`PetriNet`]. This routine is executed recursively.
     /// Optionally, the input and output place of the inserted workflow net can be defined.
     ///
-    fn add_to_petri_net(
+    pub fn add_to_petri_net(
         &self,
         net: &mut PetriNet,
         in_place: Option<PlaceID>,
@@ -405,7 +405,7 @@ impl Leaf {
     /// places can be given to connect the newly created (silent) transition to. The output is
     /// the [`PlaceID`] of the input and output place, each.
     ///
-    fn add_to_petri_net(
+    pub fn add_to_petri_net(
         &self,
         net: &mut PetriNet,
         in_place: Option<PlaceID>,
