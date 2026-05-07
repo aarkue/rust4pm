@@ -289,12 +289,13 @@ impl Operator {
                 let mut last_in_place = in_place;
 
                 self.children.iter().enumerate().for_each(|(pos, child)| {
-                    let curr_out_place;
-                    if pos == num_of_children - 1 {
-                        curr_out_place = out_place;
-                    } else {
-                        curr_out_place = net.add_place(None);
-                    }
+                    let curr_out_place = {
+                        if pos == num_of_children - 1 {
+                            out_place
+                        } else {
+                            net.add_place(None)
+                        }
+                    };
 
                     match child {
                         Node::Operator(op) => {
@@ -443,16 +444,16 @@ impl Leaf {
         let in_place = in_place.unwrap_or_else(|| net.add_place(None));
         let out_place = out_place.unwrap_or_else(|| net.add_place(None));
 
-        let leaf_transition;
-
-        match &self.activity_label {
-            LeafLabel::Activity(label) => {
-                leaf_transition = net.add_transition(Some(label.clone()), None);
+        let leaf_transition = {
+            match &self.activity_label {
+                LeafLabel::Activity(label) => {
+                    net.add_transition(Some(label.clone()), None)
+                }
+                LeafLabel::Tau => {
+                    net.add_transition(None, None)
+                }
             }
-            LeafLabel::Tau => {
-                leaf_transition = net.add_transition(None, None);
-            }
-        }
+        };
 
         net.add_arc(
             ArcType::PlaceTransition(in_place.get_uuid(), leaf_transition.get_uuid()),
