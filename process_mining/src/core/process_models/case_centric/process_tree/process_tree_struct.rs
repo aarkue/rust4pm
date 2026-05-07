@@ -70,6 +70,10 @@ impl Node {
     ///
     /// Calls either [`Operator::add_to_petri_net`] or [`Leaf::add_to_petri_net`] depending on the
     /// [`Node`] type.
+    /// Either takes given in and out places as the start and end of the inserted workflow net.
+    /// Edits the given Petri net by inserting the corresponding places and transitions of the
+    /// (sub)tree.
+    /// Returns the start and end places of the workflow net.
     ///
     pub fn add_to_petri_net(
         &self,
@@ -196,21 +200,10 @@ impl ProcessTree {
     ///
     pub fn to_petri_net(&self) -> PetriNet {
         let mut petri_net = PetriNet::new();
-        let start_place;
-        let end_place;
 
-        match &self.root {
-            Node::Operator(op) => {
-                (start_place, end_place) = op.add_to_petri_net(&mut petri_net, None, None);
-            }
-            Node::Leaf(leaf) => {
-                (start_place, end_place) = leaf.add_to_petri_net(&mut petri_net, None, None);
-            }
-        }
+        let (start_place, end_place) = self.root.add_to_petri_net(&mut petri_net, None, None);
 
-        let mut initial_marking = Marking::new();
-        initial_marking.insert(start_place, 1);
-        petri_net.initial_marking = Some(initial_marking);
+        petri_net.initial_marking = Some(Marking::from([(start_place, 1)]));
 
         let mut final_marking = Marking::new();
         final_marking.insert(end_place, 1);
@@ -269,7 +262,7 @@ impl Operator {
     /// adds them to the input [`PetriNet`]. This routine is executed recursively.
     /// Optionally, the input and output place of the inserted workflow net can be defined.
     ///
-    pub fn add_to_petri_net(
+    fn add_to_petri_net(
         &self,
         net: &mut PetriNet,
         in_place: Option<PlaceID>,
@@ -297,14 +290,8 @@ impl Operator {
                         }
                     };
 
-                    match child {
-                        Node::Operator(op) => {
-                            op.add_to_petri_net(net, Some(last_in_place), Some(curr_out_place));
-                        }
-                        Node::Leaf(leaf) => {
-                            leaf.add_to_petri_net(net, Some(last_in_place), Some(curr_out_place));
-                        }
-                    }
+                    child.add_to_petri_net(net, Some(last_in_place), Some(curr_out_place));
+
                     last_in_place = curr_out_place;
                 })
             }
@@ -321,11 +308,11 @@ impl Operator {
                 let tau_end_transition = net.add_transition(None, None);
 
                 net.add_arc(
-                    ArcType::PlaceTransition(in_place.get_uuid(), tau_start_transition.get_uuid()),
+                    ArcType::place_to_transition(in_place, tau_start_transition),
                     None,
                 );
                 net.add_arc(
-                    ArcType::TransitionPlace(tau_end_transition.get_uuid(), out_place.get_uuid()),
+                    ArcType::transition_to_place(tau_end_transition, out_place),
                     None,
                 );
 
@@ -333,17 +320,11 @@ impl Operator {
                     let (child_start, child_end) = child.add_to_petri_net(net, None, None);
 
                     net.add_arc(
-                        ArcType::PlaceTransition(
-                            tau_start_transition.get_uuid(),
-                            child_start.get_uuid(),
-                        ),
+                        ArcType::transition_to_place(tau_start_transition, child_start),
                         None,
                     );
                     net.add_arc(
-                        ArcType::TransitionPlace(
-                            child_end.get_uuid(),
-                            tau_end_transition.get_uuid(),
-                        ),
+                        ArcType::place_to_transition(child_end, tau_end_transition),
                         None,
                     );
                 })
@@ -357,11 +338,11 @@ impl Operator {
                 let tau_end_transition = net.add_transition(None, None);
 
                 net.add_arc(
-                    ArcType::PlaceTransition(in_place.get_uuid(), tau_start_transition.get_uuid()),
+                    ArcType::place_to_transition(in_place, tau_start_transition),
                     None,
                 );
                 net.add_arc(
-                    ArcType::TransitionPlace(tau_end_transition.get_uuid(), out_place.get_uuid()),
+                    ArcType::transition_to_place(tau_end_transition, out_place),
                     None,
                 );
 
@@ -369,31 +350,20 @@ impl Operator {
                 let loop_end_place = net.add_place(None);
 
                 net.add_arc(
-                    ArcType::TransitionPlace(
-                        tau_start_transition.get_uuid(),
-                        loop_start_place.get_uuid(),
-                    ),
+                    ArcType::transition_to_place(tau_start_transition, loop_start_place),
                     None,
                 );
                 net.add_arc(
-                    ArcType::PlaceTransition(
-                        loop_end_place.get_uuid(),
-                        tau_end_transition.get_uuid(),
-                    ),
+                    ArcType::place_to_transition(loop_end_place, tau_end_transition),
                     None,
                 );
 
                 self.children.iter().enumerate().for_each(|(pos, child)| {
-                    let child_start;
-                    let child_end;
-
-                    if pos == 0 {
-                        child_start = loop_start_place;
-                        child_end = loop_end_place;
+                    let (child_start, child_end) = if pos == 0 {
+                        (loop_start_place, loop_end_place)
                     } else {
-                        child_start = loop_end_place;
-                        child_end = loop_start_place;
-                    }
+                        (loop_end_place, loop_start_place)
+                    };
 
                     child.add_to_petri_net(net, Some(child_start), Some(child_end));
                 })
@@ -431,11 +401,11 @@ impl Leaf {
     }
 
     ///
-    /// Adds a (silent) transition to represent the leaf of a tree. Optionally, input and output
+    /// Adds a transition to represent the leaf of a tree. Optionally, input and output
     /// places can be given to connect the newly created (silent) transition to. The output is
     /// the [`PlaceID`] of the input and output place, each.
     ///
-    pub fn add_to_petri_net(
+    fn add_to_petri_net(
         &self,
         net: &mut PetriNet,
         in_place: Option<PlaceID>,
@@ -452,11 +422,11 @@ impl Leaf {
         };
 
         net.add_arc(
-            ArcType::PlaceTransition(in_place.get_uuid(), leaf_transition.get_uuid()),
+            ArcType::place_to_transition(in_place, leaf_transition),
             None,
         );
         net.add_arc(
-            ArcType::TransitionPlace(leaf_transition.get_uuid(), out_place.get_uuid()),
+            ArcType::transition_to_place(leaf_transition, out_place),
             None,
         );
 
