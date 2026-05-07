@@ -446,12 +446,8 @@ impl Leaf {
 
         let leaf_transition = {
             match &self.activity_label {
-                LeafLabel::Activity(label) => {
-                    net.add_transition(Some(label.clone()), None)
-                }
-                LeafLabel::Tau => {
-                    net.add_transition(None, None)
-                }
+                LeafLabel::Activity(label) => net.add_transition(Some(label.clone()), None),
+                LeafLabel::Tau => net.add_transition(None, None),
             }
         };
 
