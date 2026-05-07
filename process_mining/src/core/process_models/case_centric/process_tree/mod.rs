@@ -1,6 +1,6 @@
 //! Process Tree
 #[cfg(feature = "graphviz-export")]
-mod image_export;
+pub mod image_export;
 pub(crate) mod process_tree_struct;
 
 #[doc(inline)]

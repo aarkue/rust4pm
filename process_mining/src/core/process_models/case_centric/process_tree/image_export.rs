@@ -159,7 +159,7 @@ pub fn export_process_tree_image_png(
 
 #[cfg(test)]
 mod test {
-    use crate::core::process_models::process_tree::image_export::{
+    use super::super::image_export::{
         export_process_tree_image_png, export_process_tree_image_svg,
     };
     use crate::core::process_models::process_tree::{

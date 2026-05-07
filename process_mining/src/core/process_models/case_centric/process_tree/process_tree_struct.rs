@@ -1,7 +1,4 @@
 use crate::core::process_models::petri_net::{ArcType, Marking, PlaceID};
-use crate::core::process_models::process_tree::image_export::{
-    export_process_tree_image_png, export_process_tree_image_svg,
-};
 use crate::PetriNet;
 use core::fmt;
 use schemars::JsonSchema;
@@ -248,7 +245,7 @@ impl ProcessTree {
     ///
     /// Only available with the `graphviz-export` feature.
     pub fn export_png<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        export_process_tree_image_png(self, path)
+        super::image_export::export_process_tree_image_png(self, path)
     }
 
     #[cfg(feature = "graphviz-export")]
@@ -261,7 +258,7 @@ impl ProcessTree {
     ///
     /// Only available with the `graphviz-export` feature.
     pub fn export_svg<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        export_process_tree_image_svg(self, path)
+        super::image_export::export_process_tree_image_svg(self, path)
     }
 }
 
