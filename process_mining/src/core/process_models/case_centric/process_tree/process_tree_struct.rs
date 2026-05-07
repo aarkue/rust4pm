@@ -1,4 +1,4 @@
-use crate::core::process_models::petri_net::{ArcType, PlaceID};
+use crate::core::process_models::petri_net::{ArcType, Marking, PlaceID};
 use crate::PetriNet;
 use serde::{Deserialize, Serialize};
 
@@ -194,7 +194,7 @@ impl ProcessTree {
     /// "Process Mining: Data Science in Action" by Wil van der Aalst.
     /// Returns a workflow net, consisting of the [`PetriNet`], its input, and output place's [`PlaceID`]
     ///
-    pub fn to_petri_net(&self) -> (PetriNet, PlaceID, PlaceID) {
+    pub fn to_petri_net(&self) -> PetriNet {
         let mut petri_net = PetriNet::new();
         let start_place;
         let end_place;
@@ -208,7 +208,15 @@ impl ProcessTree {
             }
         }
 
-        (petri_net, start_place, end_place)
+        let mut initial_marking = Marking::new();
+        initial_marking.insert(start_place, 1);
+        petri_net.initial_marking = Some(initial_marking);
+
+        let mut final_marking = Marking::new();
+        final_marking.insert(end_place, 1);
+        petri_net.final_markings = Some(vec![final_marking]);
+
+        petri_net
     }
 }
 
@@ -559,7 +567,7 @@ mod tests {
 
         let tree = ProcessTree::new(Node::Operator(seq));
 
-        let (net, _, _) = tree.to_petri_net();
+        let net = tree.to_petri_net();
 
         assert_eq!(4, net.places.len());
         assert_eq!(3, net.transitions.len());
@@ -581,7 +589,7 @@ mod tests {
 
         let tree = ProcessTree::new(Node::Operator(conc));
 
-        let (net, _, _) = tree.to_petri_net();
+        let net = tree.to_petri_net();
 
         assert_eq!(8, net.places.len());
         assert_eq!(5, net.transitions.len());
@@ -603,7 +611,7 @@ mod tests {
 
         let tree = ProcessTree::new(Node::Operator(loop_op));
 
-        let (net, _, _) = tree.to_petri_net();
+        let net = tree.to_petri_net();
 
         assert_eq!(4, net.places.len());
         assert_eq!(5, net.transitions.len());
@@ -625,7 +633,7 @@ mod tests {
 
         let tree = ProcessTree::new(Node::Operator(choice));
 
-        let (net, _, _) = tree.to_petri_net();
+        let net = tree.to_petri_net();
 
         assert_eq!(2, net.places.len());
         assert_eq!(3, net.transitions.len());
@@ -639,7 +647,7 @@ mod tests {
 
         let tree = ProcessTree::new(Node::Leaf(leaf_tau));
 
-        let (net, _, _) = tree.to_petri_net();
+        let net = tree.to_petri_net();
 
         assert_eq!(2, net.places.len());
         assert_eq!(1, net.transitions.len());
@@ -657,7 +665,7 @@ mod tests {
 
         let tree = ProcessTree::new(Node::Leaf(leaf_a));
 
-        let (net, _, _) = tree.to_petri_net();
+        let net = tree.to_petri_net();
 
         assert_eq!(2, net.places.len());
         assert_eq!(1, net.transitions.len());
@@ -704,7 +712,7 @@ mod tests {
         seq.children.push(Node::Operator(choice));
         let tree = ProcessTree::new(Node::Operator(seq));
 
-        let (net, _, _) = tree.to_petri_net();
+        let net = tree.to_petri_net();
 
         assert_eq!(10, net.places.len());
         assert_eq!(13, net.transitions.len());
