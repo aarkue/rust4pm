@@ -16,7 +16,7 @@ pub enum LeafLabel {
 ///
 /// Node in a process tree
 ///
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub enum Node {
     /// Operator node of a process tree
     Operator(Operator),
@@ -91,7 +91,7 @@ impl Node {
 ///
 /// Operator type enum for [`Operator`]
 ///
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Copy)]
 pub enum OperatorType {
     /// Sequence operator
     Sequence,
@@ -217,6 +217,7 @@ impl ProcessTree {
 /// An operator node in a process tree
 ///
 #[derive(Debug, Serialize, Deserialize)]
+#[derive(PartialEq)]
 pub struct Operator {
     /// The [`OperatorType`] of the tree itself
     pub operator_type: OperatorType,
@@ -378,6 +379,7 @@ impl Operator {
 ///
 /// A leaf in a process tree
 ///
+#[derive(PartialEq)]
 pub struct Leaf {
     /// The silent or non-silent activity label [`LeafLabel`]
     pub activity_label: LeafLabel,
