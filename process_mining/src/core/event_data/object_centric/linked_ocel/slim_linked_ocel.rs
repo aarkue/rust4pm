@@ -163,13 +163,18 @@ fn reconcile_known_value(
     }
 }
 
+/// Inner index type for events and objects.
+///
+/// The public `EventIndex` and `ObjectIndex` types are thin wrappers around this, providing type safety and OCEL-specific accessors.
+pub type InnerIndex = u32;
+
 /// An Event Index
 ///
 /// Points to an event in the context of a given OCEL
 #[derive(
     PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
-pub struct EventIndex(u32);
+pub struct EventIndex(InnerIndex);
 impl From<&EventIndex> for EventIndex {
     fn from(value: &EventIndex) -> Self {
         *value
@@ -288,7 +293,7 @@ impl EventIndex {
     /// Retrieve inner index value
     ///
     /// Warning: Only use carefully, as wrong usage can lead to invalid `EventIndex` references, even when using only a single OCEL
-    pub fn into_inner(self) -> u32 {
+    pub fn into_inner(self) -> InnerIndex {
         self.0
     }
 }
@@ -299,14 +304,14 @@ impl EventIndex {
 /// An Object Index
 ///
 /// Points to an object in the context of a given OCEL
-pub struct ObjectIndex(u32);
+pub struct ObjectIndex(InnerIndex);
 impl From<&ObjectIndex> for ObjectIndex {
     fn from(value: &ObjectIndex) -> Self {
         *value
     }
 }
-impl From<u32> for ObjectIndex {
-    fn from(value: u32) -> Self {
+impl From<InnerIndex> for ObjectIndex {
+    fn from(value: InnerIndex) -> Self {
         Self(value)
     }
 }
@@ -388,6 +393,28 @@ impl ObjectIndex {
                 .filter(move |ev| locel.events[ev.ix()].event_type == ei)
         })
     }
+    /// Get the activity trace of this object as event-type indices, ordered by event timestamp
+    ///
+    /// Each yielded `usize` is the internal event-type index of an event connected to this object.
+    /// This is the cheap form of the trace — useful when you intend to group, count, or otherwise compare
+    /// traces without allocating string copies. Use [`ObjectIndex::get_obj_activity_trace`] if you want
+    /// the event-type names directly.
+    pub fn get_obj_activity_trace_evtype_indices<'a>(
+        &self,
+        locel: &'a SlimLinkedOCEL,
+    ) -> impl Iterator<Item = usize> + use<'a> {
+        let mut events: Vec<EventIndex> = self.get_e2o_rev(locel).copied().collect();
+        events.sort_by_key(|e| *e.get_time(locel));
+        events.into_iter().map(move |e| e.get_ev(locel).event_type)
+    }
+    /// Get the activity trace of this object (i.e., the sequence of event types connected to the object, ordered by event timestamp)
+    pub fn get_obj_activity_trace<'a>(
+        &self,
+        locel: &'a SlimLinkedOCEL,
+    ) -> impl Iterator<Item = &'a String> + use<'a> {
+        self.get_obj_activity_trace_evtype_indices(locel)
+            .map(move |i| &locel.event_types[i].name)
+    }
     /// Get attribute values of this object, specified by the attribute name
     ///
     /// Returns [`None`] if there is no such attribute.
@@ -459,8 +486,27 @@ impl ObjectIndex {
     /// Retrieve inner index value
     ///
     /// Warning: Only use carefully, as wrong usage can lead to invalid `ObjectIndex` references, even when using only a single OCEL
-    pub fn into_inner(self) -> u32 {
+    pub fn into_inner(self) -> InnerIndex {
         self.0
+    }
+}
+
+/// Either an event or an object index
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum EventOrObjectIndex {
+    /// An event index
+    Event(EventIndex),
+    /// An object index
+    Object(ObjectIndex),
+}
+impl From<EventIndex> for EventOrObjectIndex {
+    fn from(value: EventIndex) -> Self {
+        Self::Event(value)
+    }
+}
+impl From<ObjectIndex> for EventOrObjectIndex {
+    fn from(value: ObjectIndex) -> Self {
+        Self::Object(value)
     }
 }
 

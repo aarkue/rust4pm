@@ -270,8 +270,11 @@ fn ocel_attribute_val_to_any_value(val: &OCELAttributeValue) -> AnyValue<'_> {
     match val {
         OCELAttributeValue::String(s) => AnyValue::StringOwned(s.into()),
         OCELAttributeValue::Time(t) => AnyValue::Datetime(
-            t.timestamp_nanos_opt().unwrap(),
-            TimeUnit::Nanoseconds,
+            t.timestamp_micros(),
+            TimeUnit::Microseconds,
+            // Unfortunately, we cannot pass fixed timezone offsets here.
+            // Polars would also not support mixed timezones in a single column.
+            // Thus, timestamp information is lost, but the timestamps are still correct (i.e., the right moment in time)
             None,
         ),
         OCELAttributeValue::Integer(i) => AnyValue::Int64(*i),
@@ -414,11 +417,7 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
             &all_evs_with_rels
                 .iter()
                 .map(|(e, _r)| {
-                    AnyValue::Datetime(
-                        e.time.timestamp_nanos_opt().unwrap(),
-                        TimeUnit::Nanoseconds,
-                        None,
-                    )
+                    AnyValue::Datetime(e.time.timestamp_micros(), TimeUnit::Microseconds, None)
                 })
                 .collect::<Vec<_>>(),
             false,
@@ -576,8 +575,8 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
                         })
                         .map(|date| {
                             AnyValue::Datetime(
-                                date.timestamp_nanos_opt().unwrap(),
-                                TimeUnit::Nanoseconds,
+                                date.timestamp_micros(),
+                                TimeUnit::Microseconds,
                                 None,
                             )
                         })
@@ -643,8 +642,8 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
                         .iter()
                         .map(|o| {
                             AnyValue::Datetime(
-                                o.time.timestamp_nanos_opt().unwrap(),
-                                TimeUnit::Nanoseconds,
+                                o.time.timestamp_micros(),
+                                TimeUnit::Microseconds,
                                 None,
                             )
                         })
@@ -695,10 +694,15 @@ pub fn event_type_to_df<'a, I: LinkedOCELAccess<'a>>(
     let id_series = Series::from_iter(evs.iter().map(|ev| ev.id.as_str()))
         .into_column()
         .with_name("id".into());
+    // The cast below reinterprets the i64 value rather than scaling it,
+    // so the integer must already be in the column's declared TimeUnit
+    // (microseconds). Using `timestamp_millis()` here previously yielded
+    // values 1000× too small — every event landed in 1970 because Polars
+    // read 1.45e12 ms as 1.45e12 µs.
     let timestamp_series =
-        Series::from_iter(evs.iter().map(|ev| ev.time.to_utc().timestamp_millis()))
+        Series::from_iter(evs.iter().map(|ev| ev.time.to_utc().timestamp_micros()))
             .cast(&polars::prelude::DataType::Datetime(
-                TimeUnit::Milliseconds,
+                TimeUnit::Microseconds,
                 Some(TimeZone::UTC),
             ))?
             .into_column()
@@ -951,9 +955,11 @@ pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
             ATTRIBUTE_CHANGE_DF_FROM_TIME.into(),
             &changes
                 .iter()
-                .map(|c| c.2.map(|t| t.timestamp_millis()).into())
+                // µs to match the declared Datetime(Microseconds) column;
+                // see comment in `event_type_to_df` for context.
+                .map(|c| c.2.map(|t| t.timestamp_micros()).into())
                 .collect::<Vec<_>>(),
-            &polars::prelude::DataType::Datetime(TimeUnit::Milliseconds, Some(TimeZone::UTC)),
+            &polars::prelude::DataType::Datetime(TimeUnit::Microseconds, Some(TimeZone::UTC)),
             false,
         )?
         .into_column();
@@ -961,9 +967,9 @@ pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
             ATTRIBUTE_CHANGE_DF_TO_TIME.into(),
             &changes
                 .iter()
-                .map(|c| c.3.map(|t| t.timestamp_millis()).into())
+                .map(|c| c.3.map(|t| t.timestamp_micros()).into())
                 .collect::<Vec<_>>(),
-            &polars::prelude::DataType::Datetime(TimeUnit::Milliseconds, Some(TimeZone::UTC)),
+            &polars::prelude::DataType::Datetime(TimeUnit::Microseconds, Some(TimeZone::UTC)),
             false,
         )?
         .into_column();

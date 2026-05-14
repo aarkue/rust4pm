@@ -198,9 +198,7 @@ impl RegistryItem {
                 OCEL::import_from_path(path).map_err(|e| e.to_string())?,
             )),
             RegistryItemKind::SlimLinkedOCEL => Ok(RegistryItem::SlimLinkedOCEL({
-                OCEL::import_from_path(path)
-                    .map(SlimLinkedOCEL::from_ocel)
-                    .map_err(|e| e.to_string())?
+                SlimLinkedOCEL::import_from_path(path).map_err(|e| e.to_string())?
             })),
             RegistryItemKind::IndexLinkedOCEL => Ok(RegistryItem::IndexLinkedOCEL(
                 IndexLinkedOCEL::import_from_path(path).map_err(|e| e.to_string())?,

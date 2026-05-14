@@ -310,8 +310,8 @@ where
             _ => {}
         }
 
-    
-        buf.clear();}
+        buf.clear();
+    }
 
     if !encountered_pnml_tag {
         return Err(PNMLParseError::NoPNMLTag);

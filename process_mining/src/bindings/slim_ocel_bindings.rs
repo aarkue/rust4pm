@@ -1,7 +1,10 @@
 //! Binding wrappers for [`SlimLinkedOCEL`] functionality
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, FixedOffset};
 use macros_process_mining::register_binding;
+use rayon::prelude::*;
 
 use crate::core::event_data::object_centric::{
     linked_ocel::{
@@ -236,6 +239,99 @@ fn locel_get_e2o_rev(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<(String, Eve
         .collect()
 }
 
+/// Get the activity trace of an object (i.e., the sequence of event types connected to the object, ordered by event timestamp)
+#[register_binding]
+fn get_obj_activity_trace(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<String> {
+    ob.get_obj_activity_trace(ocel)
+        .map(|act| act.to_string())
+        .collect()
+}
+
+/// Merge `b` into `a` by summing counts for matching keys. Used as the rayon reduce step.
+fn merge_count_maps<K: std::hash::Hash + Eq>(
+    mut a: HashMap<K, usize>,
+    b: HashMap<K, usize>,
+) -> HashMap<K, usize> {
+    for (k, v) in b {
+        *a.entry(k).or_insert(0) += v;
+    }
+    a
+}
+
+/// Get all activity-trace variants for objects of the given object type, with their occurrence counts
+///
+/// Each entry is a tuple `(activity_trace, count)`, where `activity_trace` is the sequence of event types
+/// connected to an object (ordered by event timestamp), and `count` is the number of objects of the
+/// requested type that share that exact trace.
+#[register_binding]
+fn get_variants_of_object_type(
+    ocel: &SlimLinkedOCEL,
+    ob_type: String,
+) -> Vec<(Vec<String>, usize)> {
+    let obs: Vec<ObjectIndex> = ocel.get_obs_of_type(&ob_type).copied().collect();
+    let counts: HashMap<Vec<usize>, usize> = obs
+        .into_par_iter()
+        .fold(HashMap::new, |mut acc, ob| {
+            let trace: Vec<usize> = ob.get_obj_activity_trace_evtype_indices(ocel).collect();
+            *acc.entry(trace).or_insert(0) += 1;
+            acc
+        })
+        .reduce(HashMap::new, merge_count_maps);
+    let ev_type_names: Vec<&str> =
+        <SlimLinkedOCEL as LinkedOCELAccess>::get_ev_types(ocel).collect();
+    let result: Vec<(Vec<String>, usize)> = counts
+        .into_iter()
+        .map(|(trace_idx, count)| {
+            let trace: Vec<String> = trace_idx
+                .into_iter()
+                .map(|i| ev_type_names[i].to_string())
+                .collect();
+            (trace, count)
+        })
+        .collect();
+    // result.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    result
+}
+
+/// Get the directly-follows graph (DFG) for objects of the given object type.
+///
+/// Each entry is `((from_activity, to_activity), count)`, counting adjacent pairs in each
+/// object's timestamp-ordered activity trace. Result order is unspecified.
+#[register_binding]
+fn get_dfg_of_object_type(
+    ocel: &SlimLinkedOCEL,
+    ob_type: String,
+) -> Vec<((String, String), usize)> {
+    let obs: Vec<ObjectIndex> = ocel.get_obs_of_type(&ob_type).copied().collect();
+    let counts: HashMap<(usize, usize), usize> = obs
+        .into_par_iter()
+        .fold(HashMap::new, |mut acc, ob| {
+            let mut iter = ob.get_obj_activity_trace_evtype_indices(ocel);
+            if let Some(mut prev) = iter.next() {
+                for next in iter {
+                    *acc.entry((prev, next)).or_insert(0) += 1;
+                    prev = next;
+                }
+            }
+            acc
+        })
+        .reduce(HashMap::new, merge_count_maps);
+    let ev_type_names: Vec<&str> =
+        <SlimLinkedOCEL as LinkedOCELAccess>::get_ev_types(ocel).collect();
+    counts
+        .into_iter()
+        .map(|((from, to), count)| {
+            (
+                (
+                    ev_type_names[from].to_string(),
+                    ev_type_names[to].to_string(),
+                ),
+                count,
+            )
+        })
+        .collect()
+}
+
 /// Get the outgoing O2O relationships of an object as `(qualifier, object_index)` pairs.
 #[register_binding]
 fn locel_get_o2o(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<(String, ObjectIndex)> {
@@ -300,4 +396,63 @@ fn locel_get_ob_attr_vals(
 #[register_binding]
 fn locel_construct_ocel(ocel: &SlimLinkedOCEL) -> OCEL {
     ocel.construct_ocel()
+}
+
+#[register_binding]
+fn get_object_ids_of_type(ocel: &SlimLinkedOCEL, ob_type: String) -> Vec<String> {
+    ocel.get_obs_of_type(&ob_type)
+        .map(|ob| ocel.get_ob_id(ob).to_string())
+        .collect()
+}
+
+#[register_binding]
+fn get_event_ids_of_type(ocel: &SlimLinkedOCEL, ev_type: String) -> Vec<String> {
+    ocel.get_evs_of_type(&ev_type)
+        .map(|ev| ocel.get_ev_id(ev).to_string())
+        .collect()
+}
+
+#[register_binding]
+fn get_object_type_of_id(ocel: &SlimLinkedOCEL, ob_id: &String) -> Option<String> {
+    ocel.get_ob_by_id(ob_id)
+        .map(|ob| ob.get_ob_type(ocel).to_string())
+}
+
+#[register_binding]
+fn get_e2o_rev_ids(ocel: &SlimLinkedOCEL, ob_id: &String) -> Option<Vec<String>> {
+    ocel.get_ob_by_id(ob_id).map(|ob| {
+        ob.get_e2o_rev(ocel)
+            .map(|ev| ocel.get_ev_id(ev).to_string())
+            .collect()
+    })
+}
+
+#[register_binding]
+fn get_e2o_ids(ocel: &SlimLinkedOCEL, ev_id: &String) -> Option<Vec<String>> {
+    ocel.get_ev_by_id(ev_id).map(|ev| {
+        ev.get_e2o(ocel)
+            .map(|ob| ocel.get_ob_id(ob).to_string())
+            .collect()
+    })
+}
+
+#[register_binding]
+fn get_o2o_ids(ocel: &SlimLinkedOCEL, ob_id: &String) -> Option<Vec<String>> {
+    ocel.get_ob_by_id(ob_id).map(|ob| {
+        ob.get_o2o(ocel)
+            .map(|ev| ocel.get_ob_id(ev).to_string())
+            .collect()
+    })
+}
+
+#[register_binding]
+fn get_event_type_of_id(ocel: &SlimLinkedOCEL, ev_id: &String) -> Option<String> {
+    ocel.get_ev_by_id(ev_id)
+        .map(|ev| ev.get_ev_type(ocel).to_string())
+}
+
+#[register_binding]
+fn get_event_timestamp_of_id(ocel: &SlimLinkedOCEL, ev_id: &String) -> Option<String> {
+    ocel.get_ev_by_id(ev_id)
+        .map(|ev| ev.get_time(ocel).to_string())
 }
