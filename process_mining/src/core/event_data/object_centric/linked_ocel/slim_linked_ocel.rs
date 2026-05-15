@@ -393,6 +393,63 @@ impl ObjectIndex {
                 .filter(move |ev| locel.events[ev.ix()].event_type == ei)
         })
     }
+    /// Get reverse O2O source objects of the specified type, optionally filtered by qualifier.
+    ///
+    /// When `qualifier` is `None`, iterates `o2o_rev` directly (no relationship re-scan).
+    /// When `qualifier` is `Some(q)`, only yields sources that have a relationship to this
+    /// object with that qualifier.
+    pub fn get_o2o_rev_obs_of_obtype<'a>(
+        &self,
+        locel: &'a SlimLinkedOCEL,
+        obtype: &'a str,
+        qualifier: Option<&'a str>,
+    ) -> impl Iterator<Item = &'a ObjectIndex> + use<'a> {
+        let obtype_index = locel.obtype_to_index.get(obtype).copied();
+        let this = *self;
+        obtype_index.into_iter().flat_map(move |oi| {
+            locel
+                .objects
+                .get(this.ix())
+                .into_iter()
+                .flat_map(|o| o.o2o_rev.iter())
+                .filter(move |o| locel.objects[o.ix()].object_type == oi)
+                .filter(move |o| match qualifier {
+                    None => true,
+                    Some(q) => locel.objects[o.ix()]
+                        .relationships
+                        .iter()
+                        .any(|(rq, rt)| *rt == this && locel.qualifier_str(*rq) == q),
+                })
+        })
+    }
+    /// Get reverse E2O source events of the specified type, optionally filtered by qualifier.
+    ///
+    /// When `qualifier` is `None`, iterates `e2o_rev` directly (no relationship re-scan).
+    /// When `qualifier` is `Some(q)`, only yields events that reference this object with that qualifier.
+    pub fn get_e2o_rev_evs_of_evtype<'a>(
+        &self,
+        locel: &'a SlimLinkedOCEL,
+        evtype: &'a str,
+        qualifier: Option<&'a str>,
+    ) -> impl Iterator<Item = &'a EventIndex> + use<'a> {
+        let evtype_index = locel.evtype_to_index.get(evtype).copied();
+        let this = *self;
+        evtype_index.into_iter().flat_map(move |ei| {
+            locel
+                .objects
+                .get(this.ix())
+                .into_iter()
+                .flat_map(|o| o.e2o_rev.iter())
+                .filter(move |e| locel.events[e.ix()].event_type == ei)
+                .filter(move |e| match qualifier {
+                    None => true,
+                    Some(q) => locel.events[e.ix()]
+                        .relationships
+                        .iter()
+                        .any(|(rq, o)| *o == this && locel.qualifier_str(*rq) == q),
+                })
+        })
+    }
     /// Get the activity trace of this object as event-type indices, ordered by event timestamp
     ///
     /// Each yielded `usize` is the internal event-type index of an event connected to this object.
