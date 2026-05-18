@@ -230,7 +230,7 @@ mod test_parallel_cut {
         let dfg = DirectlyFollowsGraph::discover(
             &event_log!(["a", "b", "c"], ["b", "a", "c"])
         );
-        let cut = concurrent_cut(&dfg, &None);
+        let _cut = concurrent_cut(&dfg, &None);
     }
 
     #[test]

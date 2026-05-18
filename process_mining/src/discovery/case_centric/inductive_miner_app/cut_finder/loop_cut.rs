@@ -100,7 +100,7 @@ fn redo_loop_cut<'a>(dfg: &'a DirectlyFollowsGraph<'_>) -> Vec<HashSet<Cow<'a, s
             if components.same_component(&sub_start, &end_activity) {
                 break;
             }
-            if dfg.contains_df_relation((sub_start.clone(), end_activity.into())) {
+            if !dfg.contains_df_relation((end_activity.clone(), sub_start.to_string())) {
                 components.merge_components_of(sub_start, end_activity);
                 break;
             }

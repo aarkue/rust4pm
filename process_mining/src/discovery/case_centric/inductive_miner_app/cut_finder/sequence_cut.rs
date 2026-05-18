@@ -152,14 +152,8 @@ pub fn sequence_cut_wrapper<'a>(dfg: &'a DirectlyFollowsGraph<'_>, _parameters: 
         return None;
     }
     
-    // at this point we could check whether the sequence satisfies the conditions for a strict sequence cut
-
     // if there is more than one sequence block, a cut is found successfully
-    if sequences.len() > 1 {
-        Some(Cut::new(OperatorType::Sequence, sequences))
-    } else {
-        None
-    }
+    Some(Cut::new(OperatorType::Sequence, sequences))
 }
 
 #[cfg(test)]

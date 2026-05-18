@@ -134,7 +134,8 @@ pub fn activity_once_per_trace(
                     continue 'activity_loop;
                 }
             } else {
-                // activity did not appear in the trace or in the event log at all
+                // activity did not appear in this trace → condition violated
+                continue 'activity_loop;
             }
         }
         // at this point the activity has appeared precisely one time in every trace

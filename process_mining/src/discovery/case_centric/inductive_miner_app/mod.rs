@@ -36,8 +36,7 @@ pub fn inductive_miner_default_parameters(log: EventLog, event_log_classifier: &
     // uses default parameters while for mining the process tree model
     let parameters = Parameter::generate_default_parameters();
     let node = build_tree(log, event_log_classifier, &parameters, 0);
-    // node.fold(); // as default parameters contain to fold the process tree
-    ProcessTree::new(node)
+    ProcessTree::new(node).fold()
 }
 
 
@@ -114,20 +113,19 @@ fn fallthrough_finder(log: EventLog, event_log_classifier: &EventLogClassifier, 
             node
         }
         Fallthrough::ActivityConcurrent(mut node, filtered_out_log, split) => {
-            // the filtered out log are all the logs containing all traces and therefore all events where the chosen activity occurred
-            node.add_child(build_tree(filtered_out_log, event_log_classifier, parameters,depth+1));
+            // The AND-node already holds the concurrent activity as its first child.
+            // Build the sub-tree for the extracted (concurrent) activity.
+            node.add_child(build_tree(filtered_out_log, event_log_classifier, parameters, depth + 1));
 
-            // the split is already performed in the activity concurrent fall through to save one unnecessary find_cut iteration
+            // The split was already performed inside the fallthrough; add each
+            // resulting sub-log as a further grand-children
             let operator_type = split.get_operator().clone();
             let split = split.get_own();
-
-            let mut node = Node::new_operator(operator_type);
-            // this could be done in parallel
-            // every event log yields one process node
-            for log in split{
-                // convert every log into one process node catching the behavior
-                node.add_child(build_tree(log, &event_log_classifier, parameters, depth+1));
+            let mut child = Node::new_operator(operator_type);
+            for log in split {
+                child.add_child(build_tree(log, event_log_classifier, parameters, depth + 1));
             }
+            node.add_child(child);
             node
         }
         Fallthrough::FlowerModel(node) => { node} // not much to do, this is the default
