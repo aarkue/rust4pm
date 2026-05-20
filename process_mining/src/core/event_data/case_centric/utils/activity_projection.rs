@@ -3,7 +3,7 @@
 //! Only considers traces as sequences of activities.
 //!
 //! Cases with the same activity trace are aggregated as frequencies.
-use log::{debug, error, info, trace, warn};
+use log::error;
 use macros_process_mining::{register_binding, RegistryEntity};
 use rayon::prelude::*;
 use schemars::JsonSchema;

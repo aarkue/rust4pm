@@ -3,7 +3,7 @@
 //! Allows easy and efficient access to events, objects, and their relations
 use chrono::{DateTime, FixedOffset};
 use itertools::Itertools;
-use log::{debug, error, info, trace, warn};
+use log::error;
 use macros_process_mining::RegistryEntity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

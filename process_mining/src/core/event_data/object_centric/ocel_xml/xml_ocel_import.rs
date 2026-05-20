@@ -1,4 +1,4 @@
-use log::{debug, error, info, trace, warn};
+use log::error;
 use quick_xml::{events::BytesStart, Reader};
 use serde::{Deserialize, Serialize};
 use std::{

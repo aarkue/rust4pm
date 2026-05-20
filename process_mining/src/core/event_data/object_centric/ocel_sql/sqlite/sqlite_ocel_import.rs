@@ -6,7 +6,7 @@ use crate::core::event_data::object_centric::ocel_struct::{
 };
 use crate::core::event_data::timestamp_utils::parse_timestamp;
 use chrono::FixedOffset;
-use log::{debug, error, info, trace, warn};
+use log::error;
 use rusqlite::{Connection, Params, Row, Rows, Statement};
 use std::{collections::HashMap, ffi::CString};
 

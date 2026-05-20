@@ -3,7 +3,7 @@ use crate::core::{
     event_data::case_centric::utils::activity_projection::EventLogActivityProjection,
     process_models::case_centric::petri_net::petri_net_struct::Transition, PetriNet,
 };
-use log::{debug, error, info, trace, warn};
+use log::info;
 const AUTO_CONFIGS: &[AlphaPPPConfig] = &[
     AlphaPPPConfig {
         balance_thresh: 0.6,

@@ -2,7 +2,7 @@ use crate::core::{
     process_models::case_centric::petri_net::petri_net_struct::{ArcType, Marking, PlaceID},
     PetriNet,
 };
-use log::{debug, error, info, trace, warn};
+use log::error;
 use quick_xml::{Error as QuickXMLError, Reader};
 use std::{collections::HashMap, io::BufRead};
 use uuid::Uuid;

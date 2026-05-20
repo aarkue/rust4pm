@@ -1,4 +1,4 @@
-use log::{debug, error, info, trace, warn};
+use log::info;
 use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::{
     cmp::max,

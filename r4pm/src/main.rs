@@ -1,5 +1,9 @@
+#![deny(clippy::print_stdout)]
+#![deny(clippy::print_stderr)]
+#![cfg_attr(test, allow(clippy::print_stdout, clippy::print_stderr))]
+
 use anstyle::AnsiColor;
-use log::{debug, error, info, trace, warn};
+use log::{error, info};
 pub use process_mining::bindings;
 use process_mining::bindings::Binding;
 use std::{collections::HashSet, path::PathBuf, process::ExitCode, sync::LazyLock};
@@ -178,7 +182,10 @@ fn main() -> ExitCode {
                         final_res = val;
                     }
                 }
-                println!("{}", serde_json::to_string_pretty(&final_res).unwrap());
+                #[allow(clippy::print_stdout)]
+                {
+                    println!("{}", serde_json::to_string_pretty(&final_res).unwrap());
+                }
             }
         }
         Err(e) => {
@@ -189,6 +196,7 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+#[allow(clippy::print_stdout)]
 fn print_function_info(binding: &Binding, required_fn_args: &HashSet<String>) {
     let name = binding.name;
 

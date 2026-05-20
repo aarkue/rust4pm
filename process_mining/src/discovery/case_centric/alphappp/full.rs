@@ -1,4 +1,4 @@
-use log::{debug, error, info, trace, warn};
+use log::{debug, info};
 use macros_process_mining::register_binding;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

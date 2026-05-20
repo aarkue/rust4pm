@@ -8,7 +8,7 @@ use super::{
 use crate::core::event_data::case_centric::xes::import_xes::XESImportOptions;
 use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use flate2::read::GzDecoder;
-use log::{debug, error, info, trace, warn};
+use log::error;
 use quick_xml::{escape::unescape, events::BytesStart, Reader};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -748,7 +748,7 @@ impl StreamingXESParser<'_> {
                 },
                 None => {
                     if options.verbose {
-                        eprintln!(
+                        error!(
                         "No current trace when parsing event attribute: Key {key:?}, Value {val:?}"
                     );
                     }

@@ -1,7 +1,7 @@
 //! CSV Export for OCEL 2.0
 use crate::core::event_data::object_centric::ocel_struct::{OCELAttributeValue, OCELObject, OCEL};
 use chrono::{DateTime, FixedOffset};
-use log::{debug, error, info, trace, warn};
+use log::error;
 use std::{
     collections::{HashMap, HashSet},
     io::Write,

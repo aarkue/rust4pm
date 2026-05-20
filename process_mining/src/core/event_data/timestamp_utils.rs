@@ -1,6 +1,6 @@
 //! Shared timestamp parsing utilities for event data importers
 use chrono::{DateTime, FixedOffset, NaiveDateTime};
-use log::{debug, error, info, trace, warn};
+use log::error;
 
 /// Parse a timestamp string to `DateTime<FixedOffset>`, trying multiple formats.
 ///
