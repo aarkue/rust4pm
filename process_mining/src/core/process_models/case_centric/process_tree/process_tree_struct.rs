@@ -85,7 +85,7 @@ impl Node {
 
                 // If the current operator is associative, inline any child
                 // that carries the same operator type.
-                let children = if op.operator_type.is_associative() {
+                let mut children = if op.operator_type.is_associative() {
                     let mut flattened = Vec::with_capacity(folded_children.len());
                     for child in folded_children {
                         match child {
@@ -105,12 +105,79 @@ impl Node {
                     folded_children
                 };
 
+                // XOR-specific: at most one tau (silent leaf) is semantically
+                // meaningful as a direct child. Remove duplicates introduced
+                // when EmptyTraces fallthrough shells are folded upward.
+                if op.operator_type == OperatorType::ExclusiveChoice {
+                    let tau = Node::Leaf(Leaf { activity_label: LeafLabel::Tau });
+                    let mut tau_seen = false;
+                    children.retain(|c| {
+                        if *c == tau {
+                            if tau_seen { return false; }
+                            tau_seen = true;
+                        }
+                        true
+                    });
+                }
+
                 Node::Operator(Operator {
                     operator_type: op.operator_type,
                     children,
                 })
             }
         }
+    }
+}
+
+impl std::fmt::Display for OperatorType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OperatorType::Sequence       => write!(f, "SEQ"),
+            OperatorType::ExclusiveChoice => write!(f, "XOR"),
+            OperatorType::Concurrency    => write!(f, "AND"),
+            OperatorType::Loop           => write!(f, "LOOP"),
+        }
+    }
+}
+
+impl std::fmt::Display for LeafLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LeafLabel::Activity(s) => write!(f, "{s}"),
+            LeafLabel::Tau         => write!(f, "tau"),
+        }
+    }
+}
+
+impl std::fmt::Display for Leaf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.activity_label)
+    }
+}
+
+impl std::fmt::Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Node::Leaf(leaf)     => write!(f, "{leaf}"),
+            Node::Operator(op)   => write!(f, "{op}"),
+        }
+    }
+}
+
+impl std::fmt::Display for Operator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}(", self.operator_type)?;
+        for (i, child) in self.children.iter().enumerate() {
+            if i > 0 { write!(f, ", ")?; }
+            write!(f, "{child}")?;
+        }
+        write!(f, ")")
+    }
+}
+
+impl std::fmt::Display for ProcessTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.root)
     }
 }
 
@@ -167,23 +234,9 @@ impl ProcessTree {
 
     /// Folds the process tree by merging nodes whose operator is associative.
     ///
-    /// For the associative operators [`Sequence`](OperatorType::Sequence),
-    /// [`ExclusiveChoice`](OperatorType::ExclusiveChoice), and
-    /// [`Concurrency`](OperatorType::Concurrency) the following identity holds:
-    ///
-    /// ```text
-    /// OP(OP(a, b), c)  ≡  OP(a, b, c)
-    /// ```
-    ///
     /// The fold is applied recursively bottom-up across the entire tree, so
     /// arbitrarily deep chains of the same associative operator are fully
     /// collapsed into a single flat node.
-    ///
-    /// [`Loop`](OperatorType::Loop) nodes are **not** folded because their
-    /// child positions carry different semantic roles.
-    ///
-    /// # Returns
-    /// A new [`ProcessTree`] with all associative operator chains collapsed.
     pub fn fold(self) -> Self {
         ProcessTree::new(self.root.fold())
     }

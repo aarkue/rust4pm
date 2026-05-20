@@ -262,3 +262,83 @@ mod tests {
         assert_eq!(node.root, expected);
     }
 }
+
+/// Integration tests that require external test data files.
+/// Run with: cargo test sepsis -- --nocapture
+#[cfg(test)]
+mod integration_tests {
+    use crate::core::event_data::case_centric::xes::import_xes::import_xes_path;
+    use crate::core::event_data::case_centric::xes::import_xes::XESImportOptions;
+    use crate::core::event_data::case_centric::EventLogClassifier;
+    use crate::discovery::case_centric::inductive_miner_app::inductive_miner_default_parameters;
+    use crate::test_utils::get_test_data_path;
+
+    /// Mine the Sepsis Cases event log and print the resulting process tree
+    /// in canonical parenthesis notation (SEQ/XOR/AND/LOOP/tau).
+    ///
+    /// The output can be compared against pm4py:
+    ///   python3 pm4py_sepsis_tree.py
+    ///
+    /// The test asserts:
+    ///   1. The log can be imported (1050 traces).
+    ///   2. The discovered tree passes is_valid().
+    ///   3. Every activity in the log appears as a leaf in the tree.
+    #[test]
+    fn test_sepsis_tree_is_valid_and_print() {
+        let path = get_test_data_path()
+            .join("xes")
+            .join("Sepsis Cases - Event Log.xes.gz");
+
+        if !path.exists() {
+            eprintln!(
+                "Skipping Sepsis integration test: file not found at {:?}.\n\
+                 Download the test data from https://rwth-aachen.sciebo.de/s/4cvtTU3lLOgtxt1 \
+                 and place it under process_mining/test_data/xes/",
+                path
+            );
+            return;
+        }
+
+        let log = import_xes_path(&path, XESImportOptions::default())
+            .expect("Failed to import Sepsis log");
+        assert_eq!(log.traces.len(), 1050, "Expected 1050 traces");
+
+        let classifier = EventLogClassifier::default();
+        let tree = inductive_miner_default_parameters(log.clone(), &classifier);
+
+        // --- validity ---
+        assert!(tree.is_valid(), "Discovered tree is not valid");
+
+        // --- all activities present ---
+        let mut expected_activities: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for trace in &log.traces {
+            for event in &trace.events {
+                expected_activities.insert(classifier.get_class_identity(event));
+            }
+        }
+        let tree_leaves: std::collections::HashSet<String> = tree
+            .find_all_leaves()
+            .into_iter()
+            .filter_map(|l| {
+                use crate::core::process_models::case_centric::process_tree::process_tree_struct::LeafLabel;
+                match &l.activity_label {
+                    LeafLabel::Activity(s) => Some(s.clone()),
+                    LeafLabel::Tau => None,
+                }
+            })
+            .collect();
+
+        for act in &expected_activities {
+            assert!(
+                tree_leaves.contains(act),
+                "Activity '{act}' is missing from the process tree"
+            );
+        }
+
+        // --- print for manual comparison ---
+        println!("\n=== Rust Inductive Miner – Sepsis Cases ===");
+        println!("Unique activities in log : {}", expected_activities.len());
+        println!("Leaves in tree           : {}", tree_leaves.len());
+        println!("\nProcess tree (canonical):\n{}", tree);
+    }
+}
