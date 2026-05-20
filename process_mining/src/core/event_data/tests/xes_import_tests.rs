@@ -1,7 +1,6 @@
-use std::{fs::File, io::Read};
-
 use chrono::DateTime;
 use quick_xml::Writer;
+use std::{fs::File, io::Read};
 
 use crate::{
     core::event_data::case_centric::{

@@ -1,10 +1,10 @@
 //! CSV Import for OCEL
 
-use std::{collections::HashMap, fmt::Display, io::Read};
-
 use chrono::{DateTime, FixedOffset};
+use log::error;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::{collections::HashMap, fmt::Display, io::Read};
 
 use crate::core::event_data::{
     object_centric::ocel_struct::{
@@ -345,7 +345,7 @@ pub fn import_ocel_csv_with_options(
                     });
                 }
                 if options.verbose {
-                    eprintln!("Warning: Skipping row {row_num} (missing timestamp)");
+                    error!("Skipping row {row_num} (missing timestamp)");
                 }
                 continue;
             }
@@ -363,7 +363,7 @@ pub fn import_ocel_csv_with_options(
 
         if is_attr_only && timestamp.is_none() {
             if options.verbose {
-                eprintln!("Warning: Row {row_num} (attribute-only without timestamp). Will assume UNIX EPOCH as time.");
+                error!("Row {row_num} (attribute-only without timestamp). Will assume UNIX EPOCH as time.");
             }
             timestamp = Some(DateTime::UNIX_EPOCH.into());
         }
@@ -448,7 +448,7 @@ pub fn import_ocel_csv_with_options(
                         ),
                     });
                 }
-                eprintln!("Warning: O2O source '{id}' not found at row {row_num}");
+                error!("O2O source '{id}' not found at row {row_num}");
             }
             continue;
         }

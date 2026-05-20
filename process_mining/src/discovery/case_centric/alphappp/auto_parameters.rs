@@ -1,9 +1,9 @@
+use super::full::{alphappp_discover_petri_net, AlphaPPPConfig};
 use crate::core::{
     event_data::case_centric::utils::activity_projection::EventLogActivityProjection,
     process_models::case_centric::petri_net::petri_net_struct::Transition, PetriNet,
 };
-
-use super::full::{alphappp_discover_petri_net, AlphaPPPConfig};
+use log::info;
 const AUTO_CONFIGS: &[AlphaPPPConfig] = &[
     AlphaPPPConfig {
         balance_thresh: 0.6,
@@ -128,8 +128,8 @@ pub fn alphappp_discover_with_auto_parameters(
         }
     }
     let (best_config, best_score, best_pn) = best.unwrap();
-    println!("Best score: {best_score:.2} with config {best_config:?}");
-    println!(
+    info!("Best score: {best_score:.2} with config {best_config:?}");
+    info!(
         "Resulting net has {} arcs, {} transitions and {} places",
         best_pn.arcs.len(),
         best_pn.transitions.len(),

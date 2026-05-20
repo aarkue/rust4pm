@@ -7,6 +7,9 @@
     clippy::clone_on_copy
 )]
 #![doc = include_str!("../README.md")]
+#![deny(clippy::print_stdout)]
+#![deny(clippy::print_stderr)]
+#![cfg_attr(test, allow(clippy::print_stdout, clippy::print_stderr))]
 
 pub mod analysis;
 pub mod conformance;

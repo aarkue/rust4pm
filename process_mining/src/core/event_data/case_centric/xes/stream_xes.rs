@@ -1,5 +1,3 @@
-use crate::core::event_data::case_centric::xes::import_xes::XESImportOptions;
-
 use super::{
     super::event_log_struct::{
         Attribute, AttributeValue, Attributes, Event, EventLogClassifier, EventLogExtension, Trace,
@@ -7,8 +5,10 @@ use super::{
     },
     import_xes::XESParseError,
 };
+use crate::core::event_data::case_centric::xes::import_xes::XESImportOptions;
 use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use flate2::read::GzDecoder;
+use log::error;
 use quick_xml::{escape::unescape, events::BytesStart, Reader};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -233,7 +233,7 @@ impl StreamingXESParser<'_> {
                                     }
                                     None => {
                                         if self.options.verbose {
-                                            eprintln!("Invalid XES format: Event without trace")
+                                            error!("Invalid XES format: Event without trace")
                                         }
                                     }
                                 }
@@ -268,7 +268,7 @@ impl StreamingXESParser<'_> {
                                 // and nested if symbolizes the logic better
                                 if self.encountered_log {
                                     if self.options.verbose {
-                                        eprintln!(
+                                        error!(
                                         "Encountered two log tags. This is not a valid XES file"
                                     )
                                     }
@@ -466,7 +466,7 @@ impl StreamingXESParser<'_> {
                                                 // This means there was no current nested attribute but the mode indicated otherwise
                                                 // Should thus not happen, but execution can continue.
                                                 if self.options.verbose {
-                                                    eprintln!("Warning: Attribute mode but no open nested attributes!");
+                                                    error!("Attribute mode but no open nested attributes!");
                                                 }
                                                 self.current_mode = self.last_mode_before_attr;
                                             }
@@ -727,7 +727,7 @@ impl StreamingXESParser<'_> {
                 }
                 None => {
                     if options.verbose {
-                        eprintln!(
+                        error!(
                         "No current trace when parsing trace attribute: Key {key:?}, Value {val:?}"
                     );
                     }
@@ -740,7 +740,7 @@ impl StreamingXESParser<'_> {
                     }
                     None => {
                         if options.verbose {
-                            eprintln!(
+                            error!(
                             "No current event when parsing event attribute: Key {key:?}, Value {val:?}"
                         )
                         }
@@ -748,7 +748,7 @@ impl StreamingXESParser<'_> {
                 },
                 None => {
                     if options.verbose {
-                        eprintln!(
+                        error!(
                         "No current trace when parsing event attribute: Key {key:?}, Value {val:?}"
                     );
                     }
@@ -877,7 +877,7 @@ impl<'a> XESParsingTraceStream<'a> {
                 XESNextStreamElement::Error(e) => Err(e),
                 XESNextStreamElement::Trace(_) => {
                     if s.options.verbose {
-                        eprintln!("Encountered trace before LogData; This should not happen!");
+                        error!("Encountered trace before LogData; This should not happen!");
                     }
                     Err(XESParseError::ExpectedLogData)
                 }
@@ -892,7 +892,7 @@ impl<'a> XESParsingTraceStream<'a> {
             None => {
                 // No log data and no error returned: This should not happen!
                 if s.options.verbose {
-                    eprintln!(
+                    error!(
                     "Iterator initially empty. Expected log data or error; This should not happen!"
                 );
                 }
@@ -1040,7 +1040,7 @@ fn parse_attribute_value_from_tag(
                         Some(dt) => Some(AttributeValue::Date(dt)),
                         None => {
                             if options.verbose {
-                                eprintln!("Failed to parse date from {value:?}");
+                                error!("Failed to parse date from {value:?}");
                             }
                             None
                         }
@@ -1050,7 +1050,7 @@ fn parse_attribute_value_from_tag(
                             Ok(n) => n,
                             Err(e) => {
                                 if options.verbose {
-                                    eprintln!("Could not parse integer {value:?}: Error {e}");
+                                    error!("Could not parse integer {value:?}: Error {e}");
                                 }
                                 i64::default()
                             }
@@ -1062,7 +1062,7 @@ fn parse_attribute_value_from_tag(
                             Ok(n) => n,
                             Err(e) => {
                                 if options.verbose {
-                                    eprintln!("Could not parse float {value:?}: Error {e}");
+                                    error!("Could not parse float {value:?}: Error {e}");
                                 }
                                 f64::default()
                             }
@@ -1074,7 +1074,7 @@ fn parse_attribute_value_from_tag(
                             Ok(n) => n,
                             Err(e) => {
                                 if options.verbose {
-                                    eprintln!("Could not parse boolean {value:?}: Error {e}");
+                                    error!("Could not parse boolean {value:?}: Error {e}");
                                 }
                                 bool::default()
                             }
@@ -1086,7 +1086,7 @@ fn parse_attribute_value_from_tag(
                             Ok(n) => n,
                             Err(e) => {
                                 if options.verbose {
-                                    eprintln!("Could not parse UUID {value:?}: Error {e}");
+                                    error!("Could not parse UUID {value:?}: Error {e}");
                                 }
                                 Uuid::default()
                             }
@@ -1104,9 +1104,7 @@ fn parse_attribute_value_from_tag(
                                 .read_to_string(&mut name_str)
                                 .unwrap_or_default();
                             if options.verbose {
-                                eprintln!(
-                                    "Attribute type not implemented '{name_str}' in mode {m:?}"
-                                );
+                                error!("Attribute type not implemented '{name_str}' in mode {m:?}");
                             }
                             None
                         }

@@ -3,12 +3,12 @@
 //! Only considers traces as sequences of activities.
 //!
 //! Cases with the same activity trace are aggregated as frequencies.
-use std::collections::{HashMap, HashSet};
-
+use log::error;
 use macros_process_mining::{register_binding, RegistryEntity};
 use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 use crate::core::event_data::case_centric::io::EventLogIOError;
 use crate::core::io::{Exportable, ExtensionWithMime, Importable};
@@ -172,7 +172,7 @@ pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
     let mut should_add_start = true;
     let start_act = match log.act_to_index.get(START_ACTIVITY) {
         Some(a) => {
-            eprintln!("Start activity ({START_ACTIVITY}) already present in activity set! Will skip adding a start activity to every trace, which might not be the desired outcome.");
+            error!("Start activity ({START_ACTIVITY}) already present in activity set! Will skip adding a start activity to every trace, which might not be the desired outcome.");
             should_add_start = false;
             *a
         }
@@ -187,7 +187,7 @@ pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
     let mut should_add_end = true;
     let end_act = match log.act_to_index.get(END_ACTIVITY) {
         Some(a) => {
-            eprintln!("End activity ({END_ACTIVITY}) already present in activity set! Still adding an end activity to every trace, which might not be the desired outcome.");
+            error!("End activity ({END_ACTIVITY}) already present in activity set! Still adding an end activity to every trace, which might not be the desired outcome.");
             should_add_end = false;
             *a
         }

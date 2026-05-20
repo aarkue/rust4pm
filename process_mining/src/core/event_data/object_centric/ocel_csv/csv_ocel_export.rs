@@ -1,7 +1,7 @@
 //! CSV Export for OCEL 2.0
-
 use crate::core::event_data::object_centric::ocel_struct::{OCELAttributeValue, OCELObject, OCEL};
 use chrono::{DateTime, FixedOffset};
+use log::error;
 use std::{
     collections::{HashMap, HashSet},
     io::Write,
@@ -276,7 +276,7 @@ fn format_object_refs(refs: &[ObjectRef<'_>]) -> String {
                     match serde_json::to_string(attrs) {
                         Ok(json) => s.push_str(&json),
                         Err(e) => {
-                            eprintln!("Failed to serialize object attributes to JSON: {}", e);
+                            error!("Failed to serialize object attributes to JSON: {}", e);
                         }
                     }
                 }

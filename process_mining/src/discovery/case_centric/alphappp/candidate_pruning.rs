@@ -1,9 +1,9 @@
+use log::info;
+use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::{
     cmp::max,
     collections::{HashMap, HashSet},
 };
-
-use rayon::prelude::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 use crate::core::event_data::case_centric::utils::activity_projection::{
     EventLogActivityProjection, END_ACTIVITY, START_ACTIVITY,
@@ -148,7 +148,7 @@ pub fn prune_candidates(
             balance <= balance_threshold
         })
         .collect();
-    println!("After balance: {}", filtered_cnds.len());
+    info!("After balance: {}", filtered_cnds.len());
     let filtered_cnds: Vec<&(Vec<usize>, Vec<usize>)> = filtered_cnds
         .into_par_iter()
         .filter(|(a, b)| {
@@ -156,7 +156,7 @@ pub fn prune_candidates(
             fitness >= fitness_threshold && min_per_act_fitness >= fitness_threshold
         })
         .collect();
-    println!("After fitness: {}", filtered_cnds.len());
+    info!("After fitness: {}", filtered_cnds.len());
 
     let sel: Vec<(Vec<usize>, Vec<usize>)> = filtered_cnds
         .par_iter()
@@ -176,7 +176,7 @@ pub fn prune_candidates(
         .map(|(a, b)| (a.clone(), b.clone()))
         .collect();
 
-    println!("After maximal (sel): {}", sel.len());
+    info!("After maximal (sel): {}", sel.len());
     sel.into_iter()
         .filter(|(a, b)| {
             let strict_fit = compute_local_fitness(a, b, log, true);

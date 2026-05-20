@@ -1,9 +1,9 @@
-use polars::{error::PolarsResult, frame::DataFrame, io::SerWriter, prelude::CsvWriter};
-use std::{fs::File, path::Path};
-
 use crate::core::event_data::object_centric::ocel_struct::OCELAttributeType;
 #[cfg(feature = "dataframes")]
 use crate::core::event_data::object_centric::{linked_ocel::LinkedOCELAccess, ocel_struct::OCEL};
+use log::{debug, error, info, trace, warn};
+use polars::{error::PolarsResult, frame::DataFrame, io::SerWriter, prelude::CsvWriter};
+use std::{fs::File, path::Path};
 
 ///
 /// Error encountered while parsing XES
@@ -208,7 +208,7 @@ pub fn export_ocel_to_kuzudb_typed<'a, P: AsRef<Path>>(
                 },
                 attribute_fields_str
             );
-            println!("Query for event type {ev_type}: {q}");
+            trace!("Query for event type {ev_type}: {q}");
             conn.query(&q)?;
 
             conn.query(&format!(
@@ -301,7 +301,7 @@ pub fn export_ocel_to_kuzudb_typed<'a, P: AsRef<Path>>(
             clean_name,
             clean_name,
         );
-        println!(":: {q}");
+        trace!(":: {q}");
         conn.query(&q)?;
         remove_file(path.join("tmp.csv"))?;
 
@@ -413,7 +413,6 @@ mod tests {
         conn.query("CREATE NODE TABLE Event(id STRING PRIMARY KEY, type STRING, time TIMESTAMP);")?;
         let now = Instant::now();
         for i in 0..10_000 {
-            // println!("{i}");
             let query = format!(
                 "CREATE (e:Event {{id: {}, type: 'Pay Order', time: timestamp('{}')}});",
                 i,

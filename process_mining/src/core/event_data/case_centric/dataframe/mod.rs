@@ -1,11 +1,11 @@
 //! Conversion of Event Data from/to polars `DataFrame`s
 //!
 //! 🔐 Requires the `dataframes` feature to be enabled.
-use std::{collections::HashSet, time::Instant};
-
 use chrono::DateTime;
+use log::{debug, error, info, trace, warn};
 use polars::prelude::*;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
+use std::{collections::HashSet, time::Instant};
 
 use crate::core::{
     event_data::case_centric::{
@@ -81,11 +81,10 @@ fn attribute_value_to_any_value<'a>(from: &AttributeValue) -> AnyValue<'a> {
 ///
 pub fn convert_log_to_dataframe(
     log: &EventLog,
-    print_debug: bool,
+    _print_debug: bool, //Replaced print with debug statement
 ) -> Result<DataFrame, PolarsError> {
-    if print_debug {
-        println!("Starting converting log to DataFrame");
-    }
+    debug!("Starting converting log to DataFrame");
+
     let mut now = Instant::now();
     let all_attributes: HashSet<String> = log
         .traces
@@ -110,9 +109,7 @@ pub fn convert_log_to_dataframe(
         })
         .flatten()
         .collect();
-    if print_debug {
-        println!("Gathering all attributes took {:.2?}", now.elapsed());
-    }
+    debug!("Gathering all attributes took {:.2?}", now.elapsed());
     now = Instant::now();
     let x: Vec<Series> = all_attributes
         .par_iter()
@@ -148,9 +145,7 @@ pub fn convert_log_to_dataframe(
             let mut unique_dtypes: HashSet<DataType> = entries.iter().map(|v| v.dtype()).collect();
             unique_dtypes.remove(&DataType::Null);
             if unique_dtypes.len() > 1 {
-                eprintln!(
-                    "Warning: Attribute {k} contains values of different dtypes ({unique_dtypes:?})"
-                );
+                error!("Attribute {k} contains values of different dtypes ({unique_dtypes:?})");
                 if unique_dtypes
                     == vec![DataType::Float64, DataType::Int64]
                         .into_iter()
@@ -177,12 +172,12 @@ pub fn convert_log_to_dataframe(
             Series::new(k.into(), entries)
         })
         .collect();
-    if print_debug {
-        println!(
-            "Creating a Series for every Attribute took {:.2?}",
-            now.elapsed()
-        );
-    }
+
+    debug!(
+        "Creating a Series for every Attribute took {:.2?}",
+        now.elapsed()
+    );
+
     now = Instant::now();
     let df = unsafe {
         DataFrame::new_no_checks(

@@ -2,7 +2,6 @@ use process_mining::{EventLog, Importable};
 use std::env;
 use std::error::Error;
 use std::path::PathBuf;
-
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {

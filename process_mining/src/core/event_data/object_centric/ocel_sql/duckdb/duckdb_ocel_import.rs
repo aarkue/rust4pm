@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::core::event_data::{
     object_centric::ocel_struct::{
         OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute,
@@ -7,6 +5,8 @@ use crate::core::event_data::{
     },
     timestamp_utils::parse_timestamp,
 };
+use log::{debug, error, info, trace, warn};
+use std::collections::HashMap;
 
 use super::super::*;
 use ::duckdb::{Connection, Params, Row, Rows, Statement};
@@ -126,7 +126,6 @@ pub fn import_ocel_duckdb_from_con(con: Connection) -> Result<OCEL, ::duckdb::Er
             // Technically time should probably be set to UNIX epoch (1970-01-01 00:00 UTC) for these "initial" attribute values
             // however there are some OCEL logs for which this does not hold?
             if DateTime::UNIX_EPOCH.fixed_offset() != time {
-                // eprintln!("Expected initial object attribute value to have UNIX epoch as time. Instead got {time:?}. Overwriting to UNIX epoch.");
                 time = DateTime::UNIX_EPOCH.into();
             }
             o.attributes
@@ -154,7 +153,7 @@ pub fn import_ocel_duckdb_from_con(con: Connection) -> Result<OCEL, ::duckdb::Er
                 .iter()
                 .find(|at| at.name == changed_field)
                 .ok_or_else(|| {
-                    println!(
+                    error!(
                         "Could not get change field for {:?} in {:?}",
                         changed_field, ob_type_attrs
                     );
@@ -270,9 +269,7 @@ pub fn import_ocel_duckdb_from_con(con: Connection) -> Result<OCEL, ::duckdb::Er
                 qualifier,
             });
         } else {
-            eprintln!(
-                "Warning: E2O relationship not added as event with ID {ev_id} was not found."
-            );
+            error!("E2O relationship not added as event with ID {ev_id} was not found.");
         }
     });
 
@@ -280,23 +277,23 @@ pub fn import_ocel_duckdb_from_con(con: Connection) -> Result<OCEL, ::duckdb::Er
     let mut s = con.prepare("SELECT * FROM object_object".to_string().as_str())?;
     let evs = query_all::<_>(&mut s, [])?;
     evs.and_then(|x| {
-            Ok::<(String, String, String), ::duckdb::Error>((
-                x.get(OCEL_O2O_SOURCE_ID_COLUMN)?,
-                x.get(OCEL_O2O_TARGET_ID_COLUMN)?,
-                x.get(OCEL_REL_QUALIFIER_COLUMN)?,
-            ))
-        })
-        .flatten()
-        .for_each(|(source_ob_id, target_ob_id, qualifier)| {
-            if let Some(ev) = object_map.get_mut(&source_ob_id) {
-                ev.relationships.push(OCELRelationship {
-                    object_id: target_ob_id,
-                    qualifier,
-                });
-            }else{
-                eprintln!("Warning: O2O relationship not added as object with ID {source_ob_id} was not found.");
-            }
-        });
+        Ok::<(String, String, String), ::duckdb::Error>((
+            x.get(OCEL_O2O_SOURCE_ID_COLUMN)?,
+            x.get(OCEL_O2O_TARGET_ID_COLUMN)?,
+            x.get(OCEL_REL_QUALIFIER_COLUMN)?,
+        ))
+    })
+    .flatten()
+    .for_each(|(source_ob_id, target_ob_id, qualifier)| {
+        if let Some(ev) = object_map.get_mut(&source_ob_id) {
+            ev.relationships.push(OCELRelationship {
+                object_id: target_ob_id,
+                qualifier,
+            });
+        } else {
+            error!("O2O relationship not added as object with ID {source_ob_id} was not found.");
+        }
+    });
 
     ocel.objects = object_map.into_values().collect();
     ocel.events = event_map.into_values().collect();

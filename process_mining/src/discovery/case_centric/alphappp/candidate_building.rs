@@ -1,6 +1,6 @@
-use std::collections::HashSet;
-
+use log::info;
 use rayon::prelude::*;
+use std::collections::HashSet;
 
 use crate::core::event_data::case_centric::utils::activity_projection::ActivityProjectionDFG;
 
@@ -75,7 +75,7 @@ pub fn build_candidates(dfg: &ActivityProjectionDFG) -> HashSet<(Vec<usize>, Vec
         .par_iter()
         .filter_map(|((a, b), w)| if w > &0 { Some((*a, *b)) } else { None })
         .collect();
-    println!("DF #{:?}", df_relations.len());
+    info!("DF #{:?}", df_relations.len());
     let mut cnds: HashSet<(Vec<usize>, Vec<usize>)> = HashSet::new();
     let mut final_cnds: HashSet<(Vec<usize>, Vec<usize>)> = HashSet::new();
     (0..dfg.nodes.len()).for_each(|a| {
