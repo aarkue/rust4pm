@@ -1,11 +1,11 @@
-use quick_xml::{Error as QuickXMLError, Reader};
-use std::{collections::HashMap, io::BufRead};
-use uuid::Uuid;
-
 use crate::core::{
     process_models::case_centric::petri_net::petri_net_struct::{ArcType, Marking, PlaceID},
     PetriNet,
 };
+use log::{debug, error, info, trace, warn};
+use quick_xml::{Error as QuickXMLError, Reader};
+use std::{collections::HashMap, io::BufRead};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -135,13 +135,13 @@ where
                 }
                 b"net" => {
                     if current_mode != Mode::Pnml {
-                        eprintln!("Expected to be in Mode::PNML when encountering net");
+                        error!("Expected to be in Mode::PNML when encountering net");
                     }
                     current_mode = Mode::Net;
                 }
                 b"page" => {
                     if current_mode != Mode::Net {
-                        eprintln!("Expected to be in Mode::Net when encountering page");
+                        error!("Expected to be in Mode::Net when encountering page");
                     }
                     current_mode = Mode::Net;
                 }
@@ -222,9 +222,7 @@ where
                                 // Set label to None (silent)
                                 trans.label = None;
                             } else {
-                                eprintln!(
-                                    "Can't find current transition when adding toolspecific!"
-                                );
+                                error!("Can't find current transition when adding toolspecific!");
                             }
                         }
                     }
@@ -288,7 +286,7 @@ where
                                 trans.label = Some(text);
                             }
                         } else {
-                            eprintln!("Can't find current transition when adding text!");
+                            error!("Can't find current transition when adding text!");
                         }
                     }
                     Mode::InitialMarking => {

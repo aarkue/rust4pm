@@ -1,18 +1,18 @@
 //! Linked Slim (i.e., less duplicate fields) OCEL
 //!
 //! Allows easy and efficient access to events, objects, and their relations
+use chrono::{DateTime, FixedOffset};
+use itertools::Itertools;
+use log::{debug, error, info, trace, warn};
+use macros_process_mining::RegistryEntity;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::{Borrow, Cow},
     collections::HashMap,
     io::{Read, Write},
     path::Path,
 };
-
-use chrono::{DateTime, FixedOffset};
-use itertools::Itertools;
-use macros_process_mining::RegistryEntity;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
@@ -614,8 +614,8 @@ impl SlimLinkedOCEL {
         // Pad (or truncate) attributes to expected length; warn on mismatch
         let expected_attr_len = self.event_types[*etype].attributes.len();
         if attributes.len() != expected_attr_len {
-            eprintln!(
-                "[rust4pm] warning: event_type '{}' expects {} attribute value(s), got {}. \
+            error!(
+                "[rust4pm] : event_type '{}' expects {} attribute value(s), got {}. \
                  Padding with Null / truncating. Ensure attribute order matches `add_event_type`.",
                 event_type,
                 expected_attr_len,
@@ -673,8 +673,8 @@ impl SlimLinkedOCEL {
         // Pad (or truncate) attributes to expected length; warn on mismatch
         let expected_attr_len = self.object_types[*otype].attributes.len();
         if attributes.len() != expected_attr_len {
-            eprintln!(
-                "[rust4pm] warning: object_type '{}' expects {} attribute list(s), got {}. \
+            error!(
+                "[rust4pm] : object_type '{}' expects {} attribute list(s), got {}. \
                  Padding with empty / truncating. Ensure attribute order matches `add_object_type`.",
                 object_type,
                 expected_attr_len,
@@ -699,8 +699,8 @@ impl SlimLinkedOCEL {
     /// Returns `true` on success, `false` if either index is out of bounds (with a stderr warning).
     pub fn add_e2o(&mut self, event: EventIndex, object: ObjectIndex, qualifier: String) -> bool {
         if event.0 >= self.events.len() || object.0 >= self.objects.len() {
-            eprintln!(
-                "[rust4pm] warning: add_e2o called with invalid index(es) (event={}, object={}); ignored",
+            error!(
+                "[rust4pm] : add_e2o called with invalid index(es) (event={}, object={}); ignored",
                 event.0, object.0
             );
             return false;
@@ -727,8 +727,8 @@ impl SlimLinkedOCEL {
         qualifier: String,
     ) -> bool {
         if from_obj.0 >= self.objects.len() || to_obj.0 >= self.objects.len() {
-            eprintln!(
-                "[rust4pm] warning: add_o2o called with invalid index(es) (from_obj={}, to_obj={}); ignored",
+            error!(
+                "[rust4pm]: add_o2o called with invalid index(es) (from_obj={}, to_obj={}); ignored",
                 from_obj.0, to_obj.0
             );
             return false;
@@ -751,8 +751,8 @@ impl SlimLinkedOCEL {
     /// Returns `true` on success, `false` if either index is out of bounds (with a stderr warning).
     pub fn delete_e2o(&mut self, event: &EventIndex, object: &ObjectIndex) -> bool {
         if event.0 >= self.events.len() || object.0 >= self.objects.len() {
-            eprintln!(
-                "[rust4pm] warning: delete_e2o called with invalid index(es) (event={}, object={}); ignored",
+            error!(
+                "[rust4pm] : delete_e2o called with invalid index(es) (event={}, object={}); ignored",
                 event.0, object.0
             );
             return false;
@@ -769,8 +769,8 @@ impl SlimLinkedOCEL {
     /// Returns `true` on success, `false` if either index is out of bounds (with a stderr warning).
     pub fn delete_o2o(&mut self, from_obj: &ObjectIndex, to_obj: &ObjectIndex) -> bool {
         if from_obj.0 >= self.objects.len() || to_obj.0 >= self.objects.len() {
-            eprintln!(
-                "[rust4pm] warning: delete_o2o called with invalid index(es) (from_obj={}, to_obj={}); ignored",
+            error!(
+                "[rust4pm]: delete_o2o called with invalid index(es) (from_obj={}, to_obj={}); ignored",
                 from_obj.0, to_obj.0
             );
             return false;

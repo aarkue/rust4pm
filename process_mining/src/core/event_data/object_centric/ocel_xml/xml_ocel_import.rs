@@ -1,10 +1,10 @@
+use log::{debug, error, info, trace, warn};
+use quick_xml::{events::BytesStart, Reader};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader},
 };
-
-use quick_xml::{events::BytesStart, Reader};
-use serde::{Deserialize, Serialize};
 
 use crate::core::event_data::{
     object_centric::{
@@ -117,11 +117,10 @@ fn parse_attribute_value(
     match res {
         Ok(attribute_val) => attribute_val,
         Err(e) => {
-            if options.verbose {
-                eprintln!(
+            error!(
                     "Failed to parse attribute value {value:?} with supposed type {attribute_type:?}\n{e}"
                 );
-            }
+
             OCELAttributeValue::Null
         }
     }
@@ -249,9 +248,7 @@ where
                                         )
                                     }
                                     Err(e) => {
-                                        if options.verbose {
-                                            eprintln!("Failed to parse time value of attribute: {e}. Will skip this attribute completely for now.");
-                                        }
+                                        error!("Failed to parse time value of attribute: {e}. Will skip this attribute completely for now.");
                                     }
                                 }
                             }
@@ -444,9 +441,7 @@ where
                                         )
                                     }
                                     Err(e) => {
-                                        if options.verbose {
-                                            eprintln!("Failed to parse time value of attribute: {e}. Will skip this attribute completely for now.");
-                                        }
+                                        error!("Failed to parse time value of attribute: {e}. Will skip this attribute completely for now.");
                                     }
                                 }
                             }

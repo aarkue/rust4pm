@@ -1,6 +1,6 @@
 //! Shared timestamp parsing utilities for event data importers
-
 use chrono::{DateTime, FixedOffset, NaiveDateTime};
+use log::{debug, error, info, trace, warn};
 
 /// Parse a timestamp string to `DateTime<FixedOffset>`, trying multiple formats.
 ///
@@ -29,7 +29,7 @@ use chrono::{DateTime, FixedOffset, NaiveDateTime};
 pub fn parse_timestamp<'a>(
     time: &'a str,
     custom_format: Option<&'a str>,
-    verbose: bool,
+    _verbose: bool, // This should be handled by logger, not by our logic. Kept with an underscore to preserve backward compatibility without breaking API consumers
 ) -> Result<DateTime<FixedOffset>, &'a str> {
     // Try custom date format first if provided
     if let Some(date_format) = custom_format {
@@ -88,9 +88,7 @@ pub fn parse_timestamp<'a>(
         return Ok(dt);
     }
 
-    if verbose {
-        eprintln!("Failed to parse timestamp: {time}");
-    }
+    error!("Failed to parse timestamp: {time}");
     Err("Unexpected timestamp format")
 }
 

@@ -1,11 +1,11 @@
+use log::{debug, error, info, trace, warn};
+use macros_process_mining::register_binding;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     time::{SystemTime, UNIX_EPOCH},
 };
-
-use macros_process_mining::register_binding;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 
 use crate::core::{
     event_data::case_centric::utils::activity_projection::{
@@ -124,7 +124,7 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
     config: AlphaPPPConfig,
     get_time_millis_fn: &dyn Fn() -> u128,
 ) -> (PetriNet, AlgoDuration) {
-    println!("Started Alpha+++ Discovery");
+    info!("Started Alpha+++ Discovery");
     let mut algo_dur = AlgoDuration {
         loop_repair: 0.0,
         skip_repair: 0.0,
@@ -144,7 +144,7 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
 
     let start_act = log_proj.act_to_index.get(START_ACTIVITY).unwrap();
     let end_act = log_proj.act_to_index.get(END_ACTIVITY).unwrap();
-    println!(
+    info!(
         "Adding start/end acts took: {:.4}s",
         get_time_millis_fn() - start
     );
@@ -154,11 +154,11 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
         (config.log_repair_loop_df_thresh_rel * mean_dfg).ceil() as u64,
     );
     algo_dur.loop_repair = (get_time_millis_fn() - start) as f32 / 1000.0;
-    println!(
+    info!(
         "Using Loop Log Repair with df_threshold of {}",
         (config.log_repair_loop_df_thresh_rel * mean_dfg).ceil() as u64,
     );
-    println!("#Added for loop: {}", added_loop.len());
+    info!("#Added for loop: {}", added_loop.len());
 
     start = get_time_millis_fn();
     let (log_proj, added_skip) = add_artificial_acts_for_skips(
@@ -166,7 +166,7 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
         (config.log_repair_skip_df_thresh_rel * mean_dfg).ceil() as u64,
     );
     algo_dur.skip_repair = (get_time_millis_fn() - start) as f32 / 1000.0;
-    println!("Log Skip/Loop Repair took: {:.4}s", algo_dur.skip_repair);
+    info!("Log Skip/Loop Repair took: {:.4}s", algo_dur.skip_repair);
     start = get_time_millis_fn();
 
     let mut act_count = vec![0_i128; log_proj.activities.len()];
@@ -175,8 +175,8 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
             act_count[*act] += *w as i128;
         })
     });
-    println!("Act count: {act_count:?}");
-    println!(
+    info!("Act count: {act_count:?}");
+    debug!(
         "Acts: {:?}",
         log_proj
             .activities
@@ -185,26 +185,26 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
             .collect::<Vec<(&String, i128)>>()
     );
 
-    println!("#Added for skip: {}", added_skip.len());
+    info!("#Added for skip: {}", added_skip.len());
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
     let dfg = filter_dfg(
         &dfg,
         config.absolute_df_clean_thresh,
         config.relative_df_clean_thresh,
     );
-    println!(
+    info!(
         "Filtered DFG (aDFG) #Edges: {}, Weight Sum: {}",
         dfg.edges.len(),
         dfg.edges.values().sum::<u64>()
     );
     algo_dur.filter_dfg = (get_time_millis_fn() - start) as f32 / 1000.0;
-    println!("Filtering DFG took: {:.4}s", algo_dur.filter_dfg);
+    info!("Filtering DFG took: {:.4}s", algo_dur.filter_dfg);
     start = get_time_millis_fn();
     let cnds: HashSet<(Vec<usize>, Vec<usize>)> = build_candidates(&dfg);
-    println!("Built candidates {}", cnds.len());
+    info!("Built candidates {}", cnds.len());
 
     algo_dur.cnd_building = (get_time_millis_fn() - start) as f32 / 1000.0;
-    println!("Building candidates took: {:.4}s", algo_dur.cnd_building);
+    info!("Building candidates took: {:.4}s", algo_dur.cnd_building);
     start = get_time_millis_fn();
     let sel = prune_candidates(
         &cnds,
@@ -221,9 +221,9 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
     //     b.sort();
     //     println!("{:?} => {:?}", a,b);
     // });
-    println!("Final pruned candidates: {}", sel.len());
+    info!("Final pruned candidates: {}", sel.len());
     algo_dur.prune_cnd = (get_time_millis_fn() - start) as f32 / 1000.0;
-    println!("Pruning candidates took: {:.4}s", algo_dur.prune_cnd);
+    info!("Pruning candidates took: {:.4}s", algo_dur.prune_cnd);
     start = get_time_millis_fn();
     let mut pn = PetriNet::new();
     let mut initial_marking: Marking = Marking::new();
@@ -283,10 +283,10 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
     pn.initial_marking = Some(initial_marking);
     pn.final_markings = Some(vec![final_marking]);
     algo_dur.build_net = (get_time_millis_fn() - start) as f32 / 1000.0;
-    println!("Building PN took: {:.4}s", algo_dur.build_net);
+    info!("Building PN took: {:.4}s", algo_dur.build_net);
 
     algo_dur.total = (get_time_millis_fn() - total_start) as f32 / 1000.0;
-    println!("\n====\nWhole Discovery took: {:.4}s", algo_dur.total);
+    info!("\n====\nWhole Discovery took: {:.4}s", algo_dur.total);
     (pn, algo_dur)
 }
 

@@ -1,8 +1,8 @@
-use std::{collections::HashSet, path::PathBuf, process::ExitCode, sync::LazyLock};
-
 use anstyle::AnsiColor;
+use log::{debug, error, info, trace, warn};
 pub use process_mining::bindings;
 use process_mining::bindings::Binding;
+use std::{collections::HashSet, path::PathBuf, process::ExitCode, sync::LazyLock};
 
 static SPACE: &str = "  ";
 static CLI_NAME: &str = "r4pm";
@@ -54,10 +54,11 @@ fn bold(s: impl std::fmt::Display) -> String {
 }
 
 fn main() -> ExitCode {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let functions = bindings::list_functions();
     let args: Vec<String> = std::env::args().collect();
     if args.len() <= 1 {
-        println!(
+        error!(
             "{}\nAvailable functions: {}",
             warn(format!("Usage: {CLI_NAME} fun_name --arg1 'abc' --arg2 4")),
             functions
@@ -73,7 +74,7 @@ fn main() -> ExitCode {
     let func_name = &args[1];
     let binding = functions.iter().find(|f| f.name == func_name);
     if binding.is_none() {
-        println!("Unknown function: {func_name}");
+        error!("Unknown function: {func_name}");
         return ExitCode::FAILURE;
     }
     let binding = binding.unwrap();
@@ -99,7 +100,7 @@ fn main() -> ExitCode {
                             params.insert(arg_name.to_string(), resolved_value);
                         }
                         Err(e) => {
-                            eprintln!(
+                            error!(
                                 "{}",
                                 warn(format!("Error resolving argument '{}': {}", arg_name, e))
                             );
@@ -117,7 +118,7 @@ fn main() -> ExitCode {
                 output_path = Some(PathBuf::from(arg));
             } else {
                 // Unknown argument?!
-                eprintln!("{}", warn(format!("Unknown argument: {:?}", arg)));
+                error!("{}", warn(format!("Unknown argument: {:?}", arg)));
                 return ExitCode::FAILURE;
             }
         }
@@ -128,7 +129,7 @@ fn main() -> ExitCode {
         .filter(|k| !params.contains_key(k))
         .collect();
     if !missing_args.is_empty() {
-        eprintln!(
+        error!(
             "{}",
             warn(format!(
                 "Missing required arguments: {}",
@@ -146,10 +147,10 @@ fn main() -> ExitCode {
                     if let Some(item) = state_guard.get(id) {
                         match item.export_to_path(&output_path) {
                             Ok(_) => {
-                                println!("Exported registry item '{}' to {:?}", id, output_path);
+                                info!("Exported registry item '{}' to {:?}", id, output_path);
                             }
                             Err(e) => {
-                                eprintln!(
+                                error!(
                                     "{}",
                                     warn(format!("Failed to export registry item: {}", e))
                                 );
@@ -181,7 +182,7 @@ fn main() -> ExitCode {
             }
         }
         Err(e) => {
-            eprintln!("{}", warn(format!("Error calling function: {}", e)));
+            error!("{}", warn(format!("Error calling function: {}", e)));
             return ExitCode::FAILURE;
         }
     }

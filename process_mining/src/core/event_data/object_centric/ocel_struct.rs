@@ -422,7 +422,7 @@ impl OCELAttributeType {
     /// For instance "string" yields [`OCELAttributeType::String`]
     ///
     /// See [`OCELAttributeType::to_type_string`] for the reverse functionality.
-    ///  
+    ///
     pub fn from_type_str(s: &str) -> Self {
         match s {
             "string" => OCELAttributeType::String,

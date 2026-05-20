@@ -1,11 +1,10 @@
 //! Discovering OC-DECLARE Models from Object-Centric Event Data
-use std::collections::{HashMap, HashSet, VecDeque};
-
 use itertools::Itertools;
 use macros_process_mining::register_binding;
 use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
     conformance::oc_declare::get_for_all_evs_perf_thresh,

@@ -1,11 +1,6 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fs::File,
-    path::Path,
-};
-
 use chrono::{DateTime, Utc};
 use itertools::Itertools;
+use log::{debug, error, info, trace, warn};
 use polars::{
     error::{PolarsError, PolarsResult},
     frame::DataFrame,
@@ -15,6 +10,11 @@ use polars::{
         TimeZone,
     },
     series::Series,
+};
+use std::{
+    collections::{HashMap, HashSet},
+    fs::File,
+    path::Path,
 };
 
 use crate::core::event_data::object_centric::{
@@ -314,9 +314,7 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
         .collect();
     // println!("Object attributes: {:?}; Actual object attributes: {:?}", object_attributes.len(), actual_object_attributes.len());
     if !object_attributes.is_superset(&actual_object_attributes) {
-        eprintln!(
-            "Warning: Global object attributes is not a superset of actual object attributes"
-        );
+        error!("Global object attributes is not a superset of actual object attributes");
     }
     let object_attributes_initial: HashSet<String> = object_attributes
         .clone()

@@ -1,14 +1,14 @@
+use super::super::*;
 use crate::core::event_data::object_centric::ocel_struct::OCEL;
 use crate::core::event_data::object_centric::ocel_struct::{
     OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute,
     OCELRelationship, OCELTypeAttribute,
 };
 use crate::core::event_data::timestamp_utils::parse_timestamp;
-use std::{collections::HashMap, ffi::CString};
-
-use super::super::*;
 use chrono::FixedOffset;
+use log::{debug, error, info, trace, warn};
 use rusqlite::{Connection, Params, Row, Rows, Statement};
+use std::{collections::HashMap, ffi::CString};
 
 fn try_get_column_date_val(
     r: &Row<'_>,
@@ -262,9 +262,7 @@ pub fn import_ocel_sqlite_from_con(con: Connection) -> Result<OCEL, rusqlite::Er
                 qualifier,
             });
         } else {
-            eprintln!(
-                "Warning: E2O relationship not added as event with ID {ev_id} was not found."
-            );
+            error!("E2O relationship not added as event with ID {ev_id} was not found.");
         }
     });
 
@@ -272,23 +270,23 @@ pub fn import_ocel_sqlite_from_con(con: Connection) -> Result<OCEL, rusqlite::Er
     let mut s = con.prepare("SELECT * FROM object_object".to_string().as_str())?;
     let evs = query_all::<_>(&mut s, [])?;
     evs.and_then(|x| {
-            Ok::<(String, String, String), rusqlite::Error>((
-                x.get(OCEL_O2O_SOURCE_ID_COLUMN)?,
-                x.get(OCEL_O2O_TARGET_ID_COLUMN)?,
-                x.get(OCEL_REL_QUALIFIER_COLUMN)?,
-            ))
-        })
-        .flatten()
-        .for_each(|(source_ob_id, target_ob_id, qualifier)| {
-            if let Some(ev) = object_map.get_mut(&source_ob_id) {
-                ev.relationships.push(OCELRelationship {
-                    object_id: target_ob_id,
-                    qualifier,
-                });
-            }else{
-                eprintln!("Warning: O2O relationship not added as object with ID {source_ob_id} was not found.");
-            }
-        });
+        Ok::<(String, String, String), rusqlite::Error>((
+            x.get(OCEL_O2O_SOURCE_ID_COLUMN)?,
+            x.get(OCEL_O2O_TARGET_ID_COLUMN)?,
+            x.get(OCEL_REL_QUALIFIER_COLUMN)?,
+        ))
+    })
+    .flatten()
+    .for_each(|(source_ob_id, target_ob_id, qualifier)| {
+        if let Some(ev) = object_map.get_mut(&source_ob_id) {
+            ev.relationships.push(OCELRelationship {
+                object_id: target_ob_id,
+                qualifier,
+            });
+        } else {
+            error!("O2O relationship not added as object with ID {source_ob_id} was not found.");
+        }
+    });
 
     ocel.objects = object_map.into_values().collect();
     ocel.events = event_map.into_values().collect();
