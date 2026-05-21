@@ -38,15 +38,18 @@ schemars = { version = "1.1.0", features = ["chrono04", "uuid1"]}
 inventory = { version = "0.3", optional = true }
 csv = "1.4.0"
 
-[features]
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
+dhat = "0.3.3"
 
+[features]
 # Enables exporting Petri nets as PNG/SVG/... images using graphviz.
 # Note: graphviz needs to be locally installed to the PATH for the image export functions to work.
 graphviz-export = ["dep:graphviz-rust"]
 
 # Enables OCEL 2.0 SQLite/DuckDB import and export functionality
 # Note: this might not work on certain architectures or machines if SQLite is not available/cannot be build
-ocel-sqlite = ["dep:rusqlite"] 
+ocel-sqlite = ["dep:rusqlite"]
 ocel-duckdb = ["dep:duckdb"]
 
 # Enables polars DataFrame conversion from/to event data structs
@@ -80,3 +83,21 @@ required-features = ["dataframes", "kuzudb"]
 [[example]]
 name = "ocel_duckdb_export"
 required-features = ["ocel-duckdb"]
+
+[[bench]]
+name = "load_dataframe"
+harness = false
+required-features = ["dataframes"]
+
+[[bench]]
+name = "load_dataframe_mem"
+harness = false
+required-features = ["dataframes"]
+
+[[bench]]
+name = "load_events"
+harness = false
+
+[[bench]]
+name = "load_events_mem"
+harness = false
