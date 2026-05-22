@@ -63,7 +63,8 @@ pub(crate) fn sql_type_to_ocel(s: &str) -> OCELAttributeType {
 pub(crate) fn ocel_type_to_sql(attr: &OCELAttributeType) -> &'static str {
     match attr {
         OCELAttributeType::String => "TEXT",
-        OCELAttributeType::Float => "REAL",
+        // DOUBLE PRECISION instead of REAL for full f64 float support in both DuckDB and SQLite
+        OCELAttributeType::Float => "DOUBLE PRECISION",
         OCELAttributeType::Integer => "INTEGER",
         OCELAttributeType::Boolean => "BOOLEAN",
         OCELAttributeType::Time => "TIMESTAMP",
@@ -434,7 +435,7 @@ fn write_object_changes_duckdb(
                 .map(|v| v.value.to_string())
         })
         .collect();
-    let unix = DateTime::UNIX_EPOCH.to_rfc3339();
+    let unix = DateTime::UNIX_EPOCH.naive_utc();
     let no_field: Option<String> = None;
     let chained: Vec<&dyn ::duckdb::ToSql> = vec![
         &o.id as &dyn ::duckdb::ToSql,
@@ -462,11 +463,11 @@ fn write_object_changes_duckdb(
                 }
             })
             .collect();
-        let time_str = a.time.to_rfc3339();
+        let time_naive = a.time.naive_utc();
         let name_opt: Option<String> = Some(a.name.clone());
         let chained: Vec<&dyn ::duckdb::ToSql> = vec![
             &o.id as &dyn ::duckdb::ToSql,
-            &time_str as &dyn ::duckdb::ToSql,
+            &time_naive as &dyn ::duckdb::ToSql,
             &name_opt as &dyn ::duckdb::ToSql,
         ]
         .into_iter()
@@ -522,10 +523,10 @@ fn write_event_attrs_duckdb(
                 .map(|v| v.value.to_string())
         })
         .collect();
-    let time_str = e.time.to_rfc3339();
+    let time_naive = e.time.naive_utc();
     let chained: Vec<&dyn ::duckdb::ToSql> = vec![
         &e.id as &dyn ::duckdb::ToSql,
-        &time_str as &dyn ::duckdb::ToSql,
+        &time_naive as &dyn ::duckdb::ToSql,
     ]
     .into_iter()
     .chain(vals.iter().map(|v| v as &dyn ::duckdb::ToSql))
