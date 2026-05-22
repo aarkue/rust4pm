@@ -1,11 +1,10 @@
 //! Conversion of Event Data from/to polars `DataFrame`s
 //!
 //! 🔐 Requires the `dataframes` feature to be enabled.
-use std::{collections::HashSet, time::Instant};
-
 use chrono::DateTime;
 use polars::prelude::*;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
+use std::{collections::HashSet, time::Instant};
 
 use crate::core::{
     event_data::case_centric::{
@@ -90,26 +89,29 @@ pub fn convert_log_to_dataframe(
     let all_attributes: HashSet<String> = log
         .traces
         .par_iter()
-        .flat_map(|t| {
-            let trace_attrs: HashSet<String> = t
-                .attributes
-                .iter()
-                .map(|a| TRACE_PREFIX.to_string() + a.key.as_str())
-                .collect();
-            let m: HashSet<String> = t
-                .events
-                .iter()
-                .flat_map(|e| {
-                    e.attributes
-                        .iter()
-                        .map(|a| a.key.clone())
-                        .collect::<Vec<String>>()
-                })
-                .collect();
-            [trace_attrs, m]
-        })
-        .flatten()
-        .collect();
+        .fold(
+            || HashSet::new(),
+            |mut acc_set: HashSet<String>, trace| {
+                for a in &trace.attributes {
+                    acc_set.insert(format!("{}{}", TRACE_PREFIX, a.key));
+                }
+                for event in &trace.events {
+                    for a in &event.attributes {
+                        if !acc_set.contains(&a.key) {
+                            acc_set.insert(a.key.clone());
+                        }
+                    }
+                }
+                acc_set
+            },
+        )
+        .reduce(
+            || HashSet::new(),
+            |mut set1, set2| {
+                set1.extend(set2);
+                set1
+            },
+        );
     if print_debug {
         println!("Gathering all attributes took {:.2?}", now.elapsed());
     }

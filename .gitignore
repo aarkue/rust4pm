@@ -1,1 +1,4 @@
 /target
+dhat*.json
+perf.data
+flamegraph.svg
