@@ -1,23 +1,19 @@
 //! Benchmark the time taken to convert EventLog to polars::DataFrame
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use process_mining::core::event_data::case_centric::dataframe::convert_log_to_dataframe;
-use process_mining::{EventLog, Importable};
-use std::path::PathBuf;
+
+use process_mining::{test_utils::get_test_data_path, EventLog, Importable};
+
 fn bench_dataframe_conversion(c: &mut Criterion) {
+    let root = get_test_data_path();
     let datasets = vec![
-        (
-            "repair",
-            "./../process_mining/test_data/xes/RepairExample.xes",
-        ),
-        (
-            "traffic",
-            "./../process_mining/test_data/xes/Road_Traffic_Fine_Management_Process.xes.gz",
-        ),
+        ("repair", "xes/RepairExample.xes"),
+        ("traffic", "xes/Road_Traffic_Fine_Management_Process.xes.gz"),
     ];
     let mut group = c.benchmark_group("log_to_dataframe_conversion");
     group.sample_size(100);
     for (name, path_str) in datasets {
-        let path = PathBuf::from(path_str);
+        let path = root.join(path_str);
         if let Ok(log) = EventLog::import_from_path(&path) {
             group.bench_function(name, |b| {
                 b.iter(|| {
