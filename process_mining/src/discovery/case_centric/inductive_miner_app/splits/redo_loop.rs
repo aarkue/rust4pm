@@ -1,18 +1,4 @@
 //! Utility for splitting a log according to a loop cut
-//!
-//!
-//! # Implementation Notes
-//! This implementation adopts the loop-splitting algorithm as implemented in
-//! the ProM framework (`InductiveMiner`), originally written in Java.
-//!
-//! Reference:
-//! - Leemans, S.J.J., Fahland, D., van der Aalst, W.M.P.:
-//!   "Discovering Block-Structured Process Models from Event Logs – A Constructive Approach."
-//!   Application of Concurrency to System Design (ACSD), 2013.
-//! - Leemans S.J.J., "Robust process mining with guarantees", Ph.D. Thesis, Eindhoven
-//!   University of Technology, 09.05.2017
-//! - ProM source code:
-//!   https://github.com/promworkbench/InductiveMiner/blob/main/src/org/processmining/plugins/inductiveminer2/framework/logsplitter/LogSplitterLoop.java
 
 use std::collections::HashMap;
 use crate::EventLog;
@@ -20,89 +6,18 @@ use crate::core::event_data::case_centric::EventLogClassifier;
 use crate::core::process_models::process_tree::OperatorType::Loop;
 use crate::discovery::case_centric::inductive_miner_app::cut_finder::cut::Cut;
 use crate::discovery::case_centric::inductive_miner_app::splits::split::Split;
-/// Splits an event log according to the partition of a Loop-cut.
-///
-/// Recall that a loop cut identifies a structure consisting of a main body (do-part) and at least one redo part.
-/// The partitions of the cut represent activity sets that belong to different segments of the loop structure.
-/// The first partition belongs to the do segment.
-///
-/// Creates one sub log for each partition in the cut
-/// Iterates over every trace, grouping activities to the same sub trace as long as they belong to the same partition.
-/// If a partition changes the current sub trace is finalized and added to the sub log
-///
-/// # Returns
-/// Some(split) containing filtered traces
-/// None if the cut is not a valid loop cut
-///
-/// # Notes
-/// - number of traces in each sublog may differ
-/// - event order is preserved
-/// - activities not encountered in any partition are being ignored
 
+/// Splits an event log according to the partition of a Loop-cut.
 pub fn loop_split<'a>(log: &EventLog, classifier: &EventLogClassifier, cut: Cut<'a>) -> Option<Split> {
     if Loop != cut.get_operator() {
         return None;
     }
-    // Prologue - preparations
+    
     let k = cut.len();
-    let mut result: Vec<EventLog> = Vec::with_capacity(k);
-
-    // Create empty sublogs
-    for _ in 0..k {
-        result.push(log.clone_without_traces());
-    }
-    // get partitions
+    let mut result: Vec<EventLog> = vec![log.clone_without_traces(); k];
     let partitions = cut.get_own();
 
-    // Pre-map activities to partition index for fast lookup - just transfer activity to index of set
-    let mut activity_to_log_map = HashMap::new();
-    for (i, part) in partitions.iter().enumerate() {
-        // at least two partitions, if more loops there can be more
-        for a in part {
-            activity_to_log_map.insert(a.clone(), i);
-        }
-    }
-
-    // iterate over each trace of the original log
-    for trace in &log.traces {
-        //each sublogs gets one clean trace
-        let mut sub_trace = trace.clone_without_events();
-
-        let mut last_partition: Option<usize> = None; // init too None to signal the start of a new trace
-
-        for event in &trace.events {
-            let activity = classifier.get_class_identity(event);
-
-            // get the log index / the index of the partition the activity is part of (exactly one partition)
-            let Some(log_index) = activity_to_log_map.get(activity.as_str()) else {
-                eprintln!("Encountered unexpeceted activity {} in loop splitter using the following cut {:?}: on event log.", activity, partitions);
-                // if the activity is not in the block, this means that it's not part of the loop - it shouldn't be in here
-                continue;
-            };
-
-            if last_partition.is_some() && last_partition.unwrap() != *log_index {
-                // if the last partition is not the same as in the block index of the current activity,
-                // we need to create a new sub_trace and push the last one to the existing ones
-
-                // as last_partition is some, we can just push the trace to the result log index at last partiton
-                result[last_partition.unwrap()].traces.push(sub_trace);
-                sub_trace = trace.clone_without_events();
-            }
-            // At the current state, the event belongs to the subtrace of the log_index which
-
-            // push current activity to sub_trace of block_index sublog
-            sub_trace.events.push(event.clone());
-            // update the last partition
-            last_partition = Some(*log_index);
-        }
-        // at this point we have a sub_trace which is empty or contains at least one element,
-        // if the last_partition variable is set, there is at least one element in the log
-        if last_partition.is_some() {
-            result[last_partition.unwrap()].traces.push(sub_trace);
-        } else {
-            // trace is empty, nothing to do
-        }
-    }
+    todo!();
 
     Some(Split::new(Loop, result))
 }

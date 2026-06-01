@@ -1,24 +1,10 @@
 //! Utility for detecting a loop cut in a Directly Follows Graph.
-//! 
-//! 
-//! # Implementation Notes
-//! This implementation ports the Loop cut finder algorithm as implemented in
-//! the ProM framework (`InductiveMiner`), originally written in Java.
-//!
-//! Reference:
-//! - Leemans, S.J.J., Fahland, D., van der Aalst, W.M.P.:
-//!   "Discovering Block-Structured Process Models from Event Logs – A Constructive Approach."
-//!   Application of Concurrency to System Design (ACSD), 2013.
-//! - Leemans S.J.J., "Robust process mining with guarantees", Ph.D. Thesis, Eindhoven
-//!   University of Technology, 09.05.2017
-//! - ProM source code:
-//!   https://github.com/promworkbench/InductiveMiner/blob/main/src/org/processmining/plugins/inductiveminer2/framework/cutfinders/CutFinderIMLoop.java
+
 use std::borrow::Cow;
 use std::collections::HashSet;
 use crate::core::process_models::dfg::DirectlyFollowsGraph;
 use crate::core::process_models::process_tree::OperatorType;
 use crate::discovery::case_centric::inductive_miner_app::cut_finder::cut::Cut;
-use crate::discovery::case_centric::inductive_miner_app::structures::components::Components;
 
 
 /// Attempts to find a loop cut in a given Directly Follows Graph (DFG).
@@ -40,83 +26,7 @@ use crate::discovery::case_centric::inductive_miner_app::structures::components:
 /// # Panic
 /// Panics if the dfg contains no start activity
 fn redo_loop_cut<'a>(dfg: &'a DirectlyFollowsGraph<'_>) -> Vec<HashSet<Cow<'a, str>>> {
-    // activities
-    let nodes: Vec<Cow<'a, str>> = dfg.activities.iter().map(|(act, _)| Cow::from(act)).collect();
-    let mut components = Components::new(&nodes);
-
-    // start element as pivot element -> safe unwrap as there has to be at least one start element
-    let pivot = dfg.start_activities.iter().next().unwrap();
-    for start in &dfg.start_activities {
-        components.merge_components_of(pivot, start);
-    }
-    for end in &dfg.end_activities {
-        components.merge_components_of(pivot, end);
-    }
-
-    // merge inner components
-    for ((v0, v1), _) in &dfg.directly_follows_relations {
-        let v0_is_start = dfg.start_activities.contains(v0.as_ref());
-        let v0_is_end = dfg.end_activities.contains(v0.as_ref());
-        let v1_is_start = dfg.start_activities.contains(v1.as_ref());
-
-        if !v0_is_start {
-            if !v0_is_end {
-                if !v1_is_start {
-                    components.merge_components_of(v0, v1);
-                }
-            }
-        } else if v0_is_end {
-            components.merge_components_of(v0, v1);
-        }
-    }
-
-    // create sub end and sub start activities
-    let mut sub_end_activities = HashSet::new();
-    let mut sub_start_activities = HashSet::new();
-
-    // sort edges into components
-    for ((v0, v1), _) in &dfg.directly_follows_relations {
-        if components.same_component(&v0, &v1) {
-            sub_start_activities.insert(v0);
-            sub_end_activities.insert(v1);
-        }
-    }
-
-    // check if sub-end-activities are connected to all start activities
-    for sub_end in sub_end_activities {
-        for start in &dfg.start_activities {
-            if components.same_component(sub_end, start) {
-                break;
-            }
-            if !dfg.contains_df_relation((sub_end.clone(), start.into())) {
-                components.merge_components_of(sub_end, start);
-                break;
-            }
-        }
-    }
-
-    for sub_start in sub_start_activities {
-        for end_activity in dfg.end_activities.iter() {
-            if components.same_component(&sub_start, &end_activity) {
-                break;
-            }
-            if !dfg.contains_df_relation((end_activity.clone(), sub_start.to_string())) {
-                components.merge_components_of(sub_start, end_activity);
-                break;
-            }
-        }
-    }
-
-    // reorder so that pivot comes first
-    let mut partition = components.get_components();
-    let pivot = Cow::Owned(pivot.to_string());
-    if let Some(pos) = partition.iter().position(|set| set.contains(&pivot)) {
-        partition.swap(0, pos);
-    }
-
-    partition
-
-    //  check whether those sub component belongs to the do or the redo
+    todo!()
 }
 
 /// Attempts to find a Loop cut in a given DFG.
