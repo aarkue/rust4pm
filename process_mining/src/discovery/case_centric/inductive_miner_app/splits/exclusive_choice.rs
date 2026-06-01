@@ -17,37 +17,8 @@ pub fn xor_split<'a>(log: &EventLog, activity_classifier: &EventLogClassifier, c
     let partition = cut.get_own();
     let mut result: Vec<EventLog> = vec![log.clone_without_traces(); k];
 
-    for trace in log.traces.iter() {
-        let mut counts = vec![0usize; k];
+    todo!();
 
-        for event in trace.events.iter() {
-            let activity = activity_classifier.get_class_identity(event);
-            if let Some(idx) = partition.iter().position(|p| p.contains(activity.as_str())) {
-                counts[idx] += 1;
-            }
-        }
-
-        let target_idx = if trace.events.is_empty() {
-            None
-        } else {
-            counts.iter().enumerate().max_by_key(|&(_, count)| count).map(|(i, _)| i)
-        };
-
-        for sublog_idx in 0..k {
-            if let Some(winning) = target_idx {
-                if winning != sublog_idx {
-                    continue;
-                }
-            }
-            
-            let mut new_trace = trace.clone();
-            new_trace.events.retain(|e| {
-                let act = activity_classifier.get_class_identity(e);
-                partition[sublog_idx].contains(act.as_str())
-            });
-            result[sublog_idx].traces.push(new_trace);
-        }
-    }
     Some(Split::new(ExclusiveChoice, result))
 }
 
