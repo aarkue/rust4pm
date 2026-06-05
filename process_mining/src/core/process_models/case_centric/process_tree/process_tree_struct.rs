@@ -1,3 +1,5 @@
+use crate::core::process_models::petri_net::{ArcType, Marking, PlaceID};
+use crate::PetriNet;
 use serde::{Deserialize, Serialize};
 
 ///
@@ -62,6 +64,27 @@ impl Node {
                 _ => !op.children.is_empty(),
             },
             Node::Leaf(_) => true,
+        }
+    }
+  
+    ///
+    /// Calls either [`Operator::add_to_petri_net`] or [`Leaf::add_to_petri_net`] depending on the
+    /// [`Node`] type.
+    /// Either takes given in and out places as the start and end of the inserted workflow net.
+    /// Edits the given Petri net by inserting the corresponding places and transitions of the
+    /// (sub)tree.
+    /// Returns the start and end places of the workflow net.
+    ///
+    pub fn add_to_petri_net(
+        &self,
+        net: &mut PetriNet,
+        in_place: Option<PlaceID>,
+        out_place: Option<PlaceID>,
+    ) -> (PlaceID, PlaceID) {
+        match self {
+            Node::Operator(op) => op.
+          (net, in_place, out_place),
+            Node::Leaf(leaf) => leaf.add_to_petri_net(net, in_place, out_place),
         }
     }
 
@@ -313,6 +336,25 @@ impl ProcessTree {
 
         result
     }
+
+    ///
+    /// Transforms a [`ProcessTree`] into a [`PetriNet`] according to the rules defined in
+    /// "Process Mining: Data Science in Action" by Wil van der Aalst.
+    /// Returns a workflow net, consisting of the [`PetriNet`], its input, and output place's [`PlaceID`]
+    ///
+    pub fn to_petri_net(&self) -> PetriNet {
+        let mut petri_net = PetriNet::new();
+
+        let (start_place, end_place) = self.root.add_to_petri_net(&mut petri_net, None, None);
+
+        petri_net.initial_marking = Some(Marking::from([(start_place, 1)]));
+
+        let mut final_marking = Marking::new();
+        final_marking.insert(end_place, 1);
+        petri_net.final_markings = Some(vec![final_marking]);
+
+        petri_net
+    }
 }
 
 ///
@@ -359,6 +401,122 @@ impl Operator {
 
         result
     }
+
+    ///
+    /// Unfolds an operator and its descendants into corresponding place, transitions, and arcs and
+    /// adds them to the input [`PetriNet`]. This routine is executed recursively.
+    /// Optionally, the input and output place of the inserted workflow net can be defined.
+    ///
+    pub fn add_to_petri_net(
+        &self,
+        net: &mut PetriNet,
+        in_place: Option<PlaceID>,
+        out_place: Option<PlaceID>,
+    ) -> (PlaceID, PlaceID) {
+        let in_place = in_place.unwrap_or_else(|| net.add_place(None));
+        let out_place = out_place.unwrap_or_else(|| net.add_place(None));
+
+        let num_of_children = self.children.len();
+
+        match self.operator_type {
+            // For a sequence operator, the workflow nets are sequentially connected using each
+            // previous output place as the input place of the following workflow net.
+            // The first and last children consider the operators input and output place as their
+            // input and output place, respectively.
+            OperatorType::Sequence => {
+                let mut last_in_place = in_place;
+
+                self.children.iter().enumerate().for_each(|(pos, child)| {
+                    let curr_out_place = {
+                        if pos == num_of_children - 1 {
+                            out_place
+                        } else {
+                            net.add_place(None)
+                        }
+                    };
+
+                    child.add_to_petri_net(net, Some(last_in_place), Some(curr_out_place));
+
+                    last_in_place = curr_out_place;
+                })
+            }
+            // Considers for each child the input and output place of the operator as their input
+            // and output place
+            OperatorType::ExclusiveChoice => self.children.iter().for_each(|child| {
+                child.add_to_petri_net(net, Some(in_place), Some(out_place));
+            }),
+            // Inserts and connects additional silent transitions as start and end and each child
+            // creates new input and output places that are then connected to the silent start and
+            // silent end transition.
+            OperatorType::Concurrency => {
+                let tau_start_transition = net.add_transition(None, None);
+                let tau_end_transition = net.add_transition(None, None);
+
+                net.add_arc(
+                    ArcType::place_to_transition(in_place, tau_start_transition),
+                    None,
+                );
+                net.add_arc(
+                    ArcType::transition_to_place(tau_end_transition, out_place),
+                    None,
+                );
+
+                self.children.iter().for_each(|child| {
+                    let (child_start, child_end) = child.add_to_petri_net(net, None, None);
+
+                    net.add_arc(
+                        ArcType::transition_to_place(tau_start_transition, child_start),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::place_to_transition(child_end, tau_end_transition),
+                        None,
+                    );
+                })
+            }
+            // Inserts silent transitions to put the workflow net of the loop operator in choice
+            // if other operators are in choice. All workflow nets share the same input and output
+            // places. However, only the first child models the do-part going from input to output
+            // place and every other child going from output to input place modelling the redo-part.
+            OperatorType::Loop => {
+                let tau_start_transition = net.add_transition(None, None);
+                let tau_end_transition = net.add_transition(None, None);
+
+                net.add_arc(
+                    ArcType::place_to_transition(in_place, tau_start_transition),
+                    None,
+                );
+                net.add_arc(
+                    ArcType::transition_to_place(tau_end_transition, out_place),
+                    None,
+                );
+
+                let loop_start_place = net.add_place(None);
+                let loop_end_place = net.add_place(None);
+
+                net.add_arc(
+                    ArcType::transition_to_place(tau_start_transition, loop_start_place),
+                    None,
+                );
+                net.add_arc(
+                    ArcType::place_to_transition(loop_end_place, tau_end_transition),
+                    None,
+                );
+
+                self.children.iter().enumerate().for_each(|(pos, child)| {
+                    let (child_start, child_end) = if pos == 0 {
+                        (loop_start_place, loop_end_place)
+                    } else {
+                        (loop_end_place, loop_start_place)
+                    };
+
+                    child.add_to_petri_net(net, Some(child_start), Some(child_end));
+                })
+            }
+        }
+
+        (in_place, out_place)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -386,6 +544,39 @@ impl Leaf {
                 activity_label: LeafLabel::Tau,
             }
         }
+    }
+
+    ///
+    /// Adds a transition to represent the leaf of a tree. Optionally, input and output
+    /// places can be given to connect the newly created (silent) transition to. The output is
+    /// the [`PlaceID`] of the input and output place, each.
+    ///
+    pub fn add_to_petri_net(
+        &self,
+        net: &mut PetriNet,
+        in_place: Option<PlaceID>,
+        out_place: Option<PlaceID>,
+    ) -> (PlaceID, PlaceID) {
+        let in_place = in_place.unwrap_or_else(|| net.add_place(None));
+        let out_place = out_place.unwrap_or_else(|| net.add_place(None));
+
+        let leaf_transition = {
+            match &self.activity_label {
+                LeafLabel::Activity(label) => net.add_transition(Some(label.clone()), None),
+                LeafLabel::Tau => net.add_transition(None, None),
+            }
+        };
+
+        net.add_arc(
+            ArcType::place_to_transition(in_place, leaf_transition),
+            None,
+        );
+        net.add_arc(
+            ArcType::transition_to_place(leaf_transition, out_place),
+            None,
+        );
+
+        (in_place, out_place)
     }
 }
 
@@ -656,5 +847,172 @@ mod tests {
 
         let pt = ProcessTree::new(Node::Operator(seq_node));
         assert!(pt.is_valid());
+    }
+
+    // Checking Seq(a,b,c)
+    #[test]
+    fn sequence_test() {
+        let mut seq = Operator::new(OperatorType::Sequence);
+
+        let leaf_a = Leaf::new(Some("a".to_string()));
+        let leaf_b = Leaf::new(Some("b".to_string()));
+        let leaf_c = Leaf::new(Some("c".to_string()));
+
+        seq.children.push(Node::Leaf(leaf_a));
+        seq.children.push(Node::Leaf(leaf_b));
+        seq.children.push(Node::Leaf(leaf_c));
+
+        let tree = ProcessTree::new(Node::Operator(seq));
+
+        let net = tree.to_petri_net();
+
+        assert_eq!(4, net.places.len());
+        assert_eq!(3, net.transitions.len());
+        assert_eq!(6, net.arcs.len());
+    }
+
+    // Checking Conc(a,b,c)
+    #[test]
+    fn concurrency_test() {
+        let mut conc = Operator::new(OperatorType::Concurrency);
+
+        let leaf_a = Leaf::new(Some("a".to_string()));
+        let leaf_b = Leaf::new(Some("b".to_string()));
+        let leaf_c = Leaf::new(Some("c".to_string()));
+
+        conc.children.push(Node::Leaf(leaf_a));
+        conc.children.push(Node::Leaf(leaf_b));
+        conc.children.push(Node::Leaf(leaf_c));
+
+        let tree = ProcessTree::new(Node::Operator(conc));
+
+        let net = tree.to_petri_net();
+
+        assert_eq!(8, net.places.len());
+        assert_eq!(5, net.transitions.len());
+        assert_eq!(14, net.arcs.len());
+    }
+
+    // Checking Loop(a,b,c)
+    #[test]
+    fn loop_test() {
+        let mut loop_op = Operator::new(OperatorType::Loop);
+
+        let leaf_a = Leaf::new(Some("a".to_string()));
+        let leaf_b = Leaf::new(Some("b".to_string()));
+        let leaf_c = Leaf::new(Some("c".to_string()));
+
+        loop_op.children.push(Node::Leaf(leaf_a));
+        loop_op.children.push(Node::Leaf(leaf_b));
+        loop_op.children.push(Node::Leaf(leaf_c));
+
+        let tree = ProcessTree::new(Node::Operator(loop_op));
+
+        let net = tree.to_petri_net();
+
+        assert_eq!(4, net.places.len());
+        assert_eq!(5, net.transitions.len());
+        assert_eq!(10, net.arcs.len());
+    }
+
+    // Checking Xor(a,b,c)
+    #[test]
+    fn choice_test() {
+        let mut choice = Operator::new(OperatorType::ExclusiveChoice);
+
+        let leaf_a = Leaf::new(Some("a".to_string()));
+        let leaf_b = Leaf::new(Some("b".to_string()));
+        let leaf_c = Leaf::new(Some("c".to_string()));
+
+        choice.children.push(Node::Leaf(leaf_a));
+        choice.children.push(Node::Leaf(leaf_b));
+        choice.children.push(Node::Leaf(leaf_c));
+
+        let tree = ProcessTree::new(Node::Operator(choice));
+
+        let net = tree.to_petri_net();
+
+        assert_eq!(2, net.places.len());
+        assert_eq!(3, net.transitions.len());
+        assert_eq!(6, net.arcs.len());
+    }
+
+    // Checking tau
+    #[test]
+    fn silent_test() {
+        let leaf_tau = Leaf::new(None);
+
+        let tree = ProcessTree::new(Node::Leaf(leaf_tau));
+
+        let net = tree.to_petri_net();
+
+        assert_eq!(2, net.places.len());
+        assert_eq!(1, net.transitions.len());
+        assert_eq!(2, net.arcs.len());
+
+        net.transitions
+            .iter()
+            .for_each(|(_, t)| assert!(t.label.is_none()));
+    }
+
+    // Checking a
+    #[test]
+    fn leaf_test() {
+        let leaf_a = Leaf::new(Some("a".to_string()));
+
+        let tree = ProcessTree::new(Node::Leaf(leaf_a));
+
+        let net = tree.to_petri_net();
+
+        assert_eq!(2, net.places.len());
+        assert_eq!(1, net.transitions.len());
+        assert_eq!(2, net.arcs.len());
+
+        net.transitions
+            .iter()
+            .for_each(|(_, t)| assert_eq!("a", t.label.clone().unwrap()));
+    }
+
+    // Checking Seq(a, Loop(e, Conc(a,b), f, tau), Xor(b, c, d))
+    #[test]
+    fn all_op_test() {
+        let mut seq = Operator::new(OperatorType::Sequence);
+        let leaf_a = Leaf::new(Some("a".to_string()));
+        seq.children.push(Node::Leaf(leaf_a));
+
+        let mut conc = Operator::new(OperatorType::Concurrency);
+        let leaf_a = Leaf::new(Some("a".to_string()));
+        let leaf_b = Leaf::new(Some("b".to_string()));
+
+        conc.children.push(Node::Leaf(leaf_a));
+        conc.children.push(Node::Leaf(leaf_b));
+
+        let mut loop_op = Operator::new(OperatorType::Loop);
+        let leaf_e = Leaf::new(Some("e".to_string()));
+        let leaf_f = Leaf::new(Some("f".to_string()));
+        let leaf_silent = Leaf::new(None);
+
+        loop_op.children.push(Node::Leaf(leaf_e));
+        loop_op.children.push(Node::Operator(conc));
+        loop_op.children.push(Node::Leaf(leaf_f));
+        loop_op.children.push(Node::Leaf(leaf_silent));
+
+        let mut choice = Operator::new(OperatorType::ExclusiveChoice);
+        let leaf_b = Leaf::new(Some("b".to_string()));
+        let leaf_c = Leaf::new(Some("c".to_string()));
+        let leaf_d = Leaf::new(Some("d".to_string()));
+        choice.children.push(Node::Leaf(leaf_b));
+        choice.children.push(Node::Leaf(leaf_c));
+        choice.children.push(Node::Leaf(leaf_d));
+
+        seq.children.push(Node::Operator(loop_op));
+        seq.children.push(Node::Operator(choice));
+        let tree = ProcessTree::new(Node::Operator(seq));
+
+        let net = tree.to_petri_net();
+
+        assert_eq!(10, net.places.len());
+        assert_eq!(13, net.transitions.len());
+        assert_eq!(28, net.arcs.len());
     }
 }

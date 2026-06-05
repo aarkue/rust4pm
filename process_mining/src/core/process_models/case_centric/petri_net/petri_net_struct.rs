@@ -11,6 +11,8 @@ use crate::core::process_models::case_centric::petri_net::pnml::{
     export_pnml,
     import_pnml::{self, PNMLParseError},
 };
+use crate::core::process_models::process_tree::ProcessTree;
+
 #[derive(
     Debug, Clone, PartialEq, Deserialize, Serialize, Hash, Eq, PartialOrd, Ord, JsonSchema,
 )]
@@ -445,6 +447,13 @@ impl PetriNet {
     /// For the related export function, see [`PetriNet::export_pnml`])
     pub fn import_pnml<P: AsRef<std::path::Path>>(path: P) -> Result<PetriNet, PNMLParseError> {
         import_pnml::import_pnml_from_path(path)
+    }
+}
+
+/// Creates a [`PetriNet`] from a [`ProcessTree`]
+impl From<ProcessTree> for PetriNet {
+    fn from(process_tree: ProcessTree) -> Self {
+        process_tree.to_petri_net()
     }
 }
 

@@ -113,7 +113,9 @@ impl Importable for OCEL {
 
     fn infer_format(path: &Path) -> Option<String> {
         let p = path.to_string_lossy().to_lowercase();
-        if p.ends_with(".csv") {
+        if p.ends_with(".csv.gz") {
+            Some("ocel.csv.gz".to_string())
+        } else if p.ends_with(".csv") {
             Some("ocel.csv".to_string())
         } else if p.ends_with(".json") || p.ends_with(".jsonocel") {
             Some("json".to_string())
@@ -132,8 +134,12 @@ impl Importable for OCEL {
         #[cfg(feature = "ocel-sqlite")] mut reader: R,
         #[cfg(not(feature = "ocel-sqlite"))] reader: R,
         format: &str,
-        _: Self::ImportOptions,
+        options: Self::ImportOptions,
     ) -> Result<Self, Self::Error> {
+        if let Some(inner) = format.strip_suffix(".gz") {
+            let gz: Box<dyn Read> = Box::new(flate2::read::GzDecoder::new(reader));
+            return Self::import_from_reader_with_options(gz, inner, options);
+        }
         if format.ends_with("json") || format.ends_with("jsonocel") {
             let reader = std::io::BufReader::new(reader);
             let ocel: OCEL = serde_json::from_reader(reader)?;
@@ -212,8 +218,11 @@ impl Importable for OCEL {
     fn known_import_formats() -> Vec<crate::core::io::ExtensionWithMime> {
         vec![
             ExtensionWithMime::new("json", "application/json"),
+            ExtensionWithMime::new("json.gz", "application/gzip"),
             ExtensionWithMime::new("xml", "application/xml"),
+            ExtensionWithMime::new("xml.gz", "application/gzip"),
             ExtensionWithMime::new("ocel.csv", "text/csv"),
+            ExtensionWithMime::new("ocel.csv.gz", "application/gzip"),
             #[cfg(feature = "ocel-sqlite")]
             ExtensionWithMime::new("sqlite", "application/x-sqlite3"),
             #[cfg(feature = "ocel-duckdb")]
@@ -228,7 +237,9 @@ impl Exportable for OCEL {
 
     fn infer_format(path: &Path) -> Option<String> {
         let p = path.to_string_lossy().to_lowercase();
-        if p.ends_with(".ocel.csv") || p.ends_with(".csv") {
+        if p.ends_with(".csv.gz") {
+            Some("ocel.csv.gz".to_string())
+        } else if p.ends_with(".ocel.csv") || p.ends_with(".csv") {
             Some("ocel.csv".to_string())
         } else if p.ends_with(".json") || p.ends_with(".jsonocel") {
             Some("json".to_string())
@@ -300,8 +311,17 @@ impl Exportable for OCEL {
         #[cfg(feature = "ocel-sqlite")] mut writer: W,
         #[cfg(not(feature = "ocel-sqlite"))] writer: W,
         format: &str,
-        _: Self::ExportOptions,
+        options: Self::ExportOptions,
     ) -> Result<(), Self::Error> {
+        if let Some(inner) = format.strip_suffix(".gz") {
+            let mut encoder = flate2::write::GzEncoder::new(
+                Box::new(writer) as Box<dyn Write>,
+                flate2::Compression::default(),
+            );
+            self.export_to_writer_with_options(&mut encoder, inner, options)?;
+            encoder.finish()?;
+            return Ok(());
+        }
         if format.ends_with("json") || format.ends_with("jsonocel") {
             serde_json::to_writer(writer, self)?;
             Ok(())
@@ -343,8 +363,11 @@ impl Exportable for OCEL {
     fn known_export_formats() -> Vec<crate::core::io::ExtensionWithMime> {
         vec![
             ExtensionWithMime::new("json", "application/json"),
+            ExtensionWithMime::new("json.gz", "application/gzip"),
             ExtensionWithMime::new("xml", "application/xml"),
+            ExtensionWithMime::new("xml.gz", "application/gzip"),
             ExtensionWithMime::new("ocel.csv", "text/csv"),
+            ExtensionWithMime::new("ocel.csv.gz", "application/gzip"),
             #[cfg(feature = "ocel-sqlite")]
             ExtensionWithMime::new("sqlite", "application/x-sqlite3"),
             #[cfg(feature = "ocel-duckdb")]

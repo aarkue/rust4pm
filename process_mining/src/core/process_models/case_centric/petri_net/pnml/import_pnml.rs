@@ -25,6 +25,12 @@ enum Mode {
 }
 
 fn read_to_string(x: &mut &[u8]) -> String {
+    if let Ok(x_str) = std::str::from_utf8(x) {
+        if let Ok(unescaped) = quick_xml::escape::unescape(x_str) {
+            return unescaped.into_owned();
+        }
+        return x_str.to_string();
+    }
     String::from_utf8_lossy(x).to_string()
 }
 
@@ -202,10 +208,8 @@ where
                     current_mode = Mode::Arc;
                 }
                 // Handle weighted arcs
-                b"inscription" => {
-                    if current_mode == Mode::Arc {
-                        current_mode = Mode::ArcInscription;
-                    }
+                b"inscription" if current_mode == Mode::Arc => {
+                    current_mode = Mode::ArcInscription;
                 }
                 // For handling silent transitions
                 b"toolspecific" => {
@@ -230,12 +234,10 @@ where
                     current_mode = Mode::InitialMarking;
                 }
                 b"finalmarkings" => current_mode = Mode::FinalMarkings,
-                b"marking" => {
-                    if current_mode == Mode::FinalMarkings {
-                        current_mode = Mode::FinalMarkingsMarking;
-                        // Add new final marking
-                        final_markings.push(HashMap::new());
-                    }
+                b"marking" if current_mode == Mode::FinalMarkings => {
+                    current_mode = Mode::FinalMarkingsMarking;
+                    // Add new final marking
+                    final_markings.push(HashMap::new());
                 }
                 b"name" => match current_mode {
                     Mode::Place => current_mode = Mode::PlaceName,
@@ -263,11 +265,7 @@ where
                 }
                 b"finalmarkings" => current_mode = Mode::Net,
                 b"marking" => current_mode = Mode::FinalMarkings,
-                b"inscription" => {
-                    if current_mode == Mode::ArcInscription {
-                        current_mode = Mode::Arc
-                    }
-                }
+                b"inscription" if current_mode == Mode::ArcInscription => current_mode = Mode::Arc,
                 b"arc" => {
                     current_mode = Mode::Net;
                 }

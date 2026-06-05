@@ -28,6 +28,8 @@ use uuid::Uuid;
 /// Thus, __for XES-compliant logs it is guaranteed that this data is already complete once the first trace is parsed__.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct XESOuterLogData {
+    /// The XES version associated with the log tag
+    pub xes_version: Option<String>,
     /// XES Extensions of event log
     pub extensions: Vec<EventLogExtension>,
     /// Event Classifiers of event log
@@ -271,6 +273,7 @@ impl StreamingXESParser<'_> {
                                     )
                                     }
                                 }
+                                self.log_data.xes_version = get_attribute_string(&t, "xes.version");
                                 self.encountered_log = true;
                                 self.current_mode = Mode::Log
                             }
@@ -624,6 +627,7 @@ fn should_ignore_attribute(options: &XESImportOptions, mode: &Mode, key: &str) -
 #[test]
 fn test_classifier_parse() {
     let data = XESOuterLogData {
+        xes_version: None,
         extensions: Vec::new(),
         classifiers: Vec::new(),
         log_attributes: Vec::new(),
@@ -959,6 +963,28 @@ pub fn stream_xes_file_gz<'a>(
 }
 
 ///
+/// Stream XES [`Trace`]s from a [`BufRead`]
+///
+/// If `is_gzipped` is true, this de-compresses the buffer for gzipped data (e.g., `.xes.gz`).
+///
+/// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [`Trace`]s
+///
+pub fn stream_xes_bufread<'a>(
+    input: impl BufRead + 'a,
+    is_gzipped: bool,
+    options: XESImportOptions,
+) -> Result<XESParsingStreamAndLogData<'a>, XESParseError> {
+    if is_gzipped {
+        let dec = GzDecoder::new(input);
+        XESParsingTraceStream::try_new(
+            Box::new(Reader::from_reader(Box::new(BufReader::new(dec)))),
+            options,
+        )
+    } else {
+        XESParsingTraceStream::try_new(Box::new(Reader::from_reader(Box::new(input))), options)
+    }
+}
+///
 /// Stream XES [`Trace`]s from path (auto-detecting gz compression from file extension)
 ///
 /// The returned [`XESParsingStreamAndLogData`] contains the [`XESOuterLogData`] and can be used to iterate over [`Trace`]s
@@ -982,7 +1008,13 @@ pub fn stream_xes_from_path<'a, P: AsRef<std::path::Path>>(
 
 fn get_attribute_string(t: &BytesStart<'_>, key: &'static str) -> Option<String> {
     if let Ok(Some(attr)) = t.try_get_attribute(key) {
-        return Some(String::from_utf8_lossy(&attr.value).to_string());
+        let raw = String::from_utf8_lossy(&attr.value);
+        let escaped = unescape(&raw);
+        let res = match escaped {
+            Ok(s) => s.into_owned(),
+            Err(_) => raw.into_owned(),
+        };
+        return Some(res);
     }
     // eprintln!(
     //     "Did not find expected XML attribute with key {:?}. Will assume empty string as value.",
@@ -1003,11 +1035,7 @@ fn parse_attribute_value_from_tag(
             let value = get_attribute_string(t, "value");
             if let Some(value) = value {
                 match t.name().as_ref() {
-                    b"string" => Some(AttributeValue::String(
-                        unescape(value.as_str())
-                            .unwrap_or(value.as_str().into())
-                            .into(),
-                    )),
+                    b"string" => Some(AttributeValue::String(value)),
                     b"date" => match parse_date_from_str(&value, &options.date_format) {
                         Some(dt) => Some(AttributeValue::Date(dt)),
                         None => {
@@ -1136,8 +1164,9 @@ mod stream_test {
     #[test]
     fn test_xes_stream() {
         let path = get_test_data_path().join("xes").join("RepairExample.xes");
-        let (mut stream, _log_data) =
+        let (mut stream, log_data) =
             stream_xes_from_path(&path, XESImportOptions::default()).unwrap();
+        assert_eq!(log_data.xes_version, Some("1.0".to_string()));
         let num_traces = stream.count();
         println!("Num. traces: {num_traces}");
         assert_eq!(num_traces, 1104);
@@ -1151,6 +1180,7 @@ mod stream_test {
         let now = Instant::now();
         let (mut log_stream, log_data) =
             stream_xes_from_path(&path, XESImportOptions::default()).unwrap();
+        assert_eq!(log_data.xes_version, Some("1.0".to_string()));
         let classifier = log_data
             .classifiers
             .iter()
@@ -1208,6 +1238,7 @@ mod stream_test {
             },
         )
         .unwrap();
+        assert_eq!(log_data.xes_version, Some("2.0".to_string()));
         println!("{:#?}", log_data.log_attributes);
         assert!(log_data.log_attributes.is_empty());
     }

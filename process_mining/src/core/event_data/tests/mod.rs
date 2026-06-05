@@ -6,6 +6,7 @@ use crate::{
     test_utils::get_test_data_path,
 };
 
+mod ocel_gz_io_tests;
 mod ocel_xml_import_tests;
 mod xes_classifier_tests;
 mod xes_import_tests;
