@@ -82,8 +82,7 @@ impl Node {
         out_place: Option<PlaceID>,
     ) -> (PlaceID, PlaceID) {
         match self {
-            Node::Operator(op) => op.
-          (net, in_place, out_place),
+            Node::Operator(op) => op.add_to_petri_net(net, in_place, out_place),
             Node::Leaf(leaf) => leaf.add_to_petri_net(net, in_place, out_place),
         }
     }
