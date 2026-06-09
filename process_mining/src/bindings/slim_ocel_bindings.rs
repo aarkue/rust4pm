@@ -478,10 +478,8 @@ fn locel_event_object_type_counts(ocel: &SlimLinkedOCEL) -> Vec<(String, String,
             acc
         })
         .reduce(HashMap::new, merge_sum_maps);
-    let ev_types: Vec<&str> =
-        <SlimLinkedOCEL as LinkedOCELAccess>::get_ev_types(ocel).collect();
-    let ob_types: Vec<&str> =
-        <SlimLinkedOCEL as LinkedOCELAccess>::get_ob_types(ocel).collect();
+    let ev_types: Vec<&str> = <SlimLinkedOCEL as LinkedOCELAccess>::get_ev_types(ocel).collect();
+    let ob_types: Vec<&str> = <SlimLinkedOCEL as LinkedOCELAccess>::get_ob_types(ocel).collect();
     counts
         .into_iter()
         .map(|((e, o), c)| (ev_types[e].to_string(), ob_types[o].to_string(), c))
@@ -510,131 +508,116 @@ fn locel_conversion_rate(
         .filter(|&&s| {
             s.get_o2o(ocel).any(|&t| {
                 t.get_ob_type(ocel) == &target_type
-                    && t.get_e2o_rev(ocel).any(|&e| e.get_ev_type(ocel) == &activity)
+                    && t.get_e2o_rev(ocel)
+                        .any(|&e| e.get_ev_type(ocel) == &activity)
             })
         })
         .count();
     reached as f64 / total as f64
 }
 
-/// Build directly-follows predecessor edges, grouped per event.
+/// Each object's reverse-E2O events in `(time, id)` order.
 ///
-/// For each object, events related via E2O are ordered by `(time ASC, event_id ASC)`. Each
-/// adjacent pair on that ordering yields one `(predecessor, object)` edge attached to the
-/// successor event. The returned outer index is the event index; the inner `Vec` holds one
-/// entry per related object that yields a predecessor on that object's trace.
-fn build_df_predecessor_edges(ocel: &SlimLinkedOCEL) -> Vec<Vec<(EventIndex, ObjectIndex)>> {
-    let num_events = ocel.get_num_evs();
-    let num_objects = ocel.get_num_obs() as u32;
-    let per_obj: Vec<Vec<(EventIndex, EventIndex, ObjectIndex)>> = (0..num_objects)
+/// Events are sorted per call, so this makes no assumption about global event ordering
+fn sorted_events_per_object(ocel: &SlimLinkedOCEL) -> Vec<Vec<EventIndex>> {
+    (0..ocel.get_num_obs() as u32)
         .into_par_iter()
         .map(|i| {
-            let ob = ObjectIndex::from(i);
-            let mut evs: Vec<EventIndex> = ob.get_e2o_rev(ocel).copied().collect();
+            let mut evs: Vec<EventIndex> =
+                ObjectIndex::from(i).get_e2o_rev(ocel).copied().collect();
             evs.sort_by(|a, b| {
-                let ta = *a.get_time(ocel);
-                let tb = *b.get_time(ocel);
-                ta.cmp(&tb)
+                a.get_time(ocel)
+                    .cmp(b.get_time(ocel))
                     .then_with(|| ocel.get_ev_id(a).cmp(ocel.get_ev_id(b)))
             });
-            evs.windows(2).map(|w| (w[0], w[1], ob)).collect()
+            evs
         })
-        .collect();
-    let mut result: Vec<Vec<(EventIndex, ObjectIndex)>> = vec![Vec::new(); num_events];
-    for per in per_obj {
-        for (prev, curr, ob) in per {
-            result[curr.into_inner() as usize].push((prev, ob));
-        }
-    }
-    result
-}
-
-/// Aggregate per-event synchronization time, grouped by event type.
-///
-/// For each event with at least one directly-follows predecessor, the synchronization time is
-/// `floor((max_predecessor_time - min_predecessor_time).as_seconds())`, computed via integer
-/// microseconds to avoid floating-point error. Returns one row
-/// `(event_type, total_sync_seconds, event_count)` per event type with at least one qualifying
-/// event.
-#[register_binding]
-fn locel_oc_perf_sync(ocel: &SlimLinkedOCEL) -> Vec<(String, i64, i64)> {
-    let edges_per_ev = build_df_predecessor_edges(ocel);
-    let num_events = ocel.get_num_evs() as u32;
-    let per_act: HashMap<usize, (i64, i64)> = (0..num_events)
-        .into_par_iter()
-        .fold(HashMap::new, |mut acc, i| {
-            let edges = &edges_per_ev[i as usize];
-            if edges.is_empty() {
-                return acc;
-            }
-            let (min_us, max_us) = edges.iter().fold(
-                (i64::MAX, i64::MIN),
-                |(mn, mx), (p, _)| {
-                    let t = p.get_time(ocel).timestamp_micros();
-                    (mn.min(t), mx.max(t))
-                },
-            );
-            let sync_secs = (max_us - min_us) / 1_000_000;
-            let et = EventIndex::from(i).get_ev(ocel).event_type;
-            let e = acc.entry(et).or_insert((0i64, 0i64));
-            e.0 += sync_secs;
-            e.1 += 1;
-            acc
-        })
-        .reduce(HashMap::new, |mut a, b| {
-            for (k, (s, c)) in b {
-                let e = a.entry(k).or_insert((0, 0));
-                e.0 += s;
-                e.1 += c;
-            }
-            a
-        });
-    let ev_types: Vec<&str> =
-        <SlimLinkedOCEL as LinkedOCELAccess>::get_ev_types(ocel).collect();
-    per_act
-        .into_iter()
-        .map(|(et, (sync, cnt))| (ev_types[et].to_string(), sync, cnt))
         .collect()
 }
 
-/// Count delaying `(predecessor_event_type, object_type)` pairs.
+/// The `(time, id)`-immediate predecessor of `e` on object `o`, using the
+/// per-object sorted lists from [`sorted_events_per_object`].
+/// `None` if `e` is the first event on `o`.
+#[inline]
+fn df_predecessor(
+    sorted: &[Vec<EventIndex>],
+    ocel: &SlimLinkedOCEL,
+    e: EventIndex,
+    o: ObjectIndex,
+) -> Option<EventIndex> {
+    let evs = &sorted[o.into_inner() as usize];
+    let key = (e.get_time(ocel), ocel.get_ev_id(&e));
+    let pos = evs
+        .binary_search_by(|x| (x.get_time(ocel), ocel.get_ev_id(x)).cmp(&key))
+        .ok()?;
+    pos.checked_sub(1).map(|p| evs[p])
+}
+
+/// Per-event synchronization time and the delaying object.
 ///
-/// For each event with at least one directly-follows predecessor, the delaying edge is the one
-/// whose predecessor has the latest timestamp (ties broken by ascending object id). The result
-/// counts how often each `(predecessor_event_type, related_object_type)` appears as the
-/// delaying edge. Result row order is unspecified.
+/// For each event with at least one directly-follows predecessor, the synchronization time is
+/// `max_predecessor_time - min_predecessor_time` in integer microseconds (the span between its
+/// earliest and latest directly-preceding event). The delaying object is the object linking the
+/// latest predecessor (ties broken by ascending object id).
+/// Returns one row `(event_id, sync_us, delaying_object_id)` per qualifying event (row order is unspecified).
 #[register_binding]
-fn locel_oc_perf_delaying(ocel: &SlimLinkedOCEL) -> Vec<(String, String, i64)> {
-    let edges_per_ev = build_df_predecessor_edges(ocel);
-    let num_events = ocel.get_num_evs() as u32;
-    let counts: HashMap<(usize, usize), i64> = (0..num_events)
+fn locel_oc_perf_sync_per_event(ocel: &SlimLinkedOCEL) -> Vec<(String, i64, String)> {
+    let sorted = sorted_events_per_object(ocel);
+    (0..ocel.get_num_evs() as u32)
         .into_par_iter()
-        .fold(HashMap::new, |mut acc, i| {
-            let edges = &edges_per_ev[i as usize];
-            if edges.is_empty() {
-                return acc;
+        .filter_map(|i| {
+            let e = EventIndex::from(i);
+            let mut min_us = i64::MAX;
+            // (latest predecessor time, its object) = the delaying edge.
+            let mut delaying: Option<(i64, ObjectIndex)> = None;
+            for &o in e.get_e2o(ocel) {
+                if let Some(p) = df_predecessor(&sorted, ocel, e, o) {
+                    let t = p.get_time(ocel).timestamp_micros();
+                    min_us = min_us.min(t);
+                    let keep = match delaying {
+                        Some((bt, bo)) => {
+                            bt > t || (bt == t && ocel.get_ob_id(&bo) <= ocel.get_ob_id(&o))
+                        }
+                        None => false,
+                    };
+                    if !keep {
+                        delaying = Some((t, o));
+                    }
+                }
             }
-            let best = edges
-                .iter()
-                .min_by(|(p1, o1), (p2, o2)| {
-                    p2.get_time(ocel)
-                        .cmp(p1.get_time(ocel))
-                        .then_with(|| ocel.get_ob_id(o1).cmp(ocel.get_ob_id(o2)))
-                })
-                .unwrap();
-            let act_idx = best.0.get_ev(ocel).event_type;
-            let ot_idx = best.1.get_ob(ocel).object_type;
-            *acc.entry((act_idx, ot_idx)).or_insert(0i64) += 1;
-            acc
+            delaying.map(|(max_us, o)| {
+                (
+                    ocel.get_ev_id(&e).to_string(),
+                    max_us - min_us,
+                    ocel.get_ob_id(&o).to_string(),
+                )
+            })
         })
-        .reduce(HashMap::new, merge_sum_maps);
-    let ev_types: Vec<&str> =
-        <SlimLinkedOCEL as LinkedOCELAccess>::get_ev_types(ocel).collect();
-    let ob_types: Vec<&str> =
-        <SlimLinkedOCEL as LinkedOCELAccess>::get_ob_types(ocel).collect();
-    counts
-        .into_iter()
-        .map(|((a, o), c)| (ev_types[a].to_string(), ob_types[o].to_string(), c))
+        .collect()
+}
+
+/// Per-event sojourn time.
+///
+/// For each event with at least one directly-follows predecessor, the sojourn time is
+/// `event_time - latest_predecessor_time` in integer microseconds. Returns one row
+/// `(event_id, sojourn_us)` per qualifying event; row order is unspecified.
+#[register_binding]
+fn locel_oc_perf_sojourn_per_event(ocel: &SlimLinkedOCEL) -> Vec<(String, i64)> {
+    let sorted = sorted_events_per_object(ocel);
+    (0..ocel.get_num_evs() as u32)
+        .into_par_iter()
+        .filter_map(|i| {
+            let e = EventIndex::from(i);
+            let latest = e
+                .get_e2o(ocel)
+                .filter_map(|&o| df_predecessor(&sorted, ocel, e, o))
+                .map(|p| p.get_time(ocel).timestamp_micros())
+                .max()?;
+            Some((
+                ocel.get_ev_id(&e).to_string(),
+                e.get_time(ocel).timestamp_micros() - latest,
+            ))
+        })
         .collect()
 }
 
