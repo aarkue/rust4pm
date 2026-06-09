@@ -74,6 +74,14 @@ all = ["graphviz-export","ocel-sqlite","ocel-duckdb","dataframes","kuzudb", "log
 [package.metadata.docs.rs]
 all-features = true
 
+[[example]]
+name = "ocel_kuzudb_export"
+required-features = ["dataframes", "kuzudb"]
+
+[[example]]
+name = "ocel_duckdb_export"
+required-features = ["ocel-duckdb"]
+
 [[bench]]
 name = "load_dataframe"
 harness = false
