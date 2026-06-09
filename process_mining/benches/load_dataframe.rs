@@ -7,13 +7,16 @@ use process_mining::{test_utils::get_test_data_path, EventLog, Importable};
 fn bench_dataframe_conversion(c: &mut Criterion) {
     let root = get_test_data_path();
     let datasets = vec![
-        ("repair", "xes/RepairExample.xes"),
-        ("traffic", "xes/Road_Traffic_Fine_Management_Process.xes.gz"),
+        ("repair", root.join("xes").join("RepairExample.xes")),
+        (
+            "traffic",
+            root.join("xes")
+                .join("Road_Traffic_Fine_Management_Process.xes.gz"),
+        ),
     ];
     let mut group = c.benchmark_group("log_to_dataframe_conversion");
     group.sample_size(100);
-    for (name, path_str) in datasets {
-        let path = root.join(path_str);
+    for (name, path) in datasets {
         if let Ok(log) = EventLog::import_from_path(&path) {
             group.bench_function(name, |b| {
                 b.iter(|| {

@@ -8,13 +8,16 @@ mod profile {
 
     pub fn run_profile() {
         let root = get_test_data_path();
-        let path = root.join("xes/Road_Traffic_Fine_Management_Process.xes.gz");
+        let path = root
+            .join("xes")
+            .join("Road_Traffic_Fine_Management_Process.xes.gz");
         let log = EventLog::import_from_path(&path).unwrap();
-        let mut _profiler = dhat::Profiler::builder()
+        let _profiler = dhat::Profiler::builder()
             .file_name("dhat-load_dataframe.json")
             .build();
 
         let _df = convert_log_to_dataframe(&log, false).unwrap();
+        drop(_profiler);
     }
 }
 fn main() {
