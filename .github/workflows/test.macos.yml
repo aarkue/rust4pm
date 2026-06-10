@@ -18,7 +18,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # 1. Replaced actions-rs/toolchain with dtolnay's maintained action
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
@@ -37,10 +36,8 @@ jobs:
       - name: Downloading test files
         run: wget -O process_mining/test_data/out.zip https://rwth-aachen.sciebo.de/s/4cvtTU3lLOgtxt1/download
 
-      # 2. Replaced 7z command with native macOS unzip to prevent potential path/tooling issues
       - name: Unpacking test files
         run: unzip -q process_mining/test_data/out.zip -d process_mining/test_data
 
-      # 3. Replaced actions-rs/cargo with native cargo execution
       - name: Run tests
         run: cargo test --lib -p process_mining
