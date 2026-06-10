@@ -559,11 +559,17 @@ fn df_predecessor(
 /// `max_predecessor_time - min_predecessor_time` in integer microseconds (the span between its
 /// earliest and latest directly-preceding event). The delaying object is the object linking the
 /// latest predecessor (ties broken by ascending object id).
-/// Returns one row `(event_id, sync_us, delaying_object_id)` per qualifying event (row order is unspecified).
+/// Returns one row `(event_id, sync_us, delaying_object_id)` per qualifying event.
+///
+/// `top_k`: if `Some(k)`, return only the `k` rows with the largest `sync_us`, ties broken by
+/// ascending event id, sorted descending. `None` returns every qualifying event.
 #[register_binding]
-fn locel_oc_perf_sync_per_event(ocel: &SlimLinkedOCEL) -> Vec<(String, i64, String)> {
+fn locel_oc_perf_sync_per_event(
+    ocel: &SlimLinkedOCEL,
+    #[bind(default)] top_k: Option<usize>,
+) -> Vec<(String, i64, String)> {
     let sorted = sorted_events_per_object(ocel);
-    (0..ocel.get_num_evs() as u32)
+    let mut rows: Vec<(EventIndex, i64, ObjectIndex)> = (0..ocel.get_num_evs() as u32)
         .into_par_iter()
         .filter_map(|i| {
             let e = EventIndex::from(i);
@@ -585,13 +591,27 @@ fn locel_oc_perf_sync_per_event(ocel: &SlimLinkedOCEL) -> Vec<(String, i64, Stri
                     }
                 }
             }
-            delaying.map(|(max_us, o)| {
-                (
-                    ocel.get_ev_id(&e).to_string(),
-                    max_us - min_us,
-                    ocel.get_ob_id(&o).to_string(),
-                )
-            })
+            delaying.map(|(max_us, o)| (e, max_us - min_us, o))
+        })
+        .collect();
+    if let Some(k) = top_k {
+        let cmp = |a: &(EventIndex, i64, ObjectIndex), b: &(EventIndex, i64, ObjectIndex)| {
+            b.1.cmp(&a.1)
+                .then_with(|| ocel.get_ev_id(&a.0).cmp(ocel.get_ev_id(&b.0)))
+        };
+        if k < rows.len() {
+            rows.select_nth_unstable_by(k, cmp);
+            rows.truncate(k);
+        }
+        rows.sort_unstable_by(cmp);
+    }
+    rows.into_iter()
+        .map(|(e, max_minus_min, o)| {
+            (
+                ocel.get_ev_id(&e).to_string(),
+                max_minus_min,
+                ocel.get_ob_id(&o).to_string(),
+            )
         })
         .collect()
 }
@@ -600,11 +620,17 @@ fn locel_oc_perf_sync_per_event(ocel: &SlimLinkedOCEL) -> Vec<(String, i64, Stri
 ///
 /// For each event with at least one directly-follows predecessor, the sojourn time is
 /// `event_time - latest_predecessor_time` in integer microseconds. Returns one row
-/// `(event_id, sojourn_us)` per qualifying event; row order is unspecified.
+/// `(event_id, sojourn_us)` per qualifying event.
+///
+/// `top_k`: if `Some(k)`, return only the `k` rows with the largest `sojourn_us`, ties broken by
+/// ascending event id, sorted descending. `None` returns every qualifying event.
 #[register_binding]
-fn locel_oc_perf_sojourn_per_event(ocel: &SlimLinkedOCEL) -> Vec<(String, i64)> {
+fn locel_oc_perf_sojourn_per_event(
+    ocel: &SlimLinkedOCEL,
+    #[bind(default)] top_k: Option<usize>,
+) -> Vec<(String, i64)> {
     let sorted = sorted_events_per_object(ocel);
-    (0..ocel.get_num_evs() as u32)
+    let mut rows: Vec<(EventIndex, i64)> = (0..ocel.get_num_evs() as u32)
         .into_par_iter()
         .filter_map(|i| {
             let e = EventIndex::from(i);
@@ -613,11 +639,22 @@ fn locel_oc_perf_sojourn_per_event(ocel: &SlimLinkedOCEL) -> Vec<(String, i64)> 
                 .filter_map(|&o| df_predecessor(&sorted, ocel, e, o))
                 .map(|p| p.get_time(ocel).timestamp_micros())
                 .max()?;
-            Some((
-                ocel.get_ev_id(&e).to_string(),
-                e.get_time(ocel).timestamp_micros() - latest,
-            ))
+            Some((e, e.get_time(ocel).timestamp_micros() - latest))
         })
+        .collect();
+    if let Some(k) = top_k {
+        let cmp = |a: &(EventIndex, i64), b: &(EventIndex, i64)| {
+            b.1.cmp(&a.1)
+                .then_with(|| ocel.get_ev_id(&a.0).cmp(ocel.get_ev_id(&b.0)))
+        };
+        if k < rows.len() {
+            rows.select_nth_unstable_by(k, cmp);
+            rows.truncate(k);
+        }
+        rows.sort_unstable_by(cmp);
+    }
+    rows.into_iter()
+        .map(|(e, sojourn_us)| (ocel.get_ev_id(&e).to_string(), sojourn_us))
         .collect()
 }
 
