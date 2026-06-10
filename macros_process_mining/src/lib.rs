@@ -325,16 +325,16 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
     let serialization_logic = if attrs.debug_output {
         quote! {
             let final_result = format!("{:?}", result);
-            serde_json::to_value(final_result).map_err(|e| e.to_string())
+            serde_json::to_vec(&final_result).map_err(|e| e.to_string())
         }
     } else if attrs.stringify_error {
         quote! {
             let ok_result = result.map_err(|e| e.to_string())?;
-            serde_json::to_value(ok_result).map_err(|e| e.to_string())
+            serde_json::to_vec(&ok_result).map_err(|e| e.to_string())
         }
     } else {
         quote! {
-            serde_json::to_value(result).map_err(|e| e.to_string())
+            serde_json::to_vec(&result).map_err(|e| e.to_string())
         }
     };
 
@@ -398,7 +398,7 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
             quote! {
                 let id = format!("res_{}", uuid::Uuid::new_v4());
                 __state_guard.insert(id.clone(), crate::bindings::RegistryItem::#variant_ident(result));
-                serde_json::to_value(id).map_err(|e| e.to_string())
+                serde_json::to_vec(&id).map_err(|e| e.to_string())
             }
         } else {
             serialization_logic.clone()
@@ -421,7 +421,7 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
             };
             let id = format!("res_{}", uuid::Uuid::new_v4());
             state_lock.add(&id, crate::bindings::RegistryItem::#variant_ident(result));
-            serde_json::to_value(id).map_err(|e| e.to_string())
+            serde_json::to_vec(&id).map_err(|e| e.to_string())
         }
     } else {
         quote! {
@@ -468,7 +468,7 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
             use serde_json::Value;
             use std::sync::RwLock;
 
-            fn #wrapper_name(args: &Value, state_lock: &AppState) -> Result<Value, String> {
+            fn #wrapper_name(args: &Value, state_lock: &AppState) -> Result<Vec<u8>, String> {
                 let arg_map = args.as_object().ok_or("Args must be JSON object")?;
                 #execution_block
             }
