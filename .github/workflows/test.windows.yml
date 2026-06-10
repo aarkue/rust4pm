@@ -2,42 +2,50 @@ name: Test on Windows
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   Test:
     strategy:
       matrix:
-        os: [ windows-latest ]
-        rust: [ stable ]
+        os: [windows-latest]
+        rust: [stable]
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: ${{ matrix.rust }}
-          override: true
+
       - uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            process_mining/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # Using native curl avoids chocolatey network overhead
       - name: Downloading test files
         run: |
-          choco install wget --no-progress
-          wget.exe -O process_mining/test_data/out.zip https://rwth-aachen.sciebo.de/s/4cvtTU3lLOgtxt1/download
+          curl -sSfL -o process_mining/test_data/out.zip https://rwth-aachen.sciebo.de/s/4cvtTU3lLOgtxt1/download
+
       - name: Unpacking test files
-        run: 7z.exe x process_mining/test_data/out.zip -oprocess_mining/test_data
+        run: 7z.exe x process_mining/test_data/out.zip -oprocess_mining/test_data -y
+
       - name: Build
         run: cargo build --verbose
         working-directory: ./process_mining
+
       - name: Run tests
         run: cargo test --verbose
         working-directory: ./process_mining

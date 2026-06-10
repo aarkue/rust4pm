@@ -2,9 +2,9 @@ name: Test on macOS
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   Test:
@@ -16,24 +16,31 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v6
+
+      # 1. Replaced actions-rs/toolchain with dtolnay's maintained action
+      - uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: ${{ matrix.rust }}
-          override: true
-      - uses: actions/cache@v4
+
+      - uses: actions/cache@v5
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
       - name: Downloading test files
         run: wget -O process_mining/test_data/out.zip https://rwth-aachen.sciebo.de/s/4cvtTU3lLOgtxt1/download
+
+      # 2. Replaced 7z command with native macOS unzip to prevent potential path/tooling issues
       - name: Unpacking test files
-        run: 7z x process_mining/test_data/out.zip -oprocess_mining/test_data
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --lib -p process_mining
+        run: unzip -q process_mining/test_data/out.zip -d process_mining/test_data
+
+      # 3. Replaced actions-rs/cargo with native cargo execution
+      - name: Run tests
+        run: cargo test --lib -p process_mining
