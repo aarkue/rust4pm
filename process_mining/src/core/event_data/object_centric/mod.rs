@@ -1,6 +1,7 @@
 //! Object-centric Event Data
 //!
 
+pub mod appendable;
 /// Convert an OCEL to a Polars `DataFrame`
 ///
 /// See the [`dataframe::ocel_to_dataframes`] function.
@@ -18,7 +19,8 @@ pub mod ocel_csv;
 pub mod ocel_json;
 pub mod ocel_sql;
 pub(crate) mod ocel_struct;
+pub mod ocel_xml;
+pub mod readable;
+pub mod utils;
 #[doc(inline)]
 pub use ocel_struct::*;
-pub mod ocel_xml;
-pub mod utils;

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- New `ReadableOCEL` and `AppendableOCEL` traits; OCEL exporters (CSV, XML, SQL, JSON) and the JSON importer are generic over them
+- `SlimLinkedOCEL` implements `AppendableOCEL`, with auto-declare types, auto-grow attributes, and value coercion via new `OCELAttributeValue::try_coerce_to`; misordered streams are buffered and resolved on `finalize`
+- `import_ocel_json_into` and `import_ocel_xml_into` stream JSON / XML directly into any `AppendableOCEL` (e.g., `SlimLinkedOCEL`) without materializing an `OCEL` first; `SlimLinkedOCEL::import_from_*` uses the streaming paths automatically
+- `ReadableOCEL::iter_events_of_type` / `iter_objects_of_type` (default filters; `SlimLinkedOCEL` overrides via per-type indices, avoiding a full scan per type in SQL export)
+- New `OCELAttributeType::as_type_str` returns `&'static str` (cheaper than `to_type_string`)
+- `EventIndex` / `ObjectIndex` are now `u32`-backed; `into_inner` returns `u32` (**Breaking**)
+- `SlimLinkedOCEL`, `SlimOCELEvent`, `SlimOCELObject` no longer derive `Deserialize` (still serialize); construct via `Importable` or `AppendableOCEL` (**Breaking**)
+- `SlimOCELEvent::relationships` and `SlimOCELObject::relationships` are now `Vec<(QualifierIdx, ObjectIndex)>` (was `Vec<(String, ObjectIndex)>`); resolve qualifier strings via `SlimLinkedOCEL::qualifier_str` (**Breaking**)
+- CSV exporter streams rows instead of buffering all rows; tracks `(time, object_id)` pairs in a `HashSet` to skip redundant object-attribute rows
+- `SlimLinkedOCEL::from_ocel` now goes through `AppendableOCEL`, so it shares attribute coercion, schema-grow, and duplicate-id detection with the streaming import paths. Behavior changes: events/objects with attribute names not in the declared type schema grow the schema (before they were silently dropped); duplicate event/object ids are skipped with a warning (before they were kept but unreachable); references to undeclared types auto-create the type (before they were dropped with warning)
+- `try_json_to_ocel` returning `Result<OCEL, serde_json::Error>` added alongside the existing panicking `json_to_ocel`
+- New direct dependency on `hashbrown` for the slim per-id hash tables
+
 ## 0.5.5
 
 - `SlimLinkedOCEL` and bindings:

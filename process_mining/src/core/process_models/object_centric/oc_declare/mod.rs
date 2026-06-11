@@ -652,11 +652,11 @@ impl EventOrSynthetic {
                 if matches!(self, EventOrSynthetic::Init(_)) {
                     evs.min_by_key(|ev| locel.get_ev_time(*ev))
                         .copied()
-                        .unwrap_or(0_usize.into())
+                        .unwrap_or(0_u32.into())
                 } else {
                     evs.max_by_key(|ev| locel.get_ev_time(*ev))
                         .copied()
-                        .unwrap_or(0_usize.into())
+                        .unwrap_or(0_u32.into())
                 }
             }
         }

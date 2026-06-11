@@ -18,6 +18,19 @@ pub use core::io::{Exportable, Importable};
 // Re-export main structs for convenience
 pub use core::{EventLog, PetriNet, OCEL};
 
+// Re-export OCEL backend traits and the streaming entry points.
+pub use core::event_data::object_centric::{
+    appendable::AppendableOCEL,
+    ocel_json::import_ocel_json_into,
+    ocel_xml::xml_ocel_import::{import_ocel_xml_into, OCELImportOptions},
+    readable::{OCELLookup, ReadableOCEL},
+};
+
+// Re-exported so callers can construct the `Reader` / `Writer` arguments accepted by
+// `import_ocel_xml_into` and `XMLWriterWrapper` without taking a direct `quick-xml`
+// dependency.
+pub use quick_xml::{Reader as XmlReader, Writer as XmlWriter};
+
 /// Bindings
 pub mod bindings;
 
@@ -26,12 +39,37 @@ pub mod bindings;
 pub mod test_utils {
     use std::path::PathBuf;
 
-    /// Get the based path for test data.
+    use crate::OCEL;
+
+    /// Get the base path for test data.
     ///
     ///  Used for internal testing
     #[allow(unused)]
     pub fn get_test_data_path() -> PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data")
+    }
+
+    /// Sort all collections inside an [`OCEL`] (events, objects, types,
+    /// relationships, attributes) by stable keys so two OCELs that are
+    /// structurally equivalent but inserted in different orders compare
+    /// equal via `assert_eq!`.
+    #[allow(unused)]
+    pub fn sort_ocel_for_equality_compare(ocel: &mut OCEL) {
+        ocel.events
+            .sort_by(|x, y| (x.time, &x.id).cmp(&(y.time, &y.id)));
+        ocel.objects.sort_by(|x, y| x.id.cmp(&y.id));
+        ocel.event_types.sort_by(|x, y| x.name.cmp(&y.name));
+        ocel.object_types.sort_by(|x, y| x.name.cmp(&y.name));
+        for e in &mut ocel.events {
+            e.relationships
+                .sort_by(|x, y| (&x.object_id, &x.qualifier).cmp(&(&y.object_id, &y.qualifier)));
+        }
+        for o in &mut ocel.objects {
+            o.attributes
+                .sort_by(|x, y| (x.time, &x.name).cmp(&(y.time, &y.name)));
+            o.relationships
+                .sort_by(|x, y| (&x.object_id, &x.qualifier).cmp(&(&y.object_id, &y.qualifier)));
+        }
     }
 }
 
