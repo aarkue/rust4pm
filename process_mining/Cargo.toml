@@ -38,19 +38,22 @@ schemars = { version = "1.1.0", features = ["chrono04", "uuid1"]}
 inventory = { version = "0.3", optional = true }
 csv = "1.4.0"
 
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
+dhat = "0.3.3"
+
 [build-dependencies]
 # Pin cxx-build to match kuzu's cxx; bump this together with the kuzu dependency.
 cxx-build = { version = "=1.0.138", optional = true }
 
 [features]
-
 # Enables exporting Petri nets as PNG/SVG/... images using graphviz.
 # Note: graphviz needs to be locally installed to the PATH for the image export functions to work.
 graphviz-export = ["dep:graphviz-rust"]
 
 # Enables OCEL 2.0 SQLite/DuckDB import and export functionality
 # Note: this might not work on certain architectures or machines if SQLite is not available/cannot be build
-ocel-sqlite = ["dep:rusqlite"] 
+ocel-sqlite = ["dep:rusqlite"]
 ocel-duckdb = ["dep:duckdb"]
 
 # Enables polars DataFrame conversion from/to event data structs
@@ -75,8 +78,6 @@ all = ["graphviz-export","ocel-sqlite","ocel-duckdb","dataframes","kuzudb", "log
 [package.metadata.docs.rs]
 all-features = true
 
-
-
 [[example]]
 name = "ocel_kuzudb_export"
 required-features = ["dataframes", "kuzudb"]
@@ -84,3 +85,21 @@ required-features = ["dataframes", "kuzudb"]
 [[example]]
 name = "ocel_duckdb_export"
 required-features = ["ocel-duckdb"]
+
+[[bench]]
+name = "load_dataframe"
+harness = false
+required-features = ["dataframes"]
+
+[[bench]]
+name = "load_dataframe_mem"
+harness = false
+required-features = ["dataframes"]
+
+[[bench]]
+name = "load_events"
+harness = false
+
+[[bench]]
+name = "load_events_mem"
+harness = false
