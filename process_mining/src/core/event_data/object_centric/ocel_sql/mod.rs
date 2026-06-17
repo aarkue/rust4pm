@@ -53,6 +53,8 @@ pub(crate) fn sql_type_to_ocel(s: &str) -> OCELAttributeType {
         "REAL" => OCELAttributeType::Float,
         // Used by duckdb
         "FLOAT" => OCELAttributeType::Float,
+        // SQL type written for floats (see `ocel_type_to_sql`); DuckDB PRAGMA reports it as "DOUBLE"
+        "DOUBLE" | "DOUBLE PRECISION" => OCELAttributeType::Float,
         "INTEGER" => OCELAttributeType::Integer,
         "BOOLEAN" => OCELAttributeType::Boolean,
         "TIMESTAMP" => OCELAttributeType::Time,
