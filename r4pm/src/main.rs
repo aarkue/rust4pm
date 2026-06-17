@@ -140,6 +140,9 @@ fn main() -> ExitCode {
     let fn_args = serde_json::Value::Object(params);
     match bindings::call(binding, &fn_args, &state) {
         Ok(res) => {
+            // `call` returns JSON bytes; parse once for the CLI's structured handling.
+            let res: serde_json::Value =
+                serde_json::from_slice(&res).unwrap_or(serde_json::Value::Null);
             if let Some(output_path) = output_path {
                 if let Some(id) = res.as_str() {
                     let state_guard = state.items.read().unwrap();

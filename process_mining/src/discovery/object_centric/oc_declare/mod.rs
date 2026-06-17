@@ -700,3 +700,195 @@ fn has_dominating_path(
 
     false
 }
+
+type TypeLabel = (OCDeclareArcType, OCDeclareArcLabel);
+
+/// Compose arc types when chaining `A -> B -> C`.
+///
+/// Two follow types collapse to `EF`, two precede types to `EP`; anything else goes to `AS`.
+fn compose_arc_types(a: OCDeclareArcType, b: OCDeclareArcType) -> OCDeclareArcType {
+    use OCDeclareArcType::{AS, DF, DP, EF, EP};
+    if a == b {
+        return a;
+    }
+    match (a, b) {
+        (EF | DF, EF | DF) => EF,
+        (EP | DP, EP | DP) => EP,
+        _ => AS,
+    }
+}
+
+/// Greatest lower bound of two arc labels: the strongest label dominated by both inputs.
+fn compose_arc_labels(l1: &OCDeclareArcLabel, l2: &OCDeclareArcLabel) -> OCDeclareArcLabel {
+    fn at_least_each(l: &OCDeclareArcLabel) -> HashSet<&ObjectTypeAssociation> {
+        l.each.iter().chain(&l.all).collect()
+    }
+    fn at_least_any(l: &OCDeclareArcLabel) -> HashSet<&ObjectTypeAssociation> {
+        l.any.iter().chain(&l.each).chain(&l.all).collect()
+    }
+
+    let all: Vec<_> = l1.all.iter().filter(|x| l2.all.contains(x)).cloned().collect();
+    let each: Vec<_> = at_least_each(l1)
+        .intersection(&at_least_each(l2))
+        .filter(|x| !all.contains(x))
+        .map(|x| (*x).clone())
+        .collect();
+    let any: Vec<_> = at_least_any(l1)
+        .intersection(&at_least_any(l2))
+        .filter(|x| !all.contains(x) && !each.contains(x))
+        .map(|x| (*x).clone())
+        .collect();
+    OCDeclareArcLabel { each, any, all }
+}
+
+/// Project OC-DECLARE arcs onto a subset of activities by dropping any arc
+/// with an endpoint outside the target set.
+pub fn project_oc_arcs_naive(
+    arcs: Vec<OCDeclareArc>,
+    activities: &HashSet<String>,
+) -> Vec<OCDeclareArc> {
+    arcs.into_iter()
+        .filter(|a| activities.contains(a.from.as_str()) && activities.contains(a.to.as_str()))
+        .collect()
+}
+
+/// Project OC-DECLARE arcs onto a subset of activities, preserving constraints
+/// that reach a target via a chain through eliminated activities.
+///
+/// BFSs from every target activity through non-target intermediaries, composing
+/// arc types and labels along the way; whenever the search reaches another target,
+/// the composed arc is emitted. Dominated duplicates are pruned and the result is
+/// passed through transitive reduction.
+pub fn project_oc_arcs_smart(
+    arcs: Vec<OCDeclareArc>,
+    activities: &HashSet<String>,
+    lossless_reduction: bool,
+) -> Vec<OCDeclareArc> {
+    let mut adj: HashMap<&str, Vec<(&str, &OCDeclareArcType, &OCDeclareArcLabel)>> = HashMap::new();
+    for arc in &arcs {
+        adj.entry(arc.from.as_str())
+            .or_default()
+            .push((arc.to.as_str(), &arc.arc_type, &arc.label));
+    }
+    let is_target = |n: &str| activities.contains(n);
+
+    // Direct arcs between targets survive unchanged; transitive ones are added below.
+    let mut result: Vec<OCDeclareArc> = arcs
+        .iter()
+        .filter(|a| is_target(a.from.as_str()) && is_target(a.to.as_str()))
+        .cloned()
+        .collect();
+
+    // Group outgoing edges of `node` by target, skipping self-loops back to `source`.
+    let group_outgoing = |node: &str, source: &str| -> HashMap<&str, Vec<(&OCDeclareArcType, &OCDeclareArcLabel)>> {
+        let mut out = HashMap::new();
+        for &(t, ty, lbl) in adj.get(node).into_iter().flatten() {
+            if t != source {
+                out.entry(t).or_insert_with(Vec::new).push((ty, lbl));
+            }
+        }
+        out
+    };
+
+    for source in activities {
+        // For each visited non-target node, the set of non-dominated (type, label)
+        // pairs realizable along some `source -> ... -> node` path.
+        let mut known: HashMap<&str, Vec<TypeLabel>> = HashMap::new();
+        let mut frontier: VecDeque<(&str, Vec<TypeLabel>)> = VecDeque::new();
+
+        // Seed the frontier with the direct outgoing edges of `source`, clustered by target.
+        for (target, edges) in group_outgoing(source.as_str(), source.as_str()) {
+            if is_target(target) {
+                continue; // direct target-target arc, already in `result`
+            }
+            let pairs = dedup_type_label_pairs(
+                edges.into_iter().map(|(ty, lbl)| (*ty, lbl.clone())).collect(),
+            );
+            known.insert(target, pairs.clone());
+            frontier.push_back((target, pairs));
+        }
+
+        while let Some((current, current_pairs)) = frontier.pop_front() {
+            for (target, edges) in group_outgoing(current, source.as_str()) {
+                // Cartesian compose each known pair at `current` with each outgoing edge,
+                // dropping compositions whose label has no surviving obligations.
+                let composed: Vec<TypeLabel> = current_pairs
+                    .iter()
+                    .flat_map(|(ct, cl)| {
+                        edges.iter().map(move |(et, el)| {
+                            (compose_arc_types(*ct, **et), compose_arc_labels(cl, el))
+                        })
+                    })
+                    .filter(|(_, l)| !l.each.is_empty() || !l.any.is_empty() || !l.all.is_empty())
+                    .collect();
+                if composed.is_empty() {
+                    continue;
+                }
+                let composed = dedup_type_label_pairs(composed);
+
+                if is_target(target) {
+                    result.extend(composed.into_iter().map(|(arc_type, label)| OCDeclareArc {
+                        from: OCDeclareNode::new(source.clone()),
+                        to: OCDeclareNode::new(target),
+                        arc_type,
+                        label,
+                        counts: (Some(1), None),
+                    }));
+                    continue;
+                }
+
+                // Non-target intermediary: propagate only the pairs that are not
+                // already dominated by something we've recorded at `target`.
+                let existing = known.get(target).cloned().unwrap_or_default();
+                let novel: Vec<TypeLabel> = composed
+                    .into_iter()
+                    .filter(|c| {
+                        !existing.iter().any(|e| {
+                            c.0.is_dominated_by_or_eq(&e.0) && c.1.is_dominated_by(&e.1)
+                        })
+                    })
+                    .collect();
+                if novel.is_empty() {
+                    continue;
+                }
+                let mut merged = existing;
+                merged.extend(novel.iter().cloned());
+                known.insert(target, dedup_type_label_pairs(merged));
+                frontier.push_back((target, novel));
+            }
+        }
+    }
+
+    // Strip dominated duplicates within each (from, to) pair, then reduce transitively.
+    let snapshot = result.clone();
+    let pruned: Vec<OCDeclareArc> = result
+        .into_iter()
+        .filter(|a| {
+            !snapshot.iter().any(|b| {
+                a != b
+                    && a.from == b.from
+                    && a.to == b.to
+                    && a.arc_type.is_dominated_by_or_eq(&b.arc_type)
+                    && a.label.is_dominated_by(&b.label)
+            })
+        })
+        .collect();
+
+    reduce_oc_arcs(pruned, lossless_reduction)
+}
+
+/// Drop dominated (and exact-duplicate) `(arc_type, label)` pairs from a list.
+fn dedup_type_label_pairs(mut pairs: Vec<TypeLabel>) -> Vec<TypeLabel> {
+    if pairs.len() <= 1 {
+        return pairs;
+    }
+    pairs.sort();
+    pairs.dedup();
+    let snapshot = pairs.clone();
+    pairs.retain(|a| {
+        !snapshot
+            .iter()
+            .any(|b| a != b && a.0.is_dominated_by_or_eq(&b.0) && a.1.is_dominated_by(&b.1))
+    });
+    pairs
+}

@@ -1,21 +1,28 @@
 use std::{
     collections::HashMap,
+    convert::Infallible,
     io::{BufRead, BufReader},
 };
 
+use chrono::{DateTime, FixedOffset};
 use quick_xml::{events::BytesStart, Reader};
 use serde::{Deserialize, Serialize};
 
-use crate::core::event_data::{
-    object_centric::{
-        io::OCELIOError,
-        ocel_struct::{
-            OCELAttributeType, OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject,
-            OCELObjectAttribute, OCELRelationship, OCELType, OCELTypeAttribute, OCEL,
+use crate::core::{
+    event_data::{
+        object_centric::{
+            appendable::AppendableOCEL,
+            io::OCELIOError,
+            ocel_struct::{
+                OCELAttributeType, OCELAttributeValue, OCELEventAttribute, OCELObjectAttribute,
+                OCELRelationship, OCELType, OCELTypeAttribute, OCEL,
+            },
         },
+        timestamp_utils::parse_timestamp,
     },
-    timestamp_utils::parse_timestamp,
+    io::read_xml_text_unescaped,
 };
+
 ///
 /// Options for OCEL Import
 ///
@@ -59,19 +66,77 @@ enum Mode {
     None,
 }
 
-fn read_to_string(x: &mut &[u8]) -> String {
-    if let Ok(x_str) = std::str::from_utf8(x) {
-        if let Ok(escaped) = quick_xml::escape::unescape(x_str) {
-            return escaped.to_string();
-        }
-        return x_str.to_string();
+impl From<Infallible> for OCELIOError {
+    fn from(x: Infallible) -> Self {
+        match x {}
     }
-    String::from_utf8_lossy(x).to_string()
+}
+
+struct PartialEvent {
+    id: String,
+    event_type: String,
+    time: DateTime<FixedOffset>,
+    attributes: Vec<OCELEventAttribute>,
+    relationships: Vec<OCELRelationship>,
+}
+
+struct PartialObject {
+    id: String,
+    object_type: String,
+    attributes: Vec<OCELObjectAttribute>,
+    relationships: Vec<OCELRelationship>,
+}
+
+/// Parse an `<attribute name=".." time="..">` tag and append a Null-valued attribute
+/// to `current_object`. Skips on time parse failure (with optional warning).
+fn append_object_attr_decl(
+    t: &BytesStart<'_>,
+    current_object: &mut Option<PartialObject>,
+    options: &OCELImportOptions,
+) -> Result<(), OCELIOError> {
+    let name = get_attribute_value(t, "name")?;
+    let time_str = get_attribute_value(t, "time")?;
+    match parse_timestamp(&time_str, options.date_format.as_deref(), options.verbose) {
+        Ok(time) => {
+            current_object
+                .as_mut()
+                .unwrap()
+                .attributes
+                .push(OCELObjectAttribute {
+                    name,
+                    value: OCELAttributeValue::Null,
+                    time,
+                });
+        }
+        Err(e) => {
+            if options.verbose {
+                eprintln!("Failed to parse time value of attribute: {e}. Will skip this attribute completely for now.");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Parse an `<attribute name="..">` tag and append a Null-valued attribute to `current_event`.
+fn append_event_attr_decl(
+    t: &BytesStart<'_>,
+    current_event: &mut Option<PartialEvent>,
+) -> Result<(), OCELIOError> {
+    let name = get_attribute_value(t, "name")?;
+    current_event
+        .as_mut()
+        .unwrap()
+        .attributes
+        .push(OCELEventAttribute {
+            name,
+            value: OCELAttributeValue::Null,
+        });
+    Ok(())
 }
 
 fn get_attribute_value(t: &BytesStart<'_>, key: &str) -> Result<String, quick_xml::Error> {
     match t.try_get_attribute(key)? {
-        Some(attr) => Ok(read_to_string(&mut attr.value.as_ref())),
+        Some(attr) => Ok(read_xml_text_unescaped(&mut attr.value.as_ref())),
         None => Err(quick_xml::Error::Io(std::sync::Arc::new(
             std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -128,6 +193,294 @@ fn parse_attribute_value(
 }
 
 ///
+/// Import an OCEL XML stream into an [`AppendableOCEL`]
+///
+/// Type declarations, events and objects are appended to `ocel` as they are
+/// parsed. The caller is responsible for invoking [`AppendableOCEL::finalize`]
+/// afterwards if the implementation requires it.
+///
+pub fn import_ocel_xml_into<R, A>(
+    reader: &mut Reader<R>,
+    ocel: &mut A,
+    options: OCELImportOptions,
+) -> Result<(), OCELIOError>
+where
+    R: BufRead,
+    A: AppendableOCEL,
+    A::Error: Into<OCELIOError>,
+{
+    reader.config_mut().trim_text(true);
+    let mut buf: Vec<u8> = Vec::new();
+    let mut current_mode: Mode = Mode::None;
+
+    let mut current_ev_type: Option<OCELType> = None;
+    let mut current_ob_type: Option<OCELType> = None;
+    let mut current_event: Option<PartialEvent> = None;
+    let mut current_object: Option<PartialObject> = None;
+
+    let mut object_attribute_types: HashMap<(String, String), OCELAttributeType> = HashMap::new();
+    let mut event_attribute_types: HashMap<(String, String), OCELAttributeType> = HashMap::new();
+    let mut has_object_or_event_types_decl = false;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(r) => {
+                match r {
+                    quick_xml::events::Event::Start(t) => match current_mode {
+                        Mode::None if t.name().as_ref() == b"log" => {
+                            current_mode = Mode::Log;
+                        }
+                        Mode::Log => match t.name().as_ref() {
+                            b"object-types" => {
+                                current_mode = Mode::ObjectTypes;
+                                has_object_or_event_types_decl = true;
+                            }
+                            b"event-types" => {
+                                current_mode = Mode::EventTypes;
+                                has_object_or_event_types_decl = true;
+                            }
+                            b"objects" => current_mode = Mode::Objects,
+                            b"events" => current_mode = Mode::Events,
+                            _ => {}
+                        },
+                        Mode::ObjectTypes if t.name().as_ref() == b"object-type" => {
+                            let name = get_attribute_value(&t, "name")?;
+                            current_ob_type = Some(OCELType {
+                                name,
+                                attributes: Vec::new(),
+                            });
+                            current_mode = Mode::ObjectType;
+                        }
+                        Mode::ObjectType if t.name().as_ref() == b"attributes" => {
+                            current_mode = Mode::ObjectTypeAttributes;
+                        }
+                        Mode::EventType if t.name().as_ref() == b"attributes" => {
+                            current_mode = Mode::EventTypeAttributes;
+                        }
+                        Mode::EventTypes if t.name().as_ref() == b"event-type" => {
+                            let name = get_attribute_value(&t, "name")?;
+                            current_ev_type = Some(OCELType {
+                                name,
+                                attributes: Vec::new(),
+                            });
+                            current_mode = Mode::EventType;
+                        }
+                        Mode::Objects if t.name().as_ref() == b"object" => {
+                            let id = get_attribute_value(&t, "id")?;
+                            let object_type = get_attribute_value(&t, "type")?;
+                            current_object = Some(PartialObject {
+                                id,
+                                object_type,
+                                attributes: Vec::new(),
+                                relationships: Vec::new(),
+                            });
+                            current_mode = Mode::Object;
+                        }
+                        Mode::Object => match t.name().as_ref() {
+                            b"attributes" | b"objects" => {}
+                            b"attribute" => {
+                                append_object_attr_decl(&t, &mut current_object, &options)?;
+                            }
+                            _ => {}
+                        },
+                        Mode::Events if t.name().as_ref() == b"event" => {
+                            let id = get_attribute_value(&t, "id")?;
+                            let event_type = get_attribute_value(&t, "type")?;
+                            let time_str = get_attribute_value(&t, "time")?;
+                            let time = parse_timestamp(
+                                &time_str,
+                                options.date_format.as_deref(),
+                                options.verbose,
+                            )
+                            .map_err(|e| {
+                                OCELIOError::Xml(quick_xml::Error::Io(std::sync::Arc::new(
+                                    std::io::Error::new(
+                                        std::io::ErrorKind::InvalidData,
+                                        format!("Invalid date: {}", e),
+                                    ),
+                                )))
+                            })?;
+                            current_event = Some(PartialEvent {
+                                id,
+                                event_type,
+                                time,
+                                attributes: Vec::new(),
+                                relationships: Vec::new(),
+                            });
+                            current_mode = Mode::Event;
+                        }
+                        Mode::Event => match t.name().as_ref() {
+                            b"attributes" | b"objects" => {}
+                            b"attribute" => {
+                                append_event_attr_decl(&t, &mut current_event)?;
+                            }
+                            _ => {}
+                        },
+                        _ => {}
+                    },
+                    quick_xml::events::Event::End(t) => match current_mode {
+                        Mode::ObjectTypeAttributes if t.name().as_ref() == b"attributes" => {
+                            current_mode = Mode::ObjectType;
+                        }
+                        Mode::ObjectType if t.name().as_ref() == b"object-type" => {
+                            if let Some(ot) = current_ob_type.take() {
+                                ocel.declare_object_type(ot).map_err(Into::into)?;
+                            }
+                            current_mode = Mode::ObjectTypes;
+                        }
+                        Mode::ObjectTypes if t.name().as_ref() == b"object-types" => {
+                            current_mode = Mode::Log;
+                        }
+                        Mode::EventTypes if t.name().as_ref() == b"event-types" => {
+                            current_mode = Mode::Log;
+                        }
+                        Mode::EventType if t.name().as_ref() == b"event-type" => {
+                            if let Some(et) = current_ev_type.take() {
+                                ocel.declare_event_type(et).map_err(Into::into)?;
+                            }
+                            current_mode = Mode::EventTypes;
+                        }
+                        Mode::EventTypeAttributes if t.name().as_ref() == b"attributes" => {
+                            current_mode = Mode::EventType;
+                        }
+                        Mode::Log if t.name().as_ref() == b"log" => {
+                            current_mode = Mode::None;
+                        }
+                        Mode::Objects if t.name().as_ref() == b"objects" => {
+                            current_mode = Mode::Log;
+                        }
+                        Mode::Events if t.name().as_ref() == b"events" => {
+                            current_mode = Mode::Log;
+                        }
+                        Mode::Object if t.name().as_ref() == b"object" => {
+                            if let Some(o) = current_object.take() {
+                                ocel.append_object(
+                                    o.id,
+                                    &o.object_type,
+                                    o.attributes,
+                                    o.relationships,
+                                )
+                                .map_err(Into::into)?;
+                            }
+                            current_mode = Mode::Objects;
+                        }
+                        Mode::Event if t.name().as_ref() == b"event" => {
+                            if let Some(e) = current_event.take() {
+                                ocel.append_event(
+                                    e.id,
+                                    &e.event_type,
+                                    e.time,
+                                    e.attributes,
+                                    e.relationships,
+                                )
+                                .map_err(Into::into)?;
+                            }
+                            current_mode = Mode::Events;
+                        }
+                        _ => {}
+                    },
+                    quick_xml::events::Event::Empty(t) => match current_mode {
+                        Mode::ObjectTypeAttributes if t.name().as_ref() == b"attribute" => {
+                            let name = get_attribute_value(&t, "name")?;
+                            let value_type = get_attribute_value(&t, "type")?;
+                            let ot = current_ob_type.as_mut().unwrap();
+                            object_attribute_types.insert(
+                                (ot.name.clone(), name.clone()),
+                                OCELAttributeType::from_type_str(&value_type),
+                            );
+                            ot.attributes.push(OCELTypeAttribute { name, value_type });
+                        }
+                        Mode::Object => match t.name().as_ref() {
+                            b"relationship" | b"relobj" => {
+                                let object_id = get_attribute_value(&t, "object-id")?;
+                                let qualifier = get_attribute_value(&t, "qualifier")?;
+                                current_object.as_mut().unwrap().relationships.push(
+                                    OCELRelationship {
+                                        object_id,
+                                        qualifier,
+                                    },
+                                );
+                            }
+                            b"attributes" | b"objects" => {}
+                            b"attribute" => {
+                                append_object_attr_decl(&t, &mut current_object, &options)?;
+                            }
+                            _ => {}
+                        },
+                        Mode::Event => match t.name().as_ref() {
+                            b"attributes" | b"objects" => {}
+                            b"relationship" | b"object" | b"relobj" => {
+                                let object_id = get_attribute_value(&t, "object-id")?;
+                                let qualifier = get_attribute_value(&t, "qualifier")?;
+                                current_event.as_mut().unwrap().relationships.push(
+                                    OCELRelationship {
+                                        object_id,
+                                        qualifier,
+                                    },
+                                );
+                            }
+                            b"attribute" => {
+                                append_event_attr_decl(&t, &mut current_event)?;
+                            }
+                            _ => {}
+                        },
+                        Mode::ObjectType | Mode::EventType => {
+                            // Empty <attributes/> tag, no-op
+                        }
+                        Mode::EventTypeAttributes if t.name().as_ref() == b"attribute" => {
+                            let name = get_attribute_value(&t, "name")?;
+                            let value_type = get_attribute_value(&t, "type")?;
+                            let et = current_ev_type.as_mut().unwrap();
+                            event_attribute_types.insert(
+                                (et.name.clone(), name.clone()),
+                                OCELAttributeType::from_type_str(&value_type),
+                            );
+                            et.attributes.push(OCELTypeAttribute { name, value_type });
+                        }
+                        _ => {}
+                    },
+                    quick_xml::events::Event::Text(t) => match current_mode {
+                        Mode::Object => {
+                            let str_val = read_xml_text_unescaped(&mut t.as_ref());
+                            let o = current_object.as_mut().unwrap();
+                            let attr = o.attributes.last_mut().unwrap();
+                            attr.value = parse_attribute_value(
+                                object_attribute_types
+                                    .get(&(o.object_type.clone(), attr.name.clone()))
+                                    .unwrap_or(&OCELAttributeType::String),
+                                str_val,
+                                &options,
+                            );
+                        }
+                        Mode::Event => {
+                            let str_val = read_xml_text_unescaped(&mut t.as_ref());
+                            let e = current_event.as_mut().unwrap();
+                            let attr = e.attributes.last_mut().unwrap();
+                            attr.value = parse_attribute_value(
+                                event_attribute_types
+                                    .get(&(e.event_type.clone(), attr.name.clone()))
+                                    .unwrap_or(&OCELAttributeType::String),
+                                str_val,
+                                &options,
+                            );
+                        }
+                        _ => {}
+                    },
+                    quick_xml::events::Event::Eof => break,
+                    _ => {}
+                }
+            }
+            Err(err) => return Err(err.into()),
+        }
+        buf.clear();
+    }
+    if !has_object_or_event_types_decl {
+        return Err(OCELIOError::Other("No object or event types".to_string()));
+    }
+    Ok(())
+}
+
+///
 /// Import an [`OCEL`] XML file from the given reader
 ///
 pub fn import_ocel_xml<T>(
@@ -137,447 +490,13 @@ pub fn import_ocel_xml<T>(
 where
     T: BufRead,
 {
-    reader.config_mut().trim_text(true);
-    let mut buf: Vec<u8> = Vec::new();
-
-    let mut current_mode: Mode = Mode::None;
-
     let mut ocel = OCEL {
         event_types: Vec::new(),
         object_types: Vec::new(),
         events: Vec::new(),
         objects: Vec::new(),
     };
-    // Object Type, Attribute Name => Attribute Type
-    let mut object_attribute_types: HashMap<(String, String), OCELAttributeType> = HashMap::new();
-    // Event Type, Attribute Name => Attribute Type
-    let mut event_attribute_types: HashMap<(String, String), OCELAttributeType> = HashMap::new();
-    let mut has_object_or_event_types_decl = false;
-    loop {
-        match reader.read_event_into(&mut buf) {
-            Ok(r) => {
-                match r {
-                    quick_xml::events::Event::Start(t) => match current_mode {
-                        Mode::None => match t.name().as_ref() {
-                            // Start log parsing
-                            b"log" => current_mode = Mode::Log,
-                            _ => {} // mut x => print_to_string(&mut x, current_mode, "EventStart"),
-                        },
-                        Mode::Log => match t.name().as_ref() {
-                            b"object-types" => {
-                                current_mode = Mode::ObjectTypes;
-                                has_object_or_event_types_decl = true
-                            }
-                            b"event-types" => {
-                                current_mode = Mode::EventTypes;
-                                has_object_or_event_types_decl = true
-                            }
-                            b"objects" => current_mode = Mode::Objects,
-                            b"events" => current_mode = Mode::Events,
-                            _ => {} // mut x => print_to_string(&mut x, current_mode, "EventStart"),
-                        },
-                        Mode::ObjectTypes => match t.name().as_ref() {
-                            b"object-type" => {
-                                let name = get_attribute_value(&t, "name")?;
-                                ocel.object_types.push(OCELType {
-                                    name,
-                                    attributes: Vec::new(),
-                                });
-                                current_mode = Mode::ObjectType
-                            }
-                            _ => {} // mut x => print_to_string(&mut x, current_mode, "EventStart"),
-                        },
-                        Mode::ObjectType => match t.name().as_ref() {
-                            b"attributes" => current_mode = Mode::ObjectTypeAttributes,
-                            _ => {}
-                        },
-                        Mode::EventType => match t.name().as_ref() {
-                            b"attributes" => current_mode = Mode::EventTypeAttributes,
-                            // mut x => print_to_string(&mut x, current_mode, "EventStart"),
-                            _ => {}
-                        },
-                        Mode::EventTypes => match t.name().as_ref() {
-                            b"event-type" => {
-                                let name = get_attribute_value(&t, "name")?;
-                                ocel.event_types.push(OCELType {
-                                    name,
-                                    attributes: Vec::new(),
-                                });
-                                current_mode = Mode::EventType
-                            }
-                            // mut x => print_to_string(&mut x, current_mode, "EventStart"),
-                            _ => {}
-                        },
-                        Mode::Objects => match t.name().as_ref() {
-                            b"object" => {
-                                let id = get_attribute_value(&t, "id")?;
-                                let object_type = get_attribute_value(&t, "type")?;
-                                ocel.objects.push(OCELObject {
-                                    id,
-                                    object_type,
-                                    attributes: Vec::new(),
-                                    relationships: Vec::new(),
-                                });
-                                current_mode = Mode::Object
-                            }
-                            // mut x => print_to_string(&mut x, current_mode, "EventStart"),
-                            _ => {}
-                        },
-                        Mode::Object => match t.name().as_ref() {
-                            b"attributes" => {
-                                // Noop
-                            }
-                            b"objects" => {
-                                // Begin O2O; Noop
-                            }
-                            b"attribute" => {
-                                let name = get_attribute_value(&t, "name")?;
-                                let time_str = get_attribute_value(&t, "time")?;
-                                let time = parse_timestamp(
-                                    &time_str,
-                                    options.date_format.as_deref(),
-                                    options.verbose,
-                                );
-                                match time {
-                                    Ok(time_val) => {
-                                        ocel.objects.last_mut().unwrap().attributes.push(
-                                            OCELObjectAttribute {
-                                                name,
-                                                value: OCELAttributeValue::Null,
-                                                time: time_val,
-                                            },
-                                        )
-                                    }
-                                    Err(e) => {
-                                        if options.verbose {
-                                            eprintln!("Failed to parse time value of attribute: {e}. Will skip this attribute completely for now.");
-                                        }
-                                    }
-                                }
-                            }
-                            // mut x => print_to_string(&mut x, current_mode, "EventStart"),
-                            _ => {}
-                        },
-                        Mode::Events => match t.name().as_ref() {
-                            b"event" => {
-                                let id = get_attribute_value(&t, "id")?;
-                                let event_type = get_attribute_value(&t, "type")?;
-                                let time = get_attribute_value(&t, "time")?;
-                                let time_val = match parse_timestamp(
-                                    &time,
-                                    options.date_format.as_deref(),
-                                    options.verbose,
-                                ) {
-                                    Ok(t) => t,
-                                    Err(e) => {
-                                        return Err(OCELIOError::Xml(quick_xml::Error::Io(
-                                            std::sync::Arc::new(std::io::Error::new(
-                                                std::io::ErrorKind::InvalidData,
-                                                format!("Invalid date: {}", e),
-                                            )),
-                                        )));
-                                    }
-                                };
-                                ocel.events.push(OCELEvent {
-                                    id,
-                                    event_type,
-                                    attributes: Vec::new(),
-                                    relationships: Vec::new(),
-                                    time: time_val,
-                                });
-                                current_mode = Mode::Event
-                            }
-                            // mut x => print_to_string(&mut x, current_mode, "EventStart"),
-                            _ => {}
-                        },
-                        Mode::Event => match t.name().as_ref() {
-                            b"attributes" => {
-                                // Noop
-                            }
-                            b"attribute" => {
-                                let name = get_attribute_value(&t, "name")?;
-                                ocel.events.last_mut().unwrap().attributes.push(
-                                    OCELEventAttribute {
-                                        name,
-                                        value: OCELAttributeValue::Null,
-                                    },
-                                )
-                            }
-                            b"objects" => {
-                                // Event-to-Object relations start now
-                            }
-                            _ => {}
-                        },
-                        _ => {}
-                    },
-                    quick_xml::events::Event::End(t) => match current_mode {
-                        Mode::ObjectTypeAttributes => match t.name().as_ref() {
-                            b"attributes" => current_mode = Mode::ObjectType,
-                            _ => {}
-                        },
-                        Mode::ObjectType => match t.name().as_ref() {
-                            b"object-type" => current_mode = Mode::ObjectTypes,
-                            _ => {}
-                        },
-                        Mode::ObjectTypes => match t.name().as_ref() {
-                            b"object-types" => {
-                                // Finished parsing Object Types
-                                current_mode = Mode::Log
-                            }
-                            _ => {}
-                        },
-                        Mode::EventTypes => match t.name().as_ref() {
-                            b"event-types" => {
-                                // Finished parsing Object Types
-                                current_mode = Mode::Log
-                            }
-                            _ => {}
-                        },
-                        Mode::EventType => match t.name().as_ref() {
-                            b"event-type" => current_mode = Mode::EventTypes,
-                            _ => {}
-                        },
-                        Mode::EventTypeAttributes => match t.name().as_ref() {
-                            b"attributes" => current_mode = Mode::EventType,
-                            _ => {}
-                        },
-                        Mode::Log => match t.name().as_ref() {
-                            b"log" => {
-                                // Finished parsing Object Types
-                                current_mode = Mode::None
-                            }
-                            _ => {}
-                        },
-                        Mode::Objects => match t.name().as_ref() {
-                            b"objects" => current_mode = Mode::Log,
-                            _ => {}
-                        },
-                        Mode::Events => match t.name().as_ref() {
-                            b"events" => current_mode = Mode::Log,
-                            _ => {}
-                        },
-                        Mode::Object => match t.name().as_ref() {
-                            b"object" => current_mode = Mode::Objects,
-                            b"attribute" => {}
-                            b"attributes" => {}
-                            b"objects" => {
-                                // End O2O
-                            }
-                            _ => {}
-                        },
-                        Mode::Event => match t.name().as_ref() {
-                            b"event" => current_mode = Mode::Events,
-                            b"objects" => {
-                                // End of E20 Relations
-                                // Noop
-                            }
-                            b"attribute" => {}
-                            b"attributes" => {}
-                            _ => {}
-                        },
-                        _ => {}
-                    },
-                    quick_xml::events::Event::Empty(t) => match current_mode {
-                        Mode::ObjectTypeAttributes => match t.name().as_ref() {
-                            b"attribute" => {
-                                let name = get_attribute_value(&t, "name")?;
-                                let value_type = get_attribute_value(&t, "type")?;
-                                let object_type = &ocel.object_types.last().unwrap().name;
-                                object_attribute_types.insert(
-                                    (object_type.clone(), name.clone()),
-                                    OCELAttributeType::from_type_str(&value_type),
-                                );
-                                ocel.object_types
-                                    .last_mut()
-                                    .unwrap()
-                                    .attributes
-                                    .push(OCELTypeAttribute { name, value_type })
-                            }
-                            // mut x => print_to_string(&mut x, current_mode, "EventEmpty"),
-                            _ => {}
-                        },
-                        Mode::Object => match t.name().as_ref() {
-                            b"relationship" => {
-                                let object_id = get_attribute_value(&t, "object-id")?;
-                                let qualifier = get_attribute_value(&t, "qualifier")?;
-                                let new_rel: OCELRelationship = OCELRelationship {
-                                    object_id,
-                                    qualifier,
-                                };
-                                ocel.objects.last_mut().unwrap().relationships.push(new_rel);
-                            }
-                            // P2P log uses relobj instead of relationship?
-                            // TODO: Remove once fixed
-                            b"relobj" => {
-                                let object_id = get_attribute_value(&t, "object-id")?;
-                                let qualifier = get_attribute_value(&t, "qualifier")?;
-                                let new_rel: OCELRelationship = OCELRelationship {
-                                    object_id,
-                                    qualifier,
-                                };
-                                ocel.objects.last_mut().unwrap().relationships.push(new_rel);
-                            }
-                            b"objects" => {
-                                // No O2O, that's fine!
-                            }
-                            b"attributes" => {
-                                // No attributes, that's fine!
-                            }
-
-                            // Empty attributes => null value (?)
-                            b"attribute" => {
-                                let name = get_attribute_value(&t, "name")?;
-                                let time_str = get_attribute_value(&t, "time")?;
-                                let time = parse_timestamp(
-                                    &time_str,
-                                    options.date_format.as_deref(),
-                                    options.verbose,
-                                );
-                                match time {
-                                    Ok(time_val) => {
-                                        ocel.objects.last_mut().unwrap().attributes.push(
-                                            OCELObjectAttribute {
-                                                name,
-                                                value: OCELAttributeValue::Null,
-                                                time: time_val,
-                                            },
-                                        )
-                                    }
-                                    Err(e) => {
-                                        if options.verbose {
-                                            eprintln!("Failed to parse time value of attribute: {e}. Will skip this attribute completely for now.");
-                                        }
-                                    }
-                                }
-                            }
-                            _ => {}
-                        },
-                        Mode::Event => match t.name().as_ref() {
-                            b"attributes" => {
-                                // Noop
-                            }
-                            b"objects" => {
-                                // If they are empty => Noop
-                            }
-                            b"relationship" => {
-                                let object_id = get_attribute_value(&t, "object-id")?;
-                                let qualifier = get_attribute_value(&t, "qualifier")?;
-                                let new_rel: OCELRelationship = OCELRelationship {
-                                    object_id,
-                                    qualifier,
-                                };
-                                ocel.events.last_mut().unwrap().relationships.push(new_rel);
-                            }
-                            // Angular log uses object instead?
-                            // TODO: Remove once example logs are updated
-                            // Should use relationship instead
-                            b"object" => {
-                                let object_id = get_attribute_value(&t, "object-id")?;
-                                let qualifier = get_attribute_value(&t, "qualifier")?;
-                                let new_rel: OCELRelationship = OCELRelationship {
-                                    object_id,
-                                    qualifier,
-                                };
-                                ocel.events.last_mut().unwrap().relationships.push(new_rel);
-                            }
-
-                            // P2P log uses relobj instead of relationship?
-                            // TODO: Remove once fixed
-                            b"relobj" => {
-                                let object_id = get_attribute_value(&t, "object-id")?;
-                                let qualifier = get_attribute_value(&t, "qualifier")?;
-                                let new_rel: OCELRelationship = OCELRelationship {
-                                    object_id,
-                                    qualifier,
-                                };
-                                ocel.events.last_mut().unwrap().relationships.push(new_rel);
-                            }
-                            // Empty attribute => Null value (?)
-                            b"attribute" => {
-                                let name = get_attribute_value(&t, "name")?;
-                                ocel.events.last_mut().unwrap().attributes.push(
-                                    OCELEventAttribute {
-                                        name,
-                                        value: OCELAttributeValue::Null,
-                                    },
-                                )
-                            }
-                            _ => {}
-                        },
-                        Mode::ObjectType => match t.name().as_ref() {
-                            b"attributes" => {
-                                // No attributes, that's fine!
-                            }
-                            _ => {}
-                        },
-                        Mode::EventType => match t.name().as_ref() {
-                            b"attributes" => {
-                                // No attributes, that's fine!
-                            }
-                            _ => {}
-                        },
-                        Mode::EventTypeAttributes => match t.name().as_ref() {
-                            b"attribute" => {
-                                let name = get_attribute_value(&t, "name")?;
-                                let value_type = get_attribute_value(&t, "type")?;
-                                let event_type = &ocel.event_types.last().unwrap().name;
-                                event_attribute_types.insert(
-                                    (event_type.clone(), name.clone()),
-                                    OCELAttributeType::from_type_str(&value_type),
-                                );
-                                ocel.event_types
-                                    .last_mut()
-                                    .unwrap()
-                                    .attributes
-                                    .push(OCELTypeAttribute { name, value_type })
-                            }
-                            _ => {}
-                        },
-                        _ => {}
-                    },
-                    quick_xml::events::Event::Text(t) => match current_mode {
-                        Mode::Object => {
-                            let str_val = read_to_string(&mut t.as_ref());
-                            let o = ocel.objects.last_mut().unwrap();
-                            let attribute = o.attributes.last_mut().unwrap();
-                            attribute.value = parse_attribute_value(
-                                object_attribute_types
-                                    .get(&(o.object_type.clone(), attribute.name.clone()))
-                                    .unwrap_or(&OCELAttributeType::String),
-                                str_val,
-                                &options,
-                            );
-                            // parse_attribute_value
-                        }
-                        Mode::Event => {
-                            let str_val = read_to_string(&mut t.as_ref());
-                            let e = ocel.events.last_mut().unwrap();
-                            let attribute = e.attributes.last_mut().unwrap();
-                            attribute.value = parse_attribute_value(
-                                event_attribute_types
-                                    .get(&(e.event_type.clone(), attribute.name.clone()))
-                                    .unwrap_or(&OCELAttributeType::String),
-                                str_val,
-                                &options,
-                            );
-                        }
-                        _ => {
-                            // Remove to not flood output for extended OCELs
-                            // if options.verbose {
-                            //     println!("Got text in unexpected mode {current_mode:?}");
-                            // }
-                        }
-                    },
-                    quick_xml::events::Event::Eof => break,
-                    _ => {}
-                }
-            }
-            Err(err) => return Err(err.into()),
-        }
-    }
-    if !has_object_or_event_types_decl {
-        return Err(OCELIOError::Other("No object or event types".to_string()));
-    }
+    import_ocel_xml_into(reader, &mut ocel, options)?;
     Ok(ocel)
 }
 

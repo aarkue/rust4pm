@@ -107,6 +107,18 @@ impl From<duckdb::Error> for OCELIOError {
     }
 }
 
+#[cfg(any(feature = "ocel-duckdb", feature = "ocel-sqlite"))]
+impl From<DatabaseError> for OCELIOError {
+    fn from(e: DatabaseError) -> Self {
+        match e {
+            #[cfg(feature = "ocel-sqlite")]
+            DatabaseError::SQLITE(e) => OCELIOError::Sqlite(e),
+            #[cfg(feature = "ocel-duckdb")]
+            DatabaseError::DUCKDB(e) => OCELIOError::DuckDB(e),
+        }
+    }
+}
+
 impl Importable for OCEL {
     type Error = OCELIOError;
     type ImportOptions = ();
@@ -137,7 +149,10 @@ impl Importable for OCEL {
         options: Self::ImportOptions,
     ) -> Result<Self, Self::Error> {
         if let Some(inner) = format.strip_suffix(".gz") {
-            let gz: Box<dyn Read> = Box::new(flate2::read::GzDecoder::new(reader));
+            // Buffer the compressed bytes; `GzDecoder` reads from its inner in chunks.
+            let gz: Box<dyn Read> = Box::new(flate2::read::GzDecoder::new(
+                std::io::BufReader::new(reader),
+            ));
             return Self::import_from_reader_with_options(gz, inner, options);
         }
         if format.ends_with("json") || format.ends_with("jsonocel") {
@@ -272,12 +287,7 @@ impl Exportable for OCEL {
             return crate::core::event_data::object_centric::ocel_sql::export_ocel_sqlite_to_path(
                 self, path,
             )
-            .map_err(|e| match e {
-                #[cfg(feature = "ocel-sqlite")]
-                DatabaseError::SQLITE(e) => OCELIOError::Sqlite(e),
-                #[cfg(feature = "ocel-duckdb")]
-                DatabaseError::DUCKDB(e) => OCELIOError::DuckDB(e),
-            });
+            .map_err(OCELIOError::from);
             #[cfg(not(feature = "ocel-sqlite"))]
             return Err(OCELIOError::UnsupportedFormat(
                 "SQLite support not enabled".to_string(),
@@ -288,12 +298,7 @@ impl Exportable for OCEL {
                 crate::core::event_data::object_centric::ocel_sql::export_ocel_duckdb_to_path(
                     self, path,
                 )
-                .map_err(|e| match e {
-                    #[cfg(feature = "ocel-sqlite")]
-                    DatabaseError::SQLITE(e) => OCELIOError::Sqlite(e),
-                    #[cfg(feature = "ocel-duckdb")]
-                    DatabaseError::DUCKDB(e) => OCELIOError::DuckDB(e),
-                })
+                .map_err(OCELIOError::from)
             }
             #[cfg(not(feature = "ocel-duckdb"))]
             return Err(OCELIOError::UnsupportedFormat(
@@ -338,12 +343,7 @@ impl Exportable for OCEL {
         {
             #[cfg(feature = "ocel-sqlite")]
             {
-                let b = export_ocel_sqlite_to_vec(self).map_err(|e| match e {
-                    #[cfg(feature = "ocel-sqlite")]
-                    DatabaseError::SQLITE(e) => OCELIOError::Sqlite(e),
-                    #[cfg(feature = "ocel-duckdb")]
-                    DatabaseError::DUCKDB(e) => OCELIOError::DuckDB(e),
-                })?;
+                let b = export_ocel_sqlite_to_vec(self).map_err(OCELIOError::from)?;
                 writer.write_all(&b)?;
                 Ok(())
             }

@@ -45,6 +45,7 @@ pub struct EventLogActivityProjection {
     /// Traces in the event log projection
     ///
     /// Each pair represents one activity projection and the number of occurences in the log
+    /// Sorted by frequency (descending)
     pub traces: Vec<(Vec<usize>, u64)>,
 }
 
@@ -80,10 +81,13 @@ impl<'a> From<&mut XESParsingTraceStream<'a>> for EventLogActivityProjection {
 
             *traces.entry(trace_acts).or_insert(0) += 1;
         }
+        let mut traces: Vec<_> = traces.into_iter().collect();
+        // Sort by frequency (descending) once
+        traces.sort_by_key(|(_, freq)| std::cmp::Reverse(*freq));
         Self {
             activities,
             act_to_index,
-            traces: traces.into_iter().collect(),
+            traces,
         }
     }
 }
@@ -142,17 +146,21 @@ impl From<&EventLog> for EventLogActivityProjection {
             *traces_set.entry(trace).or_insert(0) += 1;
         });
 
+        let mut traces: Vec<_> = traces_set.into_iter().collect();
+        traces.sort_by_key(|(_, freq)| std::cmp::Reverse(*freq));
         EventLogActivityProjection {
             activities,
             act_to_index,
-            traces: traces_set.into_iter().collect(),
+            traces,
         }
     }
 }
 
 impl EventLogActivityProjection {
-    /// Convenience function to get sorted activity name lists back from a list of `acts`
-    pub fn acts_to_names(&self, acts: &[usize]) -> Vec<String> {
+    /// Reconstructs sorted activity name from a list of indices
+    ///
+    /// Uses the internal index -> activity mapping.
+    pub fn acts_to_names_sorted(&self, acts: &[usize]) -> Vec<String> {
         let mut ret: Vec<String> = acts
             .iter()
             .map(|act| self.activities[*act].clone())
@@ -160,6 +168,95 @@ impl EventLogActivityProjection {
         ret.sort();
         ret
     }
+
+    /// Convert activity indices to names, preserving the original order
+    ///
+    /// Uses the internal index -> activity mapping
+    pub fn reconstruct_activities(&self, acts: &[usize]) -> Vec<String> {
+        acts.iter()
+            .map(|act| self.activities[*act].clone())
+            .collect()
+    }
+}
+
+/// A process variant (activity sequence with its frequency)
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ProcessVariant {
+    /// The activity sequence of the variant as activity names
+    pub activities: Vec<String>,
+    /// Number of cases corresponding to this variant
+    pub count: u64,
+    /// Percentage of total cases corresponding to this variant
+    pub percentage: f64,
+}
+
+#[register_binding]
+/// Get the number of distinct trace variants in the projection
+pub fn get_num_variants(projection: &EventLogActivityProjection) -> usize {
+    projection.traces.len()
+}
+
+#[register_binding]
+/// Get the total number of cases in the projection
+pub fn get_num_cases(projection: &EventLogActivityProjection) -> u64 {
+    projection.traces.iter().map(|(_, freq)| freq).sum()
+}
+
+#[register_binding]
+/// Get the list of all activity names in the projection
+pub fn get_projection_activities(projection: &EventLogActivityProjection) -> Vec<String> {
+    projection.activities.clone()
+}
+
+/// Get the most frequent process variants as an iterator, sorted by frequency (descending)
+///
+/// Each variant includes the activity sequence as names, its count, and percentage of total cases.
+///
+/// Assumes `projection.traces` is sorted by descending frequency, as maintained by the provided
+/// constructors.
+pub fn get_top_variants_iter(
+    projection: &EventLogActivityProjection,
+) -> impl Iterator<Item = ProcessVariant> + use<'_> {
+    let total_cases: u64 = projection.traces.iter().map(|(_, freq)| freq).sum();
+    projection
+        .traces
+        .iter()
+        .map(move |(acts, freq)| ProcessVariant {
+            activities: projection.reconstruct_activities(acts),
+            count: *freq,
+            percentage: if total_cases > 0 {
+                (*freq as f64 / total_cases as f64) * 100.0
+            } else {
+                0.0
+            },
+        })
+}
+
+#[register_binding]
+/// Get all process variants, sorted by frequency (descending)
+///
+/// Each variant includes the activity sequence as names, its count, and percentage of total cases.
+///
+/// Assumes `projection.traces` is sorted by descending frequency, as maintained by the provided
+/// constructors.
+pub fn get_variants(projection: &EventLogActivityProjection) -> Vec<ProcessVariant> {
+    get_top_variants_iter(projection).collect()
+}
+
+#[register_binding]
+/// Get the `n` most frequent process variants, sorted by frequency (descending)
+///
+/// Each variant includes the activity sequence as names, its count, and percentage of total cases.
+/// To get all variants, pass `n` = [`get_num_variants`] or use the [`get_variants`] function.
+/// To get only the most frequent variant, pass `n` = 1.
+///
+/// Assumes `projection.traces` is sorted by descending frequency, as maintained by the provided
+/// constructors.
+pub fn get_top_n_variants(
+    projection: &EventLogActivityProjection,
+    n: usize,
+) -> Vec<ProcessVariant> {
+    get_top_variants_iter(projection).take(n).collect()
 }
 
 ///
@@ -370,5 +467,45 @@ impl Exportable for EventLogActivityProjection {
 
     fn known_export_formats() -> Vec<ExtensionWithMime> {
         vec![ExtensionWithMime::new("json", "application/json")]
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{test_utils::get_test_data_path, EventLog, Importable};
+
+    #[test]
+    fn test_variants_rtfm() {
+        let path = get_test_data_path()
+            .join("xes")
+            .join("Road_Traffic_Fine_Management_Process.xes.gz");
+        let log = EventLog::import_from_path(path).unwrap();
+        let num_cases = log.traces.len();
+        let projection = log_to_activity_projection(&log);
+        assert_eq!(get_num_cases(&projection), num_cases as u64);
+        let variants = get_variants(&projection);
+        assert_eq!(variants.len(), 231);
+        assert_eq!(
+            &get_top_n_variants(&projection, 2),
+            &[
+                ProcessVariant {
+                    activities: vec![
+                        "Create Fine".to_string(),
+                        "Send Fine".to_string(),
+                        "Insert Fine Notification".to_string(),
+                        "Add penalty".to_string(),
+                        "Send for Credit Collection".to_string(),
+                    ],
+                    count: 56_482,
+                    percentage: 56_482.0 / num_cases as f64 * 100.0,
+                },
+                ProcessVariant {
+                    activities: vec!["Create Fine".to_string(), "Payment".to_string(),],
+                    count: 46_371,
+                    percentage: 46_371.0 / num_cases as f64 * 100.0,
+                }
+            ]
+        )
     }
 }

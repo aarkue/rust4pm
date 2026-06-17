@@ -1,18 +1,19 @@
-use crate::core::event_data::object_centric::ocel_struct::OCEL;
+use crate::core::event_data::object_centric::readable::ReadableOCEL;
 
 use super::super::export::export_ocel_to_sql_con;
 use super::super::*;
 use rusqlite::Connection;
 
 ///
-/// Export an [`OCEL`] to an `SQLite` file at the specified path
+/// Export an OCEL to an `SQLite` file at the specified path
 ///
 /// Note: This function is only available if the `ocel-sqlite` feature is enabled.
 ///
-pub fn export_ocel_sqlite_to_path<P: AsRef<std::path::Path>>(
-    ocel: &OCEL,
-    path: P,
-) -> Result<(), DatabaseError> {
+pub fn export_ocel_sqlite_to_path<P, O>(ocel: &O, path: P) -> Result<(), DatabaseError>
+where
+    P: AsRef<std::path::Path>,
+    O: ReadableOCEL + ?Sized,
+{
     if path.as_ref().exists() {
         let _ = std::fs::remove_file(&path);
     }
@@ -21,10 +22,13 @@ pub fn export_ocel_sqlite_to_path<P: AsRef<std::path::Path>>(
 }
 
 ///
-/// Export an [`OCEL`] to an `SQLite` to a byte array
+/// Export an OCEL to a `SQLite` byte array
 ///
 /// Note: This function is only available if the `ocel-sqlite` feature is enabled.
-pub fn export_ocel_sqlite_to_vec(ocel: &OCEL) -> Result<Vec<u8>, DatabaseError> {
+pub fn export_ocel_sqlite_to_vec<O>(ocel: &O) -> Result<Vec<u8>, DatabaseError>
+where
+    O: ReadableOCEL + ?Sized,
+{
     let con = Connection::open_in_memory()?;
     export_ocel_to_sql_con(&con, ocel)?;
     let data = con.serialize(rusqlite::MAIN_DB)?;

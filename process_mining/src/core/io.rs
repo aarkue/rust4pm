@@ -24,6 +24,17 @@ pub fn infer_format_from_path(path: &Path) -> Option<String> {
         .map(|s| s.to_lowercase())
 }
 
+/// Decode an XML text node, unescaping entities and falling back to lossy UTF-8.
+pub(crate) fn read_xml_text_unescaped(x: &mut &[u8]) -> String {
+    if let Ok(s) = std::str::from_utf8(x) {
+        if let Ok(unescaped) = quick_xml::escape::unescape(s) {
+            return unescaped.into_owned();
+        }
+        return s.to_string();
+    }
+    String::from_utf8_lossy(x).to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// File Extension and MIME Type
 ///

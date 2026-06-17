@@ -1,6 +1,9 @@
 //! CSV Export for OCEL 2.0
 
-use crate::core::event_data::object_centric::ocel_struct::{OCELAttributeValue, OCELObject, OCEL};
+use crate::core::event_data::object_centric::{
+    ocel_struct::OCELAttributeValue,
+    readable::{OCELLookup, ReadableOCEL},
+};
 use chrono::{DateTime, FixedOffset};
 use std::{
     collections::{HashMap, HashSet},
@@ -58,14 +61,6 @@ impl From<csv::Error> for OCELCSVExportError {
     }
 }
 
-struct ExportRow<'a> {
-    timestamp: Option<&'a DateTime<FixedOffset>>,
-    id: &'a str,
-    activity: &'a str,
-    object_refs: HashMap<&'a str, Vec<ObjectRef<'a>>>,
-    event_attrs: HashMap<&'a str, String>,
-}
-
 struct ObjectRef<'a> {
     object_id: &'a str,
     qualifier: &'a str,
@@ -73,185 +68,197 @@ struct ObjectRef<'a> {
 }
 
 /// Export OCEL to CSV format
-pub fn export_ocel_csv<W: Write>(writer: W, ocel: &OCEL) -> Result<(), OCELCSVExportError> {
+pub fn export_ocel_csv<W, O>(writer: W, ocel: &O) -> Result<(), OCELCSVExportError>
+where
+    W: Write,
+    O: ReadableOCEL + ?Sized,
+{
     export_ocel_csv_with_options(writer, ocel, &OCELCSVExportOptions::default())
 }
 
 /// Export OCEL to CSV format with custom options
-pub fn export_ocel_csv_with_options<W: Write>(
+pub fn export_ocel_csv_with_options<W, O>(
     writer: W,
-    ocel: &OCEL,
+    ocel: &O,
     options: &OCELCSVExportOptions,
-) -> Result<(), OCELCSVExportError> {
+) -> Result<(), OCELCSVExportError>
+where
+    W: Write,
+    O: ReadableOCEL + ?Sized,
+{
     let mut csv_writer = csv::Writer::from_writer(writer);
-    let objects_by_id: HashMap<&str, &OCELObject> =
-        ocel.objects.iter().map(|o| (o.id.as_str(), o)).collect();
+    let lookup = ocel.lookup();
 
     let mut object_type_names: Vec<&str> = ocel
-        .object_types
+        .object_types()
         .iter()
         .map(|ot| ot.name.as_str())
         .collect();
     object_type_names.sort();
 
     let mut event_attr_names: Vec<&str> = ocel
-        .events
+        .event_types()
         .iter()
-        .flat_map(|e| e.attributes.iter().map(|a| a.name.as_str()))
+        .flat_map(|et| et.attributes.iter().map(|a| a.name.as_str()))
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
     event_attr_names.sort();
 
-    // Build header
     let mut headers: Vec<String> = vec!["id".into(), "activity".into(), "timestamp".into()];
     headers.extend(object_type_names.iter().map(|n| format!("ot:{n}")));
     headers.extend(event_attr_names.iter().map(|n| format!("ea:{n}")));
     csv_writer.write_record(&headers)?;
 
-    let mut rows: Vec<ExportRow<'_>> = Vec::new();
+    // (time, object_id) pairs covered by event rows, so the later object-attribute pass
+    // can skip rows that would duplicate an event row's value at the same timestamp.
+    let mut event_obj_times: HashSet<(DateTime<FixedOffset>, &str)> = HashSet::new();
 
-    // Event rows
-    for event in &ocel.events {
+    for event_cow in ocel.iter_events_sorted_by_time() {
+        let event = event_cow.as_ref();
         let mut object_refs: HashMap<&str, Vec<ObjectRef<'_>>> = HashMap::new();
         for rel in &event.relationships {
-            if let Some(obj) = objects_by_id.get(rel.object_id.as_str()) {
-                let matching_attrs: Vec<_> = obj
-                    .attributes
-                    .iter()
-                    .filter(|a| a.time == event.time)
+            let Some(obj_id) = lookup.get_id_borrow(&rel.object_id) else {
+                continue;
+            };
+            event_obj_times.insert((event.time, obj_id));
+            if let Some(obj_type) = lookup.object_type_of(obj_id) {
+                let obj_attrs: serde_json::Map<_, _> = lookup
+                    .object_attributes(obj_id)
+                    .filter(|(_, _, t)| *t == event.time)
+                    .map(|(name, value, _)| (name.to_string(), ocel_value_to_json(value)))
                     .collect();
-                let obj_attrs = if matching_attrs.is_empty() {
-                    None
-                } else {
-                    Some(
-                        matching_attrs
-                            .iter()
-                            .map(|a| (a.name.clone(), ocel_value_to_json(&a.value)))
-                            .collect::<serde_json::Map<_, _>>(),
-                    )
-                };
-                object_refs
-                    .entry(&obj.object_type)
-                    .or_default()
-                    .push(ObjectRef {
-                        object_id: &rel.object_id,
-                        qualifier: &rel.qualifier,
-                        attributes: obj_attrs,
-                    });
+                object_refs.entry(obj_type).or_default().push(ObjectRef {
+                    object_id: obj_id,
+                    qualifier: &rel.qualifier,
+                    attributes: (!obj_attrs.is_empty()).then_some(obj_attrs),
+                });
             }
         }
-        rows.push(ExportRow {
-            timestamp: Some(&event.time),
-            id: &event.id,
-            activity: &event.event_type,
-            object_refs,
-            event_attrs: event
-                .attributes
-                .iter()
-                .map(|a| (a.name.as_str(), a.value.to_string()))
-                .collect(),
-        });
+        let event_attrs: HashMap<&str, String> = event
+            .attributes
+            .iter()
+            .map(|a| (a.name.as_str(), a.value.to_string()))
+            .collect();
+        write_record(
+            &mut csv_writer,
+            &event.id,
+            &event.event_type,
+            Some(event.time),
+            &object_refs,
+            &event_attrs,
+            &object_type_names,
+            &event_attr_names,
+            options,
+        )?;
     }
 
-    // O2O relationship rows
     if options.include_o2o {
-        for obj in &ocel.objects {
-            if obj.relationships.is_empty() {
+        for obj_id in lookup.iter_object_ids() {
+            let mut object_refs: HashMap<&str, Vec<ObjectRef<'_>>> = HashMap::new();
+            let mut had_relationship = false;
+            for (target_id, qualifier) in lookup.object_relationships(obj_id) {
+                had_relationship = true;
+                if let Some(target_type) = lookup.object_type_of(target_id) {
+                    object_refs.entry(target_type).or_default().push(ObjectRef {
+                        object_id: target_id,
+                        qualifier,
+                        attributes: None,
+                    });
+                }
+            }
+            if !had_relationship {
                 continue;
             }
-            let mut object_refs: HashMap<&str, Vec<ObjectRef<'_>>> = HashMap::new();
-            for rel in &obj.relationships {
-                if let Some(target) = objects_by_id.get(rel.object_id.as_str()) {
-                    object_refs
-                        .entry(target.object_type.as_str())
-                        .or_default()
-                        .push(ObjectRef {
-                            object_id: &rel.object_id,
-                            qualifier: &rel.qualifier,
-                            attributes: None,
-                        });
-                }
-            }
-            rows.push(ExportRow {
-                timestamp: None,
-                id: &obj.id,
-                activity: "o2o",
-                object_refs,
-                event_attrs: HashMap::new(),
-            });
+            write_record(
+                &mut csv_writer,
+                obj_id,
+                "o2o",
+                None,
+                &object_refs,
+                &HashMap::new(),
+                &object_type_names,
+                &event_attr_names,
+                options,
+            )?;
         }
     }
 
-    // Object attribute change rows
     if options.include_object_attribute_changes {
-        for obj in &ocel.objects {
-            let mut attrs_by_time: HashMap<&DateTime<FixedOffset>, Vec<_>> = HashMap::new();
-            for attr in &obj.attributes {
-                attrs_by_time.entry(&attr.time).or_default().push(attr);
+        for obj_id in lookup.iter_object_ids() {
+            let Some(obj_type) = lookup.object_type_of(obj_id) else {
+                continue;
+            };
+            let mut attrs_by_time: HashMap<
+                DateTime<FixedOffset>,
+                Vec<(String, serde_json::Value)>,
+            > = HashMap::new();
+            for (name, value, time) in lookup.object_attributes(obj_id) {
+                attrs_by_time
+                    .entry(time)
+                    .or_default()
+                    .push((name.to_string(), ocel_value_to_json(value)));
             }
             for (time, attrs) in attrs_by_time {
-                let in_event = ocel.events.iter().any(|e| {
-                    &e.time == time && e.relationships.iter().any(|r| r.object_id == obj.id)
-                });
-                if in_event {
+                if event_obj_times.contains(&(time, obj_id)) {
                     continue;
                 }
-                let attr_map: serde_json::Map<_, _> = attrs
-                    .iter()
-                    .map(|a| (a.name.clone(), ocel_value_to_json(&a.value)))
-                    .collect();
+                let attr_map: serde_json::Map<_, _> = attrs.into_iter().collect();
                 let mut object_refs: HashMap<&str, Vec<ObjectRef<'_>>> = HashMap::new();
-                object_refs
-                    .entry(&obj.object_type)
-                    .or_default()
-                    .push(ObjectRef {
-                        object_id: &obj.id,
-                        qualifier: "",
-                        attributes: Some(attr_map),
-                    });
-                rows.push(ExportRow {
-                    timestamp: Some(time),
-                    id: "",
-                    activity: "",
-                    object_refs,
-                    event_attrs: HashMap::new(),
+                object_refs.entry(obj_type).or_default().push(ObjectRef {
+                    object_id: obj_id,
+                    qualifier: "",
+                    attributes: Some(attr_map),
                 });
+                write_record(
+                    &mut csv_writer,
+                    "",
+                    "",
+                    Some(time),
+                    &object_refs,
+                    &HashMap::new(),
+                    &object_type_names,
+                    &event_attr_names,
+                    options,
+                )?;
             }
         }
     }
-
-    // Sort: timestamped rows first (by time), then O2O rows (by id)
-    rows.sort_by(|a, b| match (a.timestamp, b.timestamp) {
-        (None, None) => a.id.cmp(b.id),
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (Some(at), Some(bt)) => at.cmp(bt),
-    });
-
-    // Write rows
-    for row in rows {
-        let mut record = vec![
-            row.id.to_string(),
-            row.activity.to_string(),
-            row.timestamp
-                .map(|ts| format_timestamp(ts, options))
-                .unwrap_or_default(),
-        ];
-        record.extend(object_type_names.iter().map(|ot| {
-            row.object_refs
-                .get(*ot)
-                .map(|r| format_object_refs(r))
-                .unwrap_or_default()
-        }));
-        record.extend(
-            event_attr_names
-                .iter()
-                .map(|ea| row.event_attrs.get(*ea).cloned().unwrap_or_default()),
-        );
-        csv_writer.write_record(&record)?;
-    }
     csv_writer.flush()?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_record<W: Write>(
+    csv_writer: &mut csv::Writer<W>,
+    id: &str,
+    activity: &str,
+    timestamp: Option<DateTime<FixedOffset>>,
+    object_refs: &HashMap<&str, Vec<ObjectRef<'_>>>,
+    event_attrs: &HashMap<&str, String>,
+    object_type_names: &[&str],
+    event_attr_names: &[&str],
+    options: &OCELCSVExportOptions,
+) -> Result<(), OCELCSVExportError> {
+    let mut record: Vec<String> = vec![
+        id.to_string(),
+        activity.to_string(),
+        timestamp
+            .map(|ts| format_timestamp(&ts, options))
+            .unwrap_or_default(),
+    ];
+    record.extend(object_type_names.iter().map(|ot| {
+        object_refs
+            .get(*ot)
+            .map(|r| format_object_refs(r))
+            .unwrap_or_default()
+    }));
+    record.extend(
+        event_attr_names
+            .iter()
+            .map(|ea| event_attrs.get(*ea).cloned().unwrap_or_default()),
+    );
+    csv_writer.write_record(&record)?;
     Ok(())
 }
 
@@ -273,12 +280,10 @@ fn format_object_refs(refs: &[ObjectRef<'_>]) -> String {
             }
             if let Some(attrs) = &r.attributes {
                 if !attrs.is_empty() {
-                    match serde_json::to_string(attrs) {
-                        Ok(json) => s.push_str(&json),
-                        Err(e) => {
-                            eprintln!("Failed to serialize object attributes to JSON: {}", e);
-                        }
-                    }
+                    s.push_str(
+                        &serde_json::to_string(attrs)
+                            .expect("serde_json::Map<String, Value> always serializes to a string"),
+                    );
                 }
             }
             s
@@ -301,19 +306,24 @@ fn ocel_value_to_json(value: &OCELAttributeValue) -> serde_json::Value {
 }
 
 /// Export OCEL to a CSV file at the specified path
-pub fn export_ocel_csv_to_path<P: AsRef<std::path::Path>>(
-    ocel: &OCEL,
-    path: P,
-) -> Result<(), OCELCSVExportError> {
+pub fn export_ocel_csv_to_path<P, O>(ocel: &O, path: P) -> Result<(), OCELCSVExportError>
+where
+    P: AsRef<std::path::Path>,
+    O: ReadableOCEL + ?Sized,
+{
     export_ocel_csv(std::io::BufWriter::new(std::fs::File::create(path)?), ocel)
 }
 
 /// Export OCEL to a CSV file at the specified path with options
-pub fn export_ocel_csv_to_path_with_options<P: AsRef<std::path::Path>>(
-    ocel: &OCEL,
+pub fn export_ocel_csv_to_path_with_options<P, O>(
+    ocel: &O,
     path: P,
     options: &OCELCSVExportOptions,
-) -> Result<(), OCELCSVExportError> {
+) -> Result<(), OCELCSVExportError>
+where
+    P: AsRef<std::path::Path>,
+    O: ReadableOCEL + ?Sized,
+{
     export_ocel_csv_with_options(
         std::io::BufWriter::new(std::fs::File::create(path)?),
         ocel,
@@ -322,7 +332,10 @@ pub fn export_ocel_csv_to_path_with_options<P: AsRef<std::path::Path>>(
 }
 
 /// Export OCEL to a CSV string
-pub fn export_ocel_csv_to_string(ocel: &OCEL) -> Result<String, OCELCSVExportError> {
+pub fn export_ocel_csv_to_string<O>(ocel: &O) -> Result<String, OCELCSVExportError>
+where
+    O: ReadableOCEL + ?Sized,
+{
     let mut buf = Vec::new();
     export_ocel_csv(&mut buf, ocel)?;
     String::from_utf8(buf).map_err(|e| {
@@ -331,10 +344,13 @@ pub fn export_ocel_csv_to_string(ocel: &OCEL) -> Result<String, OCELCSVExportErr
 }
 
 /// Export OCEL to a CSV string with options
-pub fn export_ocel_csv_to_string_with_options(
-    ocel: &OCEL,
+pub fn export_ocel_csv_to_string_with_options<O>(
+    ocel: &O,
     options: &OCELCSVExportOptions,
-) -> Result<String, OCELCSVExportError> {
+) -> Result<String, OCELCSVExportError>
+where
+    O: ReadableOCEL + ?Sized,
+{
     let mut buf = Vec::new();
     export_ocel_csv_with_options(&mut buf, ocel, options)?;
     String::from_utf8(buf).map_err(|e| {
@@ -348,7 +364,8 @@ mod tests {
     use crate::core::event_data::object_centric::{
         ocel_csv::import_ocel_csv,
         ocel_struct::{
-            OCELEvent, OCELObjectAttribute, OCELRelationship, OCELType, OCELTypeAttribute,
+            OCELEvent, OCELObject, OCELObjectAttribute, OCELRelationship, OCELType,
+            OCELTypeAttribute, OCEL,
         },
     };
 
