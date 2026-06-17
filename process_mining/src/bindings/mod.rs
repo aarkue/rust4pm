@@ -572,6 +572,7 @@ pub fn get_fn_binding(id: &str) -> Option<&'static Binding> {
     inventory::iter::<Binding>.into_iter().find(|b| b.id == id)
 }
 
+mod path_schema_bindings;
 mod slim_ocel_bindings;
 
 /// Get the number of objects in an [`OCEL`]

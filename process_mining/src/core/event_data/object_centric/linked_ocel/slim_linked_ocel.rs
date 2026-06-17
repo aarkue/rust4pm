@@ -549,7 +549,9 @@ impl ObjectIndex {
 }
 
 /// Either an event or an object index
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    PartialEq, Eq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 pub enum EventOrObjectIndex {
     /// An event index
     Event(EventIndex),
