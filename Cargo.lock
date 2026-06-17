@@ -3117,7 +3117,7 @@ dependencies = [
  "duckdb",
  "flate2",
  "graphviz-rust",
- "hashbrown 0.15.2",
+ "hashbrown 0.15.5",
  "inventory",
  "itertools 0.14.0",
  "kuzu",

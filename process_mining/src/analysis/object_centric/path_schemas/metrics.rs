@@ -152,7 +152,7 @@ fn summarize_durations(mut durations: Vec<f64>) -> Option<(f64, f64, f64, f64)> 
     let max = *durations.last().unwrap();
     let mean = durations.iter().sum::<f64>() / durations.len() as f64;
     let mid = durations.len() / 2;
-    let median = if durations.len() % 2 == 0 {
+    let median = if durations.len().is_multiple_of(2) {
         (durations[mid - 1] + durations[mid]) / 2.0
     } else {
         durations[mid]
