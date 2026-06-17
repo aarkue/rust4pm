@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.6
+
+- Translate a `ProcessTree` into a `PetriNet`:
+  - `ProcessTree::to_petri_net` returns a workflow net with initial and final marking set
+  - `add_to_petri_net` on `Node` / `Operator` / `Leaf` for recursive insertion into an existing net
+  - `From<ProcessTree> for PetriNet`
+- Bump MSRV to 1.88
+- Update dependencies (pin `cxx-build` to match `kuzu`'s `cxx`, refresh `cargo deny` license allowlist)
+- Add Criterion + dhat benchmarks for event log import (+ DataFrame conversion)
+
 ## 0.5.5
 
 - `SlimLinkedOCEL` and bindings:
