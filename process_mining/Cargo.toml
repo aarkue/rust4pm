@@ -9,7 +9,7 @@ repository = "https://github.com/aarkue/rust4pm"
 documentation = "https://docs.rs/process_mining/"
 readme = "README.md"
 keywords = ["process-mining"]
-rust-version = "1.77"
+rust-version = "1.88"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -42,6 +42,10 @@ csv = "1.4.0"
 criterion = { version = "0.5.1", features = ["html_reports"] }
 dhat = "0.3.3"
 
+[build-dependencies]
+# Pin cxx-build to match kuzu's cxx; bump this together with the kuzu dependency.
+cxx-build = { version = "=1.0.138", optional = true }
+
 [features]
 # Enables exporting Petri nets as PNG/SVG/... images using graphviz.
 # Note: graphviz needs to be locally installed to the PATH for the image export functions to work.
@@ -56,7 +60,7 @@ ocel-duckdb = ["dep:duckdb"]
 dataframes = ["dep:polars"]
 
 # Enables kuzudb features for OCEL (e.g., exporting OCEL to kuzudb database)
-kuzudb = ["dep:kuzu"]
+kuzudb = ["dep:kuzu", "dep:cxx-build"]
 
 # Enables event log splitting (+rand dependency)
 log-splitting = ["dep:rand"]
