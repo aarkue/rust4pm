@@ -345,8 +345,9 @@ pub struct Binding {
     pub id: &'static str,
     /// Name of the function
     pub name: &'static str,
-    /// Function handler (executing the function with (de-)serializing inputs/outputs)
-    pub handler: fn(&Value, &AppState) -> Result<Value, String>,
+    /// Function handler (executing the function with (de-)serializing inputs/outputs).
+    /// Returns the result pre-serialized as UTF-8 JSON bytes.
+    pub handler: fn(&Value, &AppState) -> Result<Vec<u8>, String>,
     /// Documentation of function
     pub docs: fn() -> Vec<String>,
     /// Module path of declared function
@@ -548,8 +549,9 @@ pub fn resolve_argument(
     Ok(value)
 }
 
-/// Call the specified function with the passed arguments
-pub fn call(binding: &Binding, args: &Value, state: &AppState) -> Result<Value, String> {
+/// Call the specified function with the passed arguments.
+/// Returns the result pre-serialized as UTF-8 JSON bytes.
+pub fn call(binding: &Binding, args: &Value, state: &AppState) -> Result<Vec<u8>, String> {
     (binding.handler)(args, state)
 }
 
