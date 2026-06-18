@@ -217,8 +217,7 @@ impl ProcessTree {
     }
 
     ///
-    /// Transforms a [`ProcessTree`] into a [`PetriNet`] according to the rules defined in
-    /// "Process Mining: Data Science in Action" by Wil van der Aalst.
+    /// Transforms a [`ProcessTree`] into a [`PetriNet`] according to the translation rules in literature.
     /// Returns a workflow net, consisting of the [`PetriNet`], its input, and output place's [`PlaceID`]
     ///
     pub fn to_petri_net(&self) -> PetriNet {

@@ -203,43 +203,8 @@ mod test {
         ProcessTree::new(Node::Operator(seq))
     }
 
-    fn create_sequence_tree() -> ProcessTree {
-        let mut seq = Operator::new(OperatorType::Sequence);
-        let leaf_a = Leaf::new(Some("a".to_string()));
-        let leaf_b = Leaf::new(Some("b".to_string()));
-        let leaf_c = Leaf::new(Some("c".to_string()));
-        let leaf_d = Leaf::new(Some("d".to_string()));
-        let leaf_e = Leaf::new(Some("e".to_string()));
-
-        seq.children.push(Node::Leaf(leaf_a));
-        seq.children.push(Node::Leaf(leaf_b));
-        seq.children.push(Node::Leaf(leaf_c));
-        seq.children.push(Node::Leaf(leaf_d));
-        seq.children.push(Node::Leaf(leaf_e));
-
-        return ProcessTree::new(Node::Operator(seq));
-    }
-
-    fn create_two_choice_loop_with_single_concurrent_activity_tree() -> ProcessTree {
-        let mut conc = Operator::new(OperatorType::Concurrency);
-
-        let leaf_x = Leaf::new(Some("x".to_string()));
-        let mut loop_op = Operator::new(OperatorType::Loop);
-        let leaf_a = Leaf::new(Some("a".to_string()));
-        let leaf_b = Leaf::new(Some("b".to_string()));
-        let leaf_c = Leaf::new(Some("c".to_string()));
-        loop_op.children.push(Node::Leaf(leaf_a));
-        loop_op.children.push(Node::Leaf(leaf_b));
-        loop_op.children.push(Node::Leaf(leaf_c));
-
-        conc.children.push(Node::Leaf(leaf_x));
-        conc.children.push(Node::Operator(loop_op));
-
-        return ProcessTree::new(Node::Operator(conc));
-    }
-
     #[test]
-    pub fn test_petri_net_png_export() {
+    pub fn test_process_tree_png_export() {
         let tree = create_example_tree();
 
         let export_path = get_test_data_path()
@@ -249,7 +214,7 @@ mod test {
     }
 
     #[test]
-    pub fn test_petri_net_svg_export() {
+    pub fn test_process_tree_svg_export() {
         let tree = create_example_tree();
 
         let export_path = get_test_data_path()
