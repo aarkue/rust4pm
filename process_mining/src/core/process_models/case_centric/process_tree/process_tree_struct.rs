@@ -130,7 +130,7 @@ impl fmt::Display for OperatorType {
             }
             &OperatorType::Interleaving => {
                 write!(f, "↔")
-            },
+            }
             &OperatorType::InclusiveChoice => {
                 write!(f, "∨")
             }
@@ -546,7 +546,11 @@ impl Operator {
                         None,
                     );
 
-                    child.add_to_petri_net(net, Some(intermediate_child_place), Some(end_child_place));
+                    child.add_to_petri_net(
+                        net,
+                        Some(intermediate_child_place),
+                        Some(end_child_place),
+                    );
 
                     let first_transition = net.add_transition(None, None);
                     let later_transition = net.add_transition(None, None);
