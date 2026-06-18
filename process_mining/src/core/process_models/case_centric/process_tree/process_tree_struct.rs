@@ -1,11 +1,13 @@
 use crate::core::process_models::petri_net::{ArcType, Marking, PlaceID};
 use crate::PetriNet;
+use core::fmt;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 ///
 /// Leaf in a process tree
 ///
-#[derive(Debug, Serialize, Deserialize, Hash, Eq, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Hash, Eq, PartialEq, JsonSchema)]
 pub enum LeafLabel {
     /// Non-silent activity leaf
     Activity(String),
@@ -16,7 +18,7 @@ pub enum LeafLabel {
 ///
 /// Node in a process tree
 ///
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub enum Node {
     /// Operator node of a process tree
     Operator(Operator),
@@ -91,7 +93,7 @@ impl Node {
 ///
 /// Operator type enum for [`Operator`]
 ///
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub enum OperatorType {
     /// Sequence operator
     Sequence,
@@ -104,9 +106,30 @@ pub enum OperatorType {
 }
 
 ///
+/// Functionality to translate the operators into ASCII: →, X, ∧, and ↻
+///
+impl fmt::Display for OperatorType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OperatorType::Sequence => {
+                write!(f, "→")
+            }
+            OperatorType::ExclusiveChoice => {
+                write!(f, "X")
+            }
+            OperatorType::Concurrency => {
+                write!(f, "∧")
+            }
+            OperatorType::Loop => {
+                write!(f, "↻")
+            }
+        }
+    }
+}
+///
 /// Object-centric process tree struct that contains [`Node`] as root
 ///
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ProcessTree {
     /// The root of the object-centric process tree
     pub root: Node,
@@ -194,8 +217,7 @@ impl ProcessTree {
     }
 
     ///
-    /// Transforms a [`ProcessTree`] into a [`PetriNet`] according to the rules defined in
-    /// "Process Mining: Data Science in Action" by Wil van der Aalst.
+    /// Transforms a [`ProcessTree`] into a [`PetriNet`] according to the translation rules in literature.
     /// Returns a workflow net, consisting of the [`PetriNet`], its input, and output place's [`PlaceID`]
     ///
     pub fn to_petri_net(&self) -> PetriNet {
@@ -211,12 +233,38 @@ impl ProcessTree {
 
         petri_net
     }
+
+    #[cfg(feature = "graphviz-export")]
+    /// Export a process tree as a PNG image
+    ///
+    /// The PNG file is written to the specified filepath
+    ///
+    /// _Note_: This is an export method for __visualizing__ the process tree.
+    /// The resulting PNG file cannot be imported as a process tree again.
+    ///
+    /// Only available with the `graphviz-export` feature.
+    pub fn export_png<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
+        super::image_export::export_process_tree_image_png(self, path)
+    }
+
+    #[cfg(feature = "graphviz-export")]
+    /// Export a process tree as an SVG image
+    ///
+    /// The SVG file is written to the specified filepath
+    ///
+    /// _Note_: This is an export method for __visualizing__ the process tree.
+    /// The resulting SVG file cannot be imported as a process tree again.
+    ///
+    /// Only available with the `graphviz-export` feature.
+    pub fn export_svg<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
+        super::image_export::export_process_tree_image_svg(self, path)
+    }
 }
 
 ///
 /// An operator node in a process tree
 ///
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Operator {
     /// The [`OperatorType`] of the tree itself
     pub operator_type: OperatorType,
@@ -374,7 +422,7 @@ impl Operator {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 ///
 /// A leaf in a process tree
 ///
