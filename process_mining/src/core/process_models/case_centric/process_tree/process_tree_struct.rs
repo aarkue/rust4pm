@@ -111,7 +111,7 @@ pub enum OperatorType {
 }
 
 ///
-/// Functionality to translate the operators into ASCII: →, X, ∧, and ↻
+/// Functionality to translate the operators into ASCII: →, X, ∧, ↻, ↔, and ∨
 ///
 impl fmt::Display for OperatorType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -128,10 +128,10 @@ impl fmt::Display for OperatorType {
             OperatorType::Loop => {
                 write!(f, "↻")
             }
-            &OperatorType::Interleaving => {
+            OperatorType::Interleaving => {
                 write!(f, "↔")
             }
-            &OperatorType::InclusiveChoice => {
+            OperatorType::InclusiveChoice => {
                 write!(f, "∨")
             }
         }
