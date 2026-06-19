@@ -37,6 +37,8 @@ uuid = {version = "1.16.0", features = ["v4", "serde"]}
 schemars = { version = "1.1.0", features = ["chrono04", "uuid1"]}
 inventory = { version = "0.3", optional = true }
 csv = "1.4.0"
+hashbrown = "0.17.1"
+rustc-hash = "2.1.2"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
