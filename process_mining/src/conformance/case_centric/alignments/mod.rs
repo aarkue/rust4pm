@@ -5,7 +5,9 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    conformance::alignments::{dijkstra::AlignmentError, sync_prod_net::SyncProductNet},
+    conformance::alignments::{
+        cost::CostFunction, dijkstra::AlignmentError, sync_prod_net::SyncProductNet,
+    },
     core::{
         event_data::case_centric::utils::activity_projection::EventLogActivityProjection,
         process_models::petri_net::TransitionID,
@@ -63,6 +65,14 @@ pub struct AlignmentOptions {
     /// Maximum number of states to visit before aborting (per trace).
     /// `None` means no limit.
     pub max_states: Option<usize>,
+}
+impl Default for AlignmentOptions {
+    fn default() -> Self {
+        Self {
+            cost_fn: CostFunction::standard(),
+            max_states: Some(100_000),
+        }
+    }
 }
 /// Compute alignments for all variants of an event log.
 pub fn align_log<'a>(
@@ -193,14 +203,20 @@ pub fn compute_fitness(
 
 #[cfg(test)]
 mod test {
-    use std::time::Instant;
+    use std::{collections::HashSet, time::Instant};
 
     use crate::{
         conformance::alignments::{
-            align_log, compute_fitness, cost::CostFunction, dijkstra::AlignmentError,
+            align_empty_trace, align_log, compute_fitness,
+            cost::CostFunction,
+            dijkstra::AlignmentError,
+            sync_prod_net::{SyncProdNetConstructionError, SyncProductNet},
             AlignmentOptions,
         },
-        core::event_data::case_centric::utils::activity_projection::log_to_activity_projection,
+        core::{
+            event_data::case_centric::utils::activity_projection::log_to_activity_projection,
+            process_models::petri_net::{ArcType, PlaceID},
+        },
         test_utils::get_test_data_path,
         EventLog, Importable, PetriNet,
     };
@@ -216,15 +232,7 @@ mod test {
         let log = EventLog::import_from_path(test_path.join("xes").join(log_name)).unwrap();
         let net = PetriNet::import_pnml(test_path.join("petri-net").join(net_name)).unwrap();
         let act_proj = log_to_activity_projection(&log);
-        let options = AlignmentOptions {
-            cost_fn: CostFunction {
-                model_move_cost: 1,
-                log_move_cost: 1,
-                sync_move_cost: 0,
-                silent_move_cost: 0,
-            },
-            max_states: None,
-        };
+        let options = AlignmentOptions::default();
         let now = Instant::now();
         let result = align_log(&net, &act_proj, &options);
         println!("Aligning traces took {:?}", now.elapsed());
@@ -251,5 +259,147 @@ mod test {
         let fitness = fitness.unwrap();
         // Ground truth total alignment cost was computed and additionally verified with external source (PM4Py)
         assert_eq!(fitness.total_costs, 17650);
+    }
+
+    #[test]
+    fn no_initial_marking_err() {
+        let test_path = get_test_data_path();
+        let mut net =
+            PetriNet::import_pnml(test_path.join("petri-net").join("sepsis-DISCovered.apnml"))
+                .unwrap();
+        net.initial_marking = None;
+        let sn = SyncProductNet::construct(&net, &[], &CostFunction::standard());
+        assert_eq!(sn, Err(SyncProdNetConstructionError::NoInitialMarking));
+    }
+    #[test]
+    fn no_final_markings_err() {
+        let test_path = get_test_data_path();
+        let mut net =
+            PetriNet::import_pnml(test_path.join("petri-net").join("sepsis-DISCovered.apnml"))
+                .unwrap();
+        net.final_markings = None;
+        let sn = SyncProductNet::construct(&net, &[], &CostFunction::standard());
+        assert_eq!(sn, Err(SyncProdNetConstructionError::NoFinalMarking));
+    }
+    #[test]
+    fn unknown_place_in_initial_marking_err() {
+        let test_path = get_test_data_path();
+        let mut net =
+            PetriNet::import_pnml(test_path.join("petri-net").join("sepsis-DISCovered.apnml"))
+                .unwrap();
+        let new_id = PlaceID(uuid::Uuid::new_v4());
+        net.initial_marking
+            .as_mut()
+            .expect("exists in apnml")
+            .insert(new_id, 1);
+        let sn = SyncProductNet::construct(&net, &[], &CostFunction::standard());
+        assert_eq!(
+            sn,
+            Err(SyncProdNetConstructionError::InvalidPlaceInMarking(new_id))
+        );
+    }
+    #[test]
+    fn unknown_place_in_final_marking_err() {
+        let test_path = get_test_data_path();
+        let mut net =
+            PetriNet::import_pnml(test_path.join("petri-net").join("sepsis-DISCovered.apnml"))
+                .unwrap();
+        let new_id = PlaceID(uuid::Uuid::new_v4());
+        net.final_markings
+            .as_mut()
+            .expect("exists in apnml")
+            .first_mut()
+            .expect("one final marking exists")
+            .insert(new_id, 1);
+        let sn = SyncProductNet::construct(&net, &[], &CostFunction::standard());
+        assert_eq!(
+            sn,
+            Err(SyncProdNetConstructionError::InvalidPlaceInMarking(new_id))
+        );
+    }
+
+    #[test]
+    fn final_marking_unreachable_err() {
+        let test_path = get_test_data_path();
+        let log = EventLog::import_from_path(
+            test_path
+                .join("xes")
+                .join("Sepsis Cases - Event Log.xes.gz"),
+        )
+        .unwrap();
+        let mut net =
+            PetriNet::import_pnml(test_path.join("petri-net").join("sepsis-DISCovered.apnml"))
+                .unwrap();
+        let places_in_final_marking: HashSet<_> = net
+            .final_markings
+            .as_mut()
+            .expect("exists in file")
+            .first_mut()
+            .expect("not empty")
+            .keys()
+            .map(|id| id.0)
+            .collect();
+        net.arcs.retain(|arc| match arc.from_to {
+            ArcType::PlaceTransition(_, _) => true,
+            ArcType::TransitionPlace(_, place) => !places_in_final_marking.contains(&place),
+        });
+        let act_proj = log_to_activity_projection(&log);
+        let options = AlignmentOptions {
+            cost_fn: CostFunction::standard(),
+            max_states: None,
+        };
+        let empty_trace_align = align_empty_trace(&net, &options);
+        assert_eq!(
+            empty_trace_align,
+            Err(AlignmentError::FinalMarkingUnreachable)
+        );
+        let result = align_log(&net, &act_proj, &options);
+        for (_, _, var_res) in result.variant_results {
+            assert_eq!(var_res, Err(AlignmentError::FinalMarkingUnreachable));
+        }
+    }
+    #[test]
+    fn max_states_reached_err() {
+        let test_path = get_test_data_path();
+        let log = EventLog::import_from_path(
+            test_path
+                .join("xes")
+                .join("Sepsis Cases - Event Log.xes.gz"),
+        )
+        .unwrap();
+        let net =
+            PetriNet::import_pnml(test_path.join("petri-net").join("sepsis-DISCovered.apnml"))
+                .unwrap();
+        let act_proj = log_to_activity_projection(&log);
+        let options = AlignmentOptions {
+            cost_fn: CostFunction::standard(),
+            max_states: Some(10),
+        };
+        let empty_trace_align = align_empty_trace(&net, &options);
+        assert_eq!(empty_trace_align, Err(AlignmentError::MaxStatesReached));
+        let result = align_log(&net, &act_proj, &options);
+        for (_, _, var_res) in result.variant_results {
+            assert_eq!(var_res, Err(AlignmentError::MaxStatesReached));
+        }
+    }
+    #[test]
+    fn max_states_reached_not_easy_sound_err() {
+        let test_path = get_test_data_path();
+        let log = EventLog::import_from_path(
+            test_path
+                .join("xes")
+                .join("Sepsis Cases - Event Log.xes.gz"),
+        )
+        .unwrap();
+        let net =
+            PetriNet::import_pnml(test_path.join("petri-net").join("sepsis-fodina.apnml")).unwrap();
+        let act_proj = log_to_activity_projection(&log);
+        let options = AlignmentOptions::default();
+        let empty_trace_align = align_empty_trace(&net, &options);
+        assert_eq!(empty_trace_align, Err(AlignmentError::MaxStatesReached));
+        let result = align_log(&net, &act_proj, &options);
+        for (_, _, var_res) in result.variant_results {
+            assert_eq!(var_res, Err(AlignmentError::MaxStatesReached));
+        }
     }
 }

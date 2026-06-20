@@ -99,7 +99,7 @@ fn hash_state(marking: &[u8], trace_pos: u16) -> u64 {
     h.finish()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 /// Alignment Error
 pub enum AlignmentError {
     /// The specified maximum number of states was reached
@@ -175,7 +175,7 @@ pub fn search(
         let distance = context.nodes[node_id as usize].distance;
         let last_move_was_log = context.nodes[node_id as usize].last_move_was_log;
         // Transitions that can be fired are log or sync moves for this event, or model moves
-        // We fix that log moves are executed before model moves, without any semantic changes to reduce the state space
+        // We fix that log/sync moves are executed before model moves, without any semantic changes to reduce the state space
         let log_or_sync_moves = sp
             .transitions_by_trace_pos
             .get(trace_pos as usize)

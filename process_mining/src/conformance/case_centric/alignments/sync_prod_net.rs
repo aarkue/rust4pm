@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// A transition in the synchronous product net
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SyncProdNetTransition {
     /// The move this transition represents (model-transition / trace-event indices)
     pub move_type: AlignmentMove,
@@ -27,7 +27,7 @@ pub struct SyncProdNetTransition {
 ///
 /// Only model places exist; the trace position is tracked additionally in the search
 /// Transitions: [`model_moves` for model transitions, `log_moves`, `sync_moves`]
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct SyncProductNet {
     /// Number of model places
     pub num_model_places: usize,
@@ -47,7 +47,7 @@ pub struct SyncProductNet {
     pub model_trans: Vec<usize>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 /// Error when constructing the sync product net
 pub enum SyncProdNetConstructionError {
     /// A unknown place id was referenced in a marking
