@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
@@ -12,15 +14,15 @@ use crate::{
 
 /// A transition in the synchronous product net
 #[derive(Debug, Clone, PartialEq)]
-pub struct SyncProdNetTransition {
+pub(crate) struct SyncProdNetTransition {
     /// The move this transition represents (model-transition / trace-event indices)
-    pub move_type: AlignmentMove,
+    pub(crate) move_type: AlignmentMove,
     /// The pre-computed cost of firing this transition
-    pub cost: u16,
+    pub(crate) cost: u16,
     /// Incoming places (`place_index`, weight), i.e., which token to consume
-    pub inputs: Vec<(usize, u8)>,
+    pub(crate) inputs: Vec<(usize, u8)>,
     /// Outgoing places (`place_index`, weight), i.e., which token to produce
-    pub outputs: Vec<(usize, u8)>,
+    pub(crate) outputs: Vec<(usize, u8)>,
 }
 
 /// The synchronous product of a Petri net and a trace.
@@ -28,26 +30,28 @@ pub struct SyncProdNetTransition {
 /// Only model places exist; the trace position is tracked additionally in the search
 /// Transitions: [`model_moves` for model transitions, `log_moves`, `sync_moves`]
 #[derive(Debug, PartialEq)]
-pub struct SyncProductNet {
+pub(crate) struct SyncProductNet {
     /// Number of model places
-    pub num_model_places: usize,
+    pub(crate) num_model_places: usize,
     /// Length of the trace
-    pub trace_length: u16,
+    pub(crate) trace_length: u16,
     /// All transitions in the sync product
-    pub transitions: Vec<SyncProdNetTransition>,
+    pub(crate) transitions: Vec<SyncProdNetTransition>,
     /// Initial marking (tokens per place)
-    pub initial_marking: Vec<u8>,
+    pub(crate) initial_marking: Vec<u8>,
     /// Final marking (tokens per place)
-    pub final_marking: Vec<u8>,
+    pub(crate) final_marking: Vec<u8>,
     /// Log/sync transition indices grouped by trace position.
     /// `transitions_by_trace_pos[r]` holds the log/sync transitions for event `r`
     /// (fireable once r trace events have been advanced).
-    pub transitions_by_trace_pos: Vec<Vec<usize>>,
-    /// Model and silent transition indices (fireable at any rank).
-    pub model_trans: Vec<usize>,
+    pub(crate) transitions_by_trace_pos: Vec<Vec<usize>>,
+    /// Number of model/silent transitions (fireable at any rank); they occupy indices `0..n`.
+    pub(crate) num_model_trans: usize,
+    /// Largest cost over all transitions (precomputed for the search's bucket sizing)
+    pub(crate) max_edge_cost: u16,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 /// Error when constructing the sync product net
 pub enum SyncProdNetConstructionError {
     /// A unknown place id was referenced in a marking
@@ -66,7 +70,7 @@ impl std::error::Error for SyncProdNetConstructionError {}
 
 impl SyncProductNet {
     /// Construct the sync product net from a Petri net and trace
-    pub fn construct(
+    pub(crate) fn construct(
         net: &PetriNet,
         trace: &[&str],
         cost_fn: &CostFunction,
@@ -82,7 +86,7 @@ impl SyncProductNet {
         let num_model_places = net.places.len();
         let mut model_trans_map: HashMap<&Uuid, usize> = HashMap::new();
         let mut model_trans_with_label: HashMap<&str, Vec<usize>> = HashMap::new();
-        let model_trans: Vec<_> = (0..net.transitions.len()).collect();
+        let num_model_trans = net.transitions.len();
         let mut transitions_by_rank = vec![vec![]; trace.len()];
         // Model moves
         for (trans_id, trans) in &net.transitions {
@@ -192,6 +196,7 @@ impl SyncProductNet {
             final_marking[*index] = *count as u8;
         }
 
+        let max_edge_cost = transitions.iter().map(|t| t.cost).max().unwrap_or(1);
         Ok(Self {
             num_model_places,
             trace_length: trace.len() as u16,
@@ -199,7 +204,8 @@ impl SyncProductNet {
             initial_marking,
             final_marking,
             transitions_by_trace_pos: transitions_by_rank,
-            model_trans,
+            num_model_trans,
+            max_edge_cost,
         })
     }
 }

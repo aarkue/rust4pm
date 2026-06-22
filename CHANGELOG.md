@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Optimal alignments (`conformance::alignments`):
+  - `align_log` / `align_projection` / `align_trace` / `align_empty_trace` compute cost-optimal alignments via Dijkstra over a synchronous product net
+  - `compute_fitness` derives log/trace fitness for pre-computed alignments
+  - Configurable `AlignmentOptions` (`CostFunction`, `max_states`)
+  - Exposed as bindings
+- Generic, reusable state-space search in `utils::dijkstra_search` (`SearchProblem` trait + `search`)
+- `register_binding` macro accepts slice arguments (`&[T]` extracted as `Vec<T>`)
+
 ## 0.5.6
 
 - Translate a `ProcessTree` into a `PetriNet`:

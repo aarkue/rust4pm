@@ -1,26 +1,31 @@
 //! Implements optimal alignment search
 use std::cell::RefCell;
 
+use macros_process_mining::register_binding;
 use rayon::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     conformance::alignments::{
-        cost::CostFunction, dijkstra::AlignmentError, sync_prod_net::SyncProductNet,
+        cost::CostFunction,
+        petri_net::{AlignmentError, PetriNetAlignmentSpace, PetriNetStep},
+        sync_prod_net::SyncProductNet,
     },
     core::{
         event_data::case_centric::utils::activity_projection::EventLogActivityProjection,
         process_models::petri_net::TransitionID,
     },
+    utils::dijkstra_search::SearchState,
     PetriNet,
 };
 
 pub mod cost;
-pub mod dijkstra;
+pub mod petri_net;
 pub mod sync_prod_net;
 
 /// A single alignment step
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum AlignmentMove {
     /// Synchronous move (model and log agree)
     SyncMove {
@@ -40,7 +45,7 @@ pub enum AlignmentMove {
         trace_event_index: usize,
     },
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 /// Alignment Result
 pub struct AlignmentResult {
     /// The sequence of alignment moves
@@ -50,15 +55,19 @@ pub struct AlignmentResult {
     /// Number of states visited during search
     pub states_visited: usize,
 }
-/// Alignment result of a complete log (i.e., for all variants)
-#[derive(Debug, Clone)]
-pub struct LogAlignmentResult {
-    /// Alignment results per trace variant (`variant_activities`, frequency, alignment result)
-    pub variant_results: Vec<(Vec<String>, u64, Result<AlignmentResult, AlignmentError>)>,
+/// Alignment result for a single trace variant
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct VariantAlignmentResult {
+    /// The variant's activity sequence
+    pub activities: Vec<String>,
+    /// How many traces follow this variant
+    pub frequency: u64,
+    /// The alignment result or error for this variant
+    pub result: Result<AlignmentResult, AlignmentError>,
 }
 
 /// Options for computing alignment
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AlignmentOptions {
     /// Cost function for alignment moves
     pub cost_fn: cost::CostFunction,
@@ -79,18 +88,19 @@ pub fn align_log<'a>(
     net: &PetriNet,
     log: impl Into<&'a EventLogActivityProjection>,
     options: &AlignmentOptions,
-) -> LogAlignmentResult {
+) -> Vec<VariantAlignmentResult> {
     let projection: &EventLogActivityProjection = log.into();
-    align_projection(net, projection, options)
+    align_variants(net, projection, options)
 }
 
 /// Compute alignments for all variants from a pre-computed activity projection.
-pub fn align_projection(
+#[register_binding]
+pub fn align_variants(
     net: &PetriNet,
     projection: &EventLogActivityProjection,
-    options: &AlignmentOptions,
-) -> LogAlignmentResult {
-    let variant_results: Vec<_> = projection
+    #[bind(default)] options: &AlignmentOptions,
+) -> Vec<VariantAlignmentResult> {
+    projection
         .traces
         .par_iter()
         .map(|(trace_indices, count)| {
@@ -101,21 +111,25 @@ pub fn align_projection(
             let sp = SyncProductNet::construct(net, &x, &options.cost_fn);
 
             thread_local! {
-                static CTX: RefCell<dijkstra::DijkstraContext> =
-                    RefCell::new(dijkstra::DijkstraContext::default());
+                static CTX: RefCell<(PetriNetAlignmentSpace, SearchState<PetriNetStep>)> =
+                    RefCell::new((PetriNetAlignmentSpace::default(), SearchState::default()));
             }
             let activities: Vec<String> = trace_indices
                 .iter()
                 .map(|&idx| projection.activities[idx].clone())
                 .collect();
             let result = CTX.with(|ctx| {
+                let (space, state) = &mut *ctx.borrow_mut();
                 sp.map_err(AlignmentError::SyncProdNetConstructionFailed)
-                    .and_then(|sp| dijkstra::search(&sp, &mut ctx.borrow_mut(), options.max_states))
+                    .and_then(|sp| petri_net::align(&sp, space, state, options.max_states))
             });
-            (activities, *count, result)
+            VariantAlignmentResult {
+                activities,
+                frequency: *count,
+                result,
+            }
         })
-        .collect();
-    LogAlignmentResult { variant_results }
+        .collect()
 }
 
 /// Compute alignment for a single trace (given as activity sequence).
@@ -125,28 +139,41 @@ pub fn align_trace(
     options: &AlignmentOptions,
 ) -> Result<AlignmentResult, AlignmentError> {
     let sp = SyncProductNet::construct(net, trace, &options.cost_fn)?;
-    dijkstra::search(
+    petri_net::align(
         &sp,
-        &mut dijkstra::DijkstraContext::default(),
+        &mut PetriNetAlignmentSpace::default(),
+        &mut SearchState::default(),
         options.max_states,
     )
+}
+
+#[register_binding(stringify_error, name = "align_trace")]
+fn align_trace_binding(
+    net: &PetriNet,
+    trace: &[String],
+    #[bind(default)] options: &AlignmentOptions,
+) -> Result<AlignmentResult, AlignmentError> {
+    let trace_as_str: Vec<_> = trace.iter().map(|s| s.as_str()).collect();
+    align_trace(net, &trace_as_str, options)
 }
 
 /// Align the empty trace to the given model
 /// with the specified options
+#[register_binding(stringify_error)]
 pub fn align_empty_trace(
     net: &PetriNet,
-    options: &AlignmentOptions,
+    #[bind(default)] options: &AlignmentOptions,
 ) -> Result<AlignmentResult, AlignmentError> {
     let sp = SyncProductNet::construct(net, &[], &options.cost_fn)?;
-    dijkstra::search(
+    petri_net::align(
         &sp,
-        &mut dijkstra::DijkstraContext::default(),
+        &mut PetriNetAlignmentSpace::default(),
+        &mut SearchState::default(),
         options.max_states,
     )
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 /// Alignment Fitness Result
 pub struct FitnessResult {
     /// Log fitness, as the total computed fitness (summing up the costs for all traces)
@@ -162,10 +189,11 @@ pub struct FitnessResult {
 /// Compute fitness stats from alignment results
 ///
 /// Also constructs the empty-trace alignment (shortest path through model)
+#[register_binding(stringify_error)]
 pub fn compute_fitness(
-    align_res: &LogAlignmentResult,
+    align_res: &[VariantAlignmentResult],
     net: &PetriNet,
-    options: &AlignmentOptions,
+    #[bind(default)] options: &AlignmentOptions,
 ) -> Result<FitnessResult, AlignmentError> {
     let empty = align_empty_trace(net, options)?;
     let model_path_min = empty.cost;
@@ -174,29 +202,45 @@ pub fn compute_fitness(
     let mut fitness_sum_for_avg = 0f64;
     let mut num_traces = 0;
     let mut num_events = 0;
-    for (variant, freq, res) in &align_res.variant_results {
-        let res = res.as_ref().map_err(|e| e.clone())?;
+    for variant in align_res {
+        let res = variant.result.as_ref().map_err(|e| e.clone())?;
         let costs = res.cost;
         if costs == 0 {
-            num_perfectly_fitting += freq;
+            num_perfectly_fitting += variant.frequency;
         }
-        total_costs += freq * costs as u64;
-        num_traces += freq;
-        num_events += freq * variant.len() as u64;
-        let fitness = 1f64
-            - (costs as f64
-                / (variant.len() as f64 * options.cost_fn.log_move_cost as f64
-                    + model_path_min as f64));
-        fitness_sum_for_avg += *freq as f64 * fitness;
+        total_costs += variant.frequency * costs as u64;
+        num_traces += variant.frequency;
+        num_events += variant.frequency * variant.activities.len() as u64;
+        let denom = variant.activities.len() as f64 * options.cost_fn.log_move_cost as f64
+            + model_path_min as f64;
+        // denom == 0 means an empty trace against a net with initial == final marking: Perfectly fitting
+        let fitness = if denom == 0.0 {
+            1f64
+        } else {
+            1f64 - (costs as f64 / denom)
+        };
+        fitness_sum_for_avg += variant.frequency as f64 * fitness;
     }
-    let log_fitness = 1f64
-        - (total_costs as f64
-            / (num_events as f64 * options.cost_fn.log_move_cost as f64
-                + num_traces as f64 * model_path_min as f64));
+    let log_denom = num_events as f64 * options.cost_fn.log_move_cost as f64
+        + num_traces as f64 * model_path_min as f64;
+    let log_fitness = if log_denom == 0.0 {
+        1f64
+    } else {
+        1f64 - (total_costs as f64 / log_denom)
+    };
     Ok(FitnessResult {
         log_fitness,
-        average_fitness: fitness_sum_for_avg / num_traces as f64,
-        perfectly_fitting_frac: num_perfectly_fitting as f64 / num_traces as f64,
+        average_fitness: if num_traces == 0 {
+            // Could be either way..
+            0f64
+        } else {
+            fitness_sum_for_avg / num_traces as f64
+        },
+        perfectly_fitting_frac: if num_traces == 0 {
+            0f64
+        } else {
+            num_perfectly_fitting as f64 / num_traces as f64
+        },
         total_costs,
     })
 }
@@ -209,7 +253,7 @@ mod test {
         conformance::alignments::{
             align_empty_trace, align_log, compute_fitness,
             cost::CostFunction,
-            dijkstra::AlignmentError,
+            petri_net::AlignmentError,
             sync_prod_net::{SyncProdNetConstructionError, SyncProductNet},
             AlignmentOptions,
         },
@@ -218,6 +262,7 @@ mod test {
             process_models::petri_net::{ArcType, PlaceID},
         },
         test_utils::get_test_data_path,
+        utils::dijkstra_search::SearchError,
         EventLog, Importable, PetriNet,
     };
 
@@ -225,7 +270,7 @@ mod test {
         log_name: &str,
         net_name: &str,
     ) -> (
-        super::LogAlignmentResult,
+        Vec<super::VariantAlignmentResult>,
         Result<super::FitnessResult, AlignmentError>,
     ) {
         let test_path = get_test_data_path();
@@ -351,11 +396,14 @@ mod test {
         let empty_trace_align = align_empty_trace(&net, &options);
         assert_eq!(
             empty_trace_align,
-            Err(AlignmentError::FinalMarkingUnreachable)
+            Err(AlignmentError::SearchError(SearchError::Unreachable))
         );
         let result = align_log(&net, &act_proj, &options);
-        for (_, _, var_res) in result.variant_results {
-            assert_eq!(var_res, Err(AlignmentError::FinalMarkingUnreachable));
+        for variant in result {
+            assert_eq!(
+                variant.result,
+                Err(AlignmentError::SearchError(SearchError::Unreachable))
+            );
         }
     }
     #[test]
@@ -376,10 +424,16 @@ mod test {
             max_states: Some(10),
         };
         let empty_trace_align = align_empty_trace(&net, &options);
-        assert_eq!(empty_trace_align, Err(AlignmentError::MaxStatesReached));
+        assert_eq!(
+            empty_trace_align,
+            Err(AlignmentError::SearchError(SearchError::LimitReached))
+        );
         let result = align_log(&net, &act_proj, &options);
-        for (_, _, var_res) in result.variant_results {
-            assert_eq!(var_res, Err(AlignmentError::MaxStatesReached));
+        for variant in result {
+            assert_eq!(
+                variant.result,
+                Err(AlignmentError::SearchError(SearchError::LimitReached))
+            );
         }
     }
     #[test]
@@ -396,10 +450,16 @@ mod test {
         let act_proj = log_to_activity_projection(&log);
         let options = AlignmentOptions::default();
         let empty_trace_align = align_empty_trace(&net, &options);
-        assert_eq!(empty_trace_align, Err(AlignmentError::MaxStatesReached));
+        assert_eq!(
+            empty_trace_align,
+            Err(AlignmentError::SearchError(SearchError::LimitReached))
+        );
         let result = align_log(&net, &act_proj, &options);
-        for (_, _, var_res) in result.variant_results {
-            assert_eq!(var_res, Err(AlignmentError::MaxStatesReached));
+        for variant in result {
+            assert_eq!(
+                variant.result,
+                Err(AlignmentError::SearchError(SearchError::LimitReached))
+            );
         }
     }
 }

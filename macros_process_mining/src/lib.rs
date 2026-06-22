@@ -228,7 +228,15 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
                     && !(BIG_TYPES_NAMES.iter().any(|tn| ty_as_str.ends_with(tn)));
                 let type_without_ref = match &ty_no_life {
                     Type::Reference(type_reference) if change_from_ref => {
-                        *type_reference.elem.clone()
+                        match &*type_reference.elem {
+                            // `&[T]` -> extract a `Vec<T>`; `&Vec<T>` coerces back to `&[T]` at the
+                            // call site. (Does not apply to `&[&str]`: `Vec<&str>` is not owned.)
+                            Type::Slice(slice) => {
+                                let elem = &slice.elem;
+                                syn::parse_quote!(Vec<#elem>)
+                            }
+                            _ => *type_reference.elem.clone(),
+                        }
                     }
                     x => x.clone(),
                 };
