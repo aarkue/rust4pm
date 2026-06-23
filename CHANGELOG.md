@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Optimal alignments (`conformance::alignments`):
+  - `align_log` / `align_projection` / `align_trace` / `align_empty_trace` compute cost-optimal alignments via Dijkstra over a synchronous product net
+  - `compute_fitness` derives log/trace fitness for pre-computed alignments
+  - Configurable `AlignmentOptions` (`CostFunction`, `max_states`)
+  - Exposed as bindings
+- Generic, reusable state-space search in `utils::dijkstra_search` (`SearchProblem` trait + `search`)
+- `register_binding` macro accepts slice arguments (`&[T]` extracted as `Vec<T>`)
 - New `ReadableOCEL` and `AppendableOCEL` traits; OCEL exporters (CSV, XML, SQL, JSON) and the JSON importer are generic over them
 - `SlimLinkedOCEL` implements `AppendableOCEL`, with auto-declare types, auto-grow attributes, and value coercion via new `OCELAttributeValue::try_coerce_to`; misordered streams are buffered and resolved on `finalize`
 - `import_ocel_json_into` and `import_ocel_xml_into` stream JSON / XML directly into any `AppendableOCEL` (e.g., `SlimLinkedOCEL`) without materializing an `OCEL` first; `SlimLinkedOCEL::import_from_*` uses the streaming paths automatically

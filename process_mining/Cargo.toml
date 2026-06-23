@@ -19,7 +19,6 @@ chrono = { version = "0.4.40", features = ["serde"] }
 duckdb = { version = "1.2.1", optional = true, features = ["chrono"]}
 flate2 = "1.1.1"
 graphviz-rust = { version = "0.9.3", optional = true }
-hashbrown = "0.15"
 itertools = { version = "0.14.0" }
 kuzu = {version = "=0.11.2", optional = true}
 nalgebra = { version = "0.33.2", optional = true }
@@ -38,6 +37,8 @@ uuid = {version = "1.16.0", features = ["v4", "serde"]}
 schemars = { version = "1.1.0", features = ["chrono04", "uuid1"]}
 inventory = { version = "0.3", optional = true }
 csv = "1.4.0"
+hashbrown = "0.17.1"
+rustc-hash = "2.1.2"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
@@ -103,4 +104,8 @@ harness = false
 
 [[bench]]
 name = "load_events_mem"
+harness = false
+
+[[bench]]
+name = "alignments"
 harness = false

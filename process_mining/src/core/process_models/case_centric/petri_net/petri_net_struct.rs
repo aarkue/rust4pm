@@ -102,7 +102,9 @@ impl From<&Place> for PlaceID {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Hash, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, PartialEq, Clone, Copy, Serialize, Deserialize, Hash, Eq, PartialOrd, Ord, JsonSchema,
+)]
 /// Transition ID
 pub struct TransitionID(pub Uuid);
 

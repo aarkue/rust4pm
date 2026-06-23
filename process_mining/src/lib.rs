@@ -12,6 +12,7 @@ pub mod analysis;
 pub mod conformance;
 pub mod core;
 pub mod discovery;
+pub mod utils;
 
 pub use core::io::{Exportable, Importable};
 
