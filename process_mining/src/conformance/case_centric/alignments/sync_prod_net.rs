@@ -187,7 +187,7 @@ impl SyncProductNet {
 
         // Build final marking
         let mut final_marking: Vec<TokenCount> = vec![0; num_model_places];
-        // FInal marking for model
+        // Final marking for model
         let fm = net
             .final_markings
             .as_ref()

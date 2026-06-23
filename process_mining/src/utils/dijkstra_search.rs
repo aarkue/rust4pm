@@ -102,7 +102,7 @@ pub enum SearchError {
 }
 
 /// Reusable node store and bucket queue for [`search`], cleared initially.
-/// Reusing it across searches avoids reallocatings.
+/// Reusing it across searches avoids reallocations.
 #[derive(Debug)]
 pub struct SearchState<S, C = u32> {
     /// Node info, indexed using [`NodeID`]
