@@ -51,14 +51,28 @@ impl AppendableOCEL for OCEL {
     type Error = Infallible;
 
     fn declare_event_type(&mut self, event_type: OCELType) -> Result<(), Self::Error> {
-        if !self.event_types.iter().any(|t| t.name == event_type.name) {
+        // Overwrite type if it already exists
+        if let Some(et) = self
+            .event_types
+            .iter_mut()
+            .find(|et| et.name == event_type.name)
+        {
+            *et = event_type;
+        } else {
             self.event_types.push(event_type);
         }
         Ok(())
     }
 
     fn declare_object_type(&mut self, object_type: OCELType) -> Result<(), Self::Error> {
-        if !self.object_types.iter().any(|t| t.name == object_type.name) {
+        // Overwrite type if it already exists
+        if let Some(ot) = self
+            .object_types
+            .iter_mut()
+            .find(|ot| ot.name == object_type.name)
+        {
+            *ot = object_type;
+        } else {
             self.object_types.push(object_type);
         }
         Ok(())

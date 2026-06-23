@@ -204,8 +204,8 @@ pub fn get_num_cases(projection: &EventLogActivityProjection) -> u64 {
 
 #[register_binding]
 /// Get the list of all activity names in the projection
-pub fn get_projection_activities(projection: &EventLogActivityProjection) -> Vec<String> {
-    projection.activities.clone()
+pub fn get_projection_activities(projection: &EventLogActivityProjection) -> &[String] {
+    &projection.activities
 }
 
 /// Get the most frequent process variants as an iterator, sorted by frequency (descending)
@@ -214,10 +214,10 @@ pub fn get_projection_activities(projection: &EventLogActivityProjection) -> Vec
 ///
 /// Assumes `projection.traces` is sorted by descending frequency, as maintained by the provided
 /// constructors.
-pub fn get_top_variants_iter(
+pub fn get_variants_iter(
     projection: &EventLogActivityProjection,
 ) -> impl Iterator<Item = ProcessVariant> + use<'_> {
-    let total_cases: u64 = projection.traces.iter().map(|(_, freq)| freq).sum();
+    let total_cases = get_num_cases(projection);
     projection
         .traces
         .iter()
@@ -240,7 +240,7 @@ pub fn get_top_variants_iter(
 /// Assumes `projection.traces` is sorted by descending frequency, as maintained by the provided
 /// constructors.
 pub fn get_variants(projection: &EventLogActivityProjection) -> Vec<ProcessVariant> {
-    get_top_variants_iter(projection).collect()
+    get_variants_iter(projection).collect()
 }
 
 #[register_binding]
@@ -256,7 +256,7 @@ pub fn get_top_n_variants(
     projection: &EventLogActivityProjection,
     n: usize,
 ) -> Vec<ProcessVariant> {
-    get_top_variants_iter(projection).take(n).collect()
+    get_variants_iter(projection).take(n).collect()
 }
 
 ///

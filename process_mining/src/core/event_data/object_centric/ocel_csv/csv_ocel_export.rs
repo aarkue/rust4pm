@@ -158,8 +158,8 @@ where
             let mut object_refs: HashMap<&str, Vec<ObjectRef<'_>>> = HashMap::new();
             let mut had_relationship = false;
             for (target_id, qualifier) in lookup.object_relationships(obj_id) {
-                had_relationship = true;
                 if let Some(target_type) = lookup.object_type_of(target_id) {
+                    had_relationship = true;
                     object_refs.entry(target_type).or_default().push(ObjectRef {
                         object_id: target_id,
                         qualifier,

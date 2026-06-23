@@ -57,7 +57,7 @@ fn attribute_value_to_any_value<'a>(from: &AttributeValue) -> AnyValue<'a> {
                 polars::prelude::TimeUnit::Microseconds,
                 // Unfortunately, we cannot pass fixed timezone offsets here.
                 // Polars would also not support mixed timezones in a single column.
-                // Thus, timestamp information is lost, but the timestamps are still correct (i.e., the right moment in time)
+                // Thus, timezone information is lost, but the timestamps are still correct (i.e., the right moment in time)
                 None,
             )
         }

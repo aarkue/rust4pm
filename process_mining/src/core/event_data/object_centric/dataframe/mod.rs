@@ -274,7 +274,7 @@ fn ocel_attribute_val_to_any_value(val: &OCELAttributeValue) -> AnyValue<'_> {
             TimeUnit::Microseconds,
             // Unfortunately, we cannot pass fixed timezone offsets here.
             // Polars would also not support mixed timezones in a single column.
-            // Thus, timestamp information is lost, but the timestamps are still correct (i.e., the right moment in time)
+            // Thus, timezone information is lost, but the timestamps are still correct (i.e., the right moment in time)
             None,
         ),
         OCELAttributeValue::Integer(i) => AnyValue::Int64(*i),
