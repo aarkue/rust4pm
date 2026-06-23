@@ -7,6 +7,7 @@ use std::{
 use crate::{
     core::event_data::object_centric::{
         io::OCELIOError,
+        linked_ocel::{LinkedOCELAccess, SlimLinkedOCEL},
         ocel_json::{import_ocel_json_path, import_ocel_json_slice},
         ocel_xml::{
             import_ocel_xml_path, xml_ocel_export::export_ocel_xml_path,
@@ -14,6 +15,7 @@ use crate::{
         },
     },
     test_utils::get_test_data_path,
+    Importable,
 };
 
 fn get_ocel_file_bytes(name: &str) -> Vec<u8> {
@@ -42,6 +44,45 @@ fn test_ocel_xml_import() {
         .join("export")
         .join("order-management-export.xml");
     export_ocel_xml_path(&ocel, &export_path).unwrap();
+}
+
+#[test]
+fn test_ocel_xml_import_json_ground_truth() {
+    let log_bytes = &get_ocel_file_bytes("order-management.xml");
+    let ocel = import_ocel_xml_slice(log_bytes).unwrap();
+    let locel = SlimLinkedOCEL::from_ocel(ocel);
+    let json_path = get_test_data_path()
+        .join("ocel")
+        .join("order-management.json");
+    let locel_json = SlimLinkedOCEL::import_from_path(&json_path).unwrap();
+    let xml_path = get_test_data_path()
+        .join("ocel")
+        .join("order-management.xml");
+    let locel_xml = SlimLinkedOCEL::import_from_path(&xml_path).unwrap();
+    for ob in locel.get_all_obs() {
+        let ob_id = locel.get_ob_id(ob);
+        let ob_json = locel_json.get_ob_by_id(ob_id).unwrap();
+        let ob_xml = locel_xml.get_ob_by_id(ob_id).unwrap();
+        let full_ob = locel.get_full_ob(ob).into_owned();
+        let full_ob_json = locel_json.get_full_ob(ob_json).into_owned();
+        let full_ob_xml = locel_xml.get_full_ob(ob_xml).into_owned();
+        println!("Comparing object {ob_id}");
+        assert_eq!(full_ob, full_ob_xml);
+        // Currently the JSON import does not necessarily parse attributes as the same type (e.g., float instead of int)
+        assert_eq!(full_ob.relationships, full_ob_json.relationships);
+        assert_eq!(full_ob.object_type, full_ob_json.object_type);
+    }
+    for ev in locel.get_all_evs() {
+        let ev_id = locel.get_ev_id(ev);
+        let ev_json = locel_json.get_ev_by_id(ev_id).unwrap();
+        let ev_xml = locel_xml.get_ev_by_id(ev_id).unwrap();
+        let full_ev = locel.get_full_ev(ev).into_owned();
+        let full_ev_json = locel_json.get_full_ev(ev_json).into_owned();
+        let full_ev_xml = locel_xml.get_full_ev(ev_xml).into_owned();
+        println!("Comparing event {ev_id}");
+        assert_eq!(full_ev, full_ev_xml);
+        assert_eq!(full_ev, full_ev_json);
+    }
 }
 
 #[test]
@@ -196,6 +237,33 @@ fn test_ocel_pm4py_log() {
         ocel.events.len(),
         now.elapsed()
     );
+}
+
+#[test]
+fn test_slim_xml_streaming_matches_via_ocel() {
+    let log_bytes = get_ocel_file_bytes("order-management.xml");
+    let via_ocel = SlimLinkedOCEL::from_ocel(import_ocel_xml_slice(&log_bytes).unwrap());
+    let streamed = SlimLinkedOCEL::import_from_reader(log_bytes.as_slice(), "xml").unwrap();
+    assert_eq!(via_ocel.get_num_evs(), streamed.get_num_evs());
+    assert_eq!(via_ocel.get_num_obs(), streamed.get_num_obs());
+
+    // Compare reconstructed OCELs end-to-end so that relationships, attributes,
+    // qualifiers, types, and ordering are all checked, not just counts.
+    use crate::test_utils::sort_ocel_for_equality_compare;
+    use std::collections::HashMap;
+
+    let mut via = via_ocel.construct_ocel();
+    let mut sm = streamed.construct_ocel();
+    sort_ocel_for_equality_compare(&mut via);
+    sort_ocel_for_equality_compare(&mut sm);
+    assert_eq!(via.event_types, sm.event_types);
+    assert_eq!(via.object_types, sm.object_types);
+    let via_evs: HashMap<&str, _> = via.events.iter().map(|e| (e.id.as_str(), e)).collect();
+    let sm_evs: HashMap<&str, _> = sm.events.iter().map(|e| (e.id.as_str(), e)).collect();
+    assert_eq!(via_evs, sm_evs);
+    let via_obs: HashMap<&str, _> = via.objects.iter().map(|o| (o.id.as_str(), o)).collect();
+    let sm_obs: HashMap<&str, _> = sm.objects.iter().map(|o| (o.id.as_str(), o)).collect();
+    assert_eq!(via_obs, sm_obs);
 }
 
 #[test]

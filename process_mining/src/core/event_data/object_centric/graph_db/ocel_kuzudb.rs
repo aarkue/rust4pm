@@ -1,3 +1,5 @@
+#[cfg(feature = "dataframes")]
+use macros_process_mining::register_binding;
 use polars::{error::PolarsResult, frame::DataFrame, io::SerWriter, prelude::CsvWriter};
 use std::{fs::File, path::Path};
 
@@ -63,7 +65,6 @@ impl From<polars::prelude::PolarsError> for KuzuDBExportError {
     }
 }
 
-#[cfg(feature = "dataframes")]
 /// Export an [`OCEL`] as a [kuzu](https://github.com/kuzudb/kuzu) database
 ///
 /// This export function does not create different node types for different event/object types
@@ -73,8 +74,10 @@ impl From<polars::prelude::PolarsError> for KuzuDBExportError {
 /// For E2O relationships, the `E2O` relation is used, pointing from events to objects, with an additional relationship qualifier.
 ///
 /// **Limitations**: This function is work-in-progress, currently some aspects (O2O relationships, object attribute changes) are not recorded.
-pub fn export_ocel_to_kuzudb_generic<P: AsRef<Path>>(
-    db_path: P,
+#[cfg(feature = "dataframes")]
+#[register_binding(stringify_error)]
+pub fn export_ocel_to_kuzudb_generic(
+    db_path: impl AsRef<Path>,
     ocel: &OCEL,
 ) -> Result<(), KuzuDBExportError> {
     use kuzu::{Connection, Database, SystemConfig};
@@ -136,7 +139,15 @@ pub fn export_ocel_to_kuzudb_generic<P: AsRef<Path>>(
 
 fn export_df_to_csv<P: AsRef<Path>>(df: &mut DataFrame, export_path: P) -> PolarsResult<()> {
     let f = File::create(export_path)?;
-    let mut csvw = CsvWriter::new(f);
+    // Force microsecond fractional seconds + Z suffix so the timestamp
+    // column round-trips through CSV without losing the µs precision
+    // that downstream consumers (Kuzu's TIMESTAMP column type, OCEL
+    // canonicalization invariants) rely on. Polars' default datetime
+    // format is "%Y-%m-%dT%H:%M:%S" — no fractional seconds — which
+    // silently rounded everything to whole seconds in the typed Kuzu
+    // export.
+    let mut csvw =
+        CsvWriter::new(f).with_datetime_format(Some("%Y-%m-%dT%H:%M:%S%.6fZ".to_string()));
     csvw.finish(df)?;
     Ok(())
 }
@@ -159,8 +170,9 @@ fn ocel_attribute_type_to_kuzu_dtype(attr_type: &str) -> &'static str {
 }
 /// Export an OCEL to a (strictly typed) kuzu database
 #[cfg(feature = "dataframes")]
-pub fn export_ocel_to_kuzudb_typed<'a, P: AsRef<Path>>(
-    db_path: P,
+#[register_binding(stringify_error)]
+pub fn export_ocel_to_kuzudb_typed<'a>(
+    db_path: impl AsRef<Path>,
     locel: &'a impl LinkedOCELAccess<'a>,
 ) -> Result<(), KuzuDBExportError> {
     use std::fs::remove_file;

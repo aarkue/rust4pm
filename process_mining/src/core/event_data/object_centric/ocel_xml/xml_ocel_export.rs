@@ -8,28 +8,31 @@ use std::{
 };
 
 use crate::{
-    core::event_data::object_centric::ocel_struct::{OCELRelationship, OCELTypeAttribute, OCEL},
+    core::event_data::object_centric::{
+        ocel_struct::{OCELRelationship, OCELTypeAttribute},
+        readable::ReadableOCEL,
+    },
     XMLWriterWrapper,
 };
 const OK: Result<(), std::io::Error> = Ok(());
 
 ///
-/// Export [`OCEL`] to XML Writer
+/// Export an OCEL to an XML Writer
 ///
-pub fn export_ocel_xml<'a, 'b, W>(
+pub fn export_ocel_xml<'b, W, O>(
     writer: impl Into<XMLWriterWrapper<'b, W>>,
-    ocel: &'a OCEL,
+    ocel: &O,
 ) -> Result<(), quick_xml::Error>
 where
     W: Write + 'b,
+    O: ReadableOCEL + ?Sized,
 {
     let mut xml_writer = writer.into();
     let writer: &mut Writer<W> = xml_writer.to_xml_writer();
     writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
     writer.create_element("log").write_inner_content(|w| {
-        // Write Object Types
         w.create_element("object-types").write_inner_content(|w| {
-            for ot in &ocel.object_types {
+            for ot in ocel.object_types() {
                 w.create_element("object-type")
                     .with_attributes(vec![("name", ot.name.as_str())])
                     .write_inner_content(|w| {
@@ -39,9 +42,8 @@ where
             }
             OK
         })?;
-        // Write Event Types
         w.create_element("event-types").write_inner_content(|w| {
-            for et in &ocel.event_types {
+            for et in ocel.event_types() {
                 w.create_element("event-type")
                     .with_attributes(vec![("name", et.name.as_str())])
                     .write_inner_content(|w| {
@@ -51,14 +53,12 @@ where
             }
             OK
         })?;
-        // Write Objects
         w.create_element("objects").write_inner_content(|w| {
-            for o in &ocel.objects {
+            for o in ocel.iter_objects() {
                 w.create_element("object")
                     .with_attribute(("id", o.id.as_str()))
                     .with_attribute(("type", o.object_type.as_str()))
                     .write_inner_content(|w| {
-                        // Write Attributes
                         w.create_element("attributes").write_inner_content(|w| {
                             for oa in &o.attributes {
                                 w.create_element("attribute")
@@ -73,23 +73,19 @@ where
                             }
                             OK
                         })?;
-                        // Write Relationships
                         write_ocel_relationships(&o.relationships, w)?;
                         OK
                     })?;
             }
             OK
         })?;
-
-        // Write Events
         w.create_element("events").write_inner_content(|w| {
-            for e in &ocel.events {
+            for e in ocel.iter_events() {
                 w.create_element("event")
                     .with_attribute(("id", e.id.as_str()))
                     .with_attribute(("type", e.event_type.as_str()))
                     .with_attribute(("time", e.time.to_rfc3339().as_str()))
                     .write_inner_content(|w| {
-                        // Write Attributes
                         w.create_element("attributes").write_inner_content(|w| {
                             for ea in &e.attributes {
                                 w.create_element("attribute")
@@ -103,7 +99,6 @@ where
                             }
                             OK
                         })?;
-                        // Write Relationships
                         write_ocel_relationships(&e.relationships, w)?;
                         OK
                     })?;
@@ -117,7 +112,7 @@ where
 }
 
 fn write_ocel_type_attrs<W: Write>(
-    attrs: &Vec<OCELTypeAttribute>,
+    attrs: &[OCELTypeAttribute],
     w: &mut Writer<W>,
 ) -> Result<(), std::io::Error> {
     w.create_element("attributes").write_inner_content(|w| {
@@ -135,7 +130,7 @@ fn write_ocel_type_attrs<W: Write>(
 }
 
 fn write_ocel_relationships<W: Write>(
-    rels: &Vec<OCELRelationship>,
+    rels: &[OCELRelationship],
     w: &mut Writer<W>,
 ) -> Result<(), std::io::Error> {
     w.create_element("objects").write_inner_content(|w| {
@@ -150,11 +145,12 @@ fn write_ocel_relationships<W: Write>(
     OK
 }
 
-/// Export [`OCEL`] to a path
-pub fn export_ocel_xml_path<P: AsRef<std::path::Path>>(
-    ocel: &OCEL,
-    path: P,
-) -> Result<(), quick_xml::Error> {
+/// Export an OCEL to a path
+pub fn export_ocel_xml_path<P, O>(ocel: &O, path: P) -> Result<(), quick_xml::Error>
+where
+    P: AsRef<std::path::Path>,
+    O: ReadableOCEL + ?Sized,
+{
     let file = File::create(path)?;
     export_ocel_xml(&mut Writer::new(BufWriter::new(file)), ocel)
 }

@@ -53,8 +53,11 @@ fn attribute_value_to_any_value<'a>(from: &AttributeValue) -> AnyValue<'a> {
             // Fallback for testing:
             // return AnyValue::StringOwned(v.to_string().into());
             AnyValue::Datetime(
-                v.timestamp_nanos_opt().unwrap(),
-                polars::prelude::TimeUnit::Nanoseconds,
+                v.timestamp_micros(),
+                polars::prelude::TimeUnit::Microseconds,
+                // Unfortunately, we cannot pass fixed timezone offsets here.
+                // Polars would also not support mixed timezones in a single column.
+                // Thus, timezone information is lost, but the timestamps are still correct (i.e., the right moment in time)
                 None,
             )
         }
@@ -215,12 +218,21 @@ fn any_value_to_attribute_value(from: &AnyValue<'_>) -> AttributeValue {
         AnyValue::Int64(v) => AttributeValue::Int(*v),
         AnyValue::Float32(v) => AttributeValue::Float((*v).into()),
         AnyValue::Float64(v) => AttributeValue::Float(*v),
-        AnyValue::Datetime(ns, _, _) => {
-            // Convert nanos to micros; tz is not used!
-            let d: DateTime<_> = DateTime::from_timestamp_micros(ns / 1000)
-                .unwrap()
-                .fixed_offset();
-            AttributeValue::Date(d)
+        AnyValue::Datetime(v, tu, tz) => {
+            let d = match tu {
+                TimeUnit::Nanoseconds => Some(DateTime::from_timestamp_nanos(*v)),
+                TimeUnit::Microseconds => DateTime::from_timestamp_micros(*v),
+                TimeUnit::Milliseconds => DateTime::from_timestamp_millis(*v),
+            };
+            if let Some(d) = d {
+                if let Some(tz) = tz.and_then(|tz| tz.to_chrono().ok()) {
+                    let d_tz = d.with_timezone(&tz);
+                    return AttributeValue::Date(d_tz.fixed_offset());
+                } else {
+                    return AttributeValue::Date(d.fixed_offset());
+                }
+            }
+            AttributeValue::None()
         }
         x => AttributeValue::String(format!("{x:?}")),
     }
