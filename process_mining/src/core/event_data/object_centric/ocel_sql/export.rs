@@ -1,17 +1,16 @@
-use std::collections::HashMap;
-
-use crate::core::event_data::object_centric::ocel_struct::{OCELTypeAttribute, OCEL};
+use crate::core::event_data::object_centric::readable::ReadableOCEL;
 
 use super::*;
+/// Export an OCEL log to an SQL Database connection.
 ///
-/// Export an [`OCEL`] log to an SQL Database connection
+/// Accepts any [`ReadableOCEL`] backend.
 ///
-/// Note: This function is only available if the `ocel-sqlite` or the `ocel-duckdb` feature is enabled.
-///
-pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
-    con: DC,
-    ocel: &OCEL,
-) -> Result<(), DatabaseError> {
+/// Available with the `ocel-sqlite` or `ocel-duckdb` feature.
+pub fn export_ocel_to_sql_con<'a, DC, O>(con: DC, ocel: &O) -> Result<(), DatabaseError>
+where
+    DC: Into<DatabaseConnection<'a>>,
+    O: ReadableOCEL + ?Sized,
+{
     let con = con.into();
     con.execute_no_params("BEGIN TRANSACTION")?;
     // event map type
@@ -47,9 +46,8 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
 
     con.execute_no_params("COMMIT")?;
     con.execute_no_params("BEGIN TRANSACTION")?;
-    let mut et_attr_map: HashMap<&String, &Vec<OCELTypeAttribute>> = HashMap::new();
     // Tables for event types
-    for et in &ocel.event_types {
+    for et in ocel.event_types() {
         let mut attr_cols = et
             .attributes
             .iter()
@@ -65,7 +63,6 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
         if !attr_cols.is_empty() {
             attr_cols.push(',');
         }
-        et_attr_map.insert(&et.name, &et.attributes);
         con.execute_no_params(&format!(r#"CREATE TABLE IF NOT EXISTS "event_{}" ("{OCEL_ID_COLUMN}"	TEXT, "{OCEL_TIME_COLUMN}"	TIMESTAMP,{attr_cols} PRIMARY KEY("{OCEL_ID_COLUMN}"))"#,clean_sql_name(&et.name)))?;
 
         con.execute(
@@ -74,10 +71,8 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
         )?;
     }
 
-    let mut ot_attr_map: HashMap<&String, &Vec<OCELTypeAttribute>> = HashMap::new();
-
     // Tables for object types
-    for ot in &ocel.object_types {
+    for ot in ocel.object_types() {
         let mut attr_cols = ot
             .attributes
             .iter()
@@ -92,9 +87,7 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
             .join(", ");
         if !attr_cols.is_empty() {
             attr_cols.insert_str(0, ", ");
-            // attr_cols.push(',');
         }
-        ot_attr_map.insert(&ot.name, &ot.attributes);
         con.execute_no_params(&format!(r#"CREATE TABLE IF NOT EXISTS "object_{}" ("{OCEL_ID_COLUMN}"	TEXT, "{OCEL_TIME_COLUMN}" TIMESTAMP, {OCEL_CHANGED_FIELD} TEXT{attr_cols})"#,clean_sql_name(&ot.name)))?;
 
         con.execute(
@@ -103,42 +96,46 @@ pub fn export_ocel_to_sql_con<'a, DC: Into<DatabaseConnection<'a>>>(
         )?;
     }
 
-    con.add_objects("object", ocel.objects.iter())?;
+    con.add_objects("object", ocel.iter_objects())?;
 
-    for ot in &ocel.object_types {
-        let obs = ocel.objects.iter().filter(|ob| ob.object_type == ot.name);
-
-        con.add_object_changes_for_type(&clean_sql_name(&format!("object_{}", ot.name)), ot, obs)?;
+    for ot in ocel.object_types() {
+        con.add_object_changes_for_type(
+            &clean_sql_name(&format!("object_{}", ot.name)),
+            ot,
+            ocel.iter_objects_of_type(&ot.name),
+        )?;
     }
 
     con.execute_no_params("COMMIT")?;
     con.execute_no_params("BEGIN TRANSACTION")?;
-    con.add_o2o_relationships("object_object", ocel.objects.iter())?;
+    con.add_o2o_relationships("object_object", ocel.iter_objects())?;
     con.execute_no_params("COMMIT")?;
     con.execute_no_params("BEGIN TRANSACTION")?;
 
-    con.add_events("event", ocel.events.iter())?;
+    con.add_events("event", ocel.iter_events())?;
 
-    for et in &ocel.event_types {
-        let evs = ocel.events.iter().filter(|ob| ob.event_type == et.name);
-
-        con.add_event_attributes_for_type(&clean_sql_name(&format!("event_{}", et.name)), et, evs)?;
+    for et in ocel.event_types() {
+        con.add_event_attributes_for_type(
+            &clean_sql_name(&format!("event_{}", et.name)),
+            et,
+            ocel.iter_events_of_type(&et.name),
+        )?;
     }
     con.execute_no_params("COMMIT")?;
     con.execute_no_params("BEGIN TRANSACTION")?;
-    con.add_e2o_relationships("event_object", ocel.events.iter())?;
+    con.add_e2o_relationships("event_object", ocel.iter_events())?;
 
     con.execute_no_params("COMMIT")?;
     con.execute_no_params("BEGIN TRANSACTION")?;
 
-    for ot in &ocel.object_types {
+    for ot in ocel.object_types() {
         con.execute_no_params(&format!(
             r#"CREATE INDEX IF NOT EXISTS "{}_obid" ON "object_{}" ("{OCEL_ID_COLUMN}" ASC)"#,
             clean_sql_name(&ot.name),
             clean_sql_name(&ot.name)
         ))?;
     }
-    for et in &ocel.event_types {
+    for et in ocel.event_types() {
         con.execute_no_params(&format!(
             r#"CREATE INDEX IF NOT EXISTS "{}_evid" ON "event_{}" ("{OCEL_ID_COLUMN}" ASC)"#,
             clean_sql_name(&et.name),

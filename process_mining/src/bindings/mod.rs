@@ -177,7 +177,8 @@ impl RegistryItem {
                 serde_json::to_value(locel).map_err(|e| e.to_string())
             }
             RegistryItem::SlimLinkedOCEL(locel) => {
-                serde_json::to_value(locel).map_err(|e| e.to_string())
+                let ocel = locel.construct_ocel();
+                serde_json::to_value(ocel).map_err(|e| e.to_string())
             }
             RegistryItem::EventLogActivityProjection(proj) => {
                 serde_json::to_value(proj).map_err(|e| e.to_string())
@@ -197,9 +198,7 @@ impl RegistryItem {
                 OCEL::import_from_path(path).map_err(|e| e.to_string())?,
             )),
             RegistryItemKind::SlimLinkedOCEL => Ok(RegistryItem::SlimLinkedOCEL({
-                OCEL::import_from_path(path)
-                    .map(SlimLinkedOCEL::from_ocel)
-                    .map_err(|e| e.to_string())?
+                SlimLinkedOCEL::import_from_path(path).map_err(|e| e.to_string())?
             })),
             RegistryItemKind::IndexLinkedOCEL => Ok(RegistryItem::IndexLinkedOCEL(
                 IndexLinkedOCEL::import_from_path(path).map_err(|e| e.to_string())?,
@@ -346,8 +345,9 @@ pub struct Binding {
     pub id: &'static str,
     /// Name of the function
     pub name: &'static str,
-    /// Function handler (executing the function with (de-)serializing inputs/outputs)
-    pub handler: fn(&Value, &AppState) -> Result<Value, String>,
+    /// Function handler (executing the function with (de-)serializing inputs/outputs).
+    /// Returns the result pre-serialized as UTF-8 JSON bytes.
+    pub handler: fn(&Value, &AppState) -> Result<Vec<u8>, String>,
     /// Documentation of function
     pub docs: fn() -> Vec<String>,
     /// Module path of declared function
@@ -549,8 +549,9 @@ pub fn resolve_argument(
     Ok(value)
 }
 
-/// Call the specified function with the passed arguments
-pub fn call(binding: &Binding, args: &Value, state: &AppState) -> Result<Value, String> {
+/// Call the specified function with the passed arguments.
+/// Returns the result pre-serialized as UTF-8 JSON bytes.
+pub fn call(binding: &Binding, args: &Value, state: &AppState) -> Result<Vec<u8>, String> {
     (binding.handler)(args, state)
 }
 

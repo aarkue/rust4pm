@@ -289,6 +289,45 @@ impl OCELAttributeValue {
             OCELAttributeValue::Null => OCELAttributeType::Null,
         }
     }
+
+    /// Try to coerce this value so its variant matches `target`. Returns `Some(coerced)`
+    /// when a lossless or parse-based conversion is defined, `None` otherwise.
+    ///
+    /// Defined conversions:
+    ///   anything -> String    (via `Display` / RFC3339)
+    ///   Integer  -> Float     (lossless within `i64` -> `f64`)
+    ///   Float    -> Integer   (only if `fract() == 0.0` and within `i64` range)
+    ///   String   -> Integer   (parse via `i64::from_str`)
+    ///   String   -> Float     (parse via `f64::from_str`)
+    ///   String   -> Boolean   (case-insensitive `"true"`/`"false"`)
+    ///   String   -> Time      (parse via RFC3339)
+    pub fn try_coerce_to(&self, target: OCELAttributeType) -> Option<OCELAttributeValue> {
+        use OCELAttributeType as T;
+        use OCELAttributeValue::*;
+        match (target, self) {
+            (T::String, v @ (Integer(_) | Float(_) | Boolean(_) | Time(_))) => {
+                Some(String(v.to_string()))
+            }
+            (T::Float, Integer(i)) => Some(Float(*i as f64)),
+            (T::Integer, Float(f)) => {
+                let i = *f as i64;
+                if (i as f64) == *f {
+                    Some(Integer(i))
+                } else {
+                    None
+                }
+            }
+            (T::Integer, String(s)) => s.parse::<i64>().ok().map(Integer),
+            (T::Float, String(s)) => s.parse::<f64>().ok().map(Float),
+            (T::Boolean, String(s)) => match s.to_ascii_lowercase().as_str() {
+                "true" => Some(Boolean(true)),
+                "false" => Some(Boolean(false)),
+                _ => None,
+            },
+            (T::Time, String(s)) => DateTime::parse_from_rfc3339(s).ok().map(Time),
+            _ => None,
+        }
+    }
 }
 
 impl From<AttributeValue> for OCELAttributeValue {
@@ -404,16 +443,21 @@ impl OCELAttributeType {
     /// See [`OCELAttributeType::from_type_str`] for the reverse functionality.
     ///
     pub fn to_type_string(&self) -> String {
+        self.as_type_str().to_string()
+    }
+
+    /// Same as [`Self::to_type_string`] but returns a `&'static str`, suitable for
+    /// hot-path comparisons that would otherwise allocate a `String` per call.
+    pub fn as_type_str(&self) -> &'static str {
         match self {
             OCELAttributeType::String => "string",
             OCELAttributeType::Float => "float",
             OCELAttributeType::Boolean => "boolean",
             OCELAttributeType::Integer => "integer",
             OCELAttributeType::Time => "time",
-            //  Null is not a real attribute type
+            // Null is not a real OCEL attribute type; map to "string" for compatibility.
             OCELAttributeType::Null => "string",
         }
-        .to_string()
     }
 
     ///
