@@ -84,6 +84,8 @@ impl Default for AlignmentOptions {
     }
 }
 /// Compute alignments for all variants of an event log.
+///
+/// Permits at most 255 ([`petri_net::TokenCount::MAX`]) tokens in each place.
 pub fn align_log<'a>(
     net: &PetriNet,
     log: impl Into<&'a EventLogActivityProjection>,
@@ -94,6 +96,8 @@ pub fn align_log<'a>(
 }
 
 /// Compute alignments for all variants from a pre-computed activity projection.
+///
+/// Permits at most 255 ([`petri_net::TokenCount::MAX`]) tokens in each place.
 #[register_binding]
 pub fn align_variants(
     net: &PetriNet,
@@ -133,6 +137,8 @@ pub fn align_variants(
 }
 
 /// Compute alignment for a single trace (given as activity sequence).
+///
+/// Permits at most 255 ([`petri_net::TokenCount::MAX`]) tokens in each place.
 pub fn align_trace(
     net: &PetriNet,
     trace: &[&str],
@@ -147,6 +153,10 @@ pub fn align_trace(
     )
 }
 
+/// Compute alignment for a single trace (given as activity sequence).
+///
+/// Permits at most 255 ([`petri_net::TokenCount::MAX`]) tokens in each place.
+#[allow(dead_code)]
 #[register_binding(stringify_error, name = "align_trace")]
 fn align_trace_binding(
     net: &PetriNet,
@@ -159,6 +169,8 @@ fn align_trace_binding(
 
 /// Align the empty trace to the given model
 /// with the specified options
+///
+/// Permits at most 255 ([`petri_net::TokenCount::MAX`]) tokens in each place.
 #[register_binding(stringify_error)]
 pub fn align_empty_trace(
     net: &PetriNet,

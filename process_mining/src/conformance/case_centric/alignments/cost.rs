@@ -9,13 +9,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CostFunction {
     /// Default cost for a model move (visible transition fires without matching log event)
-    pub model_move_cost: u16,
+    pub model_move_cost: u32,
     /// Default cost for a log move (log event not matched by model)
-    pub log_move_cost: u16,
+    pub log_move_cost: u32,
     /// Default cost for a synchronous move
-    pub sync_move_cost: u16,
+    pub sync_move_cost: u32,
     /// Default cost for a silent/tau move
-    pub silent_move_cost: u16,
+    pub silent_move_cost: u32,
 }
 
 impl CostFunction {

@@ -43,6 +43,12 @@ impl From<SearchError> for AlignmentError {
     }
 }
 
+/// Type representing the count of tokens (e.g., in a marking)
+pub type TokenCount = u8;
+
+/// Type representing trace position
+pub type TracePos = u16;
+
 /// An edge/step of the Petri-net search: the transition fired, and whether it was a log move.
 ///
 /// The log-move-flag allows for log-before-model-moves pruning in [`PetriNetAlignment::expand`].
@@ -60,15 +66,15 @@ pub(crate) struct PetriNetAlignmentSpace {
     /// Number of model places
     num_places: usize,
     /// Flat storage for model markings, indexed using [`NodeID`]
-    markings: Vec<u8>,
+    markings: Vec<TokenCount>,
     /// Trace position per node, indexed using [`NodeID`]
-    trace_pos: Vec<u16>,
+    trace_pos: Vec<TracePos>,
     /// Index of visited states, mapping a `(marking, trace_pos)` tuple to a [`NodeID`]
     seen: HashTable<NodeID>,
     /// Current marking (re-used to reduce allocations)
-    current: Vec<u8>,
+    current: Vec<TokenCount>,
     /// Next marking, reached by firing a transition (re-used to reduce allocations)
-    next: Vec<u8>,
+    next: Vec<TokenCount>,
 }
 
 impl PetriNetAlignmentSpace {
@@ -102,7 +108,7 @@ impl PetriNetAlignmentSpace {
     }
 
     #[inline]
-    fn find_seen(&self, marking: &[u8], trace_position: u16) -> Option<NodeID> {
+    fn find_seen(&self, marking: &[TokenCount], trace_position: TracePos) -> Option<NodeID> {
         let hash = hash_state(marking, trace_position);
         let num_places = self.num_places;
         self.seen
@@ -140,7 +146,7 @@ impl SearchProblem for PetriNetAlignment<'_> {
     }
 
     fn max_edge_cost(&self) -> u32 {
-        self.net.max_edge_cost as u32
+        self.net.max_edge_cost
     }
 
     #[inline]
@@ -186,7 +192,9 @@ impl SearchProblem for PetriNetAlignment<'_> {
             if !is_enabled(&space.current, trans) {
                 continue;
             }
-            fire_transition(&space.current, &mut space.next, trans);
+            if fire_transition(&space.current, &mut space.next, trans).is_none() {
+                continue;
+            }
             let is_model_move = matches!(trans.move_type, AlignmentMove::ModelMove { .. });
             let new_trace_pos = if is_model_move {
                 trace_pos
@@ -198,7 +206,7 @@ impl SearchProblem for PetriNetAlignment<'_> {
                 was_log_move: matches!(trans.move_type, AlignmentMove::LogMove { .. }),
             };
 
-            let cost = trans.cost as u32;
+            let cost = trans.cost;
             match space.find_seen(&space.next, new_trace_pos) {
                 Some(existing) => emit(existing, false, cost, step),
                 None => {
@@ -235,7 +243,7 @@ pub(crate) fn align(
 
 #[inline]
 /// Tests whether the given transition is enabled in the given marking
-fn is_enabled(marking: &[u8], trans: &SyncProdNetTransition) -> bool {
+fn is_enabled(marking: &[TokenCount], trans: &SyncProdNetTransition) -> bool {
     trans
         .inputs
         .iter()
@@ -243,20 +251,30 @@ fn is_enabled(marking: &[u8], trans: &SyncProdNetTransition) -> bool {
 }
 
 #[inline]
+#[must_use]
 /// Fire the given transition, transforming the current marking into the `reached` marking.
-fn fire_transition(current: &[u8], reached: &mut [u8], trans: &SyncProdNetTransition) {
+///
+/// Returns `None` if the reached marking would exceed `TokenCount::MAX` tokens.
+/// In this case, the reached marking is considered out-of-bounds and should be pruned.
+fn fire_transition(
+    current: &[TokenCount],
+    reached: &mut [TokenCount],
+    trans: &SyncProdNetTransition,
+) -> Option<()> {
     reached.copy_from_slice(current);
     for (place, weight) in &trans.inputs {
         reached[*place] -= weight;
     }
     for (place, weight) in &trans.outputs {
-        reached[*place] += weight;
+        // Handle overflow to prevent arriving at incorrect markings
+        reached[*place] = reached[*place].checked_add(*weight)?;
     }
+    Some(())
 }
 
 #[inline]
 /// Hash a given state (combination of marking and trace position)
-fn hash_state(marking: &[u8], trace_pos: u16) -> u64 {
+fn hash_state(marking: &[TokenCount], trace_pos: TracePos) -> u64 {
     let mut h = FxHasher::default();
     h.write(marking);
     h.write_u16(trace_pos);
