@@ -267,11 +267,11 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
         };
         if let Some(default_expr) = &opts.default_value {
             quote! {
-                #maybe_ref crate::bindings::extract_param::<#ty_without_ref>(arg_map, #name, state, || Some(#default_expr))?
+                #maybe_ref ::process_mining::bindings::extract_param::<#ty_without_ref>(arg_map, #name, state, || Some(#default_expr))?
             }
         } else {
             quote! {
-                #maybe_ref crate::bindings::extract_param::<#ty_without_ref>(arg_map, #name, state, || None)?
+                #maybe_ref ::process_mining::bindings::extract_param::<#ty_without_ref>(arg_map, #name, state, || None)?
             }
         }
     });
@@ -282,7 +282,7 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
              let ty_str = quote::quote!(#ty_without_ref).to_string();
              let type_name = longest_big_type_match(&ty_str).unwrap();
              quote! {
-                 args_schema.push((#name.to_string(), serde_json::json!({
+                 args_schema.push((#name.to_string(), ::process_mining::__rt::serde_json::json!({
                     "type": "string",
                     "title": #type_name,
                     "x-registry-ref": #type_name,
@@ -290,7 +290,7 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
                 })));
              }
         } else {
-            quote! { args_schema.push((#name.to_string(), serde_json::to_value(schemars::schema_for!(#ty_without_ref)).unwrap())); }
+            quote! { args_schema.push((#name.to_string(), ::process_mining::__rt::serde_json::to_value(::process_mining::__rt::schemars::schema_for!(#ty_without_ref)).unwrap())); }
         }
     });
 
@@ -333,16 +333,16 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
     let serialization_logic = if attrs.debug_output {
         quote! {
             let final_result = format!("{:?}", result);
-            serde_json::to_vec(&final_result).map_err(|e| e.to_string())
+            ::process_mining::__rt::serde_json::to_vec(&final_result).map_err(|e| e.to_string())
         }
     } else if attrs.stringify_error {
         quote! {
             let ok_result = result.map_err(|e| e.to_string())?;
-            serde_json::to_vec(&ok_result).map_err(|e| e.to_string())
+            ::process_mining::__rt::serde_json::to_vec(&ok_result).map_err(|e| e.to_string())
         }
     } else {
         quote! {
-            serde_json::to_vec(&result).map_err(|e| e.to_string())
+            ::process_mining::__rt::serde_json::to_vec(&result).map_err(|e| e.to_string())
         }
     };
 
@@ -361,11 +361,11 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
                 };
                 if let Some(default_expr) = &opts.default_value {
                     quote! {
-                        let #param_ident = #maybe_ref crate::bindings::extract_param_json::<#ty_without_ref>(arg_map, #name, || Some(#default_expr))?;
+                        let #param_ident = #maybe_ref ::process_mining::bindings::extract_param_json::<#ty_without_ref>(arg_map, #name, || Some(#default_expr))?;
                     }
                 } else {
                     quote! {
-                        let #param_ident = #maybe_ref crate::bindings::extract_param_json::<#ty_without_ref>(arg_map, #name, || None)?;
+                        let #param_ident = #maybe_ref ::process_mining::bindings::extract_param_json::<#ty_without_ref>(arg_map, #name, || None)?;
                     }
                 }
             })
@@ -384,7 +384,7 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
                             .ok_or_else(|| format!("Missing required argument {}", #name))?;
                         match __state_guard.get_mut(__id)
                             .ok_or_else(|| format!("Item '{}' not found", __id))? {
-                            crate::bindings::RegistryItem::#variant_ident(inner) => inner,
+                            ::process_mining::bindings::RegistryItem::#variant_ident(inner) => inner,
                             _ => return Err(format!("ID '{}' is not a {}", __id, #type_name)),
                         }
                     };
@@ -404,9 +404,9 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
         let mut_serialization = if let Some(type_name) = is_big_type(&ret_type) {
             let variant_ident = format_ident!("{}", type_name);
             quote! {
-                let id = format!("res_{}", uuid::Uuid::new_v4());
-                __state_guard.insert(id.clone(), crate::bindings::RegistryItem::#variant_ident(result));
-                serde_json::to_vec(&id).map_err(|e| e.to_string())
+                let id = format!("res_{}", ::process_mining::__rt::uuid::Uuid::new_v4());
+                __state_guard.insert(id.clone(), ::process_mining::bindings::RegistryItem::#variant_ident(result));
+                ::process_mining::__rt::serde_json::to_vec(&id).map_err(|e| e.to_string())
             }
         } else {
             serialization_logic.clone()
@@ -427,9 +427,9 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
                 let state = &*state_guard;
                 #fn_ident( #(#extractions),* )
             };
-            let id = format!("res_{}", uuid::Uuid::new_v4());
-            state_lock.add(&id, crate::bindings::RegistryItem::#variant_ident(result));
-            serde_json::to_vec(&id).map_err(|e| e.to_string())
+            let id = format!("res_{}", ::process_mining::__rt::uuid::Uuid::new_v4());
+            state_lock.add(&id, ::process_mining::bindings::RegistryItem::#variant_ident(result));
+            ::process_mining::__rt::serde_json::to_vec(&id).map_err(|e| e.to_string())
         }
     } else {
         quote! {
@@ -442,7 +442,7 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
 
     let ret_type_schema = if let Some(type_name) = is_big_type(&ret_type) {
         quote! {
-            serde_json::json!({
+            ::process_mining::__rt::serde_json::json!({
                "type": "string",
                "title": #type_name,
                "x-registry-ref": #type_name,
@@ -451,7 +451,7 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
         }
     } else {
         quote! {
-            serde_json::to_value(schemars::schema_for!(#ret_type)).unwrap()
+            ::process_mining::__rt::serde_json::to_value(::process_mining::__rt::schemars::schema_for!(#ret_type)).unwrap()
         }
     };
 
@@ -472,9 +472,8 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
 
         #[cfg(feature = "bindings")]
         const _: () = {
-            use crate::bindings::{Binding, AppState};
-            use serde_json::Value;
-            use std::sync::RwLock;
+            use ::process_mining::bindings::{Binding, AppState};
+            use ::process_mining::__rt::serde_json::Value;
 
             fn #wrapper_name(args: &Value, state_lock: &AppState) -> Result<Vec<u8>, String> {
                 let arg_map = args.as_object().ok_or("Args must be JSON object")?;
@@ -499,7 +498,7 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
                 #ret_type_schema
             }
 
-            inventory::submit! {
+            ::process_mining::__rt::inventory::submit! {
                 Binding {
                     id: concat!(module_path!(), "::", stringify!(#fn_ident)),
                     name: #binding_name_str,
@@ -537,12 +536,12 @@ pub fn derive_registry_entity(item: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         #[cfg(feature = "bindings")]
-        impl<'a> crate::bindings::FromContext<'a> for &'a #name {
-            fn from_context(value: &serde_json::Value, state: &'a crate::bindings::InnerAppState) -> Result<Self, String> {
+        impl<'a> ::process_mining::bindings::FromContext<'a> for &'a #name {
+            fn from_context(value: &::process_mining::__rt::serde_json::Value, state: &'a ::process_mining::bindings::InnerAppState) -> Result<Self, String> {
                 let id = value.as_str().ok_or("Expected String ID")?;
                 let item = state.get(id).ok_or_else(|| format!("Item '{}' not found", id))?;
 
-                if let crate::bindings::RegistryItem::#name(inner) = item {
+                if let ::process_mining::bindings::RegistryItem::#name(inner) = item {
                     Ok(inner)
                 } else {
                     Err(format!("ID '{}' is not a {}", id, #name_str))

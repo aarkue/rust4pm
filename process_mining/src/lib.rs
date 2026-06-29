@@ -8,6 +8,18 @@
 )]
 #![doc = include_str!("../README.md")]
 
+// Allow the `#[register_binding]` macro's generated code to reference this crate by
+// its absolute name (`::process_mining::...`) even from within the crate itself.
+extern crate self as process_mining;
+
+/// Runtime re-exports used by the `#[register_binding]` macro, so downstream crates
+/// registering bindings only need a dependency on `process_mining`.
+#[cfg(feature = "bindings")]
+#[doc(hidden)]
+pub mod __rt {
+    pub use {inventory, schemars, serde_json, uuid};
+}
+
 pub mod analysis;
 pub mod conformance;
 pub mod core;

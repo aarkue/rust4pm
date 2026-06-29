@@ -41,7 +41,7 @@ use crate::core::{
     io::ExtensionWithMime,
     EventLog,
 };
-use macros_process_mining::register_binding;
+pub use macros_process_mining::{register_binding, RegistryEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
