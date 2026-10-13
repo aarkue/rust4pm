@@ -23,7 +23,13 @@ fn main() {
         Some(base_path) => {
             let path: PathBuf = PathBuf::from(base_path);
             println!("Using base path {:?}", path);
-            let num_runs = 1;
+            let num_runs: usize = env::args()
+                .nth(2)
+                .map(|n| {
+                    n.parse()
+                        .expect("Second argument must be the number of runs")
+                })
+                .unwrap_or(1);
             let noise_thresh = 0.2;
             let event_logs = vec![
                 ("Logistics", path.join("ContainerLogistics.json")),

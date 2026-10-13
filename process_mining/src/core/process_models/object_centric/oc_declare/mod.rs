@@ -436,6 +436,8 @@ impl<'b> OCDeclareArcLabel {
                 }
             })
             .map(|otass| otass.get_for_ev(ev, linked_ocel))
+            // Types without objects in `ev` impose no requirement, for EACH, ALL and ANY alike.
+            .filter(|obs| !obs.is_empty())
             .multi_cartesian_product()
             .map(|product| {
                 self.all
@@ -448,7 +450,9 @@ impl<'b> OCDeclareArcLabel {
                             -(linked_ocel.get_obs_of_type(second).count() as i32)
                         }
                     })
-                    .map(|otass| SetFilter::All(otass.get_for_ev(ev, linked_ocel)))
+                    .map(|otass| otass.get_for_ev(ev, linked_ocel))
+                    .filter(|obs| !obs.is_empty())
+                    .map(SetFilter::All)
                     .chain(if product.is_empty() {
                         Vec::default()
                     } else {
@@ -465,8 +469,9 @@ impl<'b> OCDeclareArcLabel {
                                     -(linked_ocel.get_obs_of_type(second).count() as i32)
                                 }
                             })
-                            .map(|otass| {
-                                let x = otass.get_for_ev(ev, linked_ocel);
+                            .map(|otass| otass.get_for_ev(ev, linked_ocel))
+                            .filter(|x| !x.is_empty())
+                            .map(|x| {
                                 if x.len() == 1 {
                                     SetFilter::All(x)
                                 } else {

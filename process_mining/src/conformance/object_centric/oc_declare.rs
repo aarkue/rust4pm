@@ -351,7 +351,7 @@ mod tests {
     use crate::core::event_data::object_centric::{
         appendable::AppendableOCEL, OCELRelationship, OCELType,
     };
-    use crate::core::process_models::oc_declare::ObjectTypeAssociation;
+    use crate::core::process_models::oc_declare::{OCDeclareNode, ObjectTypeAssociation};
     use chrono::DateTime;
 
     fn empty_type(name: &str) -> OCELType {
@@ -513,5 +513,84 @@ mod tests {
 
         assert_eq!(via_empty_all, via_no_objs);
         assert_eq!(via_empty_all.len(), locel.get_evs_of_type("place").count());
+    }
+
+    /// `place` has no order object, a later `ship` involves one, and there is no `pay` event.
+    fn locel_with_objectless_source() -> SlimLinkedOCEL {
+        let mut s = SlimLinkedOCEL::new();
+        for t in ["place", "ship", "pay"] {
+            s.declare_event_type(empty_type(t)).unwrap();
+        }
+        s.declare_object_type(empty_type("order")).unwrap();
+        s.append_object("o1".into(), "order", Vec::new(), Vec::new())
+            .unwrap();
+        for (i, (id, et, obs)) in [("e1", "place", vec![]), ("e2", "ship", vec!["o1"])]
+            .iter()
+            .enumerate()
+        {
+            let time =
+                DateTime::parse_from_rfc3339(&format!("2024-01-0{}T00:00:00Z", i + 1)).unwrap();
+            s.append_event(
+                (*id).into(),
+                et,
+                time,
+                Vec::new(),
+                obs.iter()
+                    .map(|o: &&str| OCELRelationship {
+                        object_id: (*o).into(),
+                        qualifier: "q".into(),
+                    })
+                    .collect(),
+            )
+            .unwrap();
+        }
+        s.finalize().unwrap();
+        s
+    }
+
+    fn place_ef(to: &str, label: OCDeclareArcLabel) -> OCDeclareArc {
+        OCDeclareArc {
+            from: OCDeclareNode::new("place"),
+            to: OCDeclareNode::new(to),
+            arc_type: OCDeclareArcType::EF,
+            label,
+            counts: (Some(1), None),
+        }
+    }
+
+    #[test]
+    fn empty_any_set_is_vacuous() {
+        let label = OCDeclareArcLabel {
+            any: vec![ObjectTypeAssociation::new_simple("order")],
+            ..Default::default()
+        };
+        let locel = locel_with_objectless_source();
+        assert_eq!(
+            oc_declare_conformance(&locel, &place_ef("ship", label)),
+            1.0
+        );
+    }
+
+    #[test]
+    fn empty_all_set_is_vacuous() {
+        let label = OCDeclareArcLabel {
+            all: vec![ObjectTypeAssociation::new_simple("order")],
+            ..Default::default()
+        };
+        let locel = locel_with_objectless_source();
+        assert_eq!(
+            oc_declare_conformance(&locel, &place_ef("ship", label)),
+            1.0
+        );
+    }
+
+    #[test]
+    fn empty_each_set_still_requires_a_target_event() {
+        let label = OCDeclareArcLabel {
+            each: vec![ObjectTypeAssociation::new_simple("order")],
+            ..Default::default()
+        };
+        let locel = locel_with_objectless_source();
+        assert_eq!(oc_declare_conformance(&locel, &place_ef("pay", label)), 0.0);
     }
 }

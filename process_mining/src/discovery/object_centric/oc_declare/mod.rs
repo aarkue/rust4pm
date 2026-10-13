@@ -667,11 +667,6 @@ fn has_dominating_path(
     visited.insert(c.from.as_str());
 
     while let Some((curr_node, depth)) = queue.pop_front() {
-        // If we reached the target via a path, 'c' is redundant.
-        if curr_node == c.to.as_str() {
-            return true;
-        }
-
         if let Some(edge_indices) = adj.get(curr_node) {
             for &edge_idx in edge_indices {
                 // Only traverse edges that are currently active
@@ -700,6 +695,12 @@ fn has_dominating_path(
                     if overlap {
                         continue;
                     }
+                }
+
+                // If we reached the target via a path, 'c' is redundant.
+                // Checked per arc, not per dequeued node, so a self-loop needs a path of at least one arc.
+                if edge.to == c.to {
+                    return true;
                 }
 
                 // Push reached node and continue search
@@ -906,4 +907,42 @@ fn dedup_type_label_pairs(mut pairs: Vec<ArcTypeAndLabel>) -> Vec<ArcTypeAndLabe
             .any(|b| a != b && a.0.is_dominated_by_or_eq(&b.0) && a.1.is_dominated_by(&b.1))
     });
     pairs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ef_each(from: &str, to: &str, ot: &str) -> OCDeclareArc {
+        OCDeclareArc {
+            from: OCDeclareNode::new(from),
+            to: OCDeclareNode::new(to),
+            arc_type: OCDeclareArcType::EF,
+            label: OCDeclareArcLabel {
+                each: vec![ObjectTypeAssociation::new_simple(ot)],
+                any: vec![],
+                all: vec![],
+            },
+            counts: (Some(1), None),
+        }
+    }
+
+    #[test]
+    fn self_loop_without_implying_path_is_kept() {
+        let arcs = vec![ef_each("a", "a", "order")];
+        assert_eq!(reduce_oc_arcs(arcs.clone(), true), arcs);
+    }
+
+    #[test]
+    fn self_loop_implied_by_cycle_is_removed() {
+        let arcs = vec![
+            ef_each("a", "a", "order"),
+            ef_each("a", "b", "order"),
+            ef_each("b", "a", "order"),
+        ];
+        assert_eq!(
+            reduce_oc_arcs(arcs, true),
+            vec![ef_each("a", "b", "order"), ef_each("b", "a", "order")]
+        );
+    }
 }
