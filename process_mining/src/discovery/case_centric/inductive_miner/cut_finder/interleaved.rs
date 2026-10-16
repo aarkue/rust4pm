@@ -2,87 +2,53 @@
 
 use crate::core::process_models::process_tree::OperatorType;
 
+use super::super::dfg::ActivityDfg;
 use super::super::log::{ActivityID, ActivityLog};
 use super::super::structures::union_find::UnionFind;
 use super::cut::Cut;
 
-/// Finds the maximal interleaved cut, if there is one.
+/// Finds the maximal interleaved cut, if there is one, as `interleavedCut` of `IMa` does (§6.4.2.1).
 ///
-/// `↔(a, b)` and `∧(a, b)` have the same directly-follows graph (Requirement Cb.4), so this reads
+/// Requirement ↔.1 asks that between parts, exactly the edges from an end to a start activity
+/// exist. So an activity that does not start a trace shares the part of its predecessors, one
+/// that does not end a trace shares the part of its successors, and an end and a start activity
+/// without an edge between them share a part. The pseudo-code swaps the pair in this last rule,
+/// which would reject the thesis' own `↔(→(a, b), c)`.
+///
+/// The graph does not tell whether the parts actually run one after the other, so this also reads
 /// the traces: an interleaved part runs to completion before the next starts, and its activities
-/// therefore occupy one uninterrupted block. Two activities share a part when their blocks overlap
-/// in some trace, or when their order never varies, which is a sequence rather than an
-/// interleaving. Merging can create new overlaps, so this repeats until it settles.
-pub fn interleaved_cut(log: &ActivityLog) -> Option<Cut> {
+/// occupy one uninterrupted block. Activities whose blocks overlap in some trace share a part,
+/// which also covers ∧↔.1. Merging can create new overlaps, so this repeats until it settles.
+pub fn interleaved_cut(log: &ActivityLog, dfg: &ActivityDfg) -> Option<Cut> {
     let alphabet_size = log.alphabet_size();
     let mut parts = UnionFind::new(alphabet_size);
-    let mut last_position = vec![0usize; alphabet_size];
 
+    for (from, to, _) in dfg.edges() {
+        if !dfg.is_end(from) || !dfg.is_start(to) {
+            parts.union(dfg.activity(from), dfg.activity(to));
+        }
+    }
+    for end in dfg.end_activities() {
+        for start in dfg.start_activities() {
+            if !dfg.follows(end, start) {
+                parts.union(dfg.activity(end), dfg.activity(start));
+            }
+        }
+    }
+
+    let mut last_position = vec![0usize; alphabet_size];
     loop {
         let mut merged = false;
         for variant in log.variants() {
             merged |= merge_blocks(&variant.activities, &mut parts, &mut last_position);
         }
-        // Only worth looking at once the blocks no longer move.
-        if !merged && !merge_fixed_order(log, &mut parts) {
+        if !merged {
             break;
         }
     }
 
     let cut = Cut::new(OperatorType::Interleaving, groups_of(log, &mut parts));
     cut.is_non_trivial().then_some(cut)
-}
-
-/// Merges the parts whose order never varies, parts that never occur together included, and
-/// reports whether that changed anything.
-///
-/// Only pairs that share no part are merged in one round, since merging is itself what can make an
-/// order vary: for `⟨a,c,d⟩, ⟨b,d⟩, ⟨d,b,a,b,a⟩` both `{a,b}, {c}` and `{c}, {d}` are ordered, but
-/// merging all three gives up the cut `↔({a,b,c}, {d})` that merging only the first pair reaches.
-fn merge_fixed_order(log: &ActivityLog, parts: &mut UnionFind) -> bool {
-    let groups = groups_of(log, parts);
-    if groups.len() < 2 {
-        return false;
-    }
-
-    let mut part_of = vec![usize::MAX; log.alphabet_size()];
-    for (index, group) in groups.iter().enumerate() {
-        for &activity in group {
-            part_of[activity] = index;
-        }
-    }
-
-    let count = groups.len();
-    let mut before = vec![false; count * count];
-    let mut order: Vec<usize> = Vec::new();
-    for variant in log.variants() {
-        order.clear();
-        for &activity in &variant.activities {
-            let part = part_of[activity];
-            if order.last() != Some(&part) {
-                order.push(part);
-            }
-        }
-        for (position, &left) in order.iter().enumerate() {
-            for &right in &order[position + 1..] {
-                before[left * count + right] = true;
-            }
-        }
-    }
-
-    let mut merged = false;
-    let mut taken = vec![false; count];
-    for left in 0..count {
-        for right in left + 1..count {
-            let fixed = !before[left * count + right] || !before[right * count + left];
-            if fixed && !taken[left] && !taken[right] {
-                merged |= parts.union(groups[left][0], groups[right][0]);
-                taken[left] = true;
-                taken[right] = true;
-            }
-        }
-    }
-    merged
 }
 
 /// The activities of the log grouped by part, each group in ascending order.
@@ -131,7 +97,7 @@ mod test_interleaved_cut {
 
     fn cut(traces: &[&[&str]]) -> Option<Vec<Vec<String>>> {
         let (labels, log) = super::super::super::log::test_utils::log_of(traces);
-        interleaved_cut(&log).map(|cut| {
+        interleaved_cut(&log, &ActivityDfg::discover(&log)).map(|cut| {
             cut.partitions()
                 .iter()
                 .map(|part| part.iter().map(|&a| labels[a].clone()).collect())
@@ -150,19 +116,29 @@ mod test_interleaved_cut {
 
     #[test]
     fn test_overlapping_blocks_are_merged() {
-        // b sits inside the block of a, so the two cannot be separated.
-        assert_eq!(cut(&[&["a", "b", "a"]]), None);
-        // Merging a with b makes the block of a, b overlap the one of c.
-        assert_eq!(cut(&[&["a", "c", "b"], &["a", "b", "a"]]), None);
+        // L109 (Figure 6.15): the graph allows ↔({a}, {b, c}), but the first trace runs a around
+        // b, c.
+        let rest: [&[&str]; 2] = [&["b", "c", "a"], &["a", "b", "c"]];
+        assert_eq!(cut(&rest), parts(&[&["a"], &["b", "c"]]));
+        assert_eq!(cut(&[&["a", "b", "c", "a"], rest[0], rest[1]]), None);
     }
 
     #[test]
-    fn test_parts_in_a_fixed_order_are_merged() {
-        // A sequence is not an interleaving: a is always before b, so both stay together and the
-        // sequence cut handles them.
+    fn test_footprint() {
+        // b never starts a trace, so it belongs to the part of a.
         assert_eq!(cut(&[&["a", "b"]]), None);
-        // Activities that never occur together are not an interleaving either.
+        // a ends and b starts a trace, but b never follows a.
         assert_eq!(cut(&[&["a"], &["b"]]), None);
+        // The blocks never overlap, but c ends no trace and is followed by d.
+        assert_eq!(
+            cut(&[&["a", "c", "d"], &["b", "d"], &["d", "b", "a", "b", "a"]]),
+            None
+        );
+        // b starts no trace, yet is preceded by both a and c.
+        assert_eq!(
+            cut(&[&["a", "b", "c"], &["c", "b", "a"], &["c", "a", "b"]]),
+            None
+        );
     }
 
     #[test]

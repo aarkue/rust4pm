@@ -2,20 +2,19 @@
 
 ## Unreleased
 
-- Implemented the Inductive Miner Algorithm (`discovery::case_centric::inductive_miner`)
-  - Overall algorithm structure and initial implementation from @Kuhlkrypto. Thanks!
-  - Added missing implementations parts (e.g., cut detection and log splitting left as stubs)
-  - Added infrequency handling (IMf) via `InductiveMinerOptions::imf(f)`, filtering in cut detection, log splitting, base cases and fall throughs
-  - IM(f) now uses an activity-projected log and an index-based directly-follows graph instead of cloning the `EventLog` per split
-  - Sub-logs and fall-through candidates are mined in parallel
-  - Added the directly-follows variant IMd/IMfd: `inductive_miner_dfg` passes over the log once and recurses on the graph alone, `inductive_miner_dfg_from_graph` mines an existing `DirectlyFollowsGraph`. Scales to logs the log recursion cannot handle; does not guarantee fitness
-  - `InductiveMinerDfgOptions::{prom, pm4py}` imitate those tools' IMd for comparison runs, via the individual options `use_tau_loops`, `flower_accepts_empty`, `repeated_activity_to_flower` and `filter_single_activity`
-  - `InductiveMinerOptions::{prom, pm4py}` do the same for the log-based IM, and `filter_single_activity` switches off the single-activity base case of IMf (§6.2.2.3), which `PM4Py` does not implement
-  - IMf's activity-concurrent fall through probes the unfiltered directly-follows graph (§6.2.2.4); `filter_activity_concurrent_probe` makes it probe the filtered one, which on logs with heavy per-trace repetition accepts orderings the log does not support
-- Added `PetriNet::reduce_silent_transitions` as language-preserving post-processing (removes silent transitions that only pass a token on)
-- Object-centric Petri net discovery (`discovery::object_centric::ocpn`)
-  - `with_object_types(ObjectTypeFilter::only([..]))` or `::except([..])` restricts discovery to some object types
-- `flatten_ocel_on` handles objects involved multiple times in one event (e.g., through different qualifiers) differently now: It no longer repeats the event. This also affects `OCDirectlyFollowsGraph`.
+- Implemented the Inductive Miner (`discovery::case_centric::inductive_miner`)
+  - Overall structure and initial implementation by @Kuhlkrypto. Thanks!
+  - Completed the missing parts, e.g., cut detection and log splitting
+  - Infrequency handling (IMf) via `InductiveMinerOptions::imf(f)`
+  - The cuts of IMa as options: `strict_sequence` (on by default, also available for IMd), `use_interleaved` and `use_inclusive_choice`, which regroups concurrent cuts into inclusive choices and nested concurrency. `InductiveMinerOptions::ima()` turns on all of them
+  - Mines on an activity-projected log with an index-based directly-follows graph, and mines sub-logs and fall-through candidates in parallel
+  - Directly-follows variant IMd/IMfd: `inductive_miner_dfg` reads the log once and recurses on the graph alone, `inductive_miner_dfg_from_graph` mines an existing `DirectlyFollowsGraph`. Scales to larger logs but does not guarantee fitness
+  - Presets `InductiveMinerOptions::{prom, pm4py}` and `InductiveMinerDfgOptions::{prom, pm4py}` imitate those tools, built from individual options such as `filter_single_activity`, `use_tau_loops`, `flower_accepts_empty` and `repeated_activity_to_flower`
+  - `filter_activity_concurrent_probe` makes IMf's activity-concurrent fall through probe the filtered instead of the unfiltered directly-follows graph
+- Added `PetriNet::reduce_silent_transitions`, which removes silent transitions that only pass a token on (language-preserving)
+- Added `ObjectCentricPetriNet` with a flat JSON form (`to_json`, `from_json`)
+- Added object-centric Petri net discovery (`discovery::object_centric::ocpn::discover_ocpn`), optionally restricted to some object types via `ObjectTypeFilter::{only, except}`
+- `flatten_ocel_on` no longer repeats an event that relates to the same object several times (e.g., under different qualifiers). This also affects `OCDirectlyFollowsGraph`
 - Fixed a regression in OC-DECLARE discovery/conformance runtime performance:
   - Now builds and construct a reverse-E2O index grouped by event type
   - OC-DECLARE internals are no longer public; their arguments could only be produced by other internals (**Breaking**)

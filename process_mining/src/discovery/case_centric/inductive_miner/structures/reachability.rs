@@ -103,7 +103,7 @@ fn strongly_connected_components(dfg: &ActivityDfg) -> (Vec<u32>, Vec<Vec<u32>>)
         }
     }
 
-    // Second pass: the same search on the reversed graph, latest finishing time first. Each tree
+    // Second pass: a search on the reversed graph, latest finishing time first. Each tree
     // it grows is one strongly connected component, and they are found in topological order.
     let mut component_of = vec![u32::MAX; n];
     let mut components: Vec<Vec<u32>> = Vec::new();
@@ -114,18 +114,16 @@ fn strongly_connected_components(dfg: &ActivityDfg) -> (Vec<u32>, Vec<Vec<u32>>)
         }
 
         let index = components.len() as u32;
-        let mut component = vec![root];
         component_of[root as usize] = index;
-        stack.push((root, 0));
-
-        while let Some((activity, next_predecessor)) = stack.pop() {
-            let predecessors = dfg.predecessors(activity as usize);
-            if let Some(&predecessor) = predecessors.get(next_predecessor) {
-                stack.push((activity, next_predecessor + 1));
+        let mut component = vec![root];
+        // The component doubles as the work list, since visiting order does not matter here.
+        let mut next = 0;
+        while let Some(&activity) = component.get(next) {
+            next += 1;
+            for &predecessor in dfg.predecessors(activity as usize) {
                 if component_of[predecessor as usize] == u32::MAX {
                     component_of[predecessor as usize] = index;
                     component.push(predecessor);
-                    stack.push((predecessor, 0));
                 }
             }
         }

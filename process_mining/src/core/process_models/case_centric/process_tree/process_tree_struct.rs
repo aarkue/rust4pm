@@ -89,26 +89,15 @@ impl Node {
         }
     }
 
-    /// Recursively folds this node by merging children that share the same
-    /// associative operator into the current node.
-    ///
-    /// The fold is applied **bottom-up**: children are folded first, and only
-    /// then the current node checks whether any of its (now-folded) children
-    /// can be inlined.
-    ///
-    /// **Example** – `SEQ(SEQ(a, b), c)` becomes `SEQ(a, b, c)`.
-    ///
-    /// Leaf nodes are returned unchanged.
+    /// Merges children that share this node's associative operator into it, bottom-up, so
+    /// `→(→(a, b), c)` becomes `→(a, b, c)`. Leaves are returned unchanged.
     pub fn fold(self) -> Self {
         match self {
             Node::Leaf(_) => self,
             Node::Operator(op) => {
-                // Recursively fold all children first (bottom-up).
                 let folded_children: Vec<Node> =
                     op.children.into_iter().map(|child| child.fold()).collect();
 
-                // If the current operator is associative, inline any child
-                // that carries the same operator type.
                 let mut children = if op.operator_type.is_associative() {
                     let mut flattened = Vec::with_capacity(folded_children.len());
                     for child in folded_children {
@@ -116,7 +105,6 @@ impl Node {
                             Node::Operator(ref inner)
                                 if inner.operator_type == op.operator_type =>
                             {
-                                // Consume the child and move its children up.
                                 if let Node::Operator(inner) = child {
                                     flattened.extend(inner.children);
                                 }
@@ -129,9 +117,7 @@ impl Node {
                     folded_children
                 };
 
-                // XOR-specific: at most one tau (silent leaf) is semantically
-                // meaningful as a direct child. Remove duplicates introduced
-                // when EmptyTraces fallthrough shells are folded upward.
+                // Folding `×(τ, ×(τ, a))` repeats the τ, and one is enough.
                 if op.operator_type == OperatorType::ExclusiveChoice {
                     let tau = Node::Leaf(Leaf {
                         activity_label: LeafLabel::Tau,
@@ -820,8 +806,6 @@ mod tests {
     use crate::core::process_models::case_centric::process_tree::process_tree_struct::{
         Leaf, Node, Operator, OperatorType, ProcessTree,
     };
-
-    // ── folding tests ────────────────────────────────────────────────────────
 
     #[test]
     fn fold_flat_sequence_unchanged() {

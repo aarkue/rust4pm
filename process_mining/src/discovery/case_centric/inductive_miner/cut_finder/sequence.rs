@@ -3,7 +3,6 @@
 use crate::core::process_models::process_tree::OperatorType;
 
 use super::super::dfg::ActivityDfg;
-use super::super::log::ActivityLog;
 use super::super::structures::complement_components::complement_components;
 use super::super::structures::reachability::Reachability;
 use super::cut::Cut;
@@ -37,80 +36,72 @@ pub fn sequence_cut(dfg: &ActivityDfg) -> Option<Cut> {
     cut.is_non_trivial().then_some(cut)
 }
 
-/// Merges the neighbouring parts of a sequence cut that the log never shows apart.
+/// Merges the parts of a sequence cut that can only occur together with a skippable neighbour,
+/// as `sequenceCutStrict` of `IMa` does (§5.6.4, §6.4.2.1).
 ///
-/// Requirement →.1 only looks at the graph, so the maximal cut can separate parts that always occur
-/// together. For `⟨c,c,c,a,c⟩, ⟨b,b,d,a⟩, ⟨b,c⟩` it separates `{b}` from `{d}`, and the resulting
-/// tree accepts a `d` without a preceding `b`, which no trace does. The thesis names the refinement
-/// and declines it "for efficiency considerations" (§6.1, discussion of L77); `ProM` and `PM4Py`
-/// apply it by default.
+/// Requirement →.1 alone can separate parts that always occur together. For
+/// `⟨c,c,c,a,c⟩, ⟨b,b,d,a⟩, ⟨b,c⟩` it separates `{b}` from `{d}`, and the resulting tree accepts a
+/// `d` without a preceding `b`, which no trace does. A part `p` that some path skips is a pivot:
+/// the parts before it that only lead up to `p`, and the parts after it that are only reached from
+/// `p` onwards, are merged into it. `ProM` and `PM4Py` apply this by default.
 ///
-/// Merging changes which parts are neighbours, so this repeats until it settles. Returns `None` if
-/// nothing is left to cut.
-pub fn strict_sequence_cut(log: &ActivityLog, cut: Cut) -> Option<Cut> {
-    let mut parts = cut.partitions().to_vec();
+/// Returns `None` if nothing is left to cut.
+pub fn strict_sequence_cut(dfg: &ActivityDfg, cut: Cut) -> Option<Cut> {
+    let parts = cut.partitions();
+    let n = parts.len();
+    let lookup = cut.partition_lookup(dfg.alphabet_size());
+    let part_of = |local: usize| lookup[dfg.activity(local)] as isize;
 
-    while let Some(merge) = merges(log, &parts) {
-        let mut merged: Vec<Vec<usize>> = Vec::with_capacity(parts.len());
-        for (index, part) in parts.into_iter().enumerate() {
-            match merged.last_mut() {
-                Some(previous) if merge[index - 1] => previous.extend(part),
-                _ => merged.push(part),
-            }
-        }
-        for part in &mut merged {
-            part.sort_unstable();
-        }
-        parts = merged;
+    // The earliest part with an edge into each part and the latest part with an edge out of it,
+    // where a trace start counts as part -1 and a trace end as part n.
+    let mut min_from = vec![isize::MAX; n];
+    let mut max_to = vec![isize::MIN; n];
+    for start in dfg.start_activities() {
+        min_from[part_of(start) as usize] = -1;
+    }
+    for end in dfg.end_activities() {
+        max_to[part_of(end) as usize] = n as isize;
+    }
+    for (from, to, _) in dfg.edges() {
+        let (from, to) = (part_of(from), part_of(to));
+        min_from[to as usize] = min_from[to as usize].min(from);
+        max_to[from as usize] = max_to[from as usize].max(to);
     }
 
-    let cut = Cut::new(OperatorType::Sequence, parts);
-    cut.is_non_trivial().then_some(cut)
-}
+    // `joined[i]`: parts `i` and `i + 1` end up in the same part.
+    let mut joined = vec![false; n.saturating_sub(1)];
+    for pivot in 0..n {
+        let p = pivot as isize;
+        let skippable = max_to[..pivot].iter().any(|&to| to > p)
+            || min_from[pivot + 1..].iter().any(|&from| from < p);
+        if !skippable {
+            continue;
+        }
+        let mut q = pivot;
+        while q > 0 && max_to[q - 1] <= p {
+            joined[q - 1] = true;
+            q -= 1;
+        }
+        let mut q = pivot + 1;
+        while q < n && min_from[q] >= p {
+            joined[q - 1] = true;
+            q += 1;
+        }
+    }
 
-/// Which neighbouring parts have to be merged, or `None` if none have.
-///
-/// Two neighbours stay separated only if the log shows every combination of "this part occurs" and
-/// "it does not" that the split allows. Neither of them occurring is not such a combination:
-/// whether everything may be skipped is settled by the empty traces before cut detection runs.
-fn merges(log: &ActivityLog, parts: &[Vec<usize>]) -> Option<Vec<bool>> {
-    let mut part_of = vec![usize::MAX; log.alphabet_size()];
+    let mut merged: Vec<Vec<usize>> = Vec::with_capacity(n);
     for (index, part) in parts.iter().enumerate() {
-        for &activity in part {
-            part_of[activity] = index;
+        match merged.last_mut() {
+            Some(previous) if joined[index - 1] => previous.extend(part),
+            _ => merged.push(part.clone()),
         }
     }
-
-    let mut occurs = vec![[false; 2]; parts.len()];
-    let mut neighbours = vec![[false; 4]; parts.len() - 1];
-    let mut occurring = vec![false; parts.len()];
-
-    for variant in log.variants() {
-        occurring.fill(false);
-        for &activity in &variant.activities {
-            let part = part_of[activity];
-            if part != usize::MAX {
-                occurring[part] = true;
-            }
-        }
-        for (part, &present) in occurring.iter().enumerate() {
-            occurs[part][present as usize] = true;
-        }
-        for (index, pair) in occurring.windows(2).enumerate() {
-            neighbours[index][pair[0] as usize * 2 + pair[1] as usize] = true;
-        }
+    for part in &mut merged {
+        part.sort_unstable();
     }
 
-    let merge: Vec<bool> = neighbours
-        .iter()
-        .enumerate()
-        .map(|(index, shown)| {
-            [(0, 1), (1, 0), (1, 1)].iter().any(|&(left, right)| {
-                occurs[index][left] && occurs[index + 1][right] && !shown[left * 2 + right]
-            })
-        })
-        .collect();
-    merge.iter().any(|&m| m).then_some(merge)
+    let cut = Cut::new(OperatorType::Sequence, merged);
+    cut.is_non_trivial().then_some(cut)
 }
 
 #[cfg(test)]
@@ -163,7 +154,7 @@ mod test_sequence_cut {
             let (labels, log) = super::super::super::log::test_utils::log_of(traces);
             let dfg = ActivityDfg::discover(&log);
             sequence_cut(&dfg)
-                .and_then(|cut| strict_sequence_cut(&log, cut))
+                .and_then(|cut| strict_sequence_cut(&dfg, cut))
                 .map(|cut| {
                     cut.partitions()
                         .iter()

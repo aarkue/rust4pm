@@ -1,8 +1,7 @@
 //! A minimal disjoint-set (union-find) structure over activity indices.
 //!
-//! Several cut-detection functions of the Inductive Miner are phrased as "start with every
-//! activity in its own part and merge two parts whenever some condition holds" (see the
-//! concurrent and the loop cut). This structure provides exactly that operation.
+//! Several cut detections start with every activity in its own part and merge two parts whenever
+//! some condition holds.
 
 /// Disjoint-set forest over the indices `0..n` with union by size and path halving.
 #[derive(Debug, Clone)]

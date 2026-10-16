@@ -1,9 +1,8 @@
 //! The Inductive Miner (IM) and its infrequent variant (`IMf`), following Leemans, "Robust Process
 //! Mining with Guarantees" (§6.1 and §6.2.2).
 //!
-//! For a log it tries [base cases](base_cases), then [cut detection](cut_finder) with a
-//! [log split](splits) and recursion, and finally the [fall throughs](fallthrough), ending in a
-//! flower model. `IMf` adds a deviation threshold `f` to all four steps and gives up the fitness
+//! For a log it tries the base cases, then [cut detection](cut_finder) with a log split and
+//! recursion, and finally the [fall throughs](fallthrough), ending in a flower model. `IMf` adds a deviation threshold `f` to all four steps and gives up the fitness
 //! guarantee of plain IM.
 //!
 //! For the variant that recurses on a directly-follows graph instead of the log, see
@@ -25,7 +24,6 @@
 //!
 //! assert_eq!(tree.to_string(), "→(a, X(b, c), d)");
 //! ```
-#![doc = include_str!("COMPARISON.md")]
 
 use rayon::prelude::*;
 
@@ -38,19 +36,17 @@ use base_cases::{find_base_case, BaseCase};
 use cut_finder::find_cut_filtering;
 use dfg::ActivityDfg;
 use fallthrough::{empty_traces, find_fallthrough, Fallthrough};
-use inclusive_choice::to_inclusive_choice;
 use log::{ActivityID, ActivityLog};
 use splits::split_log;
 
-pub mod base_cases;
+pub(crate) mod base_cases;
 pub mod cut_finder;
 pub mod dfg;
 pub mod dfg_miner;
 pub mod fallthrough;
-pub mod inclusive_choice;
 pub mod log;
-pub mod splits;
-pub mod structures;
+pub(crate) mod splits;
+pub(crate) mod structures;
 
 pub use dfg_miner::{
     inductive_miner_dfg, inductive_miner_dfg_from_graph, InductiveMinerDfgOptions,
@@ -58,67 +54,67 @@ pub use dfg_miner::{
 
 /// Settings for a run of the Inductive Miner.
 ///
-/// [`InductiveMinerOptions::default()`] is plain IM. For real-life logs, prefer
-/// [`InductiveMinerOptions::imf`].
+/// Start from a preset and change single fields with struct update syntax, as in
+/// `InductiveMinerOptions { use_interleaved: true, ..InductiveMinerOptions::imf(0.2) }`.
+/// [`default`](Self::default) is IM and [`imf`](Self::imf) is `IMf`, each with a few refinements
+/// over the thesis. [`im_thesis`](Self::im_thesis) and [`imf_thesis`](Self::imf_thesis) are the
+/// algorithms as published, and [`ima`](Self::ima) adds the cuts of `IMa`. For real-life logs,
+/// prefer [`imf`](Self::imf).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InductiveMinerOptions {
-    /// Deviation threshold `f ∈ [0, 1]` of `IMf`. `0.0` is plain IM.
+    /// Deviation threshold `f ∈ [0, 1]` of `IMf`. `0.0` turns filtering off.
     pub noise_threshold: f64,
     /// Whether to try the [fall throughs](fallthrough) before resorting to a flower model.
     pub use_fallthroughs: bool,
-    /// Whether to merge the parts of a sequence cut the log never shows apart.
-    /// See [`strict_sequence_cut`](cut_finder::strict_sequence_cut).
+    /// Whether to merge the parts of a sequence cut that only occur together with a skippable
+    /// neighbour. See [`strict_sequence_cut`](cut_finder::strict_sequence_cut).
     pub strict_sequence: bool,
-    /// Whether to look for interleaved (`↔`) cuts, tried after every other cut.
+    /// Whether to look for interleaved (`↔`) cuts, tried before concurrency. Under `IMf` they still
+    /// read the unfiltered traces, so noise can prevent them.
     /// See [`interleaved_cut`](cut_finder::interleaved_cut).
     pub use_interleaved: bool,
-    /// Whether to report a concurrent cut the log skips every part of as an inclusive choice (`∨`).
-    /// See [`as_inclusive_choice`](cut_finder::as_inclusive_choice).
+    /// Whether to regroup concurrent cuts into nested concurrency, optionality and inclusive
+    /// choice (`∨`). See [`coo_cut`](cut_finder::coo_cut).
     pub use_inclusive_choice: bool,
-    /// Whether to rewrite `∧` over children that all accept the empty trace into `∨` once the tree
-    /// is finished, which does not change the language. See [`to_inclusive_choice`].
-    pub rewrite_inclusive_choice: bool,
-    /// Whether to refuse a cut whose split leaves a part without any events. Only `IMf` reaches
-    /// this, see [`split_log`].
+    /// Whether to refuse a cut whose split leaves a part without any events, which only the
+    /// filtering splits of `IMf` can do, and fall through instead. The thesis and `ProM` take the
+    /// cut, and the part becomes `τ`.
     pub guard_empty_cut_parts: bool,
     /// Whether concurrency detection consults the minimum-self-distance relation (∧↔.1), which
     /// tells `a` and `b` running concurrently from `a` looping around `b`.
     pub use_minimum_self_distance: bool,
     /// Whether to take a tau loop that cuts every trace into single events, as the thesis does.
-    /// It yields the flower model the fall throughs exist to avoid.
+    /// Mining those single events gives the flower model, so this only decides whether
+    /// [`two_activities_concurrent`](fallthrough::two_activities_concurrent) gets a chance first.
     pub use_degenerate_tau_loops: bool,
     /// Whether `IMf` keeps the single-activity base case despite repetitions when single
     /// executions dominate (§6.2.2.3). Without it any repetition ends the recursion in a loop.
-    /// See [`find_base_case`].
     pub filter_single_activity: bool,
     /// Whether the [activity-concurrent fall through](fallthrough::activity_concurrent) accepts a
     /// candidate whose remaining log only admits a cut after filtering.
     ///
-    /// `IMf` reuses IM's fall throughs unchanged (§6.2.2.4), so the thesis probes the unfiltered
-    /// graph and filters in one place only, cut detection. Switching this on lets the fall through
-    /// fire where cut detection already gave up. On logs with heavy per-trace repetition the
-    /// relative edge filter drops most of the graph, what is left is acyclic, and every candidate
-    /// then yields a sequence cut the log does not support.
+    /// `IMf` reuses IM's fall throughs unchanged (§6.2.2.4), so the thesis filters only in cut
+    /// detection, and `ProM` probes the unfiltered graph as well. With this on, the fall through fires where cut detection already gave up. On logs
+    /// with heavy per-trace repetition the relative edge filter drops most of the graph, the rest is
+    /// acyclic, and every candidate yields a sequence cut the log does not support.
     pub filter_activity_concurrent_probe: bool,
-    /// Whether to collapse nested occurrences of the same associative operator, turning e.g.
-    /// `→(→(a, b), c)` into `→(a, b, c)`.
+    /// Whether to collapse nested occurrences of the same associative operator (e.g.,
+    /// `→(→(a, b), c)` into `→(a, b, c)`).
     pub fold: bool,
 }
 
 impl Default for InductiveMinerOptions {
     /// The Inductive Miner without filtering, with the steps that measured as improvements over
     /// the thesis switched on. See [`im_thesis`](Self::im_thesis) for the definition as published.
-    ///
-    /// The model still fits the log entirely: none of those steps gives up behaviour.
+    /// None of those steps gives up behaviour, so the model still fits the log.
     fn default() -> Self {
         Self {
             noise_threshold: 0.0,
             use_fallthroughs: true,
             strict_sequence: true,
             use_interleaved: false,
-            use_inclusive_choice: true,
-            rewrite_inclusive_choice: false,
-            guard_empty_cut_parts: true,
+            use_inclusive_choice: false,
+            guard_empty_cut_parts: false,
             use_minimum_self_distance: true,
             use_degenerate_tau_loops: false,
             filter_single_activity: true,
@@ -141,16 +137,13 @@ impl InductiveMinerOptions {
 
     /// Plain IM as Leemans defines it (§6.1), with none of the later refinements.
     ///
-    /// Differs from [`default`](Self::default) in four places: sequence cuts are the maximal ones
-    /// of →.1 even where the log never shows the parts apart, a concurrent cut whose parts are all
-    /// skippable stays `∧`, a cut whose split empties a part is taken anyway, and a tau loop is
-    /// taken even when it degenerates into the flower model. Which activity the once-per-trace fall
-    /// through takes out is not a difference: the thesis leaves that open.
+    /// Differs from [`default`](Self::default) in two places: sequence cuts are the maximal ones
+    /// of →.1, and a tau loop is taken even when it degenerates into the flower model. The thesis
+    /// leaves open which activity the once-per-trace fall through takes out, so that is not a
+    /// difference.
     pub fn im_thesis() -> Self {
         Self {
             strict_sequence: false,
-            use_inclusive_choice: false,
-            guard_empty_cut_parts: false,
             use_degenerate_tau_loops: true,
             ..Self::default()
         }
@@ -165,16 +158,25 @@ impl InductiveMinerOptions {
         }
     }
 
+    /// [`default`](Self::default) with the interleaved and inclusive choice cuts of `IMa`
+    /// (§6.4.2). Set a [`noise_threshold`](Self::noise_threshold) for `IMfa`.
+    pub fn ima() -> Self {
+        Self {
+            use_interleaved: true,
+            use_inclusive_choice: true,
+            ..Self::default()
+        }
+    }
+
     /// The settings under which this implementation behaves most like `ProM`'s IM, for comparing
     /// the two.
     ///
     /// `ProM` applies the strict sequence cut, as [`imf`](Self::imf) does, but not the
     /// minimum-self-distance restriction ∧↔.1, so it reports a concurrency where an activity
-    /// loops around another. Differences remain; see the [module documentation](self).
+    /// loops around another.
     pub fn prom(noise_threshold: f64) -> Self {
         Self {
             use_minimum_self_distance: false,
-            use_inclusive_choice: false,
             ..Self::imf(noise_threshold)
         }
     }
@@ -241,12 +243,7 @@ fn discover(
         labels,
         options: &options,
     };
-    let root = miner.mine(activity_log);
-    let tree = ProcessTree::new(if options.rewrite_inclusive_choice {
-        to_inclusive_choice(root)
-    } else {
-        root
-    });
+    let tree = ProcessTree::new(miner.mine(activity_log));
 
     if options.fold {
         tree.fold()
@@ -258,16 +255,15 @@ fn discover(
 impl Miner<'_> {
     /// Discovers the sub-tree for one (sub-)log.
     fn mine(&self, log: &ActivityLog) -> Node {
-        // Empty traces say that everything else in this log is optional, which has to be settled
-        // before anything else: neither base cases nor cut detection are defined for a log
-        // containing them.
+        // Base cases and cut detection are not defined for a log with empty traces.
         if let Some(fallthrough) = empty_traces(log, self.options.noise_threshold) {
             return self.build(fallthrough);
         }
 
-        let base_case_threshold = match self.options.filter_single_activity {
-            true => self.options.noise_threshold,
-            false => 0.0,
+        let base_case_threshold = if self.options.filter_single_activity {
+            self.options.noise_threshold
+        } else {
+            0.0
         };
         match find_base_case(log, base_case_threshold) {
             Some(BaseCase::EmptyLog) => return tau(),
@@ -283,9 +279,8 @@ impl Miner<'_> {
 
         if let Some(cut) = cut {
             let sub_logs = split_log(log, &cut);
-            // A part without events means the cut claims a branch the log never takes: the split
-            // discarded every event that would have gone there, so the branch becomes τ and its
-            // activities are lost. Falling through keeps them.
+            // A part without events would become τ and lose its activities. Falling through keeps
+            // them.
             let usable = !self.options.guard_empty_cut_parts
                 || sub_logs.iter().all(|sub_log| sub_log.num_events() > 0);
 
@@ -303,7 +298,7 @@ impl Miner<'_> {
     /// work to pay for the hand-off. Recursion produces many tiny sub-logs near the leaves, and
     /// spawning tasks for those costs more than mining them.
     fn mine_all(&self, sub_logs: &[ActivityLog]) -> Vec<Node> {
-        /// Events below which a sub-log is mined on the current thread.
+        /// Total events below which the sub-logs are mined on the current thread.
         const PARALLEL_THRESHOLD: u64 = 2_048;
 
         let worth_parallelising = sub_logs.len() > 1
@@ -338,14 +333,16 @@ impl Miner<'_> {
         dfg: &ActivityDfg,
         cut: Option<&cut_finder::cut::Cut>,
     ) {
+        use cut_finder::cut::{precedence, Cut};
+        use cut_finder::strict_sequence_cut;
         use cut_finder::test_utils::{all_valid_cuts, footprint_violation};
         use structures::minimum_self_distance::MinimumSelfDistance;
 
-        if self.options.noise_threshold > 0.0 || self.options.strict_sequence {
+        if self.options.noise_threshold > 0.0 {
             return;
         }
 
-        let describe = |cut: &cut_finder::cut::Cut| {
+        let describe = |cut: &Cut| {
             let parts: Vec<Vec<&str>> = cut
                 .partitions()
                 .iter()
@@ -369,10 +366,23 @@ impl Miner<'_> {
             .options
             .use_minimum_self_distance
             .then(|| MinimumSelfDistance::discover(log));
-        let Some(possible) = all_valid_cuts(log, dfg, minimum_self_distance.as_ref()) else {
+        let Some(mut possible) = all_valid_cuts(log, dfg, minimum_self_distance.as_ref()) else {
             return;
         };
         EXHAUSTIVE_CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        // The strict sequence cut coarsens the maximal sequence cut, or rejects it if that leaves
+        // a single part.
+        let maximal_sequence = possible
+            .iter()
+            .filter(|other| other.operator() == OperatorType::Sequence)
+            .max_by_key(|other| other.len())
+            .cloned();
+        if let (true, Some(maximal)) = (self.options.strict_sequence, &maximal_sequence) {
+            if strict_sequence_cut(dfg, maximal.clone()).is_none() {
+                possible.retain(|other| other.operator() != OperatorType::Sequence);
+            }
+        }
 
         match cut {
             None => assert!(
@@ -382,32 +392,52 @@ impl Miner<'_> {
                 describe(&possible[0])
             ),
             Some(cut) => {
-                let earlier: Vec<&cut_finder::cut::Cut> = possible
+                if let Some(earlier) = possible
                     .iter()
-                    .filter(|other| {
-                        cut_finder::cut::precedence(other.operator())
-                            < cut_finder::cut::precedence(cut.operator())
-                    })
-                    .collect();
-                assert!(
-                    earlier.is_empty(),
-                    "took {} although the earlier {} was also available",
-                    describe(cut),
-                    describe(earlier[0])
-                );
+                    .find(|other| precedence(other.operator()) < precedence(cut.operator()))
+                {
+                    panic!(
+                        "took {} although the earlier {} was also available",
+                        describe(cut),
+                        describe(earlier)
+                    );
+                }
 
-                // Interleaved cuts are left out: merging two parts can make the order of a third
-                // pair vary, so unlike the footprint cuts they have no unique finest partition.
-                if cut.operator() == OperatorType::Interleaving {
+                if let (true, OperatorType::Sequence, Some(maximal)) = (
+                    self.options.strict_sequence,
+                    cut.operator(),
+                    &maximal_sequence,
+                ) {
+                    let mut finer = maximal.partitions().iter();
+                    for part in cut.partitions() {
+                        let mut covered: Vec<ActivityID> = Vec::new();
+                        while covered.len() < part.len() {
+                            covered.extend(finer.next().expect("more parts than the maximal cut"));
+                        }
+                        covered.sort_unstable();
+                        assert_eq!(
+                            &covered,
+                            part,
+                            "{} does not merge neighbours of {}",
+                            describe(cut),
+                            describe(maximal)
+                        );
+                    }
                     return;
                 }
 
-                // The oracle enumerates the footprints, and an inclusive choice cut is a
-                // concurrent one reported under another name.
-                let operator = match cut.operator() {
-                    OperatorType::InclusiveChoice => OperatorType::Concurrency,
-                    other => other,
-                };
+                // The oracle does not enumerate interleaved cuts, and `coo_cut` merges the parts of
+                // a concurrent cut on purpose.
+                let regrouped = self.options.use_inclusive_choice
+                    && matches!(
+                        cut.operator(),
+                        OperatorType::Concurrency | OperatorType::InclusiveChoice
+                    );
+                if cut.operator() == OperatorType::Interleaving || regrouped {
+                    return;
+                }
+
+                let operator = cut.operator();
                 let most_parts = possible
                     .iter()
                     .filter(|other| other.operator() == operator)
@@ -427,7 +457,7 @@ impl Miner<'_> {
     /// Builds the sub-tree a fall through decided on, recursing where it asked for it.
     fn build(&self, fallthrough: Fallthrough) -> Node {
         match fallthrough {
-            // Everything but the empty trace is gone, so the model is just "do nothing".
+            // Avoids `×(τ, τ)`.
             Fallthrough::OptionalEmptyTraces(rest) if rest.is_empty() => tau(),
             Fallthrough::OptionalEmptyTraces(rest) => {
                 operator(OperatorType::ExclusiveChoice, [tau(), self.mine(&rest)])
@@ -446,17 +476,14 @@ impl Miner<'_> {
     }
 }
 
-/// A silent leaf.
 fn tau() -> Node {
     Node::new_leaf(None)
 }
 
-/// A leaf for the given activity.
 fn leaf(labels: &[String], activity: ActivityID) -> Node {
     Node::new_leaf(Some(labels[activity].clone()))
 }
 
-/// An operator node with the given children.
 fn operator(operator: OperatorType, children: impl IntoIterator<Item = Node>) -> Node {
     let mut node = Node::new_operator(operator);
     for child in children {
@@ -632,10 +659,26 @@ mod test_inductive_miner {
         assert_eq!(mine(traces), "∧(c, →(a, b))");
         assert_eq!(mine_with(traces, interleaved), "↔(→(a, b), c)");
 
-        // A log the other cuts do explain is untouched, since the interleaved cut is tried last.
+        // Where both apply, the interleaved cut comes first. For single activities the two
+        // operators have the same language.
         assert_eq!(
             mine_with(&[&["a", "b"], &["b", "a"]], interleaved),
-            "∧(a, b)"
+            "↔(a, b)"
+        );
+
+        // The concurrency would also accept ⟨a, c, b⟩.
+        let traces: &[&[&str]] = &[
+            &["a", "c"],
+            &["c", "a"],
+            &["b", "c"],
+            &["c", "b"],
+            &["a", "b", "c"],
+            &["c", "a", "b"],
+        ];
+        assert_eq!(mine(traces), "∧(→(X(tau, a), X(tau, b)), c)");
+        assert_eq!(
+            mine_with(traces, interleaved),
+            "↔(→(X(tau, a), X(tau, b)), c)"
         );
     }
 
@@ -836,6 +879,8 @@ mod test_inductive_miner {
                     use_inclusive_choice: true,
                     ..InductiveMinerOptions::im_thesis()
                 },
+                InductiveMinerOptions::default(),
+                InductiveMinerOptions::ima(),
             ] {
                 let tree = discover(&labels, &log, options);
                 assert!(tree.is_valid(), "invalid tree for {:?}", log.variants());
@@ -878,15 +923,16 @@ mod test_presets {
         let options = InductiveMinerOptions::imf(0.4);
         assert_eq!(options.noise_threshold, 0.4);
         assert!(options.strict_sequence);
-        assert!(options.use_inclusive_choice);
-        assert!(options.guard_empty_cut_parts);
+        assert!(!options.use_inclusive_choice);
         assert!(!options.use_degenerate_tau_loops);
+
+        let ima = InductiveMinerOptions::ima();
+        assert!(ima.use_interleaved && ima.use_inclusive_choice);
 
         let thesis = InductiveMinerOptions::imf_thesis(0.4);
         assert_eq!(thesis.noise_threshold, 0.4);
         assert!(!thesis.strict_sequence);
         assert!(!thesis.use_inclusive_choice);
-        assert!(!thesis.guard_empty_cut_parts);
         assert!(thesis.use_degenerate_tau_loops);
     }
 }

@@ -27,7 +27,7 @@ pub fn split_dfg(dfg: &ActivityDfg, cut: &Cut) -> Vec<ActivityDfg> {
     }
 }
 
-/// The accumulators for the subgraphs while one pass over the parent distributes its weight.
+/// Subgraph accumulators, filled in one pass over the parent graph.
 struct Parts {
     /// Part of each parent-local activity, or `usize::MAX` if no part contains it.
     part_of: Vec<usize>,
@@ -100,8 +100,7 @@ impl Parts {
 }
 
 /// The split for exclusive choice and concurrency: each part keeps its internal edges and the
-/// original start and end weights of its activities. Edges between parts are dropped, which for a
-/// cut adhering to ×.1 removes nothing.
+/// original start and end weights of its activities. Edges between parts are dropped.
 fn simple_split(dfg: &ActivityDfg, cut: &Cut) -> Vec<ActivityDfg> {
     let mut parts = Parts::new(dfg, cut);
     parts.empty.fill(dfg.empty_traces());
@@ -124,14 +123,14 @@ fn simple_split(dfg: &ActivityDfg, cut: &Cut) -> Vec<ActivityDfg> {
 
 /// The split for a sequence cut: an edge entering a part becomes a start weight, one leaving it an
 /// end weight, and one bypassing it entirely an empty trace, the part not having run in that
-/// execution. Original start and end weights enter resp. leave every part, so they contribute the
-/// same way. Backwards edges, which only a cut from a filtered graph leaves behind, carry no
-/// information for the split and are dropped.
+/// execution. A trace start counts as an edge from before the first part, and a trace end as an
+/// edge to after the last. Backwards edges, which only a cut from a filtered graph leaves behind,
+/// are dropped.
 fn sequence_split(dfg: &ActivityDfg, cut: &Cut) -> Vec<ActivityDfg> {
     let mut parts = Parts::new(dfg, cut);
-    let count_parts = cut.len();
+    let num_parts = cut.len();
     // Each bypass covers a contiguous range of parts, summed up by a difference array.
-    let mut bypass = vec![0i64; count_parts + 1];
+    let mut bypass = vec![0i64; num_parts + 1];
 
     for local in 0..dfg.len() {
         let Some((part, in_part)) = parts.place(local) else {
@@ -145,7 +144,7 @@ fn sequence_split(dfg: &ActivityDfg, cut: &Cut) -> Vec<ActivityDfg> {
         let end = dfg.end_count(local);
         parts.end[part][in_part] += end;
         bypass[part + 1] += end as i64;
-        bypass[count_parts] -= end as i64;
+        bypass[num_parts] -= end as i64;
     }
 
     for (from, to, count) in dfg.edges() {
@@ -165,7 +164,7 @@ fn sequence_split(dfg: &ActivityDfg, cut: &Cut) -> Vec<ActivityDfg> {
     }
 
     let mut bypassing = 0i64;
-    for (part, delta) in bypass.into_iter().take(count_parts).enumerate() {
+    for (part, delta) in bypass.into_iter().take(num_parts).enumerate() {
         bypassing += delta;
         parts.empty[part] = dfg.empty_traces() + bypassing as u64;
     }
@@ -173,14 +172,18 @@ fn sequence_split(dfg: &ActivityDfg, cut: &Cut) -> Vec<ActivityDfg> {
     parts.finish(dfg)
 }
 
-/// The split for a loop cut. The body keeps its internal edges and the original start and end
-/// weights; a redo part keeps its internal edges and turns its connections with the body into
-/// start and end weights.
+/// The split for a loop cut, giving the graphs of the sub-logs that splitting the log would give.
+/// Every part keeps its internal edges, and an edge between two parts ends a run of its source
+/// part and starts a run of its target part.
 ///
 /// The body picks up an empty trace wherever execution bypassed it: a trace starting or ending in
-/// a redo part, or an edge between two different redo parts. For a cut adhering to its footprint
-/// none of the three exists, but a cut from a filtered graph splits the unfiltered one, where
-/// they can (§6.6.3.2, Figure 6.23).
+/// a redo part, or an edge between two different redo parts (§6.6.3.2, Figure 6.23). For a cut
+/// adhering to its footprint none of the three exists, but a cut from a filtered graph splits the
+/// unfiltered one, where they can.
+///
+/// The body's start and end weights count every iteration, as in Figure 6.24. The pseudo-code of
+/// `loopDfgSplit` keeps only the trace starts and ends there, which understates them by the
+/// number of iterations and skews the frequencies `IMfd` filters by.
 fn loop_split(dfg: &ActivityDfg, cut: &Cut) -> Vec<ActivityDfg> {
     const BODY: usize = 0;
     let mut parts = Parts::new(dfg, cut);
@@ -203,9 +206,13 @@ fn loop_split(dfg: &ActivityDfg, cut: &Cut) -> Vec<ActivityDfg> {
             (from_part, to_part) if from_part == to_part => {
                 parts.intra_edge(from_part, from, to, count);
             }
-            (BODY, to_part) => parts.start[to_part][parts.local_in_part[to]] += count,
-            (from_part, BODY) => parts.end[from_part][parts.local_in_part[from]] += count,
-            _ => parts.empty[BODY] += count,
+            (from_part, to_part) => {
+                parts.end[from_part][parts.local_in_part[from]] += count;
+                parts.start[to_part][parts.local_in_part[to]] += count;
+                if from_part != BODY && to_part != BODY {
+                    parts.empty[BODY] += count;
+                }
+            }
         }
     }
 
@@ -290,7 +297,7 @@ mod test_split_dfg {
     }
 
     /// Figure 6.24: an edge between two redo parts means the body was skipped in between, so it
-    /// becomes an empty trace of the body's subgraph.
+    /// becomes an empty trace of the body's subgraph. Every iteration starts and ends the body.
     #[test]
     fn test_loop_split() {
         let subs = split(
@@ -305,9 +312,65 @@ mod test_split_dfg {
         );
         assert_eq!(
             subs[0],
-            (vec![0, 1], vec![4, 0], vec![0, 4], vec![(0, 1, 7)], 1)
+            (vec![0, 1], vec![7, 0], vec![0, 7], vec![(0, 1, 7)], 1)
         );
-        assert_eq!(subs[1], (vec![2], vec![2], vec![1], vec![], 0));
-        assert_eq!(subs[2], (vec![3], vec![1], vec![2], vec![], 0));
+        assert_eq!(subs[1], (vec![2], vec![2], vec![2], vec![], 0));
+        assert_eq!(subs[2], (vec![3], vec![2], vec![2], vec![], 0));
+    }
+
+    /// Splitting the graph of a log gives the graphs of the sub-logs, for every operator whose log
+    /// split keeps runs of events together.
+    #[test]
+    fn test_split_dfg_matches_split_log() {
+        use super::super::super::splits::split_log;
+
+        let check = |traces: &[&[&str]], operator: OperatorType, partitions: &[&[usize]]| {
+            let (_, log) = log_of(traces);
+            let cut = Cut::new(operator, partitions.iter().map(|p| p.to_vec()).collect());
+            let from_graph: Vec<Description> = split_dfg(&ActivityDfg::discover(&log), &cut)
+                .iter()
+                .map(describe)
+                .collect();
+            let from_log: Vec<Description> = split_log(&log, &cut)
+                .iter()
+                .map(|sub_log| describe(&ActivityDfg::discover(sub_log)))
+                .collect();
+            assert_eq!(from_graph, from_log, "{operator:?} split of {traces:?}");
+        };
+
+        check(
+            &[&["a", "b"], &["c"], &["c", "c"]],
+            OperatorType::ExclusiveChoice,
+            &[&[0, 1], &[2]],
+        );
+        check(
+            &[
+                &["a", "b", "c"],
+                &["a", "c"],
+                &["b", "c"],
+                &["a", "b", "b", "c"],
+            ],
+            OperatorType::Sequence,
+            &[&[0], &[1], &[2]],
+        );
+        check(
+            &[
+                &["a", "b"],
+                &["a", "b", "c", "a", "b"],
+                &["a", "b", "c", "d", "a", "b"],
+            ],
+            OperatorType::Loop,
+            &[&[0, 1], &[2], &[3]],
+        );
+        // Starting and ending in a redo part, and switching between redo parts.
+        check(
+            &[
+                &["c", "a", "b"],
+                &["a", "b", "c", "d", "a", "b"],
+                &["a", "b", "d"],
+            ],
+            OperatorType::Loop,
+            &[&[0, 1], &[2], &[3]],
+        );
     }
 }

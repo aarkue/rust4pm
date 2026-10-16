@@ -26,9 +26,7 @@ use super::cut::Cut;
 /// and end activities.
 pub fn loop_cut(dfg: &ActivityDfg) -> Option<Cut> {
     let n = dfg.len();
-    let is_body = |a: usize| dfg.is_start(a) || dfg.is_end(a);
-
-    let body: Vec<bool> = (0..n).map(is_body).collect();
+    let body: Vec<bool> = (0..n).map(|a| dfg.is_start(a) || dfg.is_end(a)).collect();
     let starts: Vec<usize> = dfg.start_activities().collect();
     let ends: Vec<usize> = dfg.end_activities().collect();
     let body_root = (0..n).find(|&a| body[a])?;
@@ -52,8 +50,8 @@ pub fn loop_cut(dfg: &ActivityDfg) -> Option<Cut> {
         }
     }
 
-    // ↺.2: an edge out of the body may only leave an end activity, and one into it may only enter
-    // a start activity. Anything else absorbs the redo part.
+    // ↺.2: the body holds only start and end activities so far, so only an edge out of a start
+    // activity that is no end activity, or into an end activity that is no start one, violates it.
     for &a in &starts {
         if !dfg.is_end(a) {
             for &b in dfg.successors(a) {
@@ -69,8 +67,7 @@ pub fn loop_cut(dfg: &ActivityDfg) -> Option<Cut> {
         }
     }
 
-    // ↺.4: a redo part connecting to some start (or from some end) activity has to connect to all
-    // of them, otherwise it cannot be entered or left consistently.
+    // ↺.4
     for (activity, &in_body) in body.iter().enumerate() {
         if in_body {
             continue;

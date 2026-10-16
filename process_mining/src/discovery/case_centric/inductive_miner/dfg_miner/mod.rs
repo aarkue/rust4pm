@@ -2,7 +2,7 @@
 //! "Robust Process Mining with Guarantees" (§6.6).
 //!
 //! Where [IM](super) recurses on the event log, this variant passes over the log once to build a
-//! directly-follows graph and recurses on that graph alone. Cut detection is IM's, the [splits]
+//! directly-follows graph and recurses on that graph alone. Cut detection is IM's, the splits
 //! divide the graph itself, and base cases and fall throughs read nothing but edges, start and end
 //! weights and an empty-trace count. After the one pass the recursion never sees a trace again,
 //! which is what makes it usable on very large logs, and it can start from a graph when no log
@@ -13,8 +13,7 @@
 //! the discovered model may fail to replay parts of the log. Rediscoverability is kept.
 //!
 //! [`InductiveMinerDfgOptions::prom`] and [`InductiveMinerDfgOptions::pm4py`] imitate those two
-//! tools for a comparison run. What they change, and what still differs, is in the
-//! [comparison notes](super#how-this-implementation-differs-from-prom-and-pm4py).
+//! tools for a comparison run.
 //!
 //! ```
 //! use process_mining::discovery::case_centric::inductive_miner::{
@@ -41,28 +40,28 @@ use crate::core::process_models::process_tree::{Node, OperatorType, ProcessTree}
 use crate::EventLog;
 
 use super::cut_finder::cut::Cut;
-use super::cut_finder::{concurrent_cut, exclusive_choice_cut, loop_cut, sequence_cut};
+use super::cut_finder::{
+    concurrent_cut, exclusive_choice_cut, loop_cut, sequence_cut, strict_sequence_cut,
+};
 use super::dfg::ActivityDfg;
-use super::inclusive_choice::to_inclusive_choice;
 use super::{choice, leaf, log, operator, tau};
+use splits::split_dfg;
 
-pub mod splits;
-
-pub use splits::split_dfg;
+mod splits;
 
 /// Settings for a run of the DFG variant of the Inductive Miner.
 ///
 /// Only the settings that read no traces carry over from
-/// [`InductiveMinerOptions`](super::InductiveMinerOptions). The trace-based refinements (strict
-/// sequence, interleaved and inclusive choice cuts, the minimum-self-distance relation) have
-/// nothing to read here.
+/// [`InductiveMinerOptions`](super::InductiveMinerOptions). The trace-based refinements
+/// (interleaved and inclusive choice cuts, the minimum-self-distance relation) have nothing to
+/// read here.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InductiveMinerDfgOptions {
     /// Deviation threshold `f ∈ [0, 1]` of `IMfd`. `0.0` is plain `IMd`.
     pub noise_threshold: f64,
-    /// Whether to rewrite `∧` over children that all accept the empty trace into `∨` once the
-    /// tree is finished, which does not change the language. See [`to_inclusive_choice`].
-    pub rewrite_inclusive_choice: bool,
+    /// Whether to merge the parts of a sequence cut that only occur together with a skippable
+    /// neighbour. See [`strict_sequence_cut`].
+    pub strict_sequence: bool,
     /// Whether to collapse nested occurrences of the same associative operator, turning e.g.
     /// `→(→(a, b), c)` into `→(a, b, c)`.
     pub fold: bool,
@@ -86,7 +85,7 @@ impl Default for InductiveMinerDfgOptions {
     fn default() -> Self {
         Self {
             noise_threshold: 0.0,
-            rewrite_inclusive_choice: false,
+            strict_sequence: false,
             fold: true,
             use_tau_loops: true,
             flower_accepts_empty: false,
@@ -106,13 +105,12 @@ impl InductiveMinerDfgOptions {
     }
 
     /// The settings under which this variant behaves most like `ProM`'s `IMd`, for comparing the
-    /// two. `ProM` sends a lone activity with a self edge to the flower instead of to
-    /// [`strict_dfg_tau_loop`], its flower allows the empty trace, and its `IMfd` reuses the
-    /// unfiltered base cases.
-    ///
-    /// Differences remain; see the [module documentation](self).
+    /// two. `ProM` applies the strict sequence cut, sends a lone activity with a self edge to the
+    /// flower instead of to [`strict_dfg_tau_loop`], its flower allows the empty trace, and its
+    /// `IMfd` reuses the unfiltered base cases.
     pub fn prom(noise_threshold: f64) -> Self {
         Self {
+            strict_sequence: true,
             flower_accepts_empty: true,
             repeated_activity_to_flower: true,
             filter_single_activity: false,
@@ -124,8 +122,6 @@ impl InductiveMinerDfgOptions {
     /// two. `PM4Py` offers empty traces and the flower as the only fall throughs, and its flower
     /// allows the empty trace. It also ignores the deviation threshold entirely, so pass `0.0` to
     /// compare like for like.
-    ///
-    /// Differences remain; see the [module documentation](self).
     pub fn pm4py(noise_threshold: f64) -> Self {
         Self {
             use_tau_loops: false,
@@ -151,10 +147,10 @@ pub fn inductive_miner_dfg(
 
 /// Discovers a [`ProcessTree`] from an existing [`DirectlyFollowsGraph`].
 ///
-/// The graph type records which activities start and end traces but not how often, so those
-/// weights are chosen such that the `IMfd` frequency filter never drops a start or an end; edges
-/// are filtered by their real frequencies. Empty traces cannot be represented at all. To mine
-/// from a log, use [`inductive_miner_dfg`], which keeps all weights exact.
+/// The graph type records which activities start and end traces but not how often. Those weights
+/// are chosen so that the `IMfd` filter never drops a start or an end, so `IMfd` filters only the
+/// edges here, by their real frequencies. Empty traces cannot be represented. To mine from a log,
+/// use [`inductive_miner_dfg`], which keeps all weights exact.
 pub fn inductive_miner_dfg_from_graph(
     graph: &DirectlyFollowsGraph<'_>,
     options: InductiveMinerDfgOptions,
@@ -194,15 +190,18 @@ pub fn inductive_miner_dfg_from_graph(
         max_outgoing[from as usize] = max_outgoing[from as usize].max(count);
     }
 
-    let start = (0..n)
-        .map(|a| u64::from(graph.start_activities.contains(&labels[a])))
+    let start = labels
+        .iter()
+        .map(|label| u64::from(graph.start_activities.contains(label)))
         .collect();
     // An end weight equal to the heaviest outgoing edge survives any threshold without raising
     // the cutoff for the real edges.
-    let end = (0..n)
-        .map(|a| {
-            if graph.end_activities.contains(&labels[a]) {
-                max_outgoing[a]
+    let end = labels
+        .iter()
+        .zip(max_outgoing)
+        .map(|(label, max)| {
+            if graph.end_activities.contains(label) {
+                max
             } else {
                 0
             }
@@ -223,12 +222,7 @@ fn discover_dfg(
         labels,
         options: &options,
     };
-    let root = miner.mine(dfg);
-    let tree = ProcessTree::new(if options.rewrite_inclusive_choice {
-        to_inclusive_choice(root)
-    } else {
-        root
-    });
+    let tree = ProcessTree::new(miner.mine(dfg));
 
     if options.fold {
         tree.fold()
@@ -247,8 +241,7 @@ struct DfgMiner<'a> {
 impl DfgMiner<'_> {
     /// Discovers the sub-tree for one (sub)graph.
     fn mine(&self, dfg: &ActivityDfg) -> Node {
-        // Empty traces say that everything else in this graph is optional, which has to be
-        // settled first: base cases and cut detection assume a graph without them (§6.6.3.5).
+        // Base cases and cut detection assume a graph without empty traces (§6.6.3.5).
         if dfg.empty_traces() > 0 {
             return self.empty_traces(dfg);
         }
@@ -263,16 +256,18 @@ impl DfgMiner<'_> {
     }
 
     /// Handles the empty traces, `emptyTracesDfg`. `IMfd` drops them instead when fewer than a
-    /// fraction `noise_threshold` of the traces are empty, measured against the total start
-    /// weight (§6.6.4.4).
+    /// fraction `noise_threshold` of the traces are empty (§6.6.4.4).
+    ///
+    /// The thesis measures against `|Start(D)|`, which leaves out the empty traces themselves.
+    /// Counting them, as `IMf` does, makes both variants decide alike on the same log.
     fn empty_traces(&self, dfg: &ActivityDfg) -> Node {
-        let total_starts: u64 = (0..dfg.len()).map(|a| dfg.start_count(a)).sum();
+        let traces: u64 =
+            (0..dfg.len()).map(|a| dfg.start_count(a)).sum::<u64>() + dfg.empty_traces();
         let frequent_enough =
-            dfg.empty_traces() as f64 >= total_starts as f64 * self.options.noise_threshold;
+            dfg.empty_traces() as f64 >= traces as f64 * self.options.noise_threshold;
 
         let rest = dfg.without_empty_traces();
         match (frequent_enough, rest.is_empty()) {
-            // Everything but the empty trace is gone, so the model is just "do nothing".
             (true, true) => tau(),
             (true, false) => operator(OperatorType::ExclusiveChoice, [tau(), self.mine(&rest)]),
             (false, _) => self.mine(&rest),
@@ -294,26 +289,35 @@ impl DfgMiner<'_> {
             return None;
         }
 
-        let self_edge = dfg.edge_count(0, 0) as f64;
+        let self_edge = dfg.edge_count(0, 0);
         let start = dfg.start_count(0) as f64;
-        let p = start / (2.0 * start + self_edge);
-        let threshold = match self.options.filter_single_activity {
-            true => self.options.noise_threshold,
-            false => 0.0,
+        let p = start / (2.0 * start + self_edge as f64);
+        let threshold = if self.options.filter_single_activity {
+            self.options.noise_threshold
+        } else {
+            0.0
         };
-        ((p - 0.5).abs() <= threshold).then(|| leaf(self.labels, dfg.activity(0)))
+        // Without a self edge, `p` is 0.5 or, for a start weight of 0, NaN.
+        (self_edge == 0 || (p - 0.5).abs() <= threshold).then(|| leaf(self.labels, dfg.activity(0)))
     }
 
     /// Cut detection of `IMd`: the four footprint cuts of IM, with `concurrentCut(D, ∅)`, since
     /// there is no log to compute a minimum-self-distance relation from (§6.6.3.1). `IMfd`
     /// retries on the filtered graph, exactly like `IMf` (§6.6.4.1).
     fn find_cut(&self, dfg: &ActivityDfg) -> Option<Cut> {
-        fn footprint_cuts(dfg: &ActivityDfg) -> Option<Cut> {
+        let footprint_cuts = |dfg: &ActivityDfg| {
             exclusive_choice_cut(dfg)
-                .or_else(|| sequence_cut(dfg))
+                .or_else(|| {
+                    let cut = sequence_cut(dfg)?;
+                    if self.options.strict_sequence {
+                        strict_sequence_cut(dfg, cut)
+                    } else {
+                        Some(cut)
+                    }
+                })
                 .or_else(|| concurrent_cut(dfg, None))
                 .or_else(|| loop_cut(dfg))
-        }
+        };
 
         footprint_cuts(dfg).or_else(|| {
             (self.options.noise_threshold > 0.0)
@@ -325,8 +329,7 @@ impl DfgMiner<'_> {
     /// The fall throughs of §6.6.3.4: the two tau loops, then the flower model.
     ///
     /// The activity fall throughs of IM have no counterpart here, since a graph does not show how
-    /// often an activity occurs per trace. Losing `activityConcurrent` also loses IM's worst case
-    /// on wide alphabets, one re-mining of the log per activity.
+    /// often an activity occurs per trace.
     fn fallthrough(&self, dfg: &ActivityDfg) -> Node {
         let lone_repeated_activity = self.options.repeated_activity_to_flower && dfg.len() == 1;
         if self.options.use_tau_loops && !lone_repeated_activity {
@@ -336,9 +339,10 @@ impl DfgMiner<'_> {
         }
 
         let flower = choice(self.labels, dfg.activities());
-        match self.options.flower_accepts_empty {
-            true => operator(OperatorType::Loop, [tau(), flower]),
-            false => operator(OperatorType::Loop, [flower, tau()]),
+        if self.options.flower_accepts_empty {
+            operator(OperatorType::Loop, [tau(), flower])
+        } else {
+            operator(OperatorType::Loop, [flower, tau()])
         }
     }
 }
@@ -448,6 +452,28 @@ mod test_dfg_miner {
         assert_eq!(
             mine(&[&["a", "b", "a", "c", "b", "c"]]),
             "↻(→(a, ↻(→(X(tau, b), c), tau)), tau)"
+        );
+    }
+
+    #[test]
+    fn test_strict_sequence() {
+        let strict = InductiveMinerDfgOptions {
+            strict_sequence: true,
+            ..Default::default()
+        };
+        // d is only reached from b, which some traces skip, so b and d share a part.
+        let traces: &[&[&str]] = &[
+            &["c", "c", "c", "a", "c"],
+            &["b", "b", "d", "a"],
+            &["b", "c"],
+        ];
+        assert_eq!(
+            mine(traces),
+            "→(X(tau, ↻(b, tau)), X(tau, d), ∧(a, ↻(c, tau)))"
+        );
+        assert_eq!(
+            mine_with(traces, strict),
+            "→(X(tau, →(↻(b, tau), X(tau, d))), ∧(a, ↻(c, tau)))"
         );
     }
 

@@ -2,8 +2,9 @@
 //!
 //! Every recursion step tries to split the activities of the current log into parts that follow
 //! one of the four directly-follows footprints of Leemans' Definition 5.3: see
-//! [`exclusive_choice_cut`], [`sequence_cut`], [`concurrent_cut`] and [`loop_cut()`]. Two optional
-//! cuts read the traces instead of the graph: [`strict_sequence_cut`] and [`interleaved_cut`].
+//! [`exclusive_choice_cut`], [`sequence_cut`], [`concurrent_cut`] and [`loop_cut()`]. The optional
+//! refinements of `IMa` (§6.4.2.1) are [`strict_sequence_cut`], [`interleaved_cut`] and [`coo_cut`].
+//! The last two also read the traces.
 
 use super::dfg::ActivityDfg;
 use super::log::{ActivityID, ActivityLog};
@@ -12,20 +13,21 @@ use super::InductiveMinerOptions;
 use cut::Cut;
 
 pub mod concurrent;
+pub mod coo;
 pub mod cut;
 pub mod exclusive_choice;
 pub mod interleaved;
 pub mod loop_cut;
 pub mod sequence;
 
-pub use concurrent::{as_inclusive_choice, concurrent_cut};
+pub use concurrent::concurrent_cut;
+pub use coo::coo_cut;
 pub use exclusive_choice::exclusive_choice_cut;
 pub use interleaved::interleaved_cut;
 pub use loop_cut::loop_cut;
 pub use sequence::{sequence_cut, strict_sequence_cut};
 
-/// Translates groups of local [`ActivityDfg`] indices into the parts of a [`Cut`], which are
-/// expressed in global [`ActivityID`]s.
+/// Translates groups of local [`ActivityDfg`] indices into parts of global [`ActivityID`]s.
 fn to_partitions(dfg: &ActivityDfg, groups: &[Vec<usize>]) -> Vec<Vec<ActivityID>> {
     groups
         .iter()
@@ -35,15 +37,14 @@ fn to_partitions(dfg: &ActivityDfg, groups: &[Vec<usize>]) -> Vec<Vec<ActivityID
 
 /// Tries to find a cut in the directly-follows graph of a log.
 ///
-/// The cut types are tried in the order exclusive choice, sequence, concurrency, loop, and the
-/// first non-trivial cut is returned. A log may adhere to several footprints at once, and the
-/// earlier ones lead to more precise models. The optional
-/// [interleaved cut](InductiveMinerOptions::use_interleaved) comes last, since it is not a
-/// footprint of the graph and every other cut is interleaved as well.
+/// The cut types are tried in the order exclusive choice, sequence, interleaving, concurrency,
+/// loop, and the first non-trivial cut is returned. A log may adhere to several footprints at
+/// once, and the earlier ones lead to more precise models. The
+/// [interleaved cut](InductiveMinerOptions::use_interleaved) is optional. Its footprint implies the
+/// one of concurrency, and its model allows a subset of what the concurrency allows.
 ///
-/// `dfg` is separate from `log` because `IMf` runs this on a filtered graph of the same log. The
-/// log is only needed for the minimum-self-distance relation, which is computed lazily since only
-/// concurrency detection uses it, and for the two cuts that read the traces themselves.
+/// `dfg` is passed separately because `IMf` runs this on a filtered graph of the same log. The log
+/// itself is read for the minimum-self-distance relation and by the cuts that look at traces.
 pub fn find_cut(
     log: &ActivityLog,
     dfg: &ActivityDfg,
@@ -51,37 +52,38 @@ pub fn find_cut(
 ) -> Option<Cut> {
     exclusive_choice_cut(dfg)
         .or_else(|| {
-            sequence_cut(dfg).and_then(|cut| match options.strict_sequence {
-                true => strict_sequence_cut(log, cut),
-                false => Some(cut),
-            })
+            let cut = sequence_cut(dfg)?;
+            if options.strict_sequence {
+                strict_sequence_cut(dfg, cut)
+            } else {
+                Some(cut)
+            }
+        })
+        .or_else(|| {
+            options
+                .use_interleaved
+                .then(|| interleaved_cut(log, dfg))
+                .flatten()
         })
         .or_else(|| {
             let minimum_self_distance = options
                 .use_minimum_self_distance
                 .then(|| MinimumSelfDistance::discover(log));
-            concurrent_cut(dfg, minimum_self_distance.as_ref()).map(|cut| {
-                match options.use_inclusive_choice {
-                    true => as_inclusive_choice(log, cut, options.noise_threshold),
-                    false => cut,
-                }
+            let cut = concurrent_cut(dfg, minimum_self_distance.as_ref())?;
+            Some(if options.use_inclusive_choice {
+                coo_cut(log, cut, options.noise_threshold)
+            } else {
+                cut
             })
         })
         .or_else(|| loop_cut(dfg))
-        .or_else(|| {
-            options
-                .use_interleaved
-                .then(|| interleaved_cut(log))
-                .flatten()
-        })
 }
 
 /// Cut detection of the Inductive Miner - infrequent (`IMf`).
 ///
-/// The unfiltered graph is tried first, exactly as plain IM does it. Only if that fails are
-/// infrequent edges removed (see [`ActivityDfg::filtered`]) and the same cut types tried again.
-/// Trying the unfiltered graph first preserves IM's rediscoverability guarantee: on a complete,
-/// noise-free log `IMf` discovers what IM discovers.
+/// The unfiltered graph is tried first, as in plain IM. Only if that fails are infrequent edges
+/// removed (see [`ActivityDfg::filtered`]) and the same cut types tried again. This keeps IM's
+/// rediscoverability: on a complete, noise-free log `IMf` discovers what IM discovers.
 ///
 /// With a [`noise_threshold`](InductiveMinerOptions::noise_threshold) of `0.0` this is exactly
 /// [`find_cut`].
@@ -90,13 +92,11 @@ pub fn find_cut_filtering(
     dfg: &ActivityDfg,
     options: &InductiveMinerOptions,
 ) -> Option<Cut> {
-    if let Some(cut) = find_cut(log, dfg, options) {
-        return Some(cut);
-    }
-    if options.noise_threshold <= 0.0 {
-        return None;
-    }
-    find_cut(log, &dfg.filtered(options.noise_threshold), options)
+    find_cut(log, dfg, options).or_else(|| {
+        (options.noise_threshold > 0.0)
+            .then(|| find_cut(log, &dfg.filtered(options.noise_threshold), options))
+            .flatten()
+    })
 }
 
 #[cfg(test)]
@@ -207,19 +207,18 @@ pub(crate) mod test_utils {
 
         match operator {
             OperatorType::Sequence => {
-                // The first part reaches every other, the second all but the first, and so on, so
-                // ordering by how many other parts a part reaches puts them in execution order.
-                // Sorting by a key keeps this well defined for partitions that are not a sequence
-                // cut at all; the footprint check below rejects those.
+                // The first part reaches every other, the second all but the first, and so on.
+                // Sorting by that count stays well defined on partitions that are no sequence cut,
+                // which the footprint check below rejects.
                 let reaches = transitive_closure(dfg);
                 let n = dfg.len();
-                let reached_by = |part: &Vec<usize>| {
+                let reach_count = |part: &Vec<usize>| {
                     partition
                         .iter()
                         .filter(|other| other[0] != part[0] && reaches[part[0] * n + other[0]])
                         .count()
                 };
-                parts.sort_by_key(|part| std::cmp::Reverse(reached_by(part)));
+                parts.sort_by_key(|part| std::cmp::Reverse(reach_count(part)));
             }
             OperatorType::Loop => {
                 let body = parts.iter().position(|part| {
@@ -295,43 +294,47 @@ pub(crate) mod test_utils {
                 check_concurrent(dfg, &parts)
             }
             OperatorType::Loop => check_loop(dfg, &parts),
-            OperatorType::Interleaving => check_interleaved(log, cut),
+            OperatorType::Interleaving => check_interleaved(log, dfg, &parts),
         }
     }
 
-    /// The interleaved requirements: in every trace the activities of a part occur as one
-    /// uninterrupted block, and every two parts are seen in both orders.
-    fn check_interleaved(log: &ActivityLog, cut: &Cut) -> Option<String> {
-        let part_of = cut.partition_lookup(log.alphabet_size());
-        let count = cut.len();
-        let mut before = vec![false; count * count];
+    /// Requirement ↔.1, all and only the edges from an end to a start activity between parts,
+    /// and that every trace runs the activities of a part as one uninterrupted block.
+    fn check_interleaved(
+        log: &ActivityLog,
+        dfg: &ActivityDfg,
+        parts: &[Vec<usize>],
+    ) -> Option<String> {
+        let violation = for_each_cross_pair(parts, |i, a, j, b| {
+            [(a, i, b, j), (b, j, a, i)]
+                .into_iter()
+                .find(|&(from, _, to, _)| {
+                    dfg.follows(from, to) != (dfg.is_end(from) && dfg.is_start(to))
+                })
+                .map(|(from, k, to, l)| {
+                    let follows = dfg.follows(from, to);
+                    format!("↔.1 violated: {from} (Σ{k}) → {to} (Σ{l}) is {follows}")
+                })
+        });
+        if violation.is_some() {
+            return violation;
+        }
 
+        let mut part_of = vec![usize::MAX; log.alphabet_size()];
+        for (index, part) in parts.iter().enumerate() {
+            for &local in part {
+                part_of[dfg.activity(local)] = index;
+            }
+        }
         for variant in log.variants() {
             let mut order: Vec<usize> = Vec::new();
             for &activity in &variant.activities {
                 let part = part_of[activity];
-                if part != usize::MAX && order.last() != Some(&part) {
-                    order.push(part);
-                }
-            }
-            for (position, &left) in order.iter().enumerate() {
-                for &right in &order[position + 1..] {
-                    if left == right {
-                        return Some(format!(
-                            "↔.1 violated: Σ{left} occurs in two separate blocks"
-                        ));
+                if order.last() != Some(&part) {
+                    if order.contains(&part) {
+                        return Some(format!("Σ{part} occurs in two separate blocks"));
                     }
-                    before[left * count + right] = true;
-                }
-            }
-        }
-
-        for left in 0..count {
-            for right in left + 1..count {
-                if !before[left * count + right] || !before[right * count + left] {
-                    return Some(format!(
-                        "↔.2 violated: Σ{left} and Σ{right} never swap order"
-                    ));
+                    order.push(part);
                 }
             }
         }
@@ -351,7 +354,6 @@ pub(crate) mod test_utils {
         let n = dfg.len();
         let reaches = transitive_closure(dfg);
         for_each_cross_pair(parts, |i, a, j, b| {
-            // `for_each_cross_pair` always yields i < j.
             let (forwards, backwards) = (reaches[a * n + b], reaches[b * n + a]);
             (!forwards || backwards).then(|| {
                 format!(
@@ -435,7 +437,9 @@ pub(crate) mod test_utils {
                 for &a in part {
                     for &b in other {
                         if dfg.follows(a, b) || dfg.follows(b, a) {
-                            return Some(format!("↺.3 violated: redo parts {i} and {j} are connected via {a} and {b}"));
+                            return Some(format!(
+                                "↺.3 violated: redo parts {i} and {j} are connected via {a} and {b}"
+                            ));
                         }
                     }
                 }
@@ -464,8 +468,8 @@ pub(crate) mod test_utils {
         None
     }
 
-    /// Transitive closure as a row-major `n * n` matrix, kept naive and separate from the one the
-    /// sequence cut finder uses.
+    /// Transitive closure as a row-major `n * n` matrix, independent of the `Reachability` the
+    /// sequence cut uses.
     fn transitive_closure(dfg: &ActivityDfg) -> Vec<bool> {
         let n = dfg.len();
         let mut reaches = vec![false; n * n];
@@ -474,13 +478,11 @@ pub(crate) mod test_utils {
                 reaches[from * n + to] = dfg.follows(from, to);
             }
         }
-        for _ in 0..n {
+        for via in 0..n {
             for from in 0..n {
-                for via in 0..n {
+                if reaches[from * n + via] {
                     for to in 0..n {
-                        if reaches[from * n + via] && reaches[via * n + to] {
-                            reaches[from * n + to] = true;
-                        }
+                        reaches[from * n + to] |= reaches[via * n + to];
                     }
                 }
             }

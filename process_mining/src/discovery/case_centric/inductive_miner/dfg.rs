@@ -4,8 +4,7 @@
 //! the miner rebuilds a graph per sub-log, and once per activity inside the activity-concurrent
 //! fall through, so [`ActivityDfg`] indexes activities densely and stores edges as a sorted
 //! adjacency list, never touching a string. Local indices ascend with the [`ActivityID`], which
-//! keeps cut detection deterministic. Edge frequencies are only needed by
-//! [`ActivityDfg::filtered`].
+//! keeps cut detection deterministic.
 
 use super::log::{ActivityID, ActivityLog};
 
@@ -24,22 +23,19 @@ pub struct ActivityDfg {
     end: Vec<u64>,
     /// Number of occurrences of each activity.
     occurrences: Vec<u64>,
-    /// Number of empty traces, the `▷ → ⊥` edge of the thesis. Ignored by IM, which settles empty
-    /// traces before building a graph; the [DFG variant](super::dfg_miner) recurses on it.
+    /// Number of empty traces. IM handles them before building a graph, so only the
+    /// [DFG variant](super::dfg_miner) reads this.
     empty_traces: u64,
     /// Outgoing edges, with their frequencies.
     successors: Adjacency,
-    /// Incoming edges. Frequencies are only ever needed per source, so these carry none.
+    /// Incoming edges, without frequencies.
     predecessors: Adjacency,
 }
 
 /// Edges of the graph in compressed-sparse-row form.
 ///
-/// A dense `n × n` matrix answers "is there an edge from `a` to `b`?" in constant time but costs
-/// `O(n²)` memory and `O(n²)` time to build and to filter, once per activity in the
-/// activity-concurrent fall through. Real graphs are sparse, so a sorted adjacency list is used
-/// instead: walking edges becomes proportional to their number, and the lookup becomes a binary
-/// search over one activity's neighbours.
+/// Real graphs are sparse, so this is cheaper to build and filter than an `n x n` matrix, at the
+/// cost of a binary search per edge lookup.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct Adjacency {
     /// Neighbours of activity `a` are `flat[offsets[a]..offsets[a + 1]]`, ascending.
@@ -58,7 +54,7 @@ impl Adjacency {
         self.offsets[activity] as usize..self.offsets[activity + 1] as usize
     }
 
-    /// Position of `neighbour` in `flat`, found by binary search over the sorted neighbours.
+    /// Position of `neighbour` in `flat`.
     fn position_of(&self, activity: usize, neighbour: usize) -> Option<usize> {
         let range = self.range(activity);
         self.flat[range.clone()]
@@ -96,11 +92,10 @@ impl Adjacency {
 
 /// Sorts edges by source and then target, summing the counts of repeated edges.
 ///
-/// Every rebuild sees one edge per pair of adjacent events, so this runs on a lot of them.
-/// Bucketing by source first turns one big sort into many tiny ones: `E log E` becomes
-/// `Σ deg log deg`, and activities have few distinct successors even on a large log.
+/// Discovery yields one edge per pair of adjacent events. A counting sort by source followed by
+/// a sort per source is much faster than one sort over all of them, since activities have few
+/// distinct successors.
 fn sort_edges_by_source(n: usize, edges: Vec<(u32, u32, u64)>) -> Vec<(u32, u32, u64)> {
-    // Counting sort into one bucket per source.
     let mut offsets = vec![0u32; n + 2];
     for &(from, _, _) in &edges {
         offsets[from as usize + 1] += 1;
@@ -117,7 +112,6 @@ fn sort_edges_by_source(n: usize, edges: Vec<(u32, u32, u64)>) -> Vec<(u32, u32,
         *slot += 1;
     }
 
-    // Order each bucket by target and merge repeated edges.
     let mut sorted: Vec<(u32, u32, u64)> = Vec::with_capacity(bucketed.len());
     for source in 0..n {
         let bucket = &mut bucketed[offsets[source] as usize..offsets[source + 1] as usize];
@@ -133,17 +127,34 @@ fn sort_edges_by_source(n: usize, edges: Vec<(u32, u32, u64)>) -> Vec<(u32, u32,
     sorted
 }
 
+/// The outgoing and incoming adjacency of unsorted, possibly repeated edges.
+fn adjacencies(n: usize, edges: Vec<(u32, u32, u64)>) -> (Adjacency, Adjacency) {
+    let sorted = sort_edges_by_source(n, edges);
+    let successors = Adjacency::from_sorted_edges(n, &sorted, true);
+    let reversed = sorted
+        .iter()
+        .map(|&(from, to, count)| (to, from, count))
+        .collect();
+    let predecessors = Adjacency::from_sorted_edges(n, &sort_edges_by_source(n, reversed), false);
+    (successors, predecessors)
+}
+
+/// Maps each global activity id to its local index, or [`usize::MAX`] if it does not occur.
+fn local_indices(alphabet_size: usize, activities: &[ActivityID]) -> Vec<usize> {
+    let mut local_of = vec![usize::MAX; alphabet_size];
+    for (local, &activity) in activities.iter().enumerate() {
+        local_of[activity] = local;
+    }
+    local_of
+}
+
 impl ActivityDfg {
     /// Discovers the directly-follows graph of the given log. Empty traces only contribute to
     /// [`ActivityDfg::empty_traces`].
     pub fn discover(log: &ActivityLog) -> Self {
         let activities = log.activities();
         let n = activities.len();
-
-        let mut local_of = vec![usize::MAX; log.alphabet_size()];
-        for (local, &activity) in activities.iter().enumerate() {
-            local_of[activity] = local;
-        }
+        let local_of = local_indices(log.alphabet_size(), &activities);
 
         let mut start = vec![0u64; n];
         let mut end = vec![0u64; n];
@@ -160,7 +171,6 @@ impl ActivityDfg {
             start[previous] += variant.count;
             end[local_of[trace[trace.len() - 1]]] += variant.count;
             occurrences[previous] += variant.count;
-
             for &activity in &trace[1..] {
                 let current = local_of[activity];
                 edges.push((previous as u32, current as u32, variant.count));
@@ -169,6 +179,7 @@ impl ActivityDfg {
             }
         }
 
+        let (successors, predecessors) = adjacencies(n, edges);
         Self {
             activities,
             local_of,
@@ -176,15 +187,16 @@ impl ActivityDfg {
             end,
             occurrences,
             empty_traces: log.num_empty_traces(),
-            ..Self::from_edges(n, edges)
+            successors,
+            predecessors,
         }
     }
 
     /// Builds a graph from its parts, the way the [DFG splits](super::dfg_miner) produce them.
     ///
-    /// `activities` are global ids in ascending order; `start`, `end` and `edges` use local
-    /// indices. Repeated edges are merged. Occurrences are derived as the start weight plus the
-    /// incoming edge weights, since there is no log to count them in.
+    /// `activities` are global ids in ascending order. `start`, `end` and `edges` use local
+    /// indices, and repeated edges are merged. With no log to count in, the occurrences of an
+    /// activity are its start weight plus its incoming edge weights.
     pub(crate) fn from_parts(
         alphabet_size: usize,
         activities: Vec<ActivityID>,
@@ -193,49 +205,19 @@ impl ActivityDfg {
         edges: Vec<(u32, u32, u64)>,
         empty_traces: u64,
     ) -> Self {
-        let n = activities.len();
-        let mut local_of = vec![usize::MAX; alphabet_size];
-        for (local, &activity) in activities.iter().enumerate() {
-            local_of[activity] = local;
-        }
-
         let mut occurrences = start.clone();
         for &(_, to, count) in &edges {
             occurrences[to as usize] += count;
         }
 
+        let (successors, predecessors) = adjacencies(activities.len(), edges);
         Self {
+            local_of: local_indices(alphabet_size, &activities),
             activities,
-            local_of,
             start,
             end,
             occurrences,
             empty_traces,
-            ..Self::from_edges(n, edges)
-        }
-    }
-
-    /// Builds the adjacency from unsorted, possibly repeated edges. Everything else is left at
-    /// its default for the caller to fill in.
-    fn from_edges(n: usize, edges: Vec<(u32, u32, u64)>) -> Self {
-        let sorted = sort_edges_by_source(n, edges);
-        let successors = Adjacency::from_sorted_edges(n, &sorted, true);
-
-        // The same edges, keyed by target, give the incoming ones.
-        let reversed = sorted
-            .iter()
-            .map(|&(from, to, count)| (to, from, count))
-            .collect();
-        let predecessors =
-            Adjacency::from_sorted_edges(n, &sort_edges_by_source(n, reversed), false);
-
-        Self {
-            activities: Vec::new(),
-            local_of: Vec::new(),
-            start: Vec::new(),
-            end: Vec::new(),
-            occurrences: Vec::new(),
-            empty_traces: 0,
             successors,
             predecessors,
         }
@@ -278,10 +260,10 @@ impl ActivityDfg {
 
     /// The local index of a global [`ActivityID`], or `None` if it does not occur in this graph.
     pub fn local_index(&self, activity: ActivityID) -> Option<usize> {
-        match self.local_of.get(activity) {
-            Some(&usize::MAX) | None => None,
-            Some(&local) => Some(local),
-        }
+        self.local_of
+            .get(activity)
+            .copied()
+            .filter(|&local| local != usize::MAX)
     }
 
     /// Returns `true` if `from` is directly followed by `to` at least once.
@@ -321,7 +303,7 @@ impl ActivityDfg {
         self.end[activity]
     }
 
-    /// The number of empty traces behind the graph. See [`ActivityDfg::empty_traces`](Self).
+    /// The number of empty traces behind the graph.
     pub fn empty_traces(&self) -> u64 {
         self.empty_traces
     }
@@ -363,45 +345,45 @@ impl ActivityDfg {
     /// Removes infrequent edges, as `IMf` does before retrying cut detection.
     ///
     /// An edge `a → b` is kept only if it occurs at least `noise_threshold` times as often as the
-    /// most frequent edge leaving `a`. Being a start or an end activity counts as an edge from an
-    /// artificial start resp. to an artificial end, so infrequent start and end activities are
-    /// dropped too. The activities themselves are never removed, and `0.0` removes nothing.
+    /// most frequent edge leaving `a`. Starting a trace counts as an edge from an artificial start
+    /// activity, and ending one as an edge to an artificial end activity, so infrequent start and
+    /// end weights are dropped too. Activities are never removed, and `0.0` removes nothing.
     pub fn filtered(&self, noise_threshold: f64) -> Self {
-        let n = self.len();
-        let mut start = self.start.clone();
-        let mut end = self.end.clone();
-        let mut kept: Vec<(u32, u32, u64)> = Vec::with_capacity(self.num_edges());
-
-        // Edges leaving the artificial start `▷`, i.e. the start activities.
         let start_cutoff = noise_threshold * self.start.iter().copied().max().unwrap_or(0) as f64;
-        for (activity, starts_a_trace) in start.iter_mut().enumerate() {
-            if (self.start[activity] as f64) < start_cutoff {
-                *starts_a_trace = 0;
-            }
-        }
+        let start = self
+            .start
+            .iter()
+            .map(|&count| {
+                if (count as f64) < start_cutoff {
+                    0
+                } else {
+                    count
+                }
+            })
+            .collect();
 
-        // Edges leaving a real activity, including the one to the artificial end `⊥`.
-        for (from, ends_a_trace) in end.iter_mut().enumerate() {
+        let mut end = self.end.clone();
+        let mut kept = Vec::with_capacity(self.num_edges());
+        for (from, end_count) in end.iter_mut().enumerate() {
             let range = self.successors.range(from);
             let max_outgoing = self.successors.counts[range.clone()]
                 .iter()
-                .chain(std::iter::once(&self.end[from]))
                 .copied()
-                .max()
-                .unwrap_or(0) as f64;
-            let cutoff = noise_threshold * max_outgoing;
+                .fold(*end_count, u64::max);
+            let cutoff = noise_threshold * max_outgoing as f64;
 
             for position in range {
                 let count = self.successors.counts[position];
-                if (count as f64) >= cutoff {
+                if count as f64 >= cutoff {
                     kept.push((from as u32, self.successors.flat[position], count));
                 }
             }
-            if (self.end[from] as f64) < cutoff {
-                *ends_a_trace = 0;
+            if (*end_count as f64) < cutoff {
+                *end_count = 0;
             }
         }
 
+        let (successors, predecessors) = adjacencies(self.len(), kept);
         Self {
             activities: self.activities.clone(),
             local_of: self.local_of.clone(),
@@ -409,14 +391,15 @@ impl ActivityDfg {
             end,
             occurrences: self.occurrences.clone(),
             empty_traces: self.empty_traces,
-            ..Self::from_edges(n, kept)
+            successors,
+            predecessors,
         }
     }
 }
 
 #[cfg(test)]
 pub(crate) mod test_utils {
-    use super::ActivityDfg;
+    use super::{adjacencies, ActivityDfg};
 
     /// Builds a graph directly from edges and start/end activities, for the cases that are
     /// awkward or impossible to write down as a log. Frequencies are all `1`.
@@ -426,27 +409,28 @@ pub(crate) mod test_utils {
         start: &[usize],
         end: &[usize],
     ) -> ActivityDfg {
-        let mut dfg = ActivityDfg {
+        let (successors, predecessors) = adjacencies(
+            activities,
+            edges
+                .iter()
+                .map(|&(from, to)| (from as u32, to as u32, 1))
+                .collect(),
+        );
+        let weights = |set: &[usize]| {
+            (0..activities)
+                .map(|a| u64::from(set.contains(&a)))
+                .collect()
+        };
+        ActivityDfg {
             activities: (0..activities).collect(),
             local_of: (0..activities).collect(),
-            start: vec![0; activities],
-            end: vec![0; activities],
+            start: weights(start),
+            end: weights(end),
             occurrences: vec![1; activities],
-            ..ActivityDfg::from_edges(
-                activities,
-                edges
-                    .iter()
-                    .map(|&(from, to)| (from as u32, to as u32, 1))
-                    .collect(),
-            )
-        };
-        for &activity in start {
-            dfg.start[activity] = 1;
+            empty_traces: 0,
+            successors,
+            predecessors,
         }
-        for &activity in end {
-            dfg.end[activity] = 1;
-        }
-        dfg
     }
 }
 

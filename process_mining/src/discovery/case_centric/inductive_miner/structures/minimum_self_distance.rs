@@ -48,13 +48,8 @@ impl MinimumSelfDistance {
             for (position, &activity) in trace.iter().enumerate() {
                 if let Some(previous) = last_seen[activity] {
                     let distance = position - previous - 1;
-                    let is_closer = match relation.minimum_distance[activity] {
-                        Some(known) => distance < known,
-                        None => true,
-                    };
                     let row = activity * words_per_row;
-                    if is_closer {
-                        // A closer pair of occurrences replaces everything seen before.
+                    if relation.minimum_distance[activity].is_none_or(|known| distance < known) {
                         relation.minimum_distance[activity] = Some(distance);
                         relation.intervenes[row..row + words_per_row].fill(0);
                     }

@@ -17,9 +17,8 @@ use crate::discovery::case_centric::inductive_miner::{inductive_miner, Inductive
 
 /// Which object types to discover a net for.
 ///
-/// Each type's net comes from that type's flattening alone and its variable arcs are decided per
-/// activity and type, so leaving a type out changes nothing about the others: it only leaves out
-/// its places, its silent transitions, and the activities no remaining type sees.
+/// Each type's net and variable arcs are discovered independently, so leaving a type out does not
+/// change the nets of the others.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ObjectTypeFilter {
     /// Every object type of the log.
@@ -59,13 +58,11 @@ pub struct ObjectCentricDiscoveryOptions {
     pub inductive_miner: InductiveMinerOptions,
     /// Which object types to discover a net for.
     pub object_types: ObjectTypeFilter,
-    /// Fraction of an activity's executions that may deviate from "exactly one object of this
-    /// type" before the arc is still called normal.
+    /// Fraction of an activity's executions that may involve other than exactly one object of a
+    /// type while its arc to that type still counts as normal.
     ///
-    /// `0.0`, the default, is the strict reading. A small tolerance keeps data-quality noise from
-    /// turning an arc variable on its own, such as the 10 of 1966 `Load to Vehicle` events relating
-    /// to no vehicle in the container-logistics log. `PM4Py` applies `0.2` implicitly, as its
-    /// `double_arc_threshold` of `0.8`.
+    /// The default `0.0` is the strict reading. A small tolerance keeps data-quality noise from
+    /// making arcs variable. `PM4Py` implicitly uses `0.2` (its `double_arc_threshold` of `0.8`).
     pub variable_arc_tolerance: f64,
 }
 
@@ -98,14 +95,10 @@ impl ObjectCentricDiscoveryOptions {
 
 /// Discovers an [`ObjectCentricPetriNet`] from an object-centric event log.
 ///
-/// Flattens the log on every object type, one case per object, mines a Petri net from each with
-/// the Inductive Miner, and decides the [variable arcs](discover_variable_arcs). Stitching needs
-/// no work: transitions carrying the same activity label are one transition of the object-centric
-/// net, which is how [`ObjectCentricPetriNet`] is read.
-///
-/// The object types are independent, so they are mined in parallel and
-/// [`options.object_types`](ObjectCentricDiscoveryOptions::object_types) can leave some out
-/// without changing the rest.
+/// Flattens the log on every selected object type (one case per object), mines a Petri net from
+/// each in parallel with the Inductive Miner, and determines the
+/// [variable arcs](discover_variable_arcs). Transitions with the same activity label are shared
+/// between the per-type nets, so no explicit merging step is needed.
 pub fn discover_ocpn<'a, O>(
     ocel: &'a O,
     options: ObjectCentricDiscoveryOptions,
@@ -124,10 +117,7 @@ where
         .par_iter()
         .map(|object_type| {
             let mut flattened = flatten_ocel_on(ocel, object_type);
-            // Objects taking part in no event carry no behaviour. Keeping them would put an
-            // empty trace in the log, which the miner reads as "this object type may be skipped"
-            // and makes the whole net optional. The flattened log of the paper is derived from
-            // the event-to-object relations, so those objects have no case.
+            // Objects without events would add empty traces, which make the whole net optional.
             flattened.traces.retain(|trace| !trace.events.is_empty());
 
             let tree = inductive_miner(
@@ -151,13 +141,11 @@ where
 /// Determines, per object type, which activities have variable arcs.
 ///
 /// A normal arc moves exactly one token, so an arc is variable as soon as one execution of the
-/// activity involves other than exactly one object of the type: several at once, or none.
-/// Flattening hides both, an event touching three items being indistinguishable from three
-/// executions and one touching none not appearing at all, so this reads the object-centric log.
-/// `tolerance` allows a fraction of the executions to deviate anyway.
+/// activity involves several objects of the type, or none. Flattening hides both cases, so this
+/// reads the object-centric log. `tolerance` allows a fraction of the executions to deviate.
 ///
 /// Types without a variable arc are absent from the result, as are activities never relating to
-/// the type, which have no arc to decide.
+/// the type.
 pub fn discover_variable_arcs<'a, O>(
     ocel: &'a O,
     tolerance: f64,
@@ -166,34 +154,22 @@ where
     O: LinkedOCELAccess<'a>,
     O::ObjectRepr: Eq + std::hash::Hash,
 {
-    /// How the events of one activity relate to one object type.
-    #[derive(Default)]
-    struct Involvement {
-        /// Events of the activity that relate to exactly one object of the type.
-        with_exactly_one: u64,
-        /// Events of the activity that relate to two or more objects of the type.
-        with_several: u64,
-    }
-
     let mut activity_occurrences: HashMap<&str, u64> = HashMap::new();
-    let mut involvement: HashMap<(&str, &str), Involvement> = HashMap::new();
+    // Per (activity, object type) that occur together: events with exactly one such object.
+    let mut with_exactly_one: HashMap<(&str, &str), u64> = HashMap::new();
     let mut objects_per_type: HashMap<&str, HashSet<&O::ObjectRepr>> = HashMap::new();
 
     for event in ocel.get_all_evs() {
         objects_per_type.clear();
         for (_qualifier, object) in ocel.get_e2o(&event) {
-            // Counted per distinct object: the same object may be related to an event under
-            // several qualifiers, which is one object, not two.
+            // A set, since an event may relate to the same object under several qualifiers.
             objects_per_type
                 .entry(ocel.get_ob_type_of(object))
                 .or_default()
                 .insert(object);
         }
 
-        // An event related to no object appears in no flattened log and takes part in no per-type
-        // net, so it says nothing about an arc. The container-logistics log has 41 of them, some
-        // because their object references point at objects that are not in the log, and counting
-        // them would make arcs look variable because of a data-quality problem.
+        // An event without objects appears in no flattened log, so it says nothing about arcs.
         if objects_per_type.is_empty() {
             continue;
         }
@@ -202,21 +178,15 @@ where
         *activity_occurrences.entry(activity).or_default() += 1;
 
         for (object_type, objects) in &objects_per_type {
-            let entry = involvement.entry((activity, object_type)).or_default();
-            if objects.len() == 1 {
-                entry.with_exactly_one += 1;
-            } else {
-                entry.with_several += 1;
-            }
+            *with_exactly_one.entry((activity, object_type)).or_default() +=
+                u64::from(objects.len() == 1);
         }
     }
 
     let mut variable: HashMap<String, HashSet<String>> = HashMap::new();
-    for ((activity, object_type), counts) in involvement {
+    for ((activity, object_type), exactly_one) in with_exactly_one {
         let occurrences = activity_occurrences[activity];
-        // Executions that did not involve exactly one object of the type: either several at once,
-        // or none at all.
-        let deviating = occurrences - counts.with_exactly_one;
+        let deviating = occurrences - exactly_one;
         if deviating as f64 > tolerance * occurrences as f64 {
             variable
                 .entry(object_type.to_string())

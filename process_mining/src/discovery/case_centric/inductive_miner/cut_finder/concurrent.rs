@@ -3,17 +3,9 @@
 use crate::core::process_models::process_tree::OperatorType;
 
 use super::super::dfg::ActivityDfg;
-use super::super::log::ActivityLog;
 use super::super::structures::complement_components::complement_components;
 use super::super::structures::minimum_self_distance::MinimumSelfDistance;
 use super::cut::Cut;
-
-/// Whether a part contains a start / an end activity.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Coverage {
-    start: bool,
-    end: bool,
-}
 
 /// Finds the maximal concurrent cut, if there is one.
 ///
@@ -41,16 +33,7 @@ pub fn concurrent_cut(
         fully_connected && !loops_around
     };
 
-    let groups = complement_components(n, may_be_separated);
-    let coverage: Vec<Coverage> = groups
-        .iter()
-        .map(|group| Coverage {
-            start: group.iter().any(|&a| dfg.is_start(a)),
-            end: group.iter().any(|&a| dfg.is_end(a)),
-        })
-        .collect();
-
-    let groups = complete_parts(groups, &coverage);
+    let groups = complete_parts(dfg, complement_components(n, may_be_separated));
     let cut = Cut::new(
         OperatorType::Concurrency,
         super::to_partitions(dfg, &groups),
@@ -67,25 +50,24 @@ pub fn concurrent_cut(
 /// remains and there is no cut. Merging `{a}` with `{c}` keeps two. Parts that complement each
 /// other are therefore paired up first, and only the rest joins an already complete part.
 ///
-/// Several partitions of that maximal size can exist; which one comes out is a choice the
-/// requirements leave open, and other implementations resolve it differently.
-fn complete_parts(groups: Vec<Vec<usize>>, coverage: &[Coverage]) -> Vec<Vec<usize>> {
-    let complete = |c: &Coverage| c.start && c.end;
+/// Several partitions of that maximal size can exist. The requirements leave open which one comes
+/// out, and other implementations pick differently.
+fn complete_parts(dfg: &ActivityDfg, groups: Vec<Vec<usize>>) -> Vec<Vec<usize>> {
+    let mut absorbing = Vec::new();
+    let mut missing_end = Vec::new();
+    let mut missing_start = Vec::new();
+    let mut missing_both = Vec::new();
+    for (index, group) in groups.iter().enumerate() {
+        let has_start = group.iter().any(|&a| dfg.is_start(a));
+        let has_end = group.iter().any(|&a| dfg.is_end(a));
+        match (has_start, has_end) {
+            (true, true) => absorbing.push(index),
+            (true, false) => missing_end.push(index),
+            (false, true) => missing_start.push(index),
+            (false, false) => missing_both.push(index),
+        }
+    }
 
-    let mut absorbing: Vec<usize> = (0..groups.len())
-        .filter(|&i| complete(&coverage[i]))
-        .collect();
-    let missing_end: Vec<usize> = (0..groups.len())
-        .filter(|&i| coverage[i].start && !coverage[i].end)
-        .collect();
-    let missing_start: Vec<usize> = (0..groups.len())
-        .filter(|&i| !coverage[i].start && coverage[i].end)
-        .collect();
-    let missing_both: Vec<usize> = (0..groups.len())
-        .filter(|&i| !coverage[i].start && !coverage[i].end)
-        .collect();
-
-    // `merged_into[i]` is the part that part `i` ends up in.
     let mut merged_into: Vec<usize> = (0..groups.len()).collect();
 
     let paired = missing_end.len().min(missing_start.len());
@@ -108,57 +90,18 @@ fn complete_parts(groups: Vec<Vec<usize>>, coverage: &[Coverage]) -> Vec<Vec<usi
         }
     }
 
-    let mut merged: Vec<Option<Vec<usize>>> = vec![None; groups.len()];
-    for (index, group) in groups.into_iter().enumerate() {
-        merged[merged_into[index]]
-            .get_or_insert_with(Vec::new)
-            .extend(group);
+    let mut merged = vec![Vec::new(); groups.len()];
+    for (group, &target) in groups.into_iter().zip(&merged_into) {
+        merged[target].extend(group);
     }
     merged
         .into_iter()
-        .flatten()
+        .filter(|group| !group.is_empty())
         .map(|mut group| {
             group.sort_unstable();
             group
         })
         .collect()
-}
-
-/// Reports a concurrent cut as an inclusive choice (`∨`) if the log skips parts of it.
-///
-/// A part no trace touches is handed an empty projection and its sub-tree turns optional. With
-/// every part optional the model allows nothing to happen at all, which the log cannot show, since
-/// empty traces are settled before cut detection runs. `∨` drops the empty projections instead, so
-/// `∨(a⁺, b⁺)` replaces `∧(a*, b*)` and loses exactly the empty trace.
-///
-/// *Every* part has to be skipped somewhere, since `∨` makes all of its parts optional: for
-/// `⟨c⟩, ⟨b,c⟩, ⟨c,b,b⟩` the `c` is mandatory and `∨(b⁺, c)` would permit a lone `b`. A part counts
-/// as skipped once more than a fraction `noise_threshold` of the traces leave it out.
-pub fn as_inclusive_choice(log: &ActivityLog, cut: Cut, noise_threshold: f64) -> Cut {
-    let part_of = cut.partition_lookup(log.alphabet_size());
-    let mut skipped_by = vec![0u64; cut.len()];
-    let mut runs = vec![false; cut.len()];
-
-    for variant in log.variants() {
-        runs.fill(false);
-        for &activity in &variant.activities {
-            let part = part_of[activity];
-            if part != usize::MAX {
-                runs[part] = true;
-            }
-        }
-        for (part, &ran) in runs.iter().enumerate() {
-            if !ran {
-                skipped_by[part] += variant.count;
-            }
-        }
-    }
-
-    let noise = noise_threshold * log.num_traces() as f64;
-    if skipped_by.iter().all(|&traces| traces as f64 > noise) {
-        return Cut::new(OperatorType::InclusiveChoice, cut.partitions().to_vec());
-    }
-    cut
 }
 
 #[cfg(test)]

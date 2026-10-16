@@ -8,7 +8,7 @@ use super::super::log::{ActivityID, ActivityLog};
 /// If the cut adheres to →.1, every trace is already of the form `t1 · t2 · … · tn` with the
 /// activities of `ti` in `Σi`, and the split just finds those boundaries. If it does not, which
 /// only happens for a cut `IMf` detected on a filtered graph, the boundaries are placed so that as
-/// few events as possible end up on the wrong side; those are dropped.
+/// few events as possible end up on the wrong side. Those are dropped.
 ///
 /// Sub-logs may contain empty traces: splitting `⟨b, b, a⟩` on `(→, {a}, {b})` yields `[ε]` for
 /// `{a}` and `[⟨b, b⟩]` for `{b}`. A later recursion decides whether that is frequent enough to
@@ -56,10 +56,10 @@ fn find_split_point(
     let mut cost = 0i64;
 
     for (position, &activity) in trace.iter().enumerate().skip(start) {
-        let of = partition_of[activity];
-        if of == partition {
+        let part = partition_of[activity];
+        if part == partition {
             cost -= 1;
-        } else if of > partition {
+        } else if part > partition {
             // Belongs to a later part (or to no part at all, `usize::MAX`).
             cost += 1;
         }

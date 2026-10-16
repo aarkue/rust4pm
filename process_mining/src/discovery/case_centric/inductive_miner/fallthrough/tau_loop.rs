@@ -1,7 +1,7 @@
 //! The tau-loop fall throughs.
 
 use super::super::dfg::ActivityDfg;
-use super::super::log::ActivityLog;
+use super::super::log::{ActivityID, ActivityLog};
 use super::Fallthrough;
 
 /// Detects looping behaviour by cutting traces where one execution seems to end and the next to
@@ -17,9 +17,9 @@ use super::Fallthrough;
 fn tau_loop_over(
     log: &ActivityLog,
     keep_degenerate: bool,
-    split_before: impl Fn(&[usize], usize) -> bool,
+    split_before: impl Fn(&[ActivityID], usize) -> bool,
 ) -> Option<Fallthrough> {
-    let mut pieces: Vec<(Vec<usize>, u64)> = Vec::new();
+    let mut pieces: Vec<(Vec<ActivityID>, u64)> = Vec::new();
 
     for variant in log.variants() {
         let trace = &variant.activities;
@@ -34,9 +34,8 @@ fn tau_loop_over(
     }
 
     let split = log.derive(pieces);
-    // Nothing was cut, so recursing would loop forever. And with every piece a single event the
-    // pieces have no order left between them, so the recursion can only report a choice over all
-    // activities: that is the flower model, and taking it here would hide the fall throughs behind.
+    // If nothing was cut, recursing would loop forever. If every piece is a single event, the
+    // recursion can only find the flower model, which would pre-empt the later fall throughs.
     let worthwhile = split.num_traces() > log.num_traces()
         && (keep_degenerate || split.num_events() > split.num_traces());
     worthwhile.then_some(Fallthrough::TauLoop(split))
@@ -52,7 +51,8 @@ pub fn strict_tau_loop(
     dfg: &ActivityDfg,
     keep_degenerate: bool,
 ) -> Option<Fallthrough> {
-    let (is_start, is_end) = start_end_lookup(log, dfg);
+    let is_start = lookup(log, dfg, dfg.start_activities());
+    let is_end = lookup(log, dfg, dfg.end_activities());
     tau_loop_over(log, keep_degenerate, |trace, position| {
         is_end[trace[position - 1]] && is_start[trace[position]]
     })
@@ -60,8 +60,8 @@ pub fn strict_tau_loop(
 
 /// Cuts traces before every occurrence of a start activity.
 ///
-/// This is the more aggressive variant: it cuts wherever an execution *could* have started,
-/// without requiring the previous one to have finished. With start activities `{a, b, d}`, the
+/// Unlike [`strict_tau_loop`], this does not require the previous execution to have finished.
+/// With start activities `{a, b, d}`, the
 /// trace `⟨a, b, c, d⟩` is cut into `⟨a⟩`, `⟨b, c⟩` and `⟨d⟩`. The shorter pieces retain less of
 /// the original log, so [`strict_tau_loop`] is tried first. Returns `None` if no trace could be
 /// cut.
@@ -70,23 +70,19 @@ pub fn tau_loop(
     dfg: &ActivityDfg,
     keep_degenerate: bool,
 ) -> Option<Fallthrough> {
-    let (is_start, _) = start_end_lookup(log, dfg);
+    let is_start = lookup(log, dfg, dfg.start_activities());
     tau_loop_over(log, keep_degenerate, |trace, position| {
         is_start[trace[position]]
     })
 }
 
-/// Builds "is a start activity" / "is an end activity" lookups indexed by activity id.
-fn start_end_lookup(log: &ActivityLog, dfg: &ActivityDfg) -> (Vec<bool>, Vec<bool>) {
-    let mut is_start = vec![false; log.alphabet_size()];
-    let mut is_end = vec![false; log.alphabet_size()];
-    for local in dfg.start_activities() {
-        is_start[dfg.activity(local)] = true;
+/// Marks the given local activities of `dfg` in a lookup indexed by activity id.
+fn lookup(log: &ActivityLog, dfg: &ActivityDfg, locals: impl Iterator<Item = usize>) -> Vec<bool> {
+    let mut marked = vec![false; log.alphabet_size()];
+    for local in locals {
+        marked[dfg.activity(local)] = true;
     }
-    for local in dfg.end_activities() {
-        is_end[dfg.activity(local)] = true;
-    }
-    (is_start, is_end)
+    marked
 }
 
 #[cfg(test)]

@@ -37,14 +37,14 @@ pub struct ActivityLog {
     /// Size of the activity alphabet of the whole mining run. Sub-logs keep the alphabet of the
     /// original log, so an activity id means the same thing in every recursion step.
     alphabet_size: usize,
-    /// Distinct variants; no two entries have the same activity sequence.
+    /// Sorted by activity sequence, with no sequence occurring twice.
     variants: Vec<TraceVariant>,
 }
 
 impl ActivityLog {
     /// Creates a log over an alphabet of `alphabet_size` activities from the given traces.
     ///
-    /// Traces with an identical activity sequence are aggregated into a single variant; traces
+    /// Traces with an identical activity sequence are aggregated into a single variant, and traces
     /// with a count of zero are dropped. Variants end up sorted, which makes a log independent of
     /// the order its traces arrived in and so keeps discovery reproducible.
     ///
@@ -76,15 +76,14 @@ impl ActivityLog {
         }
     }
 
-    /// Creates a sub-log over the same alphabet as this one from the given traces.
-    ///
-    /// Just like [`ActivityLog::new`], identical activity sequences are aggregated.
+    /// Creates a sub-log over the same alphabet as this one from the given traces, aggregated as
+    /// in [`ActivityLog::new`].
     pub fn derive(&self, traces: impl IntoIterator<Item = (Vec<ActivityID>, u64)>) -> Self {
         Self::new(self.alphabet_size, traces)
     }
 
     /// Size of the activity alphabet of the mining run. An upper bound for the ids in this log,
-    /// which usually contains only a subset; see [`ActivityLog::activities`].
+    /// which usually contains only a subset (see [`ActivityLog::activities`]).
     pub fn alphabet_size(&self) -> usize {
         self.alphabet_size
     }
@@ -113,7 +112,7 @@ impl ActivityLog {
             .sum()
     }
 
-    /// The number of empty traces in the log, i.e. `|ε ∈ L|`.
+    /// The number of empty traces in the log (`|ε ∈ L|`).
     pub fn num_empty_traces(&self) -> u64 {
         self.variants
             .iter()
@@ -166,7 +165,7 @@ impl ActivityLog {
         }))
     }
 
-    /// Returns a copy of this log with all empty traces removed.
+    /// This log with all empty traces removed.
     pub fn without_empty_traces(&self) -> Self {
         Self {
             alphabet_size: self.alphabet_size,
@@ -262,7 +261,6 @@ pub fn from_activity_projection(
     let mut labels = projection.activities.clone();
     labels.sort_unstable();
 
-    // Map the ids of the input projection to the ids of the sorted alphabet.
     let id_of: HashMap<&str, ActivityID> = labels
         .iter()
         .enumerate()
@@ -274,9 +272,8 @@ pub fn from_activity_projection(
         .map(|label| id_of[label.as_str()])
         .collect();
 
-    let alphabet_size = labels.len();
     let activity_log = ActivityLog::new(
-        alphabet_size,
+        labels.len(),
         projection
             .traces
             .iter()
@@ -323,10 +320,7 @@ pub(crate) mod test_utils {
             .iter()
             .map(|v| {
                 (
-                    v.activities
-                        .iter()
-                        .map(|&a| labels[a].clone())
-                        .collect::<Vec<_>>(),
+                    v.activities.iter().map(|&a| labels[a].clone()).collect(),
                     v.count,
                 )
             })

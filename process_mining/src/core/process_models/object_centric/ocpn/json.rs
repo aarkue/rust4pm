@@ -2,8 +2,8 @@
 //!
 //! One list of places, transitions and arcs rather than one net per object type. A transition
 //! appears once no matter how many types share it, and an arc takes its type from the place it
-//! connects, so nothing is lost. Names come from the net rather than from its UUIDs, so exporting
-//! the same net twice gives the same file.
+//! connects. Names are derived from the net structure rather than from UUIDs, so exporting the
+//! same net twice gives the same file. Places and transitions without arcs are not exported.
 //!
 //! ```text
 //! {
@@ -22,9 +22,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use uuid::Uuid;
+
 use super::object_centric_petri_net_struct::ObjectCentricPetriNet;
 use crate::core::process_models::case_centric::petri_net::petri_net_struct::{
-    ArcType, Marking, PetriNet, PlaceID, TransitionID,
+    ArcType, Marking, PlaceID, TransitionID,
 };
 
 /// An object-centric Petri net as a flat list of places, transitions and arcs.
@@ -40,7 +42,8 @@ pub struct ObjectCentricPetriNetJson {
     pub arcs: Vec<JsonArc>,
     /// Tokens per place at the start, by place name.
     pub initial_marking: BTreeMap<String, u64>,
-    /// Tokens per place at the end, by place name.
+    /// Tokens per place at the end, by place name. Only the first final marking of each object
+    /// type is exported.
     pub final_marking: BTreeMap<String, u64>,
 }
 
@@ -56,7 +59,7 @@ pub struct JsonPlace {
 /// A transition, silent if it has no label.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct JsonTransition {
-    /// Unique among all places and transitions; the activity itself for a labelled transition.
+    /// Unique among all places and transitions. For a labelled transition, the activity itself.
     pub name: String,
     /// The activity, or `None` for a silent transition.
     pub label: Option<String>,
@@ -95,30 +98,33 @@ pub enum JsonArcType {
 impl ObjectCentricPetriNet {
     /// Converts to the [flat JSON form](ObjectCentricPetriNetJson).
     pub fn to_json_form(&self) -> ObjectCentricPetriNetJson {
-        let activities: HashSet<&str> = self.activities().into_iter().collect();
         let mut json = ObjectCentricPetriNetJson::default();
-        let mut named: HashMap<uuid::Uuid, String> = HashMap::new();
+        let mut taken: HashSet<String> =
+            self.activities().into_iter().map(str::to_string).collect();
+        let mut exported_activities: HashSet<&str> = HashSet::new();
+        let mut names: HashMap<Uuid, String> = HashMap::new();
 
         for object_type in self.object_types() {
             let net = &self.nets[object_type];
-            let mut name_of = |id: uuid::Uuid, json: &mut ObjectCentricPetriNetJson| -> String {
-                if let Some(known) = named.get(&id) {
-                    return known.clone();
+            let (mut next_place, mut next_tau) = (0, 0);
+            let mut name_of = |id: Uuid, json: &mut ObjectCentricPetriNetJson| -> String {
+                if let Some(name) = names.get(&id) {
+                    return name.clone();
                 }
-                let name = match net.transitions.get(&id).map(|t| t.label.clone()) {
-                    // The activity names the transition, so the nets sharing it agree on the name
-                    // and it is written out once.
+                let name = match net.transitions.get(&id).map(|t| t.label.as_deref()) {
+                    // Nets sharing an activity agree on its name, so it is written out once.
                     Some(Some(activity)) => {
-                        if !json.transitions.iter().any(|t| t.name == activity) {
+                        if exported_activities.insert(activity) {
                             json.transitions.push(JsonTransition {
-                                name: activity.clone(),
-                                label: Some(activity.clone()),
+                                name: activity.to_string(),
+                                label: Some(activity.to_string()),
                             });
                         }
-                        activity
+                        activity.to_string()
                     }
                     Some(None) => {
-                        let name = unique(format!("{object_type} tau"), &activities, &named);
+                        let name =
+                            fresh_name(&format!("{object_type} tau"), &mut next_tau, &mut taken);
                         json.transitions.push(JsonTransition {
                             name: name.clone(),
                             label: None,
@@ -126,7 +132,8 @@ impl ObjectCentricPetriNet {
                         name
                     }
                     None => {
-                        let name = unique(format!("{object_type} p"), &activities, &named);
+                        let name =
+                            fresh_name(&format!("{object_type} p"), &mut next_place, &mut taken);
                         json.places.push(JsonPlace {
                             name: name.clone(),
                             object_type: object_type.to_string(),
@@ -134,52 +141,43 @@ impl ObjectCentricPetriNet {
                         name
                     }
                 };
-                named.insert(id, name.clone());
+                names.insert(id, name.clone());
                 name
             };
 
-            // Walking the arcs, which are stored in a fixed order, keeps the names reproducible.
+            // Arcs are stored in a fixed order, unlike places and transitions, so naming nodes
+            // along them keeps the names reproducible.
             for arc in &net.arcs {
-                let (from, to, place, transition) = match arc.from_to {
-                    ArcType::PlaceTransition(place, transition) => {
-                        (place, transition, place, transition)
-                    }
-                    ArcType::TransitionPlace(transition, place) => {
-                        (transition, place, place, transition)
-                    }
+                let (from, to, transition) = match arc.from_to {
+                    ArcType::PlaceTransition(place, transition) => (place, transition, transition),
+                    ArcType::TransitionPlace(transition, place) => (transition, place, transition),
                 };
-                let _ = place;
                 let variable = net
                     .transitions
                     .get(&transition)
                     .and_then(|t| t.label.as_deref())
-                    .is_some_and(|activity| {
-                        self.variable_arcs
-                            .get(object_type)
-                            .is_some_and(|activities| activities.contains(activity))
-                    });
-
+                    .is_some_and(|activity| self.is_variable_arc(object_type, activity));
                 let source = name_of(from, &mut json);
                 let target = name_of(to, &mut json);
                 json.arcs.push(JsonArc {
                     source,
                     target,
-                    arc_type: match variable {
-                        true => JsonArcType::Variable,
-                        false => JsonArcType::Normal,
+                    arc_type: if variable {
+                        JsonArcType::Variable
+                    } else {
+                        JsonArcType::Normal
                     },
                     weight: arc.weight,
                 });
             }
 
             for (place, tokens) in net.initial_marking.iter().flatten() {
-                if let Some(name) = named.get(&place.0) {
+                if let Some(name) = names.get(&place.0) {
                     json.initial_marking.insert(name.clone(), *tokens);
                 }
             }
-            // A net discovered from a process tree has exactly one final marking.
-            for (place, tokens) in net.final_markings.iter().flatten().flatten() {
-                if let Some(name) = named.get(&place.0) {
+            for (place, tokens) in net.final_markings.iter().flatten().take(1).flatten() {
+                if let Some(name) = names.get(&place.0) {
                     json.final_marking.insert(name.clone(), *tokens);
                 }
             }
@@ -191,8 +189,7 @@ impl ObjectCentricPetriNet {
     /// Rebuilds an object-centric Petri net from the [flat JSON form](ObjectCentricPetriNetJson).
     ///
     /// Places are grouped into one net per object type, and a transition joins every net that has
-    /// an arc to it. Identifiers are new, so a net does not survive a round trip unchanged, but its
-    /// structure does.
+    /// an arc to it. Identifiers are new, so only the structure survives a round trip.
     pub fn from_json_form(json: &ObjectCentricPetriNetJson) -> Self {
         let type_of: HashMap<&str, &str> = json
             .places
@@ -206,51 +203,47 @@ impl ObjectCentricPetriNet {
             .collect();
 
         let mut ocpn = Self::new();
-        let mut ids: HashMap<(&str, &str), uuid::Uuid> = HashMap::new();
+        let mut ids: HashMap<(&str, &str), Uuid> = HashMap::new();
 
         for arc in &json.arcs {
-            let (place, transition) = match type_of.contains_key(arc.source.as_str()) {
-                true => (arc.source.as_str(), arc.target.as_str()),
-                false => (arc.target.as_str(), arc.source.as_str()),
+            let from_place = type_of.contains_key(arc.source.as_str());
+            let (place, transition) = if from_place {
+                (arc.source.as_str(), arc.target.as_str())
+            } else {
+                (arc.target.as_str(), arc.source.as_str())
             };
             let Some(&object_type) = type_of.get(place) else {
                 continue;
             };
             let net = ocpn.nets.entry(object_type.to_string()).or_default();
 
-            let place_id = *ids
-                .entry((object_type, place))
-                .or_insert_with(|| net.add_place(None).0);
-            let label = label_of.get(transition).copied().flatten();
-            let transition_id = *ids
-                .entry((object_type, transition))
-                .or_insert_with(|| net.add_transition(label.map(str::to_string), None).0);
-
-            net.add_arc(
-                match type_of.contains_key(arc.source.as_str()) {
-                    true => {
-                        ArcType::place_to_transition(PlaceID(place_id), TransitionID(transition_id))
-                    }
-                    false => {
-                        ArcType::transition_to_place(TransitionID(transition_id), PlaceID(place_id))
-                    }
-                },
-                Some(arc.weight),
+            let place_id = PlaceID(
+                *ids.entry((object_type, place))
+                    .or_insert_with(|| net.add_place(None).0),
             );
+            let label = label_of.get(transition).copied().flatten();
+            let transition_id = TransitionID(
+                *ids.entry((object_type, transition))
+                    .or_insert_with(|| net.add_transition(label.map(str::to_string), None).0),
+            );
+            let from_to = if from_place {
+                ArcType::place_to_transition(place_id, transition_id)
+            } else {
+                ArcType::transition_to_place(transition_id, place_id)
+            };
+            net.add_arc(from_to, Some(arc.weight));
 
-            if arc.arc_type == JsonArcType::Variable {
-                if let Some(activity) = label {
-                    ocpn.variable_arcs
-                        .entry(object_type.to_string())
-                        .or_default()
-                        .insert(activity.to_string());
-                }
+            if let (JsonArcType::Variable, Some(activity)) = (arc.arc_type, label) {
+                ocpn.variable_arcs
+                    .entry(object_type.to_string())
+                    .or_default()
+                    .insert(activity.to_string());
             }
         }
 
-        for (marking, into_final) in [(&json.initial_marking, false), (&json.final_marking, true)] {
+        let markings_per_type = |marking: &BTreeMap<String, u64>| {
             let mut per_type: HashMap<&str, Marking> = HashMap::new();
-            for (place, tokens) in marking {
+            for (place, &tokens) in marking {
                 let Some(&object_type) = type_of.get(place.as_str()) else {
                     continue;
                 };
@@ -258,15 +251,19 @@ impl ObjectCentricPetriNet {
                     per_type
                         .entry(object_type)
                         .or_default()
-                        .insert(PlaceID(id), *tokens);
+                        .insert(PlaceID(id), tokens);
                 }
             }
-            for (object_type, marking) in per_type {
-                let net: &mut PetriNet = ocpn.nets.entry(object_type.to_string()).or_default();
-                match into_final {
-                    true => net.final_markings = Some(vec![marking]),
-                    false => net.initial_marking = Some(marking),
-                }
+            per_type
+        };
+        for (object_type, marking) in markings_per_type(&json.initial_marking) {
+            if let Some(net) = ocpn.nets.get_mut(object_type) {
+                net.initial_marking = Some(marking);
+            }
+        }
+        for (object_type, marking) in markings_per_type(&json.final_marking) {
+            if let Some(net) = ocpn.nets.get_mut(object_type) {
+                net.final_markings = Some(vec![marking]);
             }
         }
 
@@ -274,22 +271,21 @@ impl ObjectCentricPetriNet {
     }
 }
 
-/// A name of the form `prefix0`, `prefix1`, … that no activity and no other node already uses.
-fn unique(
-    prefix: String,
-    activities: &HashSet<&str>,
-    named: &HashMap<uuid::Uuid, String>,
-) -> String {
-    let taken: HashSet<&str> = named.values().map(String::as_str).collect();
-    (0..)
-        .map(|n| format!("{prefix}{n}"))
-        .find(|name| !activities.contains(name.as_str()) && !taken.contains(name.as_str()))
-        .expect("the counter is unbounded")
+/// The first name of the form `{prefix}{n}`, counting `n` up from `counter`, that is not taken yet.
+fn fresh_name(prefix: &str, counter: &mut usize, taken: &mut HashSet<String>) -> String {
+    loop {
+        let name = format!("{prefix}{counter}");
+        *counter += 1;
+        if taken.insert(name.clone()) {
+            return name;
+        }
+    }
 }
 
 #[cfg(test)]
 mod test_json_form {
     use super::*;
+    use crate::core::process_models::case_centric::petri_net::petri_net_struct::PetriNet;
     use crate::core::process_models::process_tree::{Node, OperatorType, ProcessTree};
 
     fn net_of(activities: &[&str]) -> PetriNet {

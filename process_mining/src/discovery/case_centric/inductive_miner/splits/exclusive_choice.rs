@@ -25,8 +25,8 @@ pub fn exclusive_choice_split(log: &ActivityLog, cut: &Cut) -> Vec<ActivityLog> 
             }
         }
 
-        // The part with the most events; ties go to the first one, which keeps empty traces (and
-        // traces consisting only of unassigned activities) in the first sub-log.
+        // Ties go to the first part, so empty traces and traces of only unassigned activities
+        // land in the first sub-log.
         let branch = events_per_partition
             .iter()
             .enumerate()

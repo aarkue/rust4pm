@@ -14,10 +14,9 @@ const BODY: usize = 0;
 /// `[⟨a, b⟩, ⟨a, b, c, a, b⟩, ⟨a, b, c, a, b, c, a, b⟩]` on `(↺, {a, b}, {c})` gives `[⟨a, b⟩⁶]`
 /// for the body and `[⟨c⟩³]` for the redo part.
 ///
-/// A loop always starts and ends with its body, so a trace that starts or ends with a redo
-/// activity does not fit. The split repairs that by inserting an empty trace into the body's
-/// sub-log and letting the recursion decide whether the body can be skipped. It is the only
-/// deviation a loop split can detect, knowing nothing about the sub-trees inside the parts.
+/// A loop starts and ends with its body and runs it between any two redo parts. Where a trace
+/// skips the body, the split inserts an empty trace into the body's sub-log and lets the recursion
+/// decide whether the body can be skipped.
 pub fn loop_split(log: &ActivityLog, cut: &Cut) -> Vec<ActivityLog> {
     let partition_of = cut.partition_lookup(log.alphabet_size());
     let mut sub_traces = vec![Vec::new(); cut.len()];
@@ -27,14 +26,16 @@ pub fn loop_split(log: &ActivityLog, cut: &Cut) -> Vec<ActivityLog> {
         let mut run: Vec<ActivityID> = Vec::new();
 
         for &activity in &variant.activities {
-            // A cut from loop detection covers every activity; treat anything else as body
-            // rather than losing it.
+            // Loop cuts cover every activity. Anything else goes to the body instead of being lost.
             let partition = match partition_of[activity] {
                 usize::MAX => BODY,
                 partition => partition,
             };
 
             if partition != current_partition {
+                if current_partition != BODY && partition != BODY {
+                    sub_traces[BODY].push((Vec::new(), variant.count));
+                }
                 sub_traces[current_partition].push((std::mem::take(&mut run), variant.count));
                 current_partition = partition;
             }
@@ -100,6 +101,16 @@ mod test_loop_split {
 
         let sub_logs = loop_split(&log, &cut);
         assert_eq!(describe(&sub_logs[0], &labels), expect(&[(&["a"], 3)]));
+        assert_eq!(describe(&sub_logs[1], &labels), expect(&[(&["c"], 1)]));
+        assert_eq!(describe(&sub_logs[2], &labels), expect(&[(&["d"], 1)]));
+
+        // Going from c straight to d skips the body in between.
+        let (labels, log) = log_of(&[&["a", "c", "d", "a"]]);
+        let sub_logs = loop_split(&log, &cut);
+        assert_eq!(
+            describe(&sub_logs[0], &labels),
+            expect(&[(&[], 1), (&["a"], 2)])
+        );
         assert_eq!(describe(&sub_logs[1], &labels), expect(&[(&["c"], 1)]));
         assert_eq!(describe(&sub_logs[2], &labels), expect(&[(&["d"], 1)]));
     }

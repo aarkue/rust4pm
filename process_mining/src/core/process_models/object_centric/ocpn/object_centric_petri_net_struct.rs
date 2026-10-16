@@ -7,21 +7,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::process_models::case_centric::petri_net::petri_net_struct::PetriNet;
 
-///
 /// An object-centric Petri net, as described in van der Aalst and Berti, "Discovering
 /// Object-Centric Petri Nets" (Fundamenta Informaticae, 2020).
 ///
-/// Stored as one accepting [`PetriNet`] per object type, so a place carries its object type
-/// through the net it belongs to. Transitions with the same non-silent label in different nets are
-/// the same transition of the object-centric net, which is what stitches the per-type nets
-/// together; silent transitions are local to their type.
+/// Stored as one accepting [`PetriNet`] per object type, so each place has the object type of its
+/// net. Transitions with the same non-silent label in different nets are the same transition of
+/// the object-centric net. Silent transitions are local to their object type.
 ///
-/// A variable arc consumes or produces a whole set of objects at once rather than a single one, so
-/// an activity handling all items of an order at the same time has variable arcs to the item
-/// places. The flattened logs the per-type nets come from do not show that, so it is recorded in
-/// [`ObjectCentricPetriNet::variable_arcs`]: an arc between a place of type `ot` and the
-/// transition of activity `a` is variable exactly if `a` is listed for `ot`.
-///
+/// A variable arc consumes or produces a set of objects at once, e.g., when an activity handles
+/// all items of an order together. An arc between a place of type `ot` and the transition of
+/// activity `a` is variable exactly if [`variable_arcs`](ObjectCentricPetriNet::variable_arcs) lists `a` for `ot`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ObjectCentricPetriNet {
     /// The accepting Petri net discovered for each object type.
@@ -43,10 +38,7 @@ impl ObjectCentricPetriNet {
         types
     }
 
-    /// The activities of the net, i.e. all non-silent transition labels, sorted.
-    ///
-    /// An activity occurring in several object types is listed once. Those are the transitions
-    /// the per-type nets share.
+    /// The activities of the net, i.e., all non-silent transition labels, sorted and deduplicated.
     pub fn activities(&self) -> Vec<&str> {
         let mut activities: Vec<&str> = self
             .nets
@@ -99,8 +91,7 @@ impl ObjectCentricPetriNet {
         self.nets.values().map(|net| net.arcs.len()).sum()
     }
 
-    /// Serializes to a JSON string in the [exchange form](super::json::ObjectCentricPetriNetJson),
-    /// which other tools can read.
+    /// Serializes to a JSON string in the [flat form](super::json::ObjectCentricPetriNetJson).
     pub fn to_json(&self) -> String {
         serde_json::to_string(&self.to_json_form()).unwrap()
     }
@@ -141,7 +132,6 @@ mod test_object_centric_petri_net {
     fn test_types_activities_and_shared_transitions() {
         let net = example();
         assert_eq!(net.object_types(), vec!["item", "order"]);
-        // "place order" occurs in both nets but is one activity of the object-centric net.
         assert_eq!(net.activities(), vec!["pay", "pick", "place order"]);
         assert_eq!(net.object_types_of("place order"), vec!["item", "order"]);
         assert_eq!(net.object_types_of("pay"), vec!["order"]);

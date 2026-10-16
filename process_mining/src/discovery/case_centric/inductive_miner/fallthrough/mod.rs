@@ -41,10 +41,9 @@ pub enum Fallthrough {
 
 /// Handles empty traces, the first fall through.
 ///
-/// Empty traces mean the whole sub-process could be skipped, modelled as `×(τ, …)`. `IMf` also
-/// checks whether that is worth doing, since a single empty trace among thousands is more likely
-/// noise than optionality: the optionality is only modelled if at least a fraction
-/// `noise_threshold` of the traces are empty. At `0.0` every empty trace counts.
+/// Empty traces mean the whole sub-process could be skipped, modelled as `×(τ, …)`. A single empty
+/// trace among thousands is more likely noise than optionality, so `IMf` only models it if at
+/// least a fraction `noise_threshold` of the traces are empty. At `0.0` every empty trace counts.
 ///
 /// Returns `None` if the log contains no empty traces.
 pub fn empty_traces(log: &ActivityLog, noise_threshold: f64) -> Option<Fallthrough> {

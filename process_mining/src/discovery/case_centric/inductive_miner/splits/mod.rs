@@ -31,9 +31,7 @@ pub fn split_log(log: &ActivityLog, cut: &Cut) -> Vec<ActivityLog> {
     match cut.operator() {
         OperatorType::ExclusiveChoice => exclusive_choice_split(log, cut),
         OperatorType::Sequence => sequence_split(log, cut),
-        // An interleaved cut splits like a concurrent one: every trace contributes its projection
-        // to every sub-log. The projection is the part's block, since the cut guarantees there is
-        // exactly one.
+        // An interleaved cut keeps each part in one block per trace, so projecting splits it.
         OperatorType::Concurrency | OperatorType::Interleaving => concurrency_split(log, cut),
         OperatorType::Loop => loop_split(log, cut),
         OperatorType::InclusiveChoice => inclusive_choice_split(log, cut),

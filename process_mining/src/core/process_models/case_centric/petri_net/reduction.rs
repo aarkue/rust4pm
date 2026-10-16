@@ -1,41 +1,39 @@
-//! (Structural) Reduction of Petri nets
-
-use std::collections::HashMap;
+//! Structural reduction of Petri nets
 
 use uuid::Uuid;
 
-use super::petri_net_struct::{ArcType, PetriNet, PlaceID, TransitionID};
+use super::petri_net_struct::{ArcType, Marking, PetriNet, PlaceID, TransitionID};
 
-/// A silent transition that can be fused into the transition feeding it.
+/// A silent transition to fuse into the only transition feeding it.
 struct Fusion {
-    /// The silent transition to remove.
     silent: Uuid,
-    /// Its only input place, which goes with it.
+    /// The only input place of `silent`, removed along with it.
     place: Uuid,
-    /// The transition producing that place, which takes over the outputs.
+    /// The only transition producing `place`, which takes over the outputs of `silent`.
     producer: Uuid,
-    /// What the silent transition produced.
     outputs: Vec<Uuid>,
 }
 
 impl PetriNet {
     /// Removes silent transitions that only pass a token on, and returns how many were removed.
     ///
-    /// A silent transition whose only input place is fed by one transition and read by nothing else
-    /// can always fire once that transition has, and firing it cannot be observed, so the feeding
-    /// transition may produce its outputs directly.
+    /// A silent transition qualifies if its only input place is unmarked, is produced by exactly
+    /// one other transition and is consumed by nothing else. It can then always fire right after
+    /// that transition without being observed, so the producer may produce its outputs directly.
     ///
-    /// The language is unchanged. Nets with weighted arcs are left unchanged.
+    /// The language is unchanged. Nets with weighted arcs are left as they are.
     pub fn reduce_silent_transitions(&mut self) -> usize {
+        if self.arcs.iter().any(|arc| arc.weight != 1) {
+            return 0;
+        }
         let mut removed = 0;
         while let Some(fusion) = self.next_fusion() {
-            self.arcs.retain(|arc| match arc.from_to {
-                ArcType::PlaceTransition(place, transition) => {
-                    place != fusion.place && transition != fusion.silent
-                }
-                ArcType::TransitionPlace(transition, place) => {
-                    place != fusion.place && transition != fusion.silent
-                }
+            self.arcs.retain(|arc| {
+                let (place, transition) = match arc.from_to {
+                    ArcType::PlaceTransition(place, transition)
+                    | ArcType::TransitionPlace(transition, place) => (place, transition),
+                };
+                place != fusion.place && transition != fusion.silent
             });
             for output in fusion.outputs {
                 self.add_arc(ArcType::TransitionPlace(fusion.producer, output), None);
@@ -48,11 +46,8 @@ impl PetriNet {
     }
 
     fn next_fusion(&self) -> Option<Fusion> {
-        if self.arcs.iter().any(|arc| arc.weight != 1) {
-            return None;
-        }
-        let marked = |place: Uuid| {
-            let holds = |marking: &HashMap<PlaceID, u64>| marking.contains_key(&PlaceID(place));
+        let marked = |place: PlaceID| {
+            let holds = |marking: &Marking| marking.contains_key(&place);
             self.initial_marking.iter().any(holds)
                 || self.final_markings.iter().flatten().any(holds)
         };
@@ -67,23 +62,24 @@ impl PetriNet {
                 let [producer] = self.preset_of_place(place)[..] else {
                     return None;
                 };
-                let [_only_reader] = self.postset_of_place(place)[..] else {
+                if producer.0 == silent || self.postset_of_place(place).len() != 1 || marked(place)
+                {
                     return None;
-                };
-
+                }
                 let outputs: Vec<Uuid> = self
                     .postset_of_transition(TransitionID(silent))
-                    .iter()
+                    .into_iter()
                     .map(|output| output.0)
                     .collect();
                 // Producing a place twice would need an arc of weight two.
-                let produced_twice = self
+                if self
                     .postset_of_transition(producer)
                     .iter()
-                    .any(|output| outputs.contains(&output.0));
-
-                let fusable = producer.0 != silent && !produced_twice && !marked(place.0);
-                fusable.then_some(Fusion {
+                    .any(|output| outputs.contains(&output.0))
+                {
+                    return None;
+                }
+                Some(Fusion {
                     silent,
                     place: place.0,
                     producer: producer.0,
@@ -95,10 +91,9 @@ impl PetriNet {
 
 #[cfg(test)]
 mod test_reduction {
-    use super::super::petri_net_struct::{Marking, PetriNet};
     use super::*;
 
-    /// `p0 -a-> p1 -τ-> p2 -b-> p3`: the silent transition can only pass the token on, so `a` may
+    /// `p0 -a-> p1 -tau-> p2 -b-> p3`: the silent transition can only pass the token on, so `a` may
     /// produce `p2` directly.
     #[test]
     fn test_pass_through_is_fused() {

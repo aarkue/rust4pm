@@ -4,24 +4,26 @@ use rayon::prelude::*;
 
 use super::super::cut_finder::{find_cut, find_cut_filtering};
 use super::super::dfg::ActivityDfg;
-use super::super::log::ActivityLog;
+use super::super::log::{ActivityID, ActivityLog};
 use super::super::InductiveMinerOptions;
 use super::Fallthrough;
 
 /// The activities of the log by descending frequency, ties broken by id.
-fn candidates(log: &ActivityLog) -> Vec<super::ActivityID> {
-    let dfg = ActivityDfg::discover(log);
-    let mut locals: Vec<usize> = (0..dfg.len()).collect();
-    locals.sort_by_key(|&local| (std::cmp::Reverse(dfg.occurrences(local)), local));
-    locals
-        .into_iter()
-        .map(|local| dfg.activity(local))
-        .collect()
+fn candidates(log: &ActivityLog) -> Vec<ActivityID> {
+    let mut occurrences = vec![0u64; log.alphabet_size()];
+    for variant in log.variants() {
+        for &activity in &variant.activities {
+            occurrences[activity] += variant.count;
+        }
+    }
+    let mut activities = log.activities();
+    activities.sort_by_key(|&activity| (std::cmp::Reverse(occurrences[activity]), activity));
+    activities
 }
 
 /// The log without `activity`, unless removing it would empty a trace, which cut detection is not
 /// defined for.
-fn rest_without(log: &ActivityLog, activity: super::ActivityID) -> Option<ActivityLog> {
+fn rest_without(log: &ActivityLog, activity: ActivityID) -> Option<ActivityLog> {
     let rest = log.without_activity(activity);
     (!rest.contains_empty_trace()).then_some(rest)
 }
@@ -51,9 +53,10 @@ pub fn activity_concurrent(
         .find_map_first(|activity| {
             let rest = rest_without(log, activity)?;
             let dfg = ActivityDfg::discover(&rest);
-            let cut = match options.filter_activity_concurrent_probe {
-                true => find_cut_filtering(&rest, &dfg, options),
-                false => find_cut(&rest, &dfg, options),
+            let cut = if options.filter_activity_concurrent_probe {
+                find_cut_filtering(&rest, &dfg, options)
+            } else {
+                find_cut(&rest, &dfg, options)
             };
             cut.map(|_| (activity, rest))
         })

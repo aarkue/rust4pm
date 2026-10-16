@@ -1,4 +1,6 @@
 //!  Functionality to Flatten OCEL on an Object Type
+use std::collections::HashSet;
+
 use macros_process_mining::register_binding;
 
 use crate::core::{
@@ -24,10 +26,8 @@ pub fn flatten_ocel_on<'a>(
         .get_obs_of_type(object_type.as_ref())
         .map(|ob| {
             let ob_val = ocel.get_full_ob(ob);
-            // An event related to the same object under several qualifiers is still one
-            // occurrence for that object, so it must appear once in the trace.
-            let mut seen_events: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
+            // An event may relate to the object under several qualifiers but occurs once.
+            let mut seen_events: HashSet<String> = HashSet::new();
             let mut events: Vec<_> = ocel
                 .get_e2o_rev(ob)
                 .filter_map(|(_q, ev)| {

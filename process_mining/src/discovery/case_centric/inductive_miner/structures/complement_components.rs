@@ -32,7 +32,6 @@ pub fn complement_components(n: usize, separate: impl Fn(usize, usize) -> bool) 
             while index < unplaced.len() {
                 let candidate = unplaced[index];
                 if separate(current, candidate) {
-                    // Not reachable in the complement from `current`; leave it for later.
                     index += 1;
                 } else {
                     unplaced.swap_remove(index);

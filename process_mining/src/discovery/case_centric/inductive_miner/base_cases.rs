@@ -5,9 +5,9 @@ use super::log::{ActivityID, ActivityLog};
 /// A log the miner can describe directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BaseCase {
-    /// The log contains no traces at all; the only thing to return is `τ`.
+    /// The log contains no traces, so the model is `τ`.
     EmptyLog,
-    /// The log consists of single executions of one activity; that activity is the model.
+    /// The log consists of single executions of this activity, so the model is its leaf.
     SingleActivity(ActivityID),
 }
 
@@ -16,9 +16,8 @@ pub enum BaseCase {
 ///
 /// For a log over a single activity, `IMf` reads the trace lengths as a geometric distribution
 /// with `p = |L| / (‖L‖ + |L|)` and returns the leaf if `|p - 0.5| ≤ noise_threshold` (§6.2.2.3).
-/// Every trace holding exactly one event gives `p = 0.5`, so at `0.0` that is what it takes. Pass
-/// a threshold of `0.0` to switch that tolerance off, as
-/// [`filter_single_activity`](super::InductiveMinerOptions::filter_single_activity) does.
+/// Only a log in which every trace holds exactly one event gives `p = 0.5`, which is what plain IM
+/// requires at a threshold of `0.0`.
 pub fn find_base_case(log: &ActivityLog, noise_threshold: f64) -> Option<BaseCase> {
     if log.is_empty() {
         return Some(BaseCase::EmptyLog);

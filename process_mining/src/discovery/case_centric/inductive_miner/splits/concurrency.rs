@@ -14,9 +14,8 @@ pub fn concurrency_split(log: &ActivityLog, cut: &Cut) -> Vec<ActivityLog> {
 
 /// Splits a log according to an inclusive choice cut.
 ///
-/// As [`concurrency_split`], except that a part a trace does not touch receives nothing rather
-/// than an empty trace: under `∨` the parts that run are the ones the trace visits, and the others
-/// are not skipped but simply not chosen.
+/// Like [`concurrency_split`], but a part the trace does not touch gets no trace instead of an
+/// empty one, since `∨` already models not choosing it.
 pub fn inclusive_choice_split(log: &ActivityLog, cut: &Cut) -> Vec<ActivityLog> {
     split(log, cut, false)
 }

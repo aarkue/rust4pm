@@ -1,5 +1,7 @@
 //! The activity-once-per-trace fall through.
 
+use rayon::prelude::*;
+
 use super::super::cut_finder::cut::precedence;
 use super::super::cut_finder::find_cut;
 use super::super::dfg::ActivityDfg;
@@ -21,30 +23,25 @@ pub fn activity_once_per_trace(
     options: &InductiveMinerOptions,
 ) -> Option<Fallthrough> {
     let activities = log.activities();
-    if activities.len() < 2 || log.is_empty() {
-        // Taking the only activity out would leave nothing to be concurrent to.
+    if activities.len() < 2 {
         return None;
     }
 
-    let mut occurs_once_per_trace = vec![false; log.alphabet_size()];
-    for &activity in &activities {
-        occurs_once_per_trace[activity] = true;
-    }
-
-    let mut occurrences_in_variant = vec![0usize; log.alphabet_size()];
+    let mut once_per_trace = vec![true; log.alphabet_size()];
+    let mut occurrences = vec![0usize; log.alphabet_size()];
     for variant in log.variants() {
-        occurrences_in_variant.fill(0);
+        occurrences.fill(0);
         for &activity in &variant.activities {
-            occurrences_in_variant[activity] += 1;
+            occurrences[activity] += 1;
         }
         for &activity in &activities {
-            occurs_once_per_trace[activity] &= occurrences_in_variant[activity] == 1;
+            once_per_trace[activity] &= occurrences[activity] == 1;
         }
     }
 
     let candidates: Vec<ActivityID> = activities
         .into_iter()
-        .filter(|&activity| occurs_once_per_trace[activity])
+        .filter(|&activity| once_per_trace[activity])
         .collect();
     let activity = best_candidate(log, &candidates, options)?;
 
@@ -56,11 +53,10 @@ pub fn activity_once_per_trace(
 
 /// Of the activities that qualify, the one whose remaining log the miner can structure best.
 ///
-/// Taking any of them out fits the log, but the choice decides what is left to discover: for
-/// `⟨a,b,c⟩, ⟨c,a,b⟩` all three occur once per trace, and leaving out `c` leaves the sequence
-/// `a, b` while leaving out `a` leaves `b` and `c` concurrent, which is the more general model.
-/// Candidates are therefore ranked by the cut their remaining log admits, in the order cut
-/// detection tries them, and by activity id where that ties.
+/// Taking any of them out fits the log, but the choice decides what is left to discover. In
+/// `⟨a,b,c⟩, ⟨c,a,b⟩` all three occur once per trace. Leaving out `c` leaves the sequence `a, b`,
+/// and leaving out `a` leaves the less precise concurrency of `b` and `c`. Candidates are ranked by
+/// the cut their remaining log admits, in the order cut detection tries them, then by activity id.
 ///
 /// Cut detection has to run once per candidate, so it is skipped where there is nothing to choose.
 fn best_candidate(
@@ -71,7 +67,8 @@ fn best_candidate(
     match candidates {
         [] => None,
         [only] => Some(*only),
-        _ => candidates.iter().copied().min_by_key(|&activity| {
+        // The key ends in the activity id, so ties cannot make the parallel minimum vary.
+        _ => candidates.par_iter().copied().min_by_key(|&activity| {
             let rest = log.without_activity(activity);
             let cut = find_cut(&rest, &ActivityDfg::discover(&rest), options);
             (
