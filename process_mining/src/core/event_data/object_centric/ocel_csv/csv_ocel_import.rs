@@ -175,7 +175,7 @@ fn parse_object_cell(cell: &str) -> Result<Vec<ObjectRef>, String> {
 /// Tries to interpret the string in the following order:
 /// bool > int > float > time > string
 ///
-/// `s` is the cell exactly as written, padding included. A number is only recognised when the
+/// `s` is the cell exactly as written, padding included. A number is only recognized when the
 /// text is already the canonical spelling of the value it would parse to, so nothing that could
 /// not be written back out as it came in is parsed.
 fn parse_value(s: &str, date_fmt: Option<&str>) -> OCELAttributeValue {
@@ -363,7 +363,7 @@ fn classify_columns(
     let (mut id_col, mut act_col, mut ts_col) = (None, None, None);
 
     for (i, h) in headers.iter().enumerate() {
-        // Trimmed only to recognise the fixed columns and the two prefixes. `ot:<X>` carries the
+        // Trimmed only to recognize the fixed columns and the two prefixes. `ot:<X>` carries the
         // exact object type name, so the name itself is taken from the header as written.
         let h_lower = h.trim().to_lowercase();
         if h_lower == "id" {

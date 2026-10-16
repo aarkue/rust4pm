@@ -72,7 +72,7 @@ pub struct FinalizeReport {
     /// Relations whose deferred endpoint did not resolve. An eager sink counts these per mapping
     /// as [`DropReason::UnresolvedEndpoint`](super::report::DropReason::UnresolvedEndpoint).
     pub unresolved_endpoints: u64,
-    /// Objects synthesised at finalize under `on_missing_endpoint: Create`, for deferred
+    /// Objects synthesized at finalize under `on_missing_endpoint: Create`, for deferred
     /// endpoints that turned out not to exist.
     pub objects_created: u64,
     /// Repeated entity ids removed at finalize: a deferring sink's share of
@@ -133,7 +133,7 @@ impl std::fmt::Display for SinkError {
             SinkError::UnknownType { kind, name } => {
                 write!(f, "undeclared {kind} type '{name}'")
             }
-            SinkError::InvalidRef => write!(f, "ref not recognised by this sink"),
+            SinkError::InvalidRef => write!(f, "ref not recognized by this sink"),
             SinkError::Backend(message) => write!(f, "sink backend error: {message}"),
         }
     }
@@ -280,9 +280,9 @@ pub trait ExtractionSink: Debug {
     /// that batches its resolutions does not, and a deferring sink cannot detect the violation.
     ///
     /// The adjacency is how a deferring sink links each staged ask to the `add_e2o` that consumed
-    /// it, so it can discard an ask belonging to a row whose event never materialised. Violate it
+    /// it, so it can discard an ask belonging to a row whose event never materialized. Violate it
     /// and, under [`MissingEndpointPolicy::Create`],
-    /// an object id can be synthesised under the wrong declared type, silently.
+    /// an object id can be synthesized under the wrong declared type, silently.
     ///
     /// # Errors
     /// Returns [`SinkError::InvalidRef`] if either ref was not handed out by this sink, or

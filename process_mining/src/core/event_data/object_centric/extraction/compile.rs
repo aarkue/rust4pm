@@ -1,5 +1,5 @@
 //! Compile a [`Blueprint`] into SQL presenting the OCEL 2.0 surface over the untouched source
-//! tables, so a log can be queried without ever being materialised.
+//! tables, so a log can be queried without ever being materialized.
 //!
 //! [`extract`](super::extract::extract) is the reference semantics. A mapping the emitter cannot
 //! reproduce becomes a [`CompileError`] naming the mapping and the reason, and the rest of the

@@ -111,7 +111,7 @@ pub enum ValidationError {
     /// A comparison literal cannot be read as the type its column declares, so the comparison
     /// matches no row at all, however the data looks.
     ///
-    /// Raised only where the column's declared type names a kind: an unrecognised `col_type` turns
+    /// Raised only where the column's declared type names a kind: an unrecognized `col_type` turns
     /// coercion off on purpose, and then the literal is compared as authored.
     UncoercibleLiteral {
         /// The mapping, by label or authored path, or the `Filter` node, the comparison sits in.
@@ -1615,7 +1615,7 @@ mod tests {
     }
 
     #[test]
-    fn a_literal_against_a_column_of_unrecognised_type_is_left_alone() {
+    fn a_literal_against_a_column_of_unrecognized_type_is_left_alone() {
         // No declared kind means coercion is deliberately off for that column, so the literal is
         // compared as authored and there is nothing to report.
         let catalog = ExtractionCatalog::new().with_table(
@@ -1682,7 +1682,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unlabelled_mapping_error_names_the_authored_path_not_the_flattened_index() {
+    fn an_unlabeled_mapping_error_names_the_authored_path_not_the_flattened_index() {
         // With mappings = [Ordered{3 members}, Single], the Single is at flattened index 3 but
         // its authored JSON path is mappings[1]. Comparing the complete set of (from, id) pairs
         // rules out a flattened-index naming that would satisfy a bare `from == "mappings[1]"`

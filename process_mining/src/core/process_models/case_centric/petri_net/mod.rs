@@ -1,6 +1,4 @@
 //! Petri net
-#[cfg(feature = "graphviz-export")]
-pub mod image_export;
 pub mod io;
 mod json;
 pub(crate) mod marking;

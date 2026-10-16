@@ -910,7 +910,7 @@ mod tests {
         );
 
         let ts = components(formatted_column("d", "%Y%m%d"), constant_part("00:00:00"));
-        let json = serde_json::to_string(&ts).expect("serialises");
+        let json = serde_json::to_string(&ts).expect("serializes");
         assert_eq!(
             serde_json::from_str::<TimestampSource>(&json).expect("round trips"),
             ts
@@ -918,7 +918,7 @@ mod tests {
     }
 
     #[test]
-    fn the_retired_spellings_no_longer_deserialise() {
+    fn the_retired_spellings_no_longer_deserialize() {
         // Silently ignoring `date_column` would leave both sides unset and drop every row.
         let legacy = serde_json::from_str::<TimestampSource>(
             r#"{"type":"components","date_column":"UDATE","time_column":"UTIME"}"#,

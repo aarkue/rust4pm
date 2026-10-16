@@ -59,7 +59,7 @@ pub trait RowProvider: Debug {
     }
 
     /// Run `sql` and call `f` once per result row, under the same push-based,
-    /// [`ControlFlow`]-honouring contract as [`Self::scan`].
+    /// [`ControlFlow`]-honoring contract as [`Self::scan`].
     ///
     /// `sql` is a single `SELECT` in this provider's [`Self::query_dialect`] whose result columns
     /// are exactly `columns`, in that order.

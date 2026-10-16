@@ -5,7 +5,7 @@
 //! [`GraphExecutor`](super::graph::GraphExecutor) cannot execute in constant memory. When both
 //! inputs read the same source, the engine already has both tables and can do the join itself.
 //!
-//! The SQL comes from [`Emitter`], the compiler's own emitter, so that a memory optimisation
+//! The SQL comes from [`Emitter`], the compiler's own emitter, so that a memory optimization
 //! cannot change results by drifting from it. [`Emitter::node_sql`] projects a node's full column
 //! set while the executor's rows carry only the demanded subset (see [`super::schema`]), so the
 //! query is wrapped in a projection naming exactly the executor's columns in its order.

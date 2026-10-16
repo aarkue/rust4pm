@@ -303,7 +303,7 @@ impl RegistryItem {
             RegistryItem::EventLogActivityProjection(proj) => {
                 serde_json::to_value(proj).map_err(|e| e.to_string())
             }
-            // Serialising a whole database into JSON would be a mistake, not a courtesy.
+            // Serializing a whole database into JSON would be a mistake, not a courtesy.
             RegistryItem::TabularSource(src) => Ok(serde_json::json!({
                 "format": src.format(),
                 "bytes": src.bytes().len(),
@@ -483,7 +483,7 @@ impl RegistryItem {
     ///
     /// Unlike [`RegistryItem::export_to_path`], the format is given rather than read off the
     /// path: a directory carries no extension, and the OCEL 2.0 bundled format's uncompressed
-    /// form is a directory. This is also the route that avoids materialising the whole export in
+    /// form is a directory. This is also the route that avoids materializing the whole export in
     /// memory, which [`RegistryItem::export_to_bytes`] cannot.
     ///
     /// # Errors
@@ -1057,8 +1057,8 @@ enum HandleArg<'a> {
 /// Decide which form a registry-reference argument is in, or `None` for a value that is none of
 /// them and is left alone.
 ///
-/// An object is a wrapper only when its key set is exactly one of the recognised ones and the
-/// recognised keys hold strings. Both halves matter: a real OCEL or `EventLog` object carries
+/// An object is a wrapper only when its key set is exactly one of the recognized ones and the
+/// recognized keys hold strings. Both halves matter: a real OCEL or `EventLog` object carries
 /// dozens of keys and so can never be mistaken for a wrapper, and a domain object that happens to
 /// be `{"bytes": 5}` is read as itself rather than reported as a malformed wrapper.
 fn classify_handle_arg(value: &Value) -> Option<HandleArg<'_>> {
@@ -1108,7 +1108,7 @@ fn decode_base64(s: &str) -> Result<Vec<u8>, String> {
 ///
 /// Converts on a kind mismatch, storing the result under `{id}_as_{arg_ref}`.
 fn resolve_stored_id(id: &str, arg_ref: &str, state: &AppState) -> Result<Option<Value>, String> {
-    // An id of the right kind inserts nothing, and taking the write lock for it would serialise
+    // An id of the right kind inserts nothing, and taking the write lock for it would serialize
     // every argument of every call against all other writers.
     {
         let items = state.read();
@@ -1150,7 +1150,7 @@ fn resolve_stored_id(id: &str, arg_ref: &str, state: &AppState) -> Result<Option
 /// Resolve an argument value based on its schema and the current state.
 ///
 /// This function handles:
-/// 1. Materialising "Big Types" if the schema indicates a registry reference, from any of the
+/// 1. Materializing "Big Types" if the schema indicates a registry reference, from any of the
 ///    forms below. Everything but the id itself is stored, and the new id is what comes back, so
 ///    a caller always ends up with a plain string id.
 /// 2. Loading JSON objects from files if the value is a path ending in `.json`.
@@ -1263,7 +1263,7 @@ fn resolve_argument_tracked(
 /// Returns the result pre-serialized as UTF-8 JSON bytes.
 ///
 /// A panic in the binding body is caught and reported as an error, because hosts reach this
-/// across an FFI or wasm boundary, where an unwind is undefined behaviour.
+/// across an FFI or wasm boundary, where an unwind is undefined behavior.
 pub fn call(binding: &Binding, args: &Value, state: &AppState) -> Result<Vec<u8>, String> {
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         (binding.handler)(args, state)
@@ -2084,7 +2084,7 @@ mod tests {
             assert_eq!(stored_handle_at(&state, &id).label, "two");
         }
 
-        // Every insert site keeps the old behaviour, not just the read-lock one.
+        // Every insert site keeps the old behavior, not just the read-lock one.
         let id = called_id("dummy_fork", serde_json::json!({ "h": "d1" }), &state);
         assert!(id.starts_with("res_"), "got {}", id);
         let id = called_id("dummy_log_of", serde_json::json!({ "h": "d1" }), &state);

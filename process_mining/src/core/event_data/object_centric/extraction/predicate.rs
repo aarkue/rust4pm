@@ -437,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unrecognised_col_type_leaves_the_literal_untouched() {
+    fn an_unrecognized_col_type_leaves_the_literal_untouched() {
         let schema = schema_of(&[("shape", "GEOMETRY")]);
         let p = Predicate::Compare {
             left: col("shape"),

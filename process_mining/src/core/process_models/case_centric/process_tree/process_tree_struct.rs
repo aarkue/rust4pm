@@ -94,7 +94,7 @@ impl Node {
 ///
 /// Operator type enum for [`Operator`]
 ///
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum OperatorType {
     /// Sequence operator
     Sequence,
@@ -242,30 +242,21 @@ impl ProcessTree {
         )
     }
 
-    #[cfg(feature = "graphviz-export")]
-    /// Export a process tree as a PNG image
-    ///
-    /// The PNG file is written to the specified filepath
-    ///
-    /// _Note_: This is an export method for __visualizing__ the process tree.
-    /// The resulting PNG file cannot be imported as a process tree again.
-    ///
-    /// Only available with the `graphviz-export` feature.
-    pub fn export_png<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        super::image_export::export_process_tree_image_png(self, path)
-    }
-
-    #[cfg(feature = "graphviz-export")]
-    /// Export a process tree as an SVG image
+    #[cfg(feature = "visualization")]
+    /// Export a process tree as an SVG image, laid out with `graphlay`
     ///
     /// The SVG file is written to the specified filepath
     ///
     /// _Note_: This is an export method for __visualizing__ the process tree.
     /// The resulting SVG file cannot be imported as a process tree again.
+    /// [`crate::visualization::process_tree`] returns the SVG as a string and the node positions.
     ///
-    /// Only available with the `graphviz-export` feature.
+    /// Only available with the `visualization` feature.
     pub fn export_svg<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        super::image_export::export_process_tree_image_svg(self, path)
+        let svg =
+            crate::visualization::process_tree::export_process_tree_svg(self, &Default::default())
+                .map_err(std::io::Error::other)?;
+        std::fs::write(path, svg)
     }
 }
 
@@ -388,7 +379,7 @@ impl Operator {
             // Inserts silent transitions to put the workflow net of the loop operator in choice
             // if other operators are in choice. All workflow nets share the same input and output
             // places. However, only the first child models the do-part going from input to output
-            // place and every other child going from output to input place modelling the redo-part.
+            // place and every other child going from output to input place modeling the redo-part.
             OperatorType::Loop => {
                 let tau_start_transition = net.add_transition(None, None);
                 let tau_end_transition = net.add_transition(None, None);

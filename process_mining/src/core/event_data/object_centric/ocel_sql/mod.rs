@@ -90,7 +90,7 @@ impl Default for SqlOcelImportOptions {
 }
 
 /// A double-quoted SQL identifier, embedded quotes doubled. For table/column names that come
-/// from the file being read, which nothing has sanitised.
+/// from the file being read, which nothing has sanitized.
 pub(crate) fn quoted_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }

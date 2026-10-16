@@ -10,7 +10,7 @@
 //! against staging and then production unedited.
 //!
 //! [`extraction_run`] cannot return `(SlimLinkedOCEL, ExtractionReport)` directly, since
-//! `#[register_binding]` recognises a big type by matching the whole return type's name against a
+//! `#[register_binding]` recognizes a big type by matching the whole return type's name against a
 //! fixed list and a tuple's rendered name never matches. It instead takes an empty
 //! `SlimLinkedOCEL` handle (from `locel_new`) as a `&mut` argument and fills it.
 

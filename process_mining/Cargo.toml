@@ -18,7 +18,6 @@ macros_process_mining = { version = "0.6.2", path = "../macros_process_mining" }
 chrono = { version = "0.4.40", features = ["serde"] }
 duckdb = { version = "1.2.1", optional = true, features = ["chrono"] }
 flate2 = "1.1.1"
-graphviz-rust = { version = "0.9.3", optional = true }
 itertools = { version = "0.14.0" }
 nalgebra = { version = "0.33.2", optional = true }
 ordered-float = "5.0.0"
@@ -41,7 +40,7 @@ inventory = { version = "0.3", optional = true }
 base64 = { version = "0.22", optional = true }
 csv = "1.4.0"
 # Backends are selected by this crate's own `extraction-dbcon*` features, since not all of them are
-# portable. `dbcon`'s `default` is `[]`, and a `dbcon` with no backend recognises no connection
+# portable. `dbcon`'s `default` is `[]`, and a `dbcon` with no backend recognizes no connection
 # string, so at least one must be selected.
 dbcon = {version = "0.4.1", optional = true }
 hashbrown = "0.17.1"
@@ -57,15 +56,14 @@ parquet = { version = "58", default-features = false, features = [
 ], optional = true }
 # Only to hand `parquet` an in-memory `ChunkReader`; `parquet` already depends on it.
 bytes = { version = "1", optional = true }
+graphlay = { version = "0.3.0", default-features = false, features = ["svg", "parallel"], optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 dhat = "0.3.3"
 
 [features]
-# Enables exporting Petri nets as PNG/SVG/... images using graphviz.
-# Note: graphviz needs to be locally installed to the PATH for the image export functions to work.
-graphviz-export = ["dep:graphviz-rust"]
+default = ["visualization"]
 
 # Enables OCEL 2.0 SQLite/DuckDB import and export functionality
 # Note: this might not work on certain architectures or machines if SQLite is not available/cannot be build
@@ -121,19 +119,24 @@ log-splitting = ["dep:rand"]
 # Enables algebraic functionality
 token-based-replay = ["dep:nalgebra"]
 
-# Enable bindings
+# Lays out process models with graphlay and draws them as SVG (`visualization::*`), including the
+# models' `export_svg` methods. Builds for wasm32.
+visualization = ["dep:graphlay"]
+
+# Enable bindings. With `visualization`, its functions are registered too, which needs graphlay's
+# JSON schemas.
 bindings = [
    "dep:inventory",
-   "dep:base64"
+   "dep:base64",
+   "graphlay?/schemars",
 ]
 
-all = ["graphviz-export","ocel-sqlite","ocel-duckdb-bundled","extraction-blueprint","extraction-dbcon","extraction-dbcon-postgres","extraction-dbcon-duckdb-bundled","ocel-bundle","ocel-bundle-parquet","dataframes", "log-splitting", "token-based-replay", "bindings" ]
+all = ["ocel-sqlite","ocel-duckdb-bundled","extraction-blueprint","extraction-dbcon","extraction-dbcon-postgres","extraction-dbcon-duckdb-bundled","ocel-bundle","ocel-bundle-parquet","dataframes", "log-splitting", "token-based-replay", "bindings", "visualization" ]
 
 [package.metadata.docs.rs]
 # The same set as `all`, listed explicitly so a feature docs.rs cannot build can be dropped
 # individually.
 features = [
-    "graphviz-export",
     "ocel-sqlite",
     "ocel-duckdb-bundled",
     "extraction-blueprint",
@@ -146,6 +149,7 @@ features = [
     "log-splitting",
     "token-based-replay",
     "bindings",
+    "visualization",
 ]
 
 [[example]]

@@ -26,6 +26,8 @@ pub mod conformance;
 pub mod core;
 pub mod discovery;
 pub mod utils;
+#[cfg(feature = "visualization")]
+pub mod visualization;
 
 pub use core::io::{Exportable, Importable};
 
@@ -84,6 +86,42 @@ pub mod test_utils {
             o.relationships
                 .sort_by(|x, y| (&x.object_id, &x.qualifier).cmp(&(&y.object_id, &y.qualifier)));
         }
+    }
+
+    /// Panics unless `xml` is well-formed, with matching end tags and at least one element.
+    #[allow(unused)]
+    pub fn assert_xml_well_formed(xml: &str) {
+        use quick_xml::events::Event;
+        let mut reader = quick_xml::Reader::from_str(xml);
+        reader.config_mut().check_end_names = true;
+        let mut depth = 0i32;
+        let mut elements = 0usize;
+        loop {
+            match reader.read_event() {
+                Ok(Event::Start(_)) => {
+                    depth += 1;
+                    elements += 1;
+                }
+                Ok(Event::Empty(_)) => elements += 1,
+                Ok(Event::End(_)) => depth -= 1,
+                Ok(Event::Eof) => break,
+                Ok(_) => {}
+                Err(e) => panic!(
+                    "not well-formed XML at byte {}: {e}",
+                    reader.buffer_position()
+                ),
+            }
+            assert!(depth >= 0, "an end tag with no matching start tag");
+        }
+        assert_eq!(depth, 0, "unclosed elements");
+        assert!(elements > 0, "no elements at all");
+    }
+
+    /// Checks `svg` and writes it to `test_data/export/<name>`, to look at by hand.
+    #[allow(unused)]
+    pub fn write_export(name: &str, svg: &str) {
+        assert_xml_well_formed(svg);
+        std::fs::write(get_test_data_path().join("export").join(name), svg).unwrap();
     }
 }
 

@@ -241,9 +241,9 @@ pub struct ExtractionReport {
     /// Non-fatal problems the run hit past [`MAX_REPORTED_ERRORS`], which
     /// [`errors`](Self::errors) therefore does not name. Zero for every run under the cap.
     pub errors_suppressed: u64,
-    /// Rows every `Join`/`Union` materialisation this run performed produced, summed across
-    /// materialisations rather than peaked: an upper bound on peak buffered rows. A cached
-    /// materialisation is counted once, when computed.
+    /// Rows every `Join`/`Union` materialization this run performed produced, summed across
+    /// materializations rather than peaked: an upper bound on peak buffered rows. A cached
+    /// materialization is counted once, when computed.
     ///
     /// Zero when no mapping's node graph contains a `Join` or `Union`, since a pure
     /// `Source -> Filter` chain streams. Zero is therefore a witness that the run streamed.

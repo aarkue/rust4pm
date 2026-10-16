@@ -1,7 +1,7 @@
 //! Turning one row into events, objects and relations, per [`Target`] kind.
 //!
 //! Every entity-and-relation path funnels through [`resolve_object_endpoint`] /
-//! [`resolve_event_endpoint`], so `on_missing_endpoint` is honoured identically at an inline
+//! [`resolve_event_endpoint`], so `on_missing_endpoint` is honored identically at an inline
 //! object reference, an `E2O`'s object side and an `O2O`'s source and target.
 
 use std::collections::{HashMap, HashSet};
@@ -748,7 +748,7 @@ fn run_o2o(
 
 /// Resolve an object endpoint to a handle, applying `on_missing_endpoint`. Every object-relating
 /// position (inline references, `E2O`'s object, `O2O`'s source/target) goes through here, so the
-/// policy is honoured identically at each.
+/// policy is honored identically at each.
 ///
 /// Touches no counter, which is why it takes no [`MappingStats`]: resolving an endpoint that
 /// already exists is the normal successful case, not a deduplication.
@@ -820,7 +820,7 @@ fn resolve_object_endpoint(
 
 /// Resolve an event endpoint (`E2O`'s event side) to a handle.
 ///
-/// `Create` cannot synthesise a missing event, since there is no timestamp to give it, so it
+/// `Create` cannot synthesize a missing event, since there is no timestamp to give it, so it
 /// behaves like `Drop` here. Only object endpoints can be created (see
 /// [`resolve_object_endpoint`]).
 fn resolve_event_endpoint(

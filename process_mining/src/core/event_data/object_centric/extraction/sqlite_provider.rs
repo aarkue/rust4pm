@@ -297,7 +297,7 @@ fn parse_declared_timestamp(text: &str) -> Option<DateTime<FixedOffset>> {
     None
 }
 
-/// Translate a `rusqlite` error into a [`ProviderError`], recognising the two cases `SQLite`'s
+/// Translate a `rusqlite` error into a [`ProviderError`], recognizing the two cases `SQLite`'s
 /// own error text names literally (`"no such table"`, `"no such column"`) and falling back to
 /// [`ProviderError::Backend`] for everything else.
 fn map_err(table: &str, e: &rusqlite::Error) -> ProviderError {

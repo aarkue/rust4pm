@@ -11,7 +11,7 @@
 //! [`Target::Event`](super::blueprint::Target::Event) without an `id` expression, where `extract`
 //! mints a fresh UUID per row and two separate runs would not be comparable by id. In exchange,
 //! [`FanOutSink`] relays only the stronger resolution answer, so the extractor never takes a
-//! [`Resolution::Deferred`] branch if one sink is eager. This compares write-side behaviour only.
+//! [`Resolution::Deferred`] branch if one sink is eager. This compares write-side behavior only.
 //!
 //! [`extract_separately`] runs `extract` once per sink, so each sink answers `resolve_event`/
 //! `resolve_object` its own way. This is the only variant that catches resolution divergences, but
