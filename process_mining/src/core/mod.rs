@@ -5,6 +5,8 @@ pub mod event_data;
 
 /// IO Traits
 pub mod io;
+/// Bytes of a tabular data file, held for an extraction to read.
+pub mod tabular_source;
 
 pub mod process_models;
 

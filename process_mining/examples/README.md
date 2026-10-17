@@ -49,7 +49,3 @@ This folder contains example usages of the `process_mining` crate.
   cargo run --example ocel_duckdb_export -- <path_to_ocel.xml>
   ```
 
-- **`ocel_kuzudb_export.rs`**: Imports an OCEL and exports it to a KuzuDB graph database.
-  ```bash
-  cargo run --example ocel_kuzudb_export -- <path_to_folder_containing_ocel_files>
-  ```

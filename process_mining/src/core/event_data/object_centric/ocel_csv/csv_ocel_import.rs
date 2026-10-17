@@ -14,6 +14,8 @@ use crate::core::event_data::{
     timestamp_utils::parse_timestamp,
 };
 
+use super::escaping::{find_unescaped, unescape_reference_part};
+
 /// Error type for CSV OCEL parsing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OCELCSVImportError {
@@ -89,13 +91,15 @@ struct ObjectRef {
 
 /// Parse object reference
 /// Can of the following shapes: `id`, `id#qualifier`, `id{json}`, or `id#qualifier{json}`
+///
+/// The `#` and `{` that divide the parts are the first unescaped ones. See [`super::escaping`].
 fn parse_object_ref(input: &str) -> Result<ObjectRef, String> {
     let input = input.trim();
     if input.is_empty() {
         return Err("Empty object reference".into());
     }
 
-    let (before_brace, json_map) = match input.find('{') {
+    let (before_brace, json_map) = match find_unescaped(input, '{') {
         Some(pos) => {
             let json_str = &input[pos..];
             let parsed: serde_json::Value = serde_json::from_str(json_str)
@@ -105,19 +109,21 @@ fn parse_object_ref(input: &str) -> Result<ObjectRef, String> {
         None => (input, None),
     };
 
-    let (id, qualifier) = match before_brace.find('#') {
+    let (id, qualifier) = match find_unescaped(before_brace, '#') {
         Some(pos) => (before_brace[..pos].trim(), before_brace[pos + 1..].trim()),
         None => (before_brace.trim(), ""),
     };
 
     Ok(ObjectRef {
-        id: id.to_string(),
-        qualifier: qualifier.to_string(),
+        id: unescape_reference_part(id).into_owned(),
+        qualifier: unescape_reference_part(qualifier).into_owned(),
         attributes: json_map,
     })
 }
 
 /// Parse cell with multiple object references separated by `/` (respecting JSON braces)
+///
+/// A `/` inside JSON attributes, or written as `\/`, does not separate references.
 fn parse_object_cell(cell: &str) -> Result<Vec<ObjectRef>, String> {
     let cell = cell.trim();
     if cell.is_empty() {
@@ -127,9 +133,20 @@ fn parse_object_cell(cell: &str) -> Result<Vec<ObjectRef>, String> {
     let mut refs = Vec::new();
     let mut current = String::new();
     let mut brace_depth = 0;
+    let mut escaped = false;
 
     for c in cell.chars() {
+        if escaped {
+            // The backslash is kept: `parse_object_ref` resolves the escape and needs to see it.
+            escaped = false;
+            current.push(c);
+            continue;
+        }
         match c {
+            '\\' => {
+                escaped = true;
+                current.push(c);
+            }
             '{' => {
                 brace_depth += 1;
                 current.push(c);
@@ -157,24 +174,92 @@ fn parse_object_cell(cell: &str) -> Result<Vec<ObjectRef>, String> {
 ///
 /// Tries to interpret the string in the following order:
 /// bool > int > float > time > string
+///
+/// `s` is the cell exactly as written, padding included. A number is only recognised when the
+/// text is already the canonical spelling of the value it would parse to, so nothing that could
+/// not be written back out as it came in is parsed.
 fn parse_value(s: &str, date_fmt: Option<&str>) -> OCELAttributeValue {
-    let s = s.trim();
     if s.eq_ignore_ascii_case("true") {
         return OCELAttributeValue::Boolean(true);
     }
     if s.eq_ignore_ascii_case("false") {
         return OCELAttributeValue::Boolean(false);
     }
-    if let Ok(i) = s.parse::<i64>() {
-        return OCELAttributeValue::Integer(i);
+    if is_canonical_integer(s) {
+        // No `f64` fallback, which would round a long identifier.
+        if let Ok(i) = s.parse::<i64>() {
+            return OCELAttributeValue::Integer(i);
+        }
+    } else if is_canonical_decimal(s) {
+        if let Ok(f) = s.parse::<f64>() {
+            return OCELAttributeValue::Float(f);
+        }
     }
-    if let Ok(f) = s.parse::<f64>() {
-        return OCELAttributeValue::Float(f);
-    }
-    if let Ok(ts) = parse_timestamp(s, date_fmt, false) {
-        return OCELAttributeValue::Time(ts);
+    if is_timestamp_like(s, date_fmt) {
+        if let Ok(ts) = parse_timestamp(s, date_fmt, false) {
+            return OCELAttributeValue::Time(ts);
+        }
     }
     OCELAttributeValue::String(s.to_string())
+}
+
+/// `0`, `-12`, `900`, but not `+7`, `007`, `-0`, `1_000` or `1e3`.
+fn is_canonical_integer(s: &str) -> bool {
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    match digits.as_bytes() {
+        [] => false,
+        // A single `0` is canonical, a leading one is not. The length check excludes `-0`.
+        [b'0'] => digits.len() == s.len(),
+        [first, ..] => {
+            first.is_ascii_digit() && *first != b'0' && digits.bytes().all(|b| b.is_ascii_digit())
+        }
+    }
+}
+
+/// `0.5`, `-0.5`, `-12.75`, but not `.5`, `5.`, `1e3` or `+1.0`.
+///
+/// Trailing zeros in the fraction are accepted: `5.00` is the number five. A leading zero in the
+/// whole part is not.
+fn is_canonical_decimal(s: &str) -> bool {
+    let Some((whole, fraction)) = s.split_once('.') else {
+        return false;
+    };
+    if fraction.is_empty() || !fraction.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    let digits = whole.strip_prefix('-').unwrap_or(whole);
+    match digits.as_bytes() {
+        [] => false,
+        // Unlike a bare integer, `-0` is fine here: `-0.5` is a normal way to write the number.
+        [b'0'] => true,
+        [first, ..] => *first != b'0' && digits.bytes().all(|b| b.is_ascii_digit()),
+    }
+}
+
+/// Whether `s` is worth handing to the timestamp parser.
+///
+/// The format's timestamp type is ISO 8601 with a timezone, so a bare date or a local
+/// wall-clock time is text: reading one as an instant would invent an offset the file never
+/// gave. An explicit `date_format` overrides this.
+fn is_timestamp_like(s: &str, date_fmt: Option<&str>) -> bool {
+    if date_fmt.is_some() {
+        return true;
+    }
+    let t = s.trim_end();
+    if t.ends_with('Z') || t.ends_with('z') {
+        return true;
+    }
+    // A trailing `+HH:MM`, `-HH:MM`, `+HHMM` or `-HHMM`. `get` rather than a slice, since counting
+    // back a fixed number of bytes can land inside a character.
+    let tail = |n: usize| t.len().checked_sub(n).and_then(|i| t.get(i..));
+    [6, 5].into_iter().any(|n| {
+        tail(n).is_some_and(|z| {
+            let bytes = z.as_bytes();
+            matches!(bytes.first(), Some(b'+' | b'-'))
+                && bytes[1..].iter().all(|b| b.is_ascii_digit() || *b == b':')
+                && bytes[1..].iter().filter(|b| b.is_ascii_digit()).count() == 4
+        })
+    })
 }
 
 /// Convert JSON value to OCEL attribute value
@@ -191,19 +276,6 @@ fn json_to_value(v: &serde_json::Value) -> OCELAttributeValue {
         }
         serde_json::Value::String(s) => OCELAttributeValue::String(s.clone()),
         _ => OCELAttributeValue::String(v.to_string()),
-    }
-}
-
-/// Coalesce two types: same->same, null + x ->x, int + float -> float, other combination -> string
-fn coalesce(t1: OCELAttributeType, t2: OCELAttributeType) -> OCELAttributeType {
-    use OCELAttributeType::*;
-    if t1 == t2 {
-        return t1;
-    }
-    match (t1, t2) {
-        (Null, other) | (other, Null) => other,
-        (Integer, Float) | (Float, Integer) => Float,
-        _ => String,
     }
 }
 
@@ -236,7 +308,7 @@ fn register_type(
     let value_type: OCELAttributeType = value.get_type();
     if let Some(attrs) = registry.get_mut(type_name) {
         if let Some(current) = attrs.get_mut(attr_name) {
-            *current = coalesce(*current, value_type);
+            *current = current.coalesce(value_type);
         } else {
             attrs.insert(attr_name.to_string(), value_type);
         }
@@ -265,6 +337,23 @@ enum Column {
     EventAttr(String),
 }
 
+/// The header after `prefix`, matching the prefix without regard to case but leaving what
+/// follows it byte for byte.
+fn strip_prefix_ignore_case<'a>(header: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = header.trim_start();
+    // Compared as bytes, because a header may open with a character that a `str` slice at the
+    // prefix length would cut in half. Once the bytes match, the ASCII prefix's length is a
+    // character boundary.
+    let (head_bytes, prefix_bytes) = (head.as_bytes(), prefix.as_bytes());
+    if head_bytes.len() >= prefix_bytes.len()
+        && head_bytes[..prefix_bytes.len()].eq_ignore_ascii_case(prefix_bytes)
+    {
+        Some(&head[prefix_bytes.len()..])
+    } else {
+        None
+    }
+}
+
 /// Classify all columns of the CSV
 /// Returns a list with all columns, as well as the indices of the id column (1st), activity column (2nd), and timestamp column (3rd)
 fn classify_columns(
@@ -274,8 +363,9 @@ fn classify_columns(
     let (mut id_col, mut act_col, mut ts_col) = (None, None, None);
 
     for (i, h) in headers.iter().enumerate() {
-        let h = h.trim();
-        let h_lower = h.to_lowercase();
+        // Trimmed only to recognise the fixed columns and the two prefixes. `ot:<X>` carries the
+        // exact object type name, so the name itself is taken from the header as written.
+        let h_lower = h.trim().to_lowercase();
         if h_lower == "id" {
             id_col = Some(i);
             columns.push(Column::Id);
@@ -285,13 +375,10 @@ fn classify_columns(
         } else if h_lower == "timestamp" {
             ts_col = Some(i);
             columns.push(Column::Timestamp);
-        } else if let Some(name) = h_lower.strip_prefix("ot:") {
-            // Use original casing for the name part
-            let orig_name = h.get(3..).unwrap_or(name).trim();
-            columns.push(Column::ObjectType(orig_name.to_string()));
-        } else if let Some(name) = h_lower.strip_prefix("ea:") {
-            let orig_name = h.get(3..).unwrap_or(name).trim();
-            columns.push(Column::EventAttr(orig_name.to_string()));
+        } else if let Some(name) = strip_prefix_ignore_case(h, "ot:") {
+            columns.push(Column::ObjectType(name.to_string()));
+        } else if let Some(name) = strip_prefix_ignore_case(h, "ea:") {
+            columns.push(Column::EventAttr(name.to_string()));
         } else {
             columns.push(Column::EventAttr(h.to_string()));
         }
@@ -438,7 +525,7 @@ pub fn import_ocel_csv_with_options(
                         qualifier: obj_ref.qualifier.clone(),
                     });
                 }
-            } else if options.verbose {
+            } else {
                 // If object never appeared before, we can't know its type.
                 if options.strict {
                     return Err(OCELCSVImportError::InvalidObjectReference {
@@ -448,7 +535,9 @@ pub fn import_ocel_csv_with_options(
                         ),
                     });
                 }
-                eprintln!("Warning: O2O source '{id}' not found at row {row_num}");
+                if options.verbose {
+                    eprintln!("Warning: O2O source '{id}' not found at row {row_num}");
+                }
             }
             continue;
         }
@@ -471,7 +560,9 @@ pub fn import_ocel_csv_with_options(
         let mut attrs: Vec<OCELEventAttribute> = Vec::new();
         for (col_idx, col) in columns.iter().enumerate() {
             if let Column::EventAttr(attr_name) = col {
-                let cell = record.get(col_idx).unwrap_or("").trim();
+                // Taken exactly as written: the format preserves an event attribute value apart
+                // from RFC 4180 unquoting. Only an empty cell is a missing value.
+                let cell = record.get(col_idx).unwrap_or("");
                 if !cell.is_empty() {
                     let value = parse_value(cell, date_fmt);
                     register_type(&mut event_type_attrs, &event_type, attr_name, &value);
@@ -635,7 +726,30 @@ e1,place order,2026-01-22T09:57:28+0000, o1 , i1 ,yes"#;
 
         let ot_names: HashSet<_> = ocel.object_types.iter().map(|t| t.name.as_str()).collect();
         assert!(ot_names.contains("Order"));
-        assert!(ot_names.contains("Item"));
+        // ` ot:Item ` names the type `Item `: only whitespace before the prefix is skipped.
+        assert!(ot_names.contains("Item "));
+    }
+
+    #[test]
+    fn a_type_name_keeps_the_whitespace_the_header_gives_it() {
+        let csv = "id,activity,timestamp,ot:order ,ot:order\n\
+                   e1,place,2026-01-22T09:57:28+0000,o1,o2";
+        let ocel = import_ocel_csv(csv.as_bytes()).unwrap();
+        let names: HashSet<_> = ocel.object_types.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains("order "), "got {names:?}");
+        assert!(names.contains("order"), "got {names:?}");
+        assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn an_event_attribute_value_keeps_its_padding() {
+        let csv = "id,activity,timestamp,note\n\
+                   e1,place,2026-01-22T09:57:28+0000,\"  spaced  \"";
+        let ocel = import_ocel_csv(csv.as_bytes()).unwrap();
+        assert_eq!(
+            ocel.events[0].attributes[0].value,
+            OCELAttributeValue::String("  spaced  ".to_string())
+        );
     }
 
     #[test]

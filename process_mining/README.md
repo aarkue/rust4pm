@@ -20,7 +20,7 @@ You can find various usage examples in the [`examples/`](examples/) directory, c
 - Importing and analyzing XES event logs (`event_log_stats.rs`)
 - Working with OCEL 2.0 data (`ocel_stats.rs`)
 - Process discovery (`process_discovery.rs`)
-- Exporting to DuckDB/KuzuDB (`ocel_duckdb_export.rs`, `ocel_kuzudb_export.rs`)
+- Exporting to `DuckDB` (`ocel_duckdb_export.rs`)
 
 To run an example:
 ```bash

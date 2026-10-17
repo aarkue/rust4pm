@@ -8,6 +8,19 @@
 )]
 #![doc = include_str!("../README.md")]
 
+// Allow the `#[register_binding]` macro's generated code to reference this crate by
+// its absolute name (`::process_mining::...`) even from within the crate itself.
+#[allow(unused_extern_crates)]
+extern crate self as process_mining;
+
+/// Crate re-exports used by the `#[register_binding]` macro's generated code, so downstream
+/// crates registering bindings only need a dependency on `process_mining`.
+#[cfg(feature = "bindings")]
+#[doc(hidden)]
+pub mod __private {
+    pub use {inventory, schemars, serde_json, uuid};
+}
+
 pub mod analysis;
 pub mod conformance;
 pub mod core;
@@ -21,7 +34,7 @@ pub use core::{EventLog, PetriNet, OCEL};
 
 // Re-export OCEL backend traits and the streaming entry points.
 pub use core::event_data::object_centric::{
-    appendable::AppendableOCEL,
+    appendable::{AppendableOCEL, StreamImportOCEL},
     ocel_json::import_ocel_json_into,
     ocel_xml::xml_ocel_import::{import_ocel_xml_into, OCELImportOptions},
     readable::{OCELLookup, ReadableOCEL},

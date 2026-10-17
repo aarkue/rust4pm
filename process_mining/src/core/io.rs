@@ -167,6 +167,26 @@ pub trait Exportable {
         self.export_to_path_with_options(path, Self::ExportOptions::default())
     }
 
+    /// Export to `path` in an explicitly named format, rather than one read back off the path.
+    ///
+    /// Exists because a path cannot always carry the format: a directory has no extension, and
+    /// the OCEL 2.0 bundled format's uncompressed form is a directory. A caller that already
+    /// knows which format the user chose, for instance one picked from
+    /// [`Self::known_export_formats`], should use this rather than encoding the choice into a
+    /// filename and having it inferred straight back out.
+    ///
+    /// # Errors
+    /// As [`Self::export_to_writer_with_options`], plus any I/O error creating `path`.
+    fn export_to_path_as<P: AsRef<Path>>(
+        &self,
+        path: P,
+        format: &str,
+        options: Self::ExportOptions,
+    ) -> Result<(), Self::Error> {
+        let file = std::fs::File::create(path)?;
+        self.export_to_writer_with_options(std::io::BufWriter::new(file), format, options)
+    }
+
     /// Export as a byte array with the specified options
     fn export_to_bytes_with_options(
         &self,
