@@ -7,6 +7,9 @@
 - `AlignmentOptions::max_states_queued` (default 10 million) bounds how many states a trace's search may hold at once; `alignments::states_in_memory` converts a memory budget into such a state count
 - Fix parallel arcs between the same place and transition counting separately (previously their weights were not summed, which could underflow a place's token count)
 - Arc weights and markings exceeding `TokenCount::MAX` now error with `SyncProdNetConstructionError::{ArcWeightTooLarge, MarkingTooLarge}` instead of being truncated (**Breaking**)
+- Traces with more events than `TracePos::MAX` now error with `SyncProdNetConstructionError::TraceTooLong` instead of being truncated (**Breaking**)
+- Alignments break ties between equally optimal alignments the same way on every run, as long as the transition ids stay the same (places and transitions are indexed in sorted id order)
+- All search buffers reused per thread are given back once a later search needs far less, so one large trace does not keep that memory for the rest of the run
 - Fixed a regression in OC-DECLARE discovery/conformance runtime performance:
   - Now builds and construct a reverse-E2O index grouped by event type
   - OC-DECLARE internals are no longer public; their arguments could only be produced by other internals (**Breaking**)

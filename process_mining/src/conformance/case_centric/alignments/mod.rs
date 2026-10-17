@@ -53,7 +53,7 @@ pub struct AlignmentResult {
     pub moves: Vec<AlignmentMove>,
     /// Total cost of the alignment
     pub cost: u32,
-    /// Number of states visited during search
+    /// Number of states visited during search, summed over both search directions
     pub states_visited: usize,
 }
 /// Alignment result for a single trace variant
@@ -74,16 +74,16 @@ pub struct AlignmentOptions {
     pub cost_fn: cost::CostFunction,
     /// Maximum number of states to visit before aborting (per trace).
     /// `None` means no limit.
-    /// 
-    /// Also see [`AlignmentOptions::max_states_queued`], which bounds the search based on both visited and pending states. 
-    /// 
+    ///
+    /// Also see [`AlignmentOptions::max_states_queued`], which bounds the search based on both visited and pending states.
+    ///
     /// This budget is shared for both ends of the bidirectional search.
     pub max_states: Option<usize>,
     /// Maximum number of states to hold at once before aborting (per trace).
     /// `None` means no limit.
     ///
     /// Also see [`AlignmentOptions::max_states`] which bounds only the visited states.
-    /// 
+    ///
     /// `max_states_queued` is better for bounding memory usage, as it counts both visited and pending states.
     /// Use [`states_in_memory`] to pick a value for a memory budget.
     ///
@@ -154,8 +154,13 @@ pub fn align_variants(
                 Err(e) => Err(e.clone()),
                 Ok(model) => {
                     let trace: Vec<&str> = activities.iter().map(String::as_str).collect();
-                    let sp = SyncProductNet::construct(model, &trace, &options.cost_fn);
-                    CTX.with(|ctx| petri_net::align(&sp, &mut ctx.borrow_mut(), options.limits()))
+                    SyncProductNet::construct(model, &trace, &options.cost_fn)
+                        .map_err(AlignmentError::from)
+                        .and_then(|sp| {
+                            CTX.with(|ctx| {
+                                petri_net::align(&sp, &mut ctx.borrow_mut(), options.limits())
+                            })
+                        })
                 }
             };
             VariantAlignmentResult {
@@ -185,7 +190,7 @@ pub fn align_trace(
     options: &AlignmentOptions,
 ) -> Result<AlignmentResult, AlignmentError> {
     let model = build_model(net, &options.cost_fn)?;
-    let sp = SyncProductNet::construct(&model, trace, &options.cost_fn);
+    let sp = SyncProductNet::construct(&model, trace, &options.cost_fn)?;
     petri_net::align(&sp, &mut AlignmentContext::default(), options.limits())
 }
 
@@ -289,19 +294,24 @@ pub fn compute_fitness(
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashSet, time::Instant};
+    use std::{
+        collections::{HashMap, HashSet},
+        time::Instant,
+    };
+
+    use uuid::Uuid;
 
     use crate::{
         conformance::alignments::{
             align_empty_trace, align_log, align_trace, compute_fitness,
             cost::CostFunction,
-            petri_net::AlignmentError,
-            sync_prod_net::{ModelNet, SyncProdNetConstructionError},
-            AlignmentOptions,
+            petri_net::{self, AlignmentContext, AlignmentError, TracePos},
+            sync_prod_net::{ModelNet, SyncProdNetConstructionError, SyncProductNet},
+            AlignmentMove, AlignmentOptions,
         },
         core::{
             event_data::case_centric::utils::activity_projection::log_to_activity_projection,
-            process_models::petri_net::{Arc, ArcType, PlaceID},
+            process_models::petri_net::{Arc, ArcType, PlaceID, TransitionID},
         },
         test_utils::get_test_data_path,
         utils::dijkstra_search::SearchError,
@@ -476,9 +486,7 @@ mod test {
             "expected the state equation to admit a spurious solution"
         );
         // ... but nothing is ever enabled, so the search must still report Unreachable
-        let now = std::time::Instant::now();
         let res = align_trace(&net, &["a"], &AlignmentOptions::default());
-        println!("spurious net -> {res:?} in {:?}", now.elapsed());
         assert_eq!(
             res,
             Err(AlignmentError::SearchError(SearchError::Unreachable))
@@ -487,33 +495,31 @@ mod test {
 
     /// A transition consuming a place past the 64th is not covered by the place word, so it must
     /// still be checked against the marking rather than taken as enabled.
-    ///
-    /// Place indices come from a `HashMap`, so which place lands past the word varies per run;
-    /// repeating makes it near-certain that at least one attempt puts it there.
     #[test]
     fn place_past_the_mask_word_still_blocks() {
-        for _ in 0..20 {
-            let mut net = PetriNet::new();
-            let places: Vec<_> = (0..200).map(|_| net.add_place(None)).collect();
-            // "a" carries the token from start to end
-            let a = net.add_transition(Some("a".to_string()), None);
-            net.add_arc(ArcType::PlaceTransition(places[0].0, a.0), None);
-            net.add_arc(ArcType::TransitionPlace(a.0, places[1].0), None);
-            // "b" needs a token in a place nothing ever marks, so it can never fire
-            let b = net.add_transition(Some("b".to_string()), None);
-            net.add_arc(ArcType::PlaceTransition(places[2].0, b.0), None);
-            net.add_arc(ArcType::TransitionPlace(b.0, places[1].0), None);
-            net.initial_marking = Some([(places[0], 1)].into_iter().collect());
-            net.final_markings = Some(vec![[(places[1], 1)].into_iter().collect()]);
+        let mut net = PetriNet::new();
+        // Places are indexed in id order, so `places[100]` lies past the 64-place word
+        let places: Vec<_> = (0..200)
+            .map(|i| net.add_place(Some(Uuid::from_u128(i))))
+            .collect();
+        // "a" carries the token from start to end
+        let a = net.add_transition(Some("a".to_string()), None);
+        net.add_arc(ArcType::PlaceTransition(places[0].0, a.0), None);
+        net.add_arc(ArcType::TransitionPlace(a.0, places[1].0), None);
+        // "b" needs a token in a place nothing ever marks, so it can never fire
+        let b = net.add_transition(Some("b".to_string()), None);
+        net.add_arc(ArcType::PlaceTransition(places[100].0, b.0), None);
+        net.add_arc(ArcType::TransitionPlace(b.0, places[1].0), None);
+        net.initial_marking = Some([(places[0], 1)].into_iter().collect());
+        net.final_markings = Some(vec![[(places[1], 1)].into_iter().collect()]);
 
-            let options = AlignmentOptions::default();
-            assert_eq!(align_trace(&net, &["a"], &options).unwrap().cost, 0);
-            assert_eq!(
-                align_trace(&net, &["b"], &options).unwrap().cost,
-                2,
-                "\"b\" cannot fire, so only a log move plus a model move aligns"
-            );
-        }
+        let options = AlignmentOptions::default();
+        assert_eq!(align_trace(&net, &["a"], &options).unwrap().cost, 0);
+        assert_eq!(
+            align_trace(&net, &["b"], &options).unwrap().cost,
+            2,
+            "\"b\" cannot fire, so only a log move plus a model move aligns"
+        );
     }
 
     /// A zero-weight arc moves no token, so it must neither block its transition nor fire
@@ -636,6 +642,226 @@ mod test {
                 variant.result,
                 Err(AlignmentError::SearchError(SearchError::Unreachable))
             );
+        }
+    }
+
+    #[test]
+    fn alignment_ties_are_deterministic() {
+        // Each fresh `HashMap` gets new hash keys, so iteration order differs between builds
+        let build = || {
+            let mut net = PetriNet::new();
+            let start = net.add_place(Some(Uuid::from_u128(1)));
+            let end = net.add_place(Some(Uuid::from_u128(2)));
+            for (id, label) in [(10, "A"), (11, "B")] {
+                let t = net.add_transition(Some(label.to_string()), Some(Uuid::from_u128(id)));
+                net.add_arc(ArcType::place_to_transition(start, t), None);
+                net.add_arc(ArcType::transition_to_place(t, end), None);
+            }
+            net.initial_marking = Some([(start, 1)].into());
+            net.final_markings = Some(vec![[(end, 1)].into()]);
+            net
+        };
+        let alignments: Vec<_> = (0..20)
+            .map(|_| {
+                align_trace(&build(), &["X"], &AlignmentOptions::default())
+                    .unwrap()
+                    .moves
+            })
+            .collect();
+        assert!(alignments.windows(2).all(|pair| pair[0] == pair[1]));
+    }
+
+    #[test]
+    fn overlong_trace_err() {
+        let mut net = PetriNet::new();
+        let start = net.add_place(None);
+        let end = net.add_place(None);
+        let a = net.add_transition(Some("a".to_string()), None);
+        net.add_arc(ArcType::place_to_transition(start, a), None);
+        net.add_arc(ArcType::transition_to_place(a, end), None);
+        net.initial_marking = Some([(start, 1)].into());
+        net.final_markings = Some(vec![[(end, 1)].into()]);
+        let trace = vec!["a"; usize::from(TracePos::MAX) + 1];
+        assert_eq!(
+            align_trace(&net, &trace, &AlignmentOptions::default()),
+            Err(AlignmentError::SyncProdNetConstructionFailed(
+                SyncProdNetConstructionError::TraceTooLong(trace.len())
+            ))
+        );
+    }
+
+    /// Replays `moves` for `trace` on `net`, independently of the search, and returns their cost
+    fn replay(
+        net: &PetriNet,
+        trace: &[&str],
+        moves: &[AlignmentMove],
+        cost_fn: &CostFunction,
+    ) -> Result<u32, String> {
+        let mut marking: HashMap<Uuid, i64> = net
+            .initial_marking
+            .iter()
+            .flatten()
+            .map(|(place, tokens)| (place.0, *tokens as i64))
+            .collect();
+        let mut fire = |transition: TransitionID| {
+            for arc in &net.arcs {
+                if let ArcType::PlaceTransition(place, t) = arc.from_to {
+                    if t == transition.0 {
+                        *marking.entry(place).or_default() -= i64::from(arc.weight);
+                    }
+                }
+            }
+            if marking.values().any(|tokens| *tokens < 0) {
+                return Err(format!("{transition:?} is not enabled"));
+            }
+            for arc in &net.arcs {
+                if let ArcType::TransitionPlace(t, place) = arc.from_to {
+                    if t == transition.0 {
+                        *marking.entry(place).or_default() += i64::from(arc.weight);
+                    }
+                }
+            }
+            Ok(())
+        };
+        let label = |transition: TransitionID| net.transitions[&transition.0].label.as_deref();
+        let (mut position, mut cost) = (0, 0);
+        for step in moves {
+            match step {
+                AlignmentMove::SyncMove {
+                    transition,
+                    trace_event_index,
+                } => {
+                    if *trace_event_index != position || label(*transition) != Some(trace[position])
+                    {
+                        return Err(format!("{step:?} does not match event {position}"));
+                    }
+                    fire(*transition)?;
+                    position += 1;
+                    cost += cost_fn.sync_move_cost;
+                }
+                AlignmentMove::ModelMove { transition } => {
+                    fire(*transition)?;
+                    cost += match label(*transition) {
+                        Some(_) => cost_fn.model_move_cost,
+                        None => cost_fn.silent_move_cost,
+                    };
+                }
+                AlignmentMove::LogMove { trace_event_index } => {
+                    if *trace_event_index != position {
+                        return Err(format!("{step:?} does not match event {position}"));
+                    }
+                    position += 1;
+                    cost += cost_fn.log_move_cost;
+                }
+            }
+        }
+        if position != trace.len() {
+            return Err(format!(
+                "only {position} of {} events consumed",
+                trace.len()
+            ));
+        }
+        marking.retain(|_, tokens| *tokens != 0);
+        let expected: HashMap<Uuid, i64> = net.final_markings.as_ref().unwrap()[0]
+            .iter()
+            .filter(|(_, tokens)| **tokens != 0)
+            .map(|(place, tokens)| (place.0, *tokens as i64))
+            .collect();
+        if marking != expected {
+            return Err("final marking not reached".to_string());
+        }
+        Ok(cost)
+    }
+
+    /// A small xorshift generator, so random nets are the same in every run
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, bound: usize) -> usize {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 % bound as u64) as usize
+        }
+    }
+
+    /// A net whose transitions put back as many tokens as they take, so its state space is finite
+    fn random_net(rng: &mut Rng) -> PetriNet {
+        let mut net = PetriNet::new();
+        let places: Vec<_> = (0..2 + rng.below(4))
+            .map(|i| net.add_place(Some(Uuid::from_u128(i as u128))))
+            .collect();
+        for index in 0..2 + rng.below(6) {
+            let label = ["a", "b", "c"].get(rng.below(4)).map(|l| l.to_string());
+            let t = net.add_transition(label, Some(Uuid::from_u128(1000 + index as u128)));
+            for _ in 0..1 + rng.below(2) {
+                let (input, output) = (
+                    places[rng.below(places.len())],
+                    places[rng.below(places.len())],
+                );
+                net.add_arc(ArcType::place_to_transition(input, t), None);
+                net.add_arc(ArcType::transition_to_place(t, output), None);
+            }
+        }
+        let tokens = 1 + rng.below(2) as u64;
+        net.initial_marking = Some([(places[0], tokens)].into());
+        net.final_markings = Some(vec![[(places[places.len() - 1], tokens)].into()]);
+        net
+    }
+
+    #[test]
+    fn bidirectional_search_matches_unidirectional() {
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        let options = AlignmentOptions::default();
+        for _ in 0..3000 {
+            let net = random_net(&mut rng);
+            let trace: Vec<&str> = (0..rng.below(7))
+                .map(|_| ["a", "b", "c", "d"][rng.below(4)])
+                .collect();
+            let model = ModelNet::build(&net, &options.cost_fn).unwrap();
+            let sp = SyncProductNet::construct(&model, &trace, &options.cost_fn).unwrap();
+            let forward = petri_net::align_forward(&sp, options.limits()).map(|a| a.cost);
+            let both = petri_net::align(&sp, &mut AlignmentContext::default(), options.limits());
+            assert_eq!(
+                both.as_ref().map(|a| a.cost),
+                forward.as_ref().copied(),
+                "{net:?} {trace:?}"
+            );
+            if let Ok(alignment) = both {
+                assert_eq!(
+                    replay(&net, &trace, &alignment.moves, &options.cost_fn),
+                    Ok(alignment.cost),
+                    "{net:?} {trace:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn alignments_replay_on_real_logs() {
+        let test_path = get_test_data_path();
+        for (log, net) in [
+            ("Sepsis Cases - Event Log.xes.gz", "sepsis-DISCovered.apnml"),
+            (
+                "Road_Traffic_Fine_Management_Process.xes.gz",
+                "rtfm-imf-02.apnml",
+            ),
+        ] {
+            let log = EventLog::import_from_path(test_path.join("xes").join(log)).unwrap();
+            let net = PetriNet::import_pnml(test_path.join("petri-net").join(net)).unwrap();
+            let options = AlignmentOptions::default();
+            let model = ModelNet::build(&net, &options.cost_fn).unwrap();
+            for variant in align_log(&net, &log_to_activity_projection(&log), &options) {
+                let trace: Vec<&str> = variant.activities.iter().map(String::as_str).collect();
+                let alignment = variant.result.unwrap();
+                assert_eq!(
+                    replay(&net, &trace, &alignment.moves, &options.cost_fn),
+                    Ok(alignment.cost)
+                );
+                let sp = SyncProductNet::construct(&model, &trace, &options.cost_fn).unwrap();
+                let forward = petri_net::align_forward(&sp, options.limits()).unwrap();
+                assert_eq!(forward.cost, alignment.cost, "{trace:?}");
+            }
         }
     }
 }

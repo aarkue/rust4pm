@@ -150,6 +150,19 @@ impl<S, C> Default for SearchState<S, C> {
     }
 }
 
+/// How many times larger than the last search a buffer may be before it is given back, so one
+/// large search does not leave its thread holding that much for every search after it
+const RELEASE_ABOVE_MULTIPLE: usize = 8;
+
+/// Buffer length (in elements) always worth keeping, so small searches never pay to reallocate
+const ALWAYS_KEEP_LEN: usize = 4096;
+
+/// Whether a reused buffer of `capacity` is too large to keep after a search that used `used`
+#[inline]
+pub(crate) fn worth_releasing(capacity: usize, used: usize) -> bool {
+    capacity > RELEASE_ABOVE_MULTIPLE * used.max(ALWAYS_KEEP_LEN)
+}
+
 /// Search for an optimal path from the start to a goal state using Dijkstra
 #[inline]
 pub fn search<P: SearchProblem>(
@@ -327,7 +340,12 @@ where
         let num_buckets: usize = num_buckets_cost
             .try_into()
             .map_err(|_| SearchError::MaxEdgeCostTooLarge)?;
-        state.nodes.clear();
+        if worth_releasing(state.nodes.capacity(), state.nodes.len()) {
+            state.nodes = Vec::new();
+            state.buckets = Vec::new();
+        } else {
+            state.nodes.clear();
+        }
         state.nodes.push(Node {
             distance: C::from(0),
             parent: start,

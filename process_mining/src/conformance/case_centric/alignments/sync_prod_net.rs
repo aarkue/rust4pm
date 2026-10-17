@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use itertools::Itertools;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -26,14 +27,6 @@ pub(crate) struct SyncProdNetTransition {
     pub(crate) move_type: AlignmentMove,
     /// The pre-computed cost of firing this transition
     pub(crate) cost: u32,
-    /// Incoming places (`place_index`, weight), i.e., which token to consume
-    ///
-    /// Only a model transition owns these; reach them through [`SyncProductNet::arcs`].
-    pub(crate) inputs: Vec<(usize, TokenCount)>,
-    /// Outgoing places (`place_index`, weight), i.e., which token to produce
-    ///
-    /// Only a model transition owns these; reach them through [`SyncProductNet::arcs`].
-    pub(crate) outputs: Vec<(usize, TokenCount)>,
     /// Index of the model transition whose arcs this move fires, if it moves a token at all.
     ///
     /// A model move fires its own, a sync move those of the transition it synchronises with, and
@@ -49,6 +42,15 @@ pub(crate) struct SyncProdNetTransition {
     pub(crate) marked_inputs_suffice: bool,
     /// The same for a backward search, which takes tokens from the output places
     pub(crate) marked_outputs_suffice: bool,
+}
+
+/// The places a model transition takes tokens from and puts them into
+#[derive(Debug, PartialEq)]
+pub(crate) struct ModelArcs {
+    /// Incoming places as `(place_index, weight)`
+    pub(crate) inputs: Vec<(usize, TokenCount)>,
+    /// Outgoing places as `(place_index, weight)`
+    pub(crate) outputs: Vec<(usize, TokenCount)>,
 }
 
 /// Whether knowing these places are marked settles on its own that they hold enough tokens.
@@ -78,21 +80,17 @@ pub(crate) struct TriggerIndex {
 }
 
 impl TriggerIndex {
-    /// Group `transitions` by the first place each consumes, which a backward search reads as
-    /// its outputs rather than its inputs
-    fn build(transitions: &[SyncProdNetTransition], num_places: usize, reverse: bool) -> Self {
-        let trigger_of = |trans: &SyncProdNetTransition| {
-            let consumed = if reverse {
-                &trans.outputs
-            } else {
-                &trans.inputs
-            };
+    /// Group the model transitions by the first place each consumes, which a backward search
+    /// reads as its outputs rather than its inputs
+    fn build(arcs: &[ModelArcs], num_places: usize, reverse: bool) -> Self {
+        let trigger_of = |arcs: &ModelArcs| {
+            let consumed = if reverse { &arcs.outputs } else { &arcs.inputs };
             consumed.iter().map(|(place, _)| *place).min()
         };
         let mut offsets = vec![0u32; num_places + 1];
         let mut consuming_nothing = Vec::new();
-        for (index, trans) in transitions.iter().enumerate() {
-            match trigger_of(trans) {
+        for (index, arcs) in arcs.iter().enumerate() {
+            match trigger_of(arcs) {
                 Some(place) => offsets[place + 1] += 1,
                 None => consuming_nothing.push(index as u32),
             }
@@ -102,8 +100,8 @@ impl TriggerIndex {
         }
         let mut cursor = offsets.clone();
         let mut triggered = vec![0u32; offsets[num_places] as usize];
-        for (index, trans) in transitions.iter().enumerate() {
-            if let Some(place) = trigger_of(trans) {
+        for (index, arcs) in arcs.iter().enumerate() {
+            if let Some(place) = trigger_of(arcs) {
                 triggered[cursor[place] as usize] = index as u32;
                 cursor[place] += 1;
             }
@@ -152,6 +150,8 @@ pub(crate) struct ModelNet {
     pub(crate) num_places: usize,
     /// The model transitions (they keep these indices in the synchronous product)
     pub(crate) transitions: Vec<SyncProdNetTransition>,
+    /// The arcs of each model transition, indexed like `transitions`
+    pub(crate) arcs: Vec<ModelArcs>,
     /// Model transitions per activity label, i.e. those a trace event can synchronize with
     by_label: HashMap<String, Vec<usize>>,
     /// Initial marking (tokens per place)
@@ -205,6 +205,8 @@ pub enum SyncProdNetConstructionError {
     ArcWeightTooLarge(u32),
     /// A marking puts more than `TokenCount::MAX` tokens in a place
     MarkingTooLarge(PlaceID, u64),
+    /// A trace has more events than [`TracePos::MAX`]
+    TraceTooLong(usize),
 }
 impl std::fmt::Display for SyncProdNetConstructionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -219,17 +221,24 @@ impl ModelNet {
         net: &PetriNet,
         cost_fn: &CostFunction,
     ) -> Result<Self, SyncProdNetConstructionError> {
+        // Sorted ids give a fixed transition order, so ties between optimal alignments are broken
+        // the same way on every run
         let place_index: HashMap<&Uuid, usize> = net
             .places
-            .iter()
+            .keys()
+            .sorted()
             .enumerate()
-            .map(|(i, p)| (p.0, i))
+            .map(|(i, id)| (id, i))
             .collect();
-        let trans_index: HashMap<&Uuid, usize> = net
+        let transitions_by_id: Vec<_> = net
             .transitions
             .iter()
+            .sorted_by_key(|(id, _)| *id)
+            .collect();
+        let trans_index: HashMap<&Uuid, usize> = transitions_by_id
+            .iter()
             .enumerate()
-            .map(|(i, t)| (t.0, i))
+            .map(|(i, (id, _))| (*id, i))
             .collect();
 
         // Parallel arcs collapse into one entry per place, summed as `u32`
@@ -277,8 +286,10 @@ impl ModelNet {
 
         let mut by_label: HashMap<String, Vec<usize>> = HashMap::new();
         let mut transitions = Vec::with_capacity(net.transitions.len());
-        for ((trans_id, trans), (inputs, outputs)) in
-            net.transitions.iter().zip(inputs.into_iter().zip(outputs))
+        let mut arcs = Vec::with_capacity(net.transitions.len());
+        for ((trans_id, trans), (inputs, outputs)) in transitions_by_id
+            .into_iter()
+            .zip(inputs.into_iter().zip(outputs))
         {
             let index = transitions.len();
             if let Some(label) = &trans.label {
@@ -299,10 +310,9 @@ impl ModelNet {
                 output_places: places_of(&outputs),
                 marked_inputs_suffice: marked_places_suffice(&inputs),
                 marked_outputs_suffice: marked_places_suffice(&outputs),
-                inputs,
-                outputs,
                 fires_model_transition,
             });
+            arcs.push(ModelArcs { inputs, outputs });
         }
         // Get marking as vec of token counts (based on place indices)
         let marking_of = |marking: &HashMap<PlaceID, u64>| {
@@ -333,11 +343,12 @@ impl ModelNet {
         let needs_token_counts = transitions
             .iter()
             .any(|t| !t.marked_inputs_suffice || !t.marked_outputs_suffice);
-        let forward_triggers = TriggerIndex::build(&transitions, net.places.len(), false);
-        let backward_triggers = TriggerIndex::build(&transitions, net.places.len(), true);
+        let forward_triggers = TriggerIndex::build(&arcs, net.places.len(), false);
+        let backward_triggers = TriggerIndex::build(&arcs, net.places.len(), true);
         Ok(Self {
             num_places: net.places.len(),
             transitions,
+            arcs,
             by_label,
             initial_marking,
             final_marking,
@@ -351,7 +362,13 @@ impl ModelNet {
 
 impl<'a> SyncProductNet<'a> {
     /// Add the log and sync moves for `trace` to the shared model half
-    pub(crate) fn construct(model: &'a ModelNet, trace: &[&str], cost_fn: &CostFunction) -> Self {
+    pub(crate) fn construct(
+        model: &'a ModelNet,
+        trace: &[&str],
+        cost_fn: &CostFunction,
+    ) -> Result<Self, SyncProdNetConstructionError> {
+        let trace_length = TracePos::try_from(trace.len())
+            .map_err(|_| SyncProdNetConstructionError::TraceTooLong(trace.len()))?;
         let num_model_trans = model.transitions.len();
         let mut trace_transitions = Vec::with_capacity(trace.len() * 2);
         let mut trace_move_offsets = Vec::with_capacity(trace.len() + 1);
@@ -366,8 +383,6 @@ impl<'a> SyncProductNet<'a> {
                     trace_event_index: trace_move_offsets.len() - 1,
                 },
                 cost: cost_fn.log_move_cost,
-                inputs: Vec::new(),
-                outputs: Vec::new(),
                 // A log move moves no token at all
                 fires_model_transition: None,
                 // A log move touches no place, so it is never rejected by the mask
@@ -388,8 +403,6 @@ impl<'a> SyncProductNet<'a> {
                         trace_event_index: trace_move_offsets.len() - 1,
                     },
                     cost: cost_fn.sync_move_cost,
-                    inputs: Vec::new(),
-                    outputs: Vec::new(),
                     fires_model_transition: Some(*model_index as u32),
                     input_places: model_trans.input_places,
                     output_places: model_trans.output_places,
@@ -405,14 +418,14 @@ impl<'a> SyncProductNet<'a> {
             .unwrap_or(0)
             .max(model.max_cost);
         trace_move_offsets.push(trace_moves.len() as u32);
-        Self {
+        Ok(Self {
             model,
-            trace_length: trace.len() as TracePos,
+            trace_length,
             trace_transitions,
             trace_move_offsets,
             trace_moves,
             max_edge_cost,
-        }
+        })
     }
 
     /// The transition an index addresses, whether it belongs to the model or to the trace
@@ -440,7 +453,7 @@ impl<'a> SyncProductNet<'a> {
     pub(crate) fn arcs(&self, trans: &SyncProdNetTransition) -> (Arcs<'_>, Arcs<'_>) {
         match trans.fires_model_transition {
             Some(index) => {
-                let fired = &self.model.transitions[index as usize];
+                let fired = &self.model.arcs[index as usize];
                 (&fired.inputs, &fired.outputs)
             }
             None => (&[], &[]),

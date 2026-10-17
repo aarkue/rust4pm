@@ -13,8 +13,8 @@ use crate::{
         AlignmentResult,
     },
     utils::dijkstra_search::{
-        search_bidirectional, NodeID, ReversibleSearchProblem, SearchError, SearchLimits,
-        SearchProblem, SearchResult, SearchState,
+        search_bidirectional, worth_releasing, NodeID, ReversibleSearchProblem, SearchError,
+        SearchLimits, SearchProblem, SearchResult, SearchState,
     },
 };
 
@@ -90,19 +90,6 @@ impl PetriNetStep {
 
 /// Marked places a fresh layout makes room for
 const INITIAL_MAX_MARKED: usize = 4;
-
-/// How many times larger than the last search a buffer may be before it is given back, so one
-/// large trace does not leave a worker holding that much for every trace after it
-const RELEASE_ABOVE_MULTIPLE: usize = 8;
-
-/// Buffer size always worth keeping, so small searches never pay to reallocate
-const ALWAYS_KEEP_BYTES: usize = 4096;
-
-/// Whether a buffer of `capacity` is too large to keep for a search that last used `used`
-#[inline]
-fn worth_releasing(capacity: usize, used: usize) -> bool {
-    capacity > RELEASE_ABOVE_MULTIPLE * used.max(ALWAYS_KEEP_BYTES)
-}
 
 /// Number of places a [`PlaceSet`] can hold
 pub(crate) const PLACE_SET_LIMIT: usize = u64::BITS as usize;
@@ -302,7 +289,10 @@ impl NodeRecords {
     fn produce(&self, key: &mut Vec<u8>, place: usize, weight: TokenCount) -> Option<()> {
         let (slot, present) = {
             let marked = MarkedPlaces(&key[..self.mask_bytes]);
-            (self.mask_bytes + marked.count_before(place), marked.contains(place))
+            (
+                self.mask_bytes + marked.count_before(place),
+                marked.contains(place),
+            )
         };
         if present {
             key[slot] = key[slot].checked_add(weight)?;
@@ -446,7 +436,8 @@ impl PetriNetAlignmentSpace {
                 net.trace_length,
             )
         };
-        self.nodes.encode(&start[..num_places], &mut self.scratch.successor_key);
+        self.nodes
+            .encode(&start[..num_places], &mut self.scratch.successor_key);
         self.nodes.encode(&goal[..num_places], &mut self.goal.key);
         // The layout has to fit both ends, and is carried between traces: a trace needing a wide
         // layout suggests the next will too
@@ -540,7 +531,9 @@ impl SearchProblem for PetriNetAlignment<'_> {
         let last_move_was_log = via.is_some_and(PetriNetStep::log_move);
         // Token counts are only needed where the bitmask cannot settle enabledness on its own
         if net.model.needs_token_counts {
-            space.nodes.decode(node, &mut space.scratch.expanding_marking);
+            space
+                .nodes
+                .decode(node, &mut space.scratch.expanding_marking);
         }
         // Rejecting a transition then costs one test against the places this node marks
         let marked = space.nodes.marked(node);
@@ -556,7 +549,10 @@ impl SearchProblem for PetriNetAlignment<'_> {
         // every transition in the net. Taken out of the space so the loop below may borrow it.
         let mut candidates = std::mem::take(&mut space.scratch.candidates);
         candidates.clear();
-        // After a log move, model moves are pruned, so nothing is gathered at all
+        // After a log move, model moves are pruned, so nothing is gathered at all. Log and model
+        // moves commute at equal cost, so each side still finds exact distances. Backward, the
+        // rule keeps the opposite order, and where the sides meet the commuted path is allowed by
+        // both, so the meeting cost stays optimal.
         if !last_move_was_log {
             let triggers = if reverse {
                 &net.model.backward_triggers
@@ -606,9 +602,14 @@ impl SearchProblem for PetriNetAlignment<'_> {
                 continue;
             }
             space.scratch.successor_key.clear();
-            space.scratch.successor_key.extend_from_slice(&space.scratch.expanding_key);
+            space
+                .scratch
+                .successor_key
+                .extend_from_slice(&space.scratch.expanding_key);
             for (place, weight) in consumed {
-                space.nodes.consume(&mut space.scratch.successor_key, *place, *weight);
+                space
+                    .nodes
+                    .consume(&mut space.scratch.successor_key, *place, *weight);
             }
             if produced.iter().any(|(place, weight)| {
                 space
@@ -637,7 +638,9 @@ impl SearchProblem for PetriNetAlignment<'_> {
                         space.nodes.widen_for(&space.scratch.successor_key);
                     }
                     let new_id = space.nodes.len() as NodeID;
-                    space.nodes.push(&space.scratch.successor_key, new_trace_pos);
+                    space
+                        .nodes
+                        .push(&space.scratch.successor_key, new_trace_pos);
                     space.add_seen(new_id, hash);
                     emit(new_id, true, cost, step);
                 }
@@ -650,9 +653,10 @@ impl SearchProblem for PetriNetAlignment<'_> {
 impl ReversibleSearchProblem for PetriNetAlignment<'_> {
     #[inline]
     fn find_in(&self, node: NodeID, other: &Self) -> Option<NodeID> {
-        other
-            .space
-            .find_seen(self.space.nodes.key_of(node), self.space.nodes.trace_pos(node))
+        other.space.find_seen(
+            self.space.nodes.key_of(node),
+            self.space.nodes.trace_pos(node),
+        )
     }
 }
 
@@ -686,6 +690,23 @@ pub(crate) fn align(
         &mut ctx.backward.1,
         limits,
     )?;
+    Ok(result_from(net, res))
+}
+
+/// Compute an optimal alignment searching forward only, as a reference for the bidirectional one
+#[cfg(test)]
+pub(crate) fn align_forward(
+    net: &SyncProductNet<'_>,
+    limits: SearchLimits,
+) -> Result<AlignmentResult, AlignmentError> {
+    let mut space = PetriNetAlignmentSpace::default();
+    let mut problem = PetriNetAlignment {
+        net,
+        space: &mut space,
+        reverse: false,
+    };
+    let res =
+        crate::utils::dijkstra_search::search(&mut problem, &mut SearchState::default(), limits)?;
     Ok(result_from(net, res))
 }
 
