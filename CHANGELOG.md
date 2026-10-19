@@ -10,6 +10,13 @@
 - Traces with more events than `TracePos::MAX` now error with `SyncProdNetConstructionError::TraceTooLong` instead of being truncated (**Breaking**)
 - Alignments break ties between equally optimal alignments the same way on every run, as long as the transition ids stay the same (places and transitions are indexed in sorted id order)
 - All search buffers reused per thread are given back once a later search needs far less, so one large trace does not keep that memory for the rest of the run
+- Added escaping-edges precision (`conformance::case_centric::precision`): `escaping_edges_precision` aligns the log, `escaping_edges_precision_from_alignments` reuses alignments (e.g., from fitness)
+  - `EscapingEdgesOptions` choose between aligned paths and replaying until the first deviation, and whether silent transitions are skipped or count as activities
+  - Presets `prom()` and `pm4py()` follow ProM's "Check Precision using Escaping Edges" and `pm4py.precision_alignments`. `prom()` comes close to ProM (silent transitions are moved to where they are needed, while ProM's value depends on where its aligner places them). `pm4py()` gives pm4py's result, except where pm4py's search over silent transitions misses available activities
+  - `exclude_dead_ends` (off by default) only counts activities after which the final marking can still be reached, so the dead ends of unsound nets are not counted as allowed behavior
+  - `TraceEnds::AsActivity` (off by default) makes stopping an activity of its own, so a model that may stop where the log never does is penalized
+  - Optionally returns every escaping edge for diagnostics
+- PNML import keeps node ids that are UUIDs and derives a fixed UUID from any other id, so importing a file twice gives the same ids (before, every import generated random ids)
 
 ## 0.6.2
 - `stream_ocel_file_to_duckdb` / `_with` infer the format the way `OCEL` does and accept every format it imports from, bundles included

@@ -80,6 +80,13 @@ impl From<QuickXMLError> for PNMLParseError {
     }
 }
 
+/// The id of a PNML node: its PNML id if that is a UUID (as written by our export), otherwise a
+/// UUID derived from it, so that importing the same file always gives the same ids
+fn node_uuid(pnml_id: &str) -> Uuid {
+    Uuid::parse_str(pnml_id)
+        .unwrap_or_else(|_| Uuid::new_v5(&Uuid::NAMESPACE_OID, pnml_id.as_bytes()))
+}
+
 ///
 /// Import a PNML file from the given XML reader ([`quick_xml::Reader`])
 ///
@@ -158,7 +165,7 @@ where
                             .unwrap_or_default()
                             .ok_or(PNMLParseError::MissingKey("id"))?;
                         let place_id_str = read_xml_text_unescaped(&mut place_id.value.as_ref());
-                        let uuid = Uuid::new_v4();
+                        let uuid = node_uuid(&place_id_str);
                         current_id = Some(uuid);
                         id_map.insert(place_id_str, uuid);
                         pn.add_place(Some(uuid));
@@ -171,7 +178,7 @@ where
                         .unwrap_or_default()
                         .ok_or(PNMLParseError::MissingKey("id"))?;
                     let trans_id_str = read_xml_text_unescaped(&mut trans_id.value.as_ref());
-                    let uuid = Uuid::new_v4();
+                    let uuid = node_uuid(&trans_id_str);
                     current_id = Some(uuid);
                     id_map.insert(trans_id_str, uuid);
                     pn.add_transition(Some(String::new()), Some(uuid));
@@ -375,11 +382,17 @@ pub fn import_pnml_from_path<P: AsRef<std::path::Path>>(
 
 #[cfg(test)]
 mod test {
+    use std::collections::BTreeSet;
+
     use quick_xml::Reader;
 
-    use crate::test_utils::get_test_data_path;
+    use crate::{
+        core::process_models::petri_net::{pnml::export_pnml::export_petri_net_to_pnml, ArcType},
+        test_utils::get_test_data_path,
+        PetriNet,
+    };
 
-    use super::import_pnml;
+    use super::{import_pnml, import_pnml_reader};
 
     #[test]
     fn test_pnml_import() {
@@ -424,6 +437,35 @@ mod test {
             pn.export_svg(&svg_export_path).unwrap();
             println!("Exported to: file:///{}", svg_export_path.to_string_lossy());
         }
+    }
+
+    #[test]
+    fn import_ids_are_stable() {
+        let path = get_test_data_path()
+            .join("petri-net")
+            .join("sepsis-DISCovered.apnml");
+        let ids = |net: &PetriNet| {
+            let places: BTreeSet<_> = net.places.keys().copied().collect();
+            let transitions: BTreeSet<_> = net.transitions.keys().copied().collect();
+            (places, transitions)
+        };
+        assert_eq!(
+            ids(&PetriNet::import_pnml(&path).unwrap()),
+            ids(&PetriNet::import_pnml(&path).unwrap())
+        );
+    }
+
+    #[test]
+    fn uuid_ids_survive_export_and_import() {
+        let mut net = PetriNet::new();
+        let place = net.add_place(None);
+        let transition = net.add_transition(Some("a".to_string()), None);
+        net.add_arc(ArcType::place_to_transition(place, transition), None);
+        let mut pnml = Vec::new();
+        export_petri_net_to_pnml(&net, &mut pnml).unwrap();
+        let imported = import_pnml_reader(&mut pnml.as_slice()).unwrap();
+        assert!(imported.places.contains_key(&place.0));
+        assert!(imported.transitions.contains_key(&transition.0));
     }
 
     #[test]
