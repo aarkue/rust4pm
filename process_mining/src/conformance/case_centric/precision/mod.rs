@@ -25,8 +25,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     conformance::alignments::{
-        align_log, petri_net::AlignmentError, sync_prod_net::SyncProdNetConstructionError,
-        AlignmentMove, AlignmentOptions, VariantAlignmentResult,
+        align_log, align_variants_with_retry, petri_net::AlignmentError,
+        sync_prod_net::SyncProdNetConstructionError, AlignmentMove, AlignmentOptions,
+        VariantAlignmentResult,
     },
     core::{
         event_data::case_centric::utils::activity_projection::EventLogActivityProjection,
@@ -49,8 +50,17 @@ mod tests;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum LogPaths {
     /// One optimal alignment per variant, without its log moves. A trace that does not fit is
-    /// measured along its closest model run.
-    Aligned(AlignmentOptions),
+    /// measured along its closest model run. A variant whose alignment fails is left out, see
+    /// [`EscapingEdgesPrecision::unaligned_traces`].
+    Aligned {
+        /// How to align the variants
+        options: AlignmentOptions,
+        /// Whether to align the variants that ran out of their memory share again, one at a time
+        /// with the whole budget (as [`align_variants_with_retry`] does). This can take long, and
+        /// they may still run out.
+        #[serde(default)]
+        retry_out_of_memory: bool,
+    },
     /// The traces as recorded, each up to its first event the model cannot replay (as in the
     /// original escaping-edges precision and in pm4py)
     ReplayUntilDeviation,
@@ -58,7 +68,10 @@ pub enum LogPaths {
 
 impl Default for LogPaths {
     fn default() -> Self {
-        Self::Aligned(AlignmentOptions::default())
+        Self::Aligned {
+            options: AlignmentOptions::default(),
+            retry_out_of_memory: false,
+        }
     }
 }
 
@@ -79,8 +92,8 @@ pub struct EscapingEdgesOptions {
     /// after it, so that the dead ends of an unsound net are not counted as allowed behavior
     pub exclude_dead_ends: bool,
     /// Limit on the markings visited per search (following silent transitions, or checking that
-    /// the final marking can be reached). Reaching it can make the precision too high, see
-    /// [`EscapingEdgesPrecision::search_limit_reached`].
+    /// the final marking can be reached). Reaching it can make the precision wrong in either
+    /// direction, see [`EscapingEdgesPrecision::search_limit_reached`].
     pub search_limit: Option<usize>,
     /// Whether to return every escaping edge
     pub report_escaping_edges: bool,
@@ -151,12 +164,15 @@ pub struct EscapingEdgesPrecision {
     pub weighted_escaping: u64,
     /// Number of states with a positive weight
     pub num_states: usize,
-    /// Traces left out because their alignment failed (e.g., the state limit was reached)
+    /// Traces left out because their alignment failed (e.g., a search limit was reached, or the
+    /// trace is too long)
     pub unaligned_traces: u64,
     /// Traces only measured up to the first step the model could not follow (a deviation, or a
     /// search stopped at `search_limit`)
     pub truncated_traces: u64,
     /// Whether a search stopped at `search_limit` somewhere, which can make `precision` too high
+    /// (fewer activities available after silent transitions) or too low (a dead end counted as
+    /// completing)
     pub search_limit_reached: bool,
     /// Every escaping edge, if `report_escaping_edges` was set
     pub escaping_edges: Option<Vec<EscapingEdge>>,
@@ -173,11 +189,17 @@ pub fn escaping_edges_precision(
     #[bind(default)] options: &EscapingEdgesOptions,
 ) -> Result<EscapingEdgesPrecision, PrecisionError> {
     match &options.log_paths {
-        LogPaths::Aligned(alignment_options) => escaping_edges_precision_from_alignments(
-            net,
-            &align_log(net, log, alignment_options),
-            options,
-        ),
+        LogPaths::Aligned {
+            options: alignment_options,
+            retry_out_of_memory,
+        } => {
+            let alignments = if *retry_out_of_memory {
+                align_variants_with_retry(net, log, alignment_options)
+            } else {
+                align_log(net, log, alignment_options)
+            };
+            escaping_edges_precision_from_alignments(net, &alignments, options)
+        }
         LogPaths::ReplayUntilDeviation => replay_precision(net, log, options),
     }
 }
@@ -207,7 +229,7 @@ fn replay_precision(
 /// Escaping-edges precision of `net` with respect to the log behind `alignments`
 ///
 /// Reuses alignments computed for `net` (e.g., for fitness). Requires [`LogPaths::Aligned`],
-/// whose alignment options are then not used.
+/// whose fields are then not used.
 #[register_binding(stringify_error)]
 pub fn escaping_edges_precision_from_alignments(
     net: &PetriNet,
@@ -239,7 +261,12 @@ pub fn escaping_edges_precision_from_alignments(
                 }
                 measure.add(path.into_iter().map(Some), variant.frequency);
             }
-            Err(AlignmentError::SearchError(_)) => measure.unaligned_traces += variant.frequency,
+            Err(
+                AlignmentError::SearchError(_)
+                | AlignmentError::SyncProdNetConstructionFailed(
+                    SyncProdNetConstructionError::TraceTooLong(_),
+                ),
+            ) => measure.unaligned_traces += variant.frequency,
             Err(AlignmentError::SyncProdNetConstructionFailed(error)) => {
                 return Err(error.clone().into())
             }

@@ -385,10 +385,13 @@ fn empty_log_is_precise() {
 #[test]
 fn failed_alignments_are_counted() {
     let options = EscapingEdgesOptions {
-        log_paths: LogPaths::Aligned(AlignmentOptions {
-            max_states: Some(1),
-            ..Default::default()
-        }),
+        log_paths: LogPaths::Aligned {
+            options: AlignmentOptions {
+                max_states: Some(1),
+                ..Default::default()
+            },
+            retry_out_of_memory: false,
+        },
         ..Default::default()
     };
     let result = measure(
@@ -397,6 +400,45 @@ fn failed_alignments_are_counted() {
         &options,
     );
     assert_eq!(result.unaligned_traces, 1);
+    assert_eq!((result.precision, result.weighted_available), (1.0, 0));
+}
+
+#[test]
+fn too_long_traces_are_left_out() {
+    let alignments = [VariantAlignmentResult {
+        activities: Vec::new(),
+        frequency: 2,
+        result: Err(SyncProdNetConstructionError::TraceTooLong(70_000).into()),
+    }];
+    let net = net(SEQUENCE, "p0", "pf");
+    let result =
+        escaping_edges_precision_from_alignments(&net, &alignments, &Default::default()).unwrap();
+    assert_eq!(result.unaligned_traces, 2);
+}
+
+#[test]
+fn retry_out_of_memory_aligns_what_the_share_could_not() {
+    let (net, log) = sepsis();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(32)
+        .build()
+        .unwrap();
+    let unaligned = |retry_out_of_memory| {
+        let options = EscapingEdgesOptions {
+            log_paths: LogPaths::Aligned {
+                options: AlignmentOptions {
+                    max_memory_mib: Some(1),
+                    ..Default::default()
+                },
+                retry_out_of_memory,
+            },
+            ..Default::default()
+        };
+        let result = pool.install(|| escaping_edges_precision(&net, &log, &options));
+        result.unwrap().unaligned_traces
+    };
+    assert!(unaligned(false) > 0);
+    assert_eq!(unaligned(true), 0);
 }
 
 #[test]
