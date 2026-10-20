@@ -175,34 +175,13 @@ impl PetriNet {
         export_petri_net_to_pnml_path(self, None, None, path)
     }
 
-    #[cfg(feature = "graphviz-export")]
-    /// Export an image of the net as a PNG file (requires Graphviz on the `PATH`)
+    #[cfg(feature = "visualization")]
+    /// Export a drawing of the net as an SVG file, laid out with `graphlay`
     ///
     /// For visualization only: The image cannot be imported again.
-    pub fn export_png<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        super::image_export::export_petri_net_image(
-            self,
-            None,
-            None,
-            path,
-            graphviz_rust::cmd::Format::Png,
-            Some(2.0),
-        )
-    }
-
-    #[cfg(feature = "graphviz-export")]
-    /// Export an image of the net as an SVG file (requires Graphviz on the `PATH`)
-    ///
-    /// For visualization only: The image cannot be imported again.
+    /// [`crate::visualization::petri_net`] returns the SVG as a string and the node positions.
     pub fn export_svg<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        super::image_export::export_petri_net_image(
-            self,
-            None,
-            None,
-            path,
-            graphviz_rust::cmd::Format::Svg,
-            None,
-        )
+        AcceptingPetriNet::new(self.clone(), Marking::new(), Marking::new()).export_svg(path)
     }
 
     /// Add a place with an optional external name
@@ -623,20 +602,15 @@ impl AcceptingPetriNet {
         )
     }
 
-    #[cfg(feature = "graphviz-export")]
-    /// Export an image of the net as a PNG file (requires Graphviz on the `PATH`)
+    #[cfg(feature = "visualization")]
+    /// Export a drawing of the net with its markings as an SVG file, laid out with `graphlay`
     ///
     /// For visualization only: The image cannot be imported again.
-    pub fn export_png<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        super::image_export::export_petri_net_image_png(self, path)
-    }
-
-    #[cfg(feature = "graphviz-export")]
-    /// Export an image of the net as an SVG file (requires Graphviz on the `PATH`)
-    ///
-    /// For visualization only: The image cannot be imported again.
+    /// [`crate::visualization::petri_net`] returns the SVG as a string and the node positions.
     pub fn export_svg<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        super::image_export::export_petri_net_image_svg(self, path)
+        let svg = crate::visualization::petri_net::export_petri_net_svg(self, &Default::default())
+            .map_err(std::io::Error::other)?;
+        std::fs::write(path, svg)
     }
 }
 

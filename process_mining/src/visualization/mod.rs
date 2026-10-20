@@ -15,15 +15,15 @@
 //! use process_mining::visualization::petri_net::{
 //!     export_petri_net_svg, layout_petri_net, petri_net_to_graph, PetriBuildOptions,
 //! };
-//! use process_mining::{Importable, PetriNet};
+//! use process_mining::{AcceptingPetriNet, Importable};
 //!
-//! let net = PetriNet::import_from_path("model.pnml")?;
+//! let net = AcceptingPetriNet::import_from_path("model.pnml")?;
 //! let options = PetriBuildOptions::default();
 //! let svg: String = export_petri_net_svg(&net, &options)?;
 //!
 //! // Positions only: `layout.nodes[i]` is where the model element `meta[i]` went.
-//! let (_, meta, _) = petri_net_to_graph(&net, &options);
-//! let layout = layout_petri_net(&net, &options)?;
+//! let (_, meta, _) = petri_net_to_graph(&net.net, &options);
+//! let layout = layout_petri_net(&net.net, &options)?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 

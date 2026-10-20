@@ -1,35 +1,18 @@
 //! Laying out and drawing a [`PetriNet`], with initial tokens as dots and final ones as squares.
+//!
+//! Markings do not change the layout, so the graph and the layout take a [`PetriNet`], and the
+//! drawing takes an [`AcceptingPetriNet`] to show its tokens.
 
 use graphlay::{Direction, Edge, Graph, LayoutError, LayoutOptions, Node, Shape};
+#[cfg(feature = "bindings")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-use crate::core::process_models::petri_net::{Arc, ArcType};
+use crate::core::process_models::petri_net::{AcceptingPetriNet, Arc, ArcType, NodeID, PetriNet};
 use crate::visualization::graph_build::{
     edge_label_size, GraphAcc, LABELED_TRANSITION_SIZE, PLACE_SIZE, SILENT_TRANSITION_SIZE,
 };
 use crate::visualization::styling::BaseStyle;
-use crate::PetriNet;
-
-/// A place or transition of a [`PetriNet`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum PetriNodeRef {
-    /// A place, by its id.
-    Place(Uuid),
-    /// A transition, silent or labeled, by its id.
-    Transition(Uuid),
-}
-
-impl PetriNodeRef {
-    /// The model id.
-    pub fn id(&self) -> Uuid {
-        match self {
-            PetriNodeRef::Place(id) | PetriNodeRef::Transition(id) => *id,
-        }
-    }
-}
 
 /// How a [`PetriNet`] is turned into a [`Graph`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,68 +56,51 @@ impl Default for PetriStyle {
     }
 }
 
-/// The [`Graph`] of `net`, the element behind each node, and the [`PetriNet::arcs`] index behind
-/// each edge.
+/// The [`Graph`] of `net`, the node behind each graph node, and the arc behind each edge.
 pub fn petri_net_to_graph(
     net: &PetriNet,
     options: &PetriBuildOptions,
-) -> (Graph, Vec<PetriNodeRef>, Vec<usize>) {
+) -> (Graph, Vec<NodeID>, Vec<Arc>) {
     // The direction only affects the engine, not the graph.
     let _ = options;
-    let mut acc: GraphAcc<PetriNodeRef, usize> = GraphAcc::new();
-
-    let mut place_ids: Vec<Uuid> = net.places.keys().copied().collect();
-    place_ids.sort_unstable();
-    for id in &place_ids {
-        acc.add_node(
-            format!("p:{id}"),
-            Node {
+    let mut acc: GraphAcc<NodeID, Arc> = GraphAcc::new();
+    let places: Vec<_> = net
+        .places()
+        .map(|(id, _)| {
+            let node = Node {
                 size: PLACE_SIZE,
                 shape: Shape::Ellipse,
                 ..Node::default()
-            },
-            || PetriNodeRef::Place(*id),
-        );
-    }
-
-    let mut transition_ids: Vec<Uuid> = net.transitions.keys().copied().collect();
-    transition_ids.sort_unstable();
-    for id in &transition_ids {
-        let silent = net.transitions[id].label.is_none();
-        acc.add_node(
-            format!("t:{id}"),
-            Node {
-                size: if silent {
+            };
+            acc.add_node(format!("p:{}", id.index()), node, || NodeID::Place(id))
+        })
+        .collect();
+    let transitions: Vec<_> = net
+        .transitions()
+        .map(|(id, t)| {
+            let node = Node {
+                size: if t.label.is_none() {
                     SILENT_TRANSITION_SIZE
                 } else {
                     LABELED_TRANSITION_SIZE
                 },
                 shape: Shape::Box,
                 ..Node::default()
-            },
-            || PetriNodeRef::Transition(*id),
-        );
-    }
-
-    for index in sorted_arc_indices(net) {
-        let arc: &Arc = &net.arcs[index];
-        let (from, to) = match arc.from_to {
-            ArcType::PlaceTransition(p, t) => (format!("p:{p}"), format!("t:{t}")),
-            ArcType::TransitionPlace(t, p) => (format!("t:{t}"), format!("p:{p}")),
+            };
+            acc.add_node(format!("t:{}", id.index()), node, || NodeID::Transition(id))
+        })
+        .collect();
+    for arc in net.arcs() {
+        let (source, target) = match arc.from_to {
+            ArcType::PlaceTransition(p, t) => (places[p.index()], transitions[t.index()]),
+            ArcType::TransitionPlace(t, p) => (transitions[t.index()], places[p.index()]),
         };
-        // Skip a dangling arc so the rest of the net is still drawn.
-        let (Some(source), Some(target)) = (acc.node_id(&from), acc.node_id(&to)) else {
-            continue;
+        let edge = Edge {
+            label_size: arc_weight_label(arc.weight).map(|text| edge_label_size(&text)),
+            ..Edge::new(source, target)
         };
-        acc.add_edge(
-            Edge {
-                label_size: arc_weight_label(arc.weight).map(|text| edge_label_size(&text)),
-                ..Edge::new(source, target)
-            },
-            index,
-        );
+        acc.add_edge(edge, arc);
     }
-
     acc.finish()
 }
 
@@ -151,15 +117,6 @@ pub fn layout_petri_net(
     graphlay::layout(&graph, &options.layout_options())
 }
 
-fn sorted_arc_indices(net: &PetriNet) -> Vec<usize> {
-    let mut order: Vec<usize> = (0..net.arcs.len()).collect();
-    order.sort_by_key(|&i| match net.arcs[i].from_to {
-        ArcType::PlaceTransition(p, t) => (0u8, p, t),
-        ArcType::TransitionPlace(t, p) => (1u8, t, p),
-    });
-    order
-}
-
 /// Shared by the graph and the scene, so the layout reserves room for exactly the drawn labels.
 fn arc_weight_label(weight: u32) -> Option<String> {
     (weight != 1).then(|| weight.to_string())
@@ -173,17 +130,15 @@ mod draw {
     };
     use graphlay::Layout;
 
-    use crate::core::process_models::petri_net::PlaceID;
-
     use crate::visualization::styling::{edge_label, node_label, scene, scene_edge, scene_node};
 
     /// More tokens in a place than this show as counts. About four is what reads at a glance.
     const MAX_TOKEN_GLYPHS: u64 = 4;
 
-    fn tokens(initial: u64, final_: u64, width: f64, style: &PetriStyle) -> NodeContent {
-        let cluster = |glyph: Glyph, count: u64| GlyphCluster {
+    fn tokens(initial: u32, final_: u32, width: f64, style: &PetriStyle) -> NodeContent {
+        let cluster = |glyph: Glyph, count: u32| GlyphCluster {
             glyph,
-            count,
+            count: u64::from(count),
             color: Some(style.token.clone()),
             ..GlyphCluster::default()
         };
@@ -216,18 +171,17 @@ mod draw {
 
     /// The drawing of `net` over an existing [`Layout`].
     pub fn petri_net_scene(
-        net: &PetriNet,
+        net: &AcceptingPetriNet,
         layout: &Layout,
-        nodes: &[PetriNodeRef],
-        edges: &[usize],
+        nodes: &[NodeID],
+        edges: &[Arc],
         style: &PetriStyle,
     ) -> Scene {
         let base = &style.base;
         let mut scene_nodes = Vec::with_capacity(nodes.len());
         for (placement, node) in layout.nodes.iter().zip(nodes) {
-            match node {
-                PetriNodeRef::Place(id) => {
-                    let place_id = PlaceID(*id);
+            match *node {
+                NodeID::Place(place) => {
                     let mut scene_node = scene_node(
                         placement,
                         Shape::Ellipse,
@@ -235,19 +189,9 @@ mod draw {
                         Some(Stroke::new(&base.node_border, base.border_width)),
                         base,
                     );
-                    let initial = net
-                        .initial_marking
-                        .as_ref()
-                        .and_then(|m| m.get(&place_id).copied())
-                        .unwrap_or(0);
-                    // TODO: drop `first()` once `PetriNet` holds a single final marking.
-                    let final_ = net
-                        .final_markings
-                        .as_ref()
-                        .and_then(|ms| ms.first())
-                        .and_then(|m| m.get(&place_id).copied())
-                        .unwrap_or(0);
-                    if initial + final_ > 0 {
+                    let initial = net.initial_marking.tokens(place);
+                    let final_ = net.final_marking.tokens(place);
+                    if initial > 0 || final_ > 0 {
                         scene_node.content.push(tokens(
                             initial,
                             final_,
@@ -257,8 +201,8 @@ mod draw {
                     }
                     scene_nodes.push(scene_node);
                 }
-                PetriNodeRef::Transition(id) => {
-                    let label = net.transitions.get(id).and_then(|t| t.label.clone());
+                NodeID::Transition(transition) => {
+                    let label = &net.net.transition(transition).label;
                     let silent = label.is_none();
                     let mut scene_node = scene_node(
                         placement,
@@ -274,7 +218,7 @@ mod draw {
                     if let Some(label) = label {
                         scene_node
                             .content
-                            .push(node_label(&label, placement.size.width, 2, base));
+                            .push(node_label(label, placement.size.width, 2, base));
                     }
                     scene_nodes.push(scene_node);
                 }
@@ -282,11 +226,11 @@ mod draw {
         }
 
         let mut scene_edges = Vec::with_capacity(layout.edges.len());
-        for (route, &arc) in layout.edges.iter().zip(edges) {
+        for (route, arc) in layout.edges.iter().zip(edges) {
             let Some(mut edge) = scene_edge(route, &base.edge, 2.0) else {
                 continue;
             };
-            if let Some(text) = net.arcs.get(arc).and_then(|a| arc_weight_label(a.weight)) {
+            if let Some(text) = arc_weight_label(arc.weight) {
                 edge.labels.push(edge_label(&text, route, base));
             }
             scene_edges.push(edge);
@@ -300,10 +244,10 @@ mod draw {
     ///
     /// As [`layout_petri_net`].
     pub fn export_petri_net_svg(
-        net: &PetriNet,
+        net: &AcceptingPetriNet,
         options: &PetriBuildOptions,
     ) -> Result<String, LayoutError> {
-        let (graph, nodes, edges) = petri_net_to_graph(net, options);
+        let (graph, nodes, edges) = petri_net_to_graph(&net.net, options);
         let layout = graphlay::layout(&graph, &options.layout_options())?;
         Ok(crate::visualization::styling::render_scene(
             &petri_net_scene(net, &layout, &nodes, &edges, &PetriStyle::default()),
@@ -316,40 +260,36 @@ pub use draw::{export_petri_net_svg, petri_net_scene};
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::process_models::petri_net::Marking;
     use crate::test_utils::{assert_xml_well_formed, get_test_data_path};
     use crate::Importable;
-    use std::collections::BTreeSet;
 
     #[test]
     fn every_place_transition_and_arc_is_drawn_once() {
         let path = get_test_data_path().join("petri-net").join("pn.pnml");
         let net = PetriNet::import_from_path(path).unwrap();
-        let (graph, meta, arcs) = petri_net_to_graph(&net, &PetriBuildOptions::default());
-        let ids: BTreeSet<Uuid> = meta.iter().map(PetriNodeRef::id).collect();
-        let expected: BTreeSet<Uuid> = net
-            .places
-            .keys()
-            .chain(net.transitions.keys())
-            .copied()
-            .collect();
-        assert_eq!((ids, meta.len()), (expected, graph.nodes.len()));
-        assert_eq!(arcs.iter().collect::<BTreeSet<_>>().len(), net.arcs.len());
+        let (graph, nodes, arcs) = petri_net_to_graph(&net, &PetriBuildOptions::default());
+        assert_eq!(nodes, net.nodes().collect::<Vec<_>>());
+        assert_eq!(graph.nodes.len(), nodes.len());
+        assert_eq!(arcs, net.arcs().collect::<Vec<_>>());
     }
 
-    /// `(initial, final markings, dots, squares, counts)`. Only the first final marking counts,
-    /// and past four tokens each kind shows once with its count.
+    /// `(initial, final, dots, squares, counts)`. Past four tokens, each kind shows once with
+    /// its count.
     #[test]
     fn tokens_are_dots_for_the_initial_and_squares_for_the_final_marking() {
-        for (initial, finals, dots, squares, counts) in [
-            (0, &[2][..], 0, 2, &[][..]),
-            (2, &[1], 2, 1, &[]),
-            (0, &[1, 3], 0, 1, &[]),
-            (12, &[132], 1, 1, &["\u{d7}12", "\u{d7}132"]),
+        for (initial, final_, dots, squares, counts) in [
+            (0, 2, 0, 2, &[][..]),
+            (2, 1, 2, 1, &[]),
+            (12, 132, 1, 1, &["\u{d7}12", "\u{d7}132"]),
         ] {
             let mut net = PetriNet::new();
             let p = net.add_place(None);
-            net.initial_marking = Some([(p, initial)].into());
-            net.final_markings = Some(finals.iter().map(|&n| [(p, n)].into()).collect());
+            let net = AcceptingPetriNet::new(
+                net,
+                Marking::from([(p, initial)]),
+                Marking::from([(p, final_)]),
+            );
             let svg = export_petri_net_svg(&net, &PetriBuildOptions::default()).unwrap();
             assert_xml_well_formed(&svg);
             // The place itself is an ellipse and the background a rect.

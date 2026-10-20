@@ -8,7 +8,7 @@ use crate::core::process_models::oc_declare::OCDeclareArc;
 use crate::core::process_models::ocdfg::OCDirectlyFollowsGraph;
 use crate::core::process_models::process_tree::ProcessTree;
 use crate::visualization::{dfg, oc_declare, ocdfg, petri_net, process_tree};
-use crate::PetriNet;
+use crate::{AcceptingPetriNet, PetriNet};
 
 /// Lay a [`PetriNet`] out, returning the positions only.
 #[register_binding(stringify_error)]
@@ -19,10 +19,10 @@ pub fn layout_petri_net(
     petri_net::layout_petri_net(net, &options)
 }
 
-/// Draw a [`PetriNet`] as a standalone SVG document.
+/// Draw an [`AcceptingPetriNet`] with its markings as a standalone SVG document.
 #[register_binding(stringify_error)]
 pub fn export_petri_net_svg(
-    net: &PetriNet,
+    net: &AcceptingPetriNet,
     #[bind(default)] options: petri_net::PetriBuildOptions,
 ) -> Result<String, LayoutError> {
     petri_net::export_petri_net_svg(net, &options)

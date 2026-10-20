@@ -37,7 +37,7 @@
 - Token-based replay and the incidence matrices use arc weights (before, every arc counted as weight 1); `create_*_incidence_matrix` return `i64` matrices indexed by place and transition id and no longer take a dictionary (**Breaking**)
 - **Breaking:** Replaced the Graphviz image export with [graphlay](https://github.com/aarkue/graphlay), which needs no locally installed binary
   - The `graphviz-export` feature and the `graphviz-rust` dependency are removed, and `visualization` takes their place (enabled by default)
-  - `export_svg` on `PetriNet`, `ProcessTree`, `DirectlyFollowsGraph` and `PartialOrderTrace` now lays the model out with graphlay
+  - `export_svg` on `PetriNet`, `AcceptingPetriNet` (with its markings), `ProcessTree`, `DirectlyFollowsGraph` and `PartialOrderTrace` now lays the model out with graphlay
   - `export_png` and the `image_export` modules (`export_*_image*`, `export_*_to_dot_graph`) are removed
 - Added the `visualization` module (feature `visualization`): positions and SVG drawings for Petri nets, process trees, DFGs, OC-DFGs, OC-DECLARE models and partial order traces, and registered bindings for all but the partial order traces
   - Process trees come in a classic look (operator circles, straight lines) and a color-coded one (named operator pills, one color per operator type), chosen with `TreeLook`
