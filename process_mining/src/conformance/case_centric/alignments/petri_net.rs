@@ -13,8 +13,9 @@ use crate::{
         AlignmentResult,
     },
     utils::dijkstra_search::{
-        search_bidirectional, worth_releasing, NodeID, ReversibleSearchProblem, SearchError,
-        SearchLimits, SearchProblem, SearchResult, SearchState,
+        reserve_vec, search_bidirectional, worth_releasing, MemoryBudget, NodeID,
+        ReversibleSearchProblem, SearchError, SearchLimits, SearchProblem, SearchResult,
+        SearchState,
     },
 };
 
@@ -303,6 +304,17 @@ impl NodeRecords {
         Some(())
     }
 
+    /// Make room for one more record within `budget`
+    #[inline]
+    fn reserve_one(&mut self, budget: &MemoryBudget) -> bool {
+        reserve_vec(&mut self.records, self.stride, budget)
+            && reserve_vec(&mut self.positions, 1, budget)
+    }
+
+    fn allocated_bytes(&self) -> usize {
+        self.records.capacity() + self.positions.capacity() * size_of::<TracePos>()
+    }
+
     /// Append a node holding `key`
     #[inline]
     fn push(&mut self, key: &[u8], trace_pos: TracePos) {
@@ -321,11 +333,16 @@ impl NodeRecords {
     ///
     /// A state is hashed over its meaningful prefix alone, so this leaves any index valid.
     #[cold]
-    fn widen_for(&mut self, key: &[u8]) {
+    #[must_use]
+    fn widen_for(&mut self, key: &[u8], budget: &MemoryBudget) -> bool {
         let max_marked = (key.len() - self.mask_bytes)
             .max(self.max_marked * 2)
             .min(self.num_places);
         let stride = self.mask_bytes + max_marked;
+        let additional = self.len() * (stride - self.stride);
+        if !reserve_vec(&mut self.records, additional, budget) {
+            return false;
+        }
         // Backwards, so a record is only overwritten once it has been moved itself
         self.records.resize(self.len() * stride, 0);
         for node in (0..self.len()).rev() {
@@ -335,6 +352,7 @@ impl NodeRecords {
         }
         self.max_marked = max_marked;
         self.stride = stride;
+        true
     }
 
     #[inline]
@@ -420,6 +438,20 @@ impl PetriNetAlignmentSpace {
         }
         self.nodes.reset(num_places);
         self.scratch.expanding_marking.resize(num_places, 0);
+        // Scratch buffers are bounded by the net, so they are sized once instead of growing
+        // during the search
+        let longest_key = num_places.div_ceil(8) + num_places;
+        for key in [
+            &mut self.scratch.expanding_key,
+            &mut self.scratch.successor_key,
+            &mut self.goal.key,
+        ] {
+            key.reserve(longest_key.saturating_sub(key.len()));
+        }
+        let num_model_trans = net.num_model_trans();
+        self.scratch
+            .candidates
+            .reserve(num_model_trans.saturating_sub(self.scratch.candidates.len()));
         // A backward search starts where a forward one ends, and aims for the other end
         let (start, start_pos, goal, goal_pos) = if reverse {
             (
@@ -449,6 +481,36 @@ impl PetriNetAlignmentSpace {
         self.add_seen(0, hash);
     }
 
+    /// Make room for one more node in the `seen` index within `budget`
+    #[inline]
+    fn reserve_seen(&mut self, budget: &MemoryBudget) -> bool {
+        if self.seen.len() < self.seen.capacity() {
+            return true;
+        }
+        let capacity = self.seen.capacity().max(2) * 2;
+        let (before, bound) = (self.seen.allocation_size(), table_bound(capacity));
+        if !budget.grow(before, bound) {
+            return false;
+        }
+        let nodes = &self.nodes;
+        self.seen
+            .reserve(capacity - self.seen.len(), |node| nodes.hash_of(*node));
+        debug_assert!(self.seen.allocation_size() <= bound);
+        budget.settle(bound, self.seen.allocation_size());
+        true
+    }
+
+    fn allocated_bytes(&self) -> usize {
+        let scratch = &self.scratch;
+        self.nodes.allocated_bytes()
+            + self.seen.allocation_size()
+            + scratch.expanding_key.capacity()
+            + scratch.successor_key.capacity()
+            + scratch.expanding_marking.capacity() * size_of::<TokenCount>()
+            + scratch.candidates.capacity() * size_of::<u32>()
+            + self.goal.key.capacity()
+    }
+
     /// Record a node under the given hash of its state
     #[inline]
     fn add_seen(&mut self, node: NodeID, hash: u64) {
@@ -472,19 +534,17 @@ impl PetriNetAlignmentSpace {
     }
 }
 
-/// Bytes one queued state costs: its search node, its `(marking, trace position)`, and its slot
-/// in the `seen` index. Both directions store the same per state.
-///
-/// Markings are stored sparsely, so this charges the worst case of every place marked at once.
-/// Real markings hold a token in a small fraction of them.
-pub(crate) const fn bytes_per_state(num_places: usize) -> usize {
-    SearchState::<PetriNetStep>::bytes_per_node()
-        + size_of::<TracePos>()
-        // A `seen` slot is a NodeID, plus hashbrown's control byte and spare capacity
-        + 2 * size_of::<NodeID>()
-        // A bitmask, and a count for every place
-        + num_places
-        + num_places.div_ceil(8)
+/// An upper bound of the bytes hashbrown allocates for a `HashTable<NodeID>` with room for
+/// `capacity` entries: buckets at most 7/8 full and rounded up to a power of two, each with a slot
+/// and a control byte, plus one group of trailing control bytes and alignment
+pub(crate) const fn table_bound(capacity: usize) -> usize {
+    let buckets = match capacity {
+        0 => return 0,
+        1..4 => 4,
+        4..8 => 8,
+        _ => (capacity * 8 / 7).next_power_of_two(),
+    };
+    buckets * (size_of::<NodeID>() + 1) + 2 * 16
 }
 
 /// Alignment as a [`SearchProblem`]: a state is a `(model marking, trace position)`, an edge fires
@@ -510,6 +570,10 @@ impl SearchProblem for PetriNetAlignment<'_> {
         self.net.max_edge_cost
     }
 
+    fn allocated_bytes(&self) -> usize {
+        self.space.allocated_bytes()
+    }
+
     /// Whether the whole trace is consumed and the target marking reached
     #[inline]
     fn is_goal(&self, node: NodeID) -> bool {
@@ -522,6 +586,7 @@ impl SearchProblem for PetriNetAlignment<'_> {
         &mut self,
         node: NodeID,
         via: Option<PetriNetStep>,
+        budget: &MemoryBudget,
         mut emit: F,
     ) {
         let reverse = self.reverse;
@@ -579,6 +644,9 @@ impl SearchProblem for PetriNetAlignment<'_> {
             .chain(candidates.iter())
             .map(|index| *index as usize)
         {
+            if budget.exhausted() {
+                break;
+            }
             let trans = net.transition(trans_idx);
             // Every place a transition consumes has to hold a token, so a place it consumes that
             // is unmarked rules it out before its inputs are ever walked
@@ -634,8 +702,13 @@ impl SearchProblem for PetriNetAlignment<'_> {
             match space.find_seen_hashed(hash, &space.scratch.successor_key, new_trace_pos) {
                 Some(existing) => emit(existing, false, cost, step),
                 None => {
-                    if !space.nodes.fits(&space.scratch.successor_key) {
-                        space.nodes.widen_for(&space.scratch.successor_key);
+                    if !space.nodes.fits(&space.scratch.successor_key)
+                        && !space.nodes.widen_for(&space.scratch.successor_key, budget)
+                    {
+                        break;
+                    }
+                    if !space.nodes.reserve_one(budget) || !space.reserve_seen(budget) {
+                        break;
                     }
                     let new_id = space.nodes.len() as NodeID;
                     space
@@ -667,12 +740,36 @@ pub(crate) struct AlignmentContext {
     backward: (PetriNetAlignmentSpace, SearchState<PetriNetStep>),
 }
 
+impl AlignmentContext {
+    pub(crate) fn allocated_bytes(&self) -> usize {
+        self.forward.0.allocated_bytes()
+            + self.forward.1.allocated_bytes()
+            + self.backward.0.allocated_bytes()
+            + self.backward.1.allocated_bytes()
+    }
+}
+
 /// Compute an optimal alignment, searching from the initial and the final marking at once
 pub(crate) fn align(
     net: &SyncProductNet<'_>,
     ctx: &mut AlignmentContext,
     limits: SearchLimits,
 ) -> Result<AlignmentResult, AlignmentError> {
+    let kept = ctx.allocated_bytes() > 0;
+    let mut res = search_both_ends(net, ctx, limits);
+    if kept && matches!(res, Err(SearchError::MemoryLimitReached)) {
+        // Buffers kept from earlier searches count against this one, so it may fit in fresh ones
+        *ctx = AlignmentContext::default();
+        res = search_both_ends(net, ctx, limits);
+    }
+    Ok(result_from(net, res?))
+}
+
+fn search_both_ends(
+    net: &SyncProductNet<'_>,
+    ctx: &mut AlignmentContext,
+    limits: SearchLimits,
+) -> Result<SearchResult<PetriNetStep>, SearchError> {
     let mut forward = PetriNetAlignment {
         net,
         space: &mut ctx.forward.0,
@@ -683,14 +780,13 @@ pub(crate) fn align(
         space: &mut ctx.backward.0,
         reverse: true,
     };
-    let res = search_bidirectional(
+    search_bidirectional(
         &mut forward,
         &mut backward,
         &mut ctx.forward.1,
         &mut ctx.backward.1,
         limits,
-    )?;
-    Ok(result_from(net, res))
+    )
 }
 
 /// Compute an optimal alignment searching forward only, as a reference for the bidirectional one
@@ -741,7 +837,23 @@ fn hash_state(key: &[u8], trace_pos: TracePos) -> u64 {
 
 #[cfg(test)]
 mod test {
-    use super::{MarkedPlaces, MarkedPlacesMut, PetriNetStep, PlaceSet};
+    use hashbrown::HashTable;
+
+    use super::{table_bound, MarkedPlaces, MarkedPlacesMut, PetriNetStep, PlaceSet};
+    use crate::utils::dijkstra_search::NodeID;
+
+    #[test]
+    fn table_bound_covers_hashbrown() {
+        for capacity in (0..5000).chain([1 << 16, 1 << 20]) {
+            let table: HashTable<NodeID> = HashTable::with_capacity(capacity);
+            assert!(
+                table.allocation_size() <= table_bound(capacity),
+                "{capacity}: {} > {}",
+                table.allocation_size(),
+                table_bound(capacity)
+            );
+        }
+    }
 
     /// A step is stored once per search node, so its width drives the search's memory use
     #[test]

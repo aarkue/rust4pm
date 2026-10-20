@@ -72,50 +72,68 @@ pub struct VariantAlignmentResult {
 pub struct AlignmentOptions {
     /// Cost function for alignment moves
     pub cost_fn: cost::CostFunction,
-    /// Maximum number of states to visit before aborting (per trace).
-    /// `None` means no limit.
+    /// Maximum number of states to visit before aborting (per trace, both search directions
+    /// together). `None` means no limit.
     ///
-    /// Also see [`AlignmentOptions::max_states_queued`], which bounds the search based on both visited and pending states.
-    ///
-    /// This budget is shared for both ends of the bidirectional search.
+    /// This bounds runtime. See [`AlignmentOptions::max_memory_mib`] for memory.
     pub max_states: Option<usize>,
-    /// Maximum number of states to hold at once before aborting (per trace).
+    /// Memory in MiB that all alignment searches of one call may hold together (default 6 GiB).
     /// `None` means no limit.
     ///
-    /// Also see [`AlignmentOptions::max_states`] which bounds only the visited states.
+    /// Traces are aligned in parallel, so each search gets an even share: the budget divided by
+    /// `rayon::current_num_threads()`, or by the number of variants if there are fewer. A single
+    /// search (e.g., [`align_trace`]) gets all of it. A trace that needs more than its share fails with
+    /// [`SearchError::MemoryLimitReached`], while the other traces are aligned as usual.
     ///
-    /// `max_states_queued` is better for bounding memory usage, as it counts both visited and pending states.
-    /// Use [`states_in_memory`] to pick a value for a memory budget.
+    /// This bounds the buffers of the searches. The event log, the model and the alignments come
+    /// on top, as does memory the allocator keeps, so leave some headroom.
     ///
-    pub max_states_queued: Option<usize>,
+    /// [`align_variants_with_retry`] aligns the traces that ran out again, one at a time with
+    /// the whole budget. By hand:
+    ///
+    /// ```no_run
+    /// # use process_mining::{conformance::alignments::{*, petri_net::AlignmentError}, utils::dijkstra_search::SearchError, PetriNet};
+    /// # use process_mining::core::event_data::case_centric::utils::activity_projection::EventLogActivityProjection;
+    /// # fn retry(net: &PetriNet, log: &EventLogActivityProjection, options: &AlignmentOptions) {
+    /// let mut results = align_variants(net, log, options);
+    /// for variant in &mut results {
+    ///     if variant.result == Err(AlignmentError::SearchError(SearchError::MemoryLimitReached)) {
+    ///         let trace: Vec<&str> = variant.activities.iter().map(String::as_str).collect();
+    ///         variant.result = align_trace(net, &trace, options);
+    ///     }
+    /// }
+    /// # }
+    /// ```
+    pub max_memory_mib: Option<usize>,
 }
 
-/// How many alignment states fit in `bytes`, for a net with `num_places` places.
-///
-/// Traces are aligned in parallel, so divide a whole-machine budget by the thread count first.
-///
-/// Pessimistic: it assumes every place is marked at once, while real markings mark a small
-/// fraction of them, so treat the result as a floor rather than a prediction.
-pub const fn states_in_memory(bytes: usize, num_places: usize) -> usize {
-    bytes / petri_net::bytes_per_state(num_places)
-}
 impl Default for AlignmentOptions {
     fn default() -> Self {
         Self {
             cost_fn: CostFunction::standard(),
             max_states: None,
-            max_states_queued: Some(10_000_000),
+            max_memory_mib: Some(6 * 1024),
         }
     }
 }
+
 impl AlignmentOptions {
-    fn limits(&self) -> SearchLimits {
+    /// The limits of each of `searches` searches running at once
+    fn limits_for(&self, searches: usize) -> SearchLimits {
         SearchLimits {
             max_states: self.max_states,
-            max_states_queued: self.max_states_queued,
+            max_memory: self
+                .max_memory_mib
+                .map(|mib| mib.saturating_mul(1 << 20) / searches.max(1)),
         }
     }
 }
+
+thread_local! {
+    /// Search buffers a thread reuses across the traces of one [`align_variants`] call
+    static CONTEXT: RefCell<AlignmentContext> = RefCell::new(AlignmentContext::default());
+}
+
 /// Compute alignments for all variants of an event log.
 ///
 /// Permits at most 255 ([`petri_net::TokenCount::MAX`]) tokens in each place.
@@ -138,30 +156,66 @@ pub fn align_variants(
     #[bind(default)] options: &AlignmentOptions,
 ) -> Vec<VariantAlignmentResult> {
     // Both the model half and its reachability are properties of the net, shared by every trace
+    align_variants_on(&build_model(net, &options.cost_fn), projection, options)
+}
+
+/// Like [`align_variants`], then aligns every variant that ran out of memory again, one at a
+/// time on the calling thread, with the whole [`AlignmentOptions::max_memory_mib`].
+///
+/// A retried search may take much longer than its first attempt, and may still run out.
+#[register_binding]
+pub fn align_variants_with_retry(
+    net: &PetriNet,
+    projection: &EventLogActivityProjection,
+    #[bind(default)] options: &AlignmentOptions,
+) -> Vec<VariantAlignmentResult> {
     let model = build_model(net, &options.cost_fn);
-    projection
+    let mut results = align_variants_on(&model, projection, options);
+    // Without a model every variant already carries its error
+    let Ok(model) = model else {
+        return results;
+    };
+    let limits = options.limits_for(1);
+    let mut ctx = AlignmentContext::default();
+    for variant in &mut results {
+        if matches!(
+            variant.result,
+            Err(AlignmentError::SearchError(SearchError::MemoryLimitReached))
+        ) {
+            let trace: Vec<&str> = variant.activities.iter().map(String::as_str).collect();
+            variant.result = align_on(&model, &trace, &options.cost_fn, &mut ctx, limits);
+        }
+    }
+    results
+}
+
+fn align_variants_on(
+    model: &Result<ModelNet, AlignmentError>,
+    projection: &EventLogActivityProjection,
+    options: &AlignmentOptions,
+) -> Vec<VariantAlignmentResult> {
+    let searches = rayon::current_num_threads().min(projection.traces.len());
+    let limits = options.limits_for(searches);
+    let results = projection
         .traces
         .par_iter()
         .map(|(trace_indices, count)| {
-            thread_local! {
-                static CTX: RefCell<AlignmentContext> = RefCell::new(AlignmentContext::default());
-            }
             let activities: Vec<String> = trace_indices
                 .iter()
                 .map(|&idx| projection.activities[idx].clone())
                 .collect();
-            let result = match &model {
+            let trace: Vec<&str> = activities.iter().map(String::as_str).collect();
+            let result = match model {
                 Err(e) => Err(e.clone()),
-                Ok(model) => {
-                    let trace: Vec<&str> = activities.iter().map(String::as_str).collect();
-                    SyncProductNet::construct(model, &trace, &options.cost_fn)
-                        .map_err(AlignmentError::from)
-                        .and_then(|sp| {
-                            CTX.with(|ctx| {
-                                petri_net::align(&sp, &mut ctx.borrow_mut(), options.limits())
-                            })
-                        })
-                }
+                Ok(model) => CONTEXT.with(|ctx| {
+                    align_on(
+                        model,
+                        &trace,
+                        &options.cost_fn,
+                        &mut ctx.borrow_mut(),
+                        limits,
+                    )
+                }),
             };
             VariantAlignmentResult {
                 activities,
@@ -169,7 +223,22 @@ pub fn align_variants(
                 result,
             }
         })
-        .collect()
+        .collect();
+    // Kept buffers would otherwise stay allocated after the call, next to a later search that
+    // may use the whole budget
+    rayon::broadcast(|_| CONTEXT.take());
+    results
+}
+
+fn align_on(
+    model: &ModelNet,
+    trace: &[&str],
+    cost_fn: &CostFunction,
+    ctx: &mut AlignmentContext,
+    limits: SearchLimits,
+) -> Result<AlignmentResult, AlignmentError> {
+    let sp = SyncProductNet::construct(model, trace, cost_fn)?;
+    petri_net::align(&sp, ctx, limits)
 }
 
 /// Build the trace-independent half, rejecting nets that cannot reach their final marking
@@ -190,8 +259,14 @@ pub fn align_trace(
     options: &AlignmentOptions,
 ) -> Result<AlignmentResult, AlignmentError> {
     let model = build_model(net, &options.cost_fn)?;
-    let sp = SyncProductNet::construct(&model, trace, &options.cost_fn)?;
-    petri_net::align(&sp, &mut AlignmentContext::default(), options.limits())
+    let mut ctx = AlignmentContext::default();
+    align_on(
+        &model,
+        trace,
+        &options.cost_fn,
+        &mut ctx,
+        options.limits_for(1),
+    )
 }
 
 /// Compute alignment for a single trace (given as activity sequence).
@@ -303,18 +378,21 @@ mod test {
 
     use crate::{
         conformance::alignments::{
-            align_empty_trace, align_log, align_trace, compute_fitness,
+            align_empty_trace, align_log, align_trace, align_variants, align_variants_with_retry,
+            compute_fitness,
             cost::CostFunction,
             petri_net::{self, AlignmentContext, AlignmentError, TracePos},
             sync_prod_net::{ModelNet, SyncProdNetConstructionError, SyncProductNet},
             AlignmentMove, AlignmentOptions,
         },
         core::{
-            event_data::case_centric::utils::activity_projection::log_to_activity_projection,
+            event_data::case_centric::utils::activity_projection::{
+                log_to_activity_projection, EventLogActivityProjection,
+            },
             process_models::petri_net::{Arc, ArcType, PlaceID, TransitionID},
         },
         test_utils::get_test_data_path,
-        utils::dijkstra_search::SearchError,
+        utils::dijkstra_search::{SearchError, SearchLimits},
         EventLog, Importable, PetriNet,
     };
 
@@ -336,6 +414,156 @@ mod test {
         let fitness = compute_fitness(&result, &net, &options);
         println!("{fitness:?}");
         (result, fitness)
+    }
+
+    fn sepsis_net() -> PetriNet {
+        let path = get_test_data_path()
+            .join("petri-net")
+            .join("sepsis-DISCovered.apnml");
+        PetriNet::import_pnml(path).unwrap()
+    }
+
+    fn sepsis() -> (PetriNet, EventLogActivityProjection) {
+        let path = get_test_data_path()
+            .join("xes")
+            .join("Sepsis Cases - Event Log.xes.gz");
+        let log = EventLog::import_from_path(path).unwrap();
+        (sepsis_net(), log_to_activity_projection(&log))
+    }
+
+    fn variants(projection: &EventLogActivityProjection) -> Vec<Vec<&str>> {
+        projection
+            .traces
+            .iter()
+            .map(|(trace, _)| {
+                trace
+                    .iter()
+                    .map(|&a| projection.activities[a].as_str())
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fewer_variants_than_threads_share_the_whole_budget() {
+        let (net, mut projection) = sepsis();
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(32)
+            .build()
+            .unwrap();
+        let options = AlignmentOptions {
+            max_memory_mib: Some(1),
+            ..AlignmentOptions::default()
+        };
+        let out_of_memory = Err(AlignmentError::SearchError(SearchError::MemoryLimitReached));
+        let all = pool.install(|| align_variants(&net, &projection, &options));
+        let ran_out = all.iter().position(|v| v.result == out_of_memory).unwrap();
+        projection.traces = vec![projection.traces[ran_out].clone()];
+        let alone = pool.install(|| align_variants(&net, &projection, &options));
+        assert!(alone[0].result.is_ok());
+    }
+
+    #[test]
+    fn retry_aligns_what_the_share_could_not() {
+        let (net, projection) = sepsis();
+        // 1 MiB over 32 threads leaves each search 32 KiB, too little for the largest variants
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(32)
+            .build()
+            .unwrap();
+        let options = AlignmentOptions {
+            max_memory_mib: Some(1),
+            ..AlignmentOptions::default()
+        };
+        let out_of_memory = Err(AlignmentError::SearchError(SearchError::MemoryLimitReached));
+        let parallel = pool.install(|| align_variants(&net, &projection, &options));
+        assert!(parallel.iter().any(|v| v.result == out_of_memory));
+
+        let retried = pool.install(|| align_variants_with_retry(&net, &projection, &options));
+        let unlimited = align_variants(
+            &net,
+            &projection,
+            &AlignmentOptions {
+                max_memory_mib: None,
+                ..AlignmentOptions::default()
+            },
+        );
+        let costs = |results: &[super::VariantAlignmentResult]| {
+            let mut costs: Vec<_> = results
+                .iter()
+                .map(|v| (v.activities.clone(), v.result.as_ref().unwrap().cost))
+                .collect();
+            costs.sort();
+            costs
+        };
+        assert_eq!(costs(&retried), costs(&unlimited));
+    }
+
+    #[test]
+    fn kept_buffers_never_cause_a_failure() {
+        let (net, projection) = sepsis();
+        let cost_fn = CostFunction::standard();
+        let model = ModelNet::build(&net, &cost_fn).unwrap();
+        for max_memory in [32 << 10, 64 << 10, 128 << 10] {
+            let limits = SearchLimits {
+                max_states: None,
+                max_memory: Some(max_memory),
+            };
+            let mut kept = AlignmentContext::default();
+            for trace in variants(&projection) {
+                let sp = SyncProductNet::construct(&model, &trace, &cost_fn).unwrap();
+                let fresh = petri_net::align(&sp, &mut AlignmentContext::default(), limits);
+                let with_kept = petri_net::align(&sp, &mut kept, limits);
+                // The other way round may differ: kept buffers that are large enough need no
+                // growth, which briefly holds the old and the new buffer
+                if fresh.is_ok() {
+                    assert_eq!(with_kept, fresh, "{max_memory} bytes, {trace:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tiny_budget_fails_cleanly() {
+        let model = ModelNet::build(&sepsis_net(), &CostFunction::standard()).unwrap();
+        let sp = SyncProductNet::construct(&model, &[], &CostFunction::standard()).unwrap();
+        let limits = SearchLimits {
+            max_states: None,
+            max_memory: Some(64),
+        };
+        assert_eq!(
+            petri_net::align(&sp, &mut AlignmentContext::default(), limits),
+            Err(AlignmentError::SearchError(SearchError::MemoryLimitReached))
+        );
+    }
+
+    #[test]
+    fn memory_limit_stops_large_searches_only() {
+        let (net, projection) = sepsis();
+        let cost_fn = CostFunction::standard();
+        let model = ModelNet::build(&net, &cost_fn).unwrap();
+        let align_with = |trace: &[&str], max_memory| {
+            let sp = SyncProductNet::construct(&model, trace, &cost_fn).unwrap();
+            let limits = SearchLimits {
+                max_states: None,
+                max_memory,
+            };
+            petri_net::align(&sp, &mut AlignmentContext::default(), limits)
+        };
+        let mut stopped = 0;
+        for trace in variants(&projection) {
+            let unlimited = align_with(&trace, None).unwrap();
+            assert_eq!(
+                align_with(&trace, Some(1 << 30)).unwrap().cost,
+                unlimited.cost
+            );
+            match align_with(&trace, Some(64 * 1024)) {
+                Ok(alignment) => assert_eq!(alignment.cost, unlimited.cost),
+                Err(AlignmentError::SearchError(SearchError::MemoryLimitReached)) => stopped += 1,
+                Err(e) => panic!("{e:?}"),
+            }
+        }
+        assert!(stopped > 0, "64 KiB should stop the largest searches");
     }
 
     #[test]
@@ -820,8 +1048,9 @@ mod test {
                 .collect();
             let model = ModelNet::build(&net, &options.cost_fn).unwrap();
             let sp = SyncProductNet::construct(&model, &trace, &options.cost_fn).unwrap();
-            let forward = petri_net::align_forward(&sp, options.limits()).map(|a| a.cost);
-            let both = petri_net::align(&sp, &mut AlignmentContext::default(), options.limits());
+            let forward = petri_net::align_forward(&sp, options.limits_for(1)).map(|a| a.cost);
+            let both =
+                petri_net::align(&sp, &mut AlignmentContext::default(), options.limits_for(1));
             assert_eq!(
                 both.as_ref().map(|a| a.cost),
                 forward.as_ref().copied(),
@@ -859,7 +1088,7 @@ mod test {
                     Ok(alignment.cost)
                 );
                 let sp = SyncProductNet::construct(&model, &trace, &options.cost_fn).unwrap();
-                let forward = petri_net::align_forward(&sp, options.limits()).unwrap();
+                let forward = petri_net::align_forward(&sp, options.limits_for(1)).unwrap();
                 assert_eq!(forward.cost, alignment.cost, "{trace:?}");
             }
         }

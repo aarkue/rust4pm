@@ -2,8 +2,9 @@
 
 ## Unreleased
 - Alignments now search from both ends at once (`utils::dijkstra_search::search_bidirectional` + `ReversibleSearchProblem`), and detect unreachable final markings up front
-- `search` takes `SearchLimits` instead of `Option<usize>`; its new `max_states_queued` bounds memory and reports `SearchError::QueuedLimitReached` (**Breaking**)
-- `AlignmentOptions::max_states_queued` (default 10 million) bounds how many states a trace's search may hold at once; `alignments::states_in_memory` converts a memory budget into such a state count
+- `search` takes `SearchLimits` (states visited, memory) instead of `Option<usize>` and reports `SearchError::MemoryLimitReached` when its memory budget runs out (**Breaking**)
+- `SearchProblem::expand` takes the search's `MemoryBudget`, through which buffers that grow during the search must reserve, and `SearchProblem` requires `allocated_bytes` (**Breaking**)
+- `AlignmentOptions::max_memory_mib` (default 6 GiB) bounds the memory of all alignment searches of one call, split evenly across the searches running at once; `align_variants_with_retry` aligns the variants that ran out again, one at a time with the whole budget. `max_states` now defaults to `None` instead of 100,000 (**Breaking**)
 - Fix parallel arcs between the same place and transition counting separately (previously their weights were not summed, which could underflow a place's token count)
 - Arc weights and markings exceeding `TokenCount::MAX` now error with `SyncProdNetConstructionError::{ArcWeightTooLarge, MarkingTooLarge}` instead of being truncated (**Breaking**)
 - Traces with more events than `TracePos::MAX` now error with `SyncProdNetConstructionError::TraceTooLong` instead of being truncated (**Breaking**)

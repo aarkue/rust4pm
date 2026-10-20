@@ -4,8 +4,10 @@
 //! [`log_to_activity_projection`] does not order variants deterministically across runs.
 //!
 //! ```text
-//! align_bench discover <log> <net> <cap>              # align all variants, list the expensive ones
-//! align_bench run <log> <net> <cap> <all|k1,k2,k3>    # align only the variants with these keys
+//! align_bench discover <log> <net> <mib>              # align all variants, list the expensive ones
+//! align_bench run <log> <net> <mib> <all|k1,k2,k3>    # align only the variants with these keys
+//!
+//! `<mib>` is the memory limit of all searches together, see `AlignmentOptions::max_memory_mib`.
 //! ```
 use process_mining::conformance::alignments::{align_variants, AlignmentOptions};
 use process_mining::core::event_data::case_centric::utils::activity_projection::{
@@ -55,7 +57,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 5 {
         eprintln!(
-            "usage:\n  {0} discover <log> <net> <cap>\n  {0} run <log> <net> <cap> <all|i,j,k>",
+            "usage:\n  {0} discover <log> <net> <mib>\n  {0} run <log> <net> <mib> <all|i,j,k>",
             args[0]
         );
         std::process::exit(1);
@@ -67,7 +69,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let proj = log_to_activity_projection(&log);
 
     let options = AlignmentOptions {
-        max_states_queued: Some(cap),
+        max_memory_mib: Some(cap),
         ..AlignmentOptions::default()
     };
 
