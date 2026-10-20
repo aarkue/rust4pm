@@ -17,7 +17,7 @@ use crate::{
         process_models::petri_net::TransitionID,
     },
     utils::dijkstra_search::{SearchError, SearchLimits},
-    PetriNet,
+    AcceptingPetriNet,
 };
 
 pub mod cost;
@@ -32,6 +32,8 @@ pub enum AlignmentMove {
     SyncMove {
         /// The transition that was fired
         transition: TransitionID,
+        /// The label of the transition (and activity of the event)
+        label: String,
         /// Index of the event in the trace
         trace_event_index: usize,
     },
@@ -39,6 +41,8 @@ pub enum AlignmentMove {
     ModelMove {
         /// The transition that was fired
         transition: TransitionID,
+        /// The label of the transition (`None` if it is silent)
+        label: Option<String>,
     },
     /// Log move (only the log moves)
     LogMove {
@@ -92,9 +96,9 @@ pub struct AlignmentOptions {
     /// the whole budget. By hand:
     ///
     /// ```no_run
-    /// # use process_mining::{conformance::alignments::{*, petri_net::AlignmentError}, utils::dijkstra_search::SearchError, PetriNet};
+    /// # use process_mining::{conformance::alignments::{*, petri_net::AlignmentError}, utils::dijkstra_search::SearchError, AcceptingPetriNet};
     /// # use process_mining::core::event_data::case_centric::utils::activity_projection::EventLogActivityProjection;
-    /// # fn retry(net: &PetriNet, log: &EventLogActivityProjection, options: &AlignmentOptions) {
+    /// # fn retry(net: &AcceptingPetriNet, log: &EventLogActivityProjection, options: &AlignmentOptions) {
     /// let mut results = align_variants(net, log, options);
     /// for variant in &mut results {
     ///     if variant.result == Err(AlignmentError::SearchError(SearchError::MemoryLimitReached)) {
@@ -138,7 +142,7 @@ thread_local! {
 ///
 /// Permits at most 255 ([`petri_net::TokenCount::MAX`]) tokens in each place.
 pub fn align_log<'a>(
-    net: &PetriNet,
+    net: &AcceptingPetriNet,
     log: impl Into<&'a EventLogActivityProjection>,
     options: &AlignmentOptions,
 ) -> Vec<VariantAlignmentResult> {
@@ -151,7 +155,7 @@ pub fn align_log<'a>(
 /// Permits at most 255 ([`petri_net::TokenCount::MAX`]) tokens in each place.
 #[register_binding]
 pub fn align_variants(
-    net: &PetriNet,
+    net: &AcceptingPetriNet,
     projection: &EventLogActivityProjection,
     #[bind(default)] options: &AlignmentOptions,
 ) -> Vec<VariantAlignmentResult> {
@@ -165,7 +169,7 @@ pub fn align_variants(
 /// A retried search may take much longer than its first attempt, and may still run out.
 #[register_binding]
 pub fn align_variants_with_retry(
-    net: &PetriNet,
+    net: &AcceptingPetriNet,
     projection: &EventLogActivityProjection,
     #[bind(default)] options: &AlignmentOptions,
 ) -> Vec<VariantAlignmentResult> {
@@ -242,7 +246,10 @@ fn align_on(
 }
 
 /// Build the trace-independent half, rejecting nets that cannot reach their final marking
-fn build_model(net: &PetriNet, cost_fn: &CostFunction) -> Result<ModelNet, AlignmentError> {
+fn build_model(
+    net: &AcceptingPetriNet,
+    cost_fn: &CostFunction,
+) -> Result<ModelNet, AlignmentError> {
     let model = ModelNet::build(net, cost_fn)?;
     if !reachability::final_marking_reachable(&model) {
         return Err(SearchError::Unreachable.into());
@@ -254,7 +261,7 @@ fn build_model(net: &PetriNet, cost_fn: &CostFunction) -> Result<ModelNet, Align
 ///
 /// Permits at most 255 ([`petri_net::TokenCount::MAX`]) tokens in each place.
 pub fn align_trace(
-    net: &PetriNet,
+    net: &AcceptingPetriNet,
     trace: &[&str],
     options: &AlignmentOptions,
 ) -> Result<AlignmentResult, AlignmentError> {
@@ -275,7 +282,7 @@ pub fn align_trace(
 #[allow(dead_code)]
 #[register_binding(stringify_error, name = "align_trace")]
 fn align_trace_binding(
-    net: &PetriNet,
+    net: &AcceptingPetriNet,
     trace: &[String],
     #[bind(default)] options: &AlignmentOptions,
 ) -> Result<AlignmentResult, AlignmentError> {
@@ -289,7 +296,7 @@ fn align_trace_binding(
 /// Permits at most 255 ([`petri_net::TokenCount::MAX`]) tokens in each place.
 #[register_binding(stringify_error)]
 pub fn align_empty_trace(
-    net: &PetriNet,
+    net: &AcceptingPetriNet,
     #[bind(default)] options: &AlignmentOptions,
 ) -> Result<AlignmentResult, AlignmentError> {
     align_trace(net, &[], options)
@@ -314,7 +321,7 @@ pub struct FitnessResult {
 #[register_binding(stringify_error)]
 pub fn compute_fitness(
     align_res: &[VariantAlignmentResult],
-    net: &PetriNet,
+    net: &AcceptingPetriNet,
     #[bind(default)] options: &AlignmentOptions,
 ) -> Result<FitnessResult, AlignmentError> {
     let empty = align_empty_trace(net, options)?;
@@ -369,12 +376,7 @@ pub fn compute_fitness(
 
 #[cfg(test)]
 mod test {
-    use std::{
-        collections::{HashMap, HashSet},
-        time::Instant,
-    };
-
-    use uuid::Uuid;
+    use std::time::Instant;
 
     use crate::{
         conformance::alignments::{
@@ -389,12 +391,21 @@ mod test {
             event_data::case_centric::utils::activity_projection::{
                 log_to_activity_projection, EventLogActivityProjection,
             },
-            process_models::petri_net::{Arc, ArcType, PlaceID, TransitionID},
+            process_models::petri_net::{ArcType, Marking, PlaceID, TransitionID},
         },
         test_utils::get_test_data_path,
         utils::dijkstra_search::{SearchError, SearchLimits},
-        EventLog, Importable, PetriNet,
+        AcceptingPetriNet, EventLog, Importable, PetriNet,
     };
+
+    fn sepsis_net() -> AcceptingPetriNet {
+        AcceptingPetriNet::import_pnml(
+            get_test_data_path()
+                .join("petri-net")
+                .join("sepsis-DISCovered.apnml"),
+        )
+        .unwrap()
+    }
 
     fn align_helper(
         log_name: &str,
@@ -405,7 +416,8 @@ mod test {
     ) {
         let test_path = get_test_data_path();
         let log = EventLog::import_from_path(test_path.join("xes").join(log_name)).unwrap();
-        let net = PetriNet::import_pnml(test_path.join("petri-net").join(net_name)).unwrap();
+        let net =
+            AcceptingPetriNet::import_pnml(test_path.join("petri-net").join(net_name)).unwrap();
         let act_proj = log_to_activity_projection(&log);
         let options = AlignmentOptions::default();
         let now = Instant::now();
@@ -416,14 +428,7 @@ mod test {
         (result, fitness)
     }
 
-    fn sepsis_net() -> PetriNet {
-        let path = get_test_data_path()
-            .join("petri-net")
-            .join("sepsis-DISCovered.apnml");
-        PetriNet::import_pnml(path).unwrap()
-    }
-
-    fn sepsis() -> (PetriNet, EventLogActivityProjection) {
+    fn sepsis() -> (AcceptingPetriNet, EventLogActivityProjection) {
         let path = get_test_data_path()
             .join("xes")
             .join("Sepsis Cases - Event Log.xes.gz");
@@ -587,59 +592,27 @@ mod test {
     }
 
     #[test]
-    fn no_initial_marking_err() {
-        let test_path = get_test_data_path();
-        let mut net =
-            PetriNet::import_pnml(test_path.join("petri-net").join("sepsis-DISCovered.apnml"))
-                .unwrap();
-        net.initial_marking = None;
-        let sn = ModelNet::build(&net, &CostFunction::standard());
-        assert_eq!(sn, Err(SyncProdNetConstructionError::NoInitialMarking));
-    }
-    #[test]
-    fn no_final_markings_err() {
-        let test_path = get_test_data_path();
-        let mut net =
-            PetriNet::import_pnml(test_path.join("petri-net").join("sepsis-DISCovered.apnml"))
-                .unwrap();
-        net.final_markings = None;
-        let sn = ModelNet::build(&net, &CostFunction::standard());
-        assert_eq!(sn, Err(SyncProdNetConstructionError::NoFinalMarking));
-    }
-    #[test]
     fn unknown_place_in_initial_marking_err() {
-        let test_path = get_test_data_path();
-        let mut net =
-            PetriNet::import_pnml(test_path.join("petri-net").join("sepsis-DISCovered.apnml"))
-                .unwrap();
-        let new_id = PlaceID(uuid::Uuid::new_v4());
-        net.initial_marking
-            .as_mut()
-            .expect("exists in apnml")
-            .insert(new_id, 1);
+        let mut net = sepsis_net();
+        net.initial_marking.add(PlaceID(999), 1);
         let sn = ModelNet::build(&net, &CostFunction::standard());
         assert_eq!(
             sn,
-            Err(SyncProdNetConstructionError::InvalidPlaceInMarking(new_id))
+            Err(SyncProdNetConstructionError::InvalidPlaceInMarking(
+                PlaceID(999)
+            ))
         );
     }
     #[test]
     fn unknown_place_in_final_marking_err() {
-        let test_path = get_test_data_path();
-        let mut net =
-            PetriNet::import_pnml(test_path.join("petri-net").join("sepsis-DISCovered.apnml"))
-                .unwrap();
-        let new_id = PlaceID(uuid::Uuid::new_v4());
-        net.final_markings
-            .as_mut()
-            .expect("exists in apnml")
-            .first_mut()
-            .expect("one final marking exists")
-            .insert(new_id, 1);
+        let mut net = sepsis_net();
+        net.final_marking.add(PlaceID(999), 1);
         let sn = ModelNet::build(&net, &CostFunction::standard());
         assert_eq!(
             sn,
-            Err(SyncProdNetConstructionError::InvalidPlaceInMarking(new_id))
+            Err(SyncProdNetConstructionError::InvalidPlaceInMarking(
+                PlaceID(999)
+            ))
         );
     }
 
@@ -650,25 +623,23 @@ mod test {
         let p0 = net.add_place(None);
         let p1 = net.add_place(None);
         let t = net.add_transition(Some("a".to_string()), None);
-        net.add_arc(ArcType::PlaceTransition(p0.0, t.0), None);
-        net.add_arc(ArcType::PlaceTransition(p0.0, t.0), None);
-        net.add_arc(ArcType::TransitionPlace(t.0, p1.0), None);
-        net.final_markings = Some(vec![[(p1, 1)].into_iter().collect()]);
+        net.add_arc(ArcType::place_to_transition(p0, t), None);
+        net.add_arc(ArcType::place_to_transition(p0, t), None);
+        net.add_arc(ArcType::transition_to_place(t, p1), None);
+        let mut net =
+            AcceptingPetriNet::new(net, Marking::from([(p0, 1)]), Marking::from([(p1, 1)]));
         let options = AlignmentOptions::default();
 
-        net.initial_marking = Some([(p0, 1)].into_iter().collect());
         assert_eq!(
             align_trace(&net, &["a"], &options),
             Err(AlignmentError::SearchError(SearchError::Unreachable))
         );
-        net.initial_marking = Some([(p0, 2)].into_iter().collect());
+        net.initial_marking = Marking::from([(p0, 2)]);
         assert_eq!(align_trace(&net, &["a"], &options).unwrap().cost, 0);
 
         // The summed weight must still fit a TokenCount
-        net.arcs.push(Arc {
-            from_to: ArcType::PlaceTransition(p0.0, t.0),
-            weight: 300,
-        });
+        net.net
+            .add_arc(ArcType::place_to_transition(p0, t), Some(300));
         assert_eq!(
             ModelNet::build(&net, &CostFunction::standard()),
             Err(SyncProdNetConstructionError::ArcWeightTooLarge(302))
@@ -677,12 +648,9 @@ mod test {
 
     #[test]
     fn oversized_marking_err() {
-        let test_path = get_test_data_path();
-        let mut net =
-            PetriNet::import_pnml(test_path.join("petri-net").join("sepsis-DISCovered.apnml"))
-                .unwrap();
-        let place = *net.initial_marking.as_ref().unwrap().keys().next().unwrap();
-        net.initial_marking.as_mut().unwrap().insert(place, 400);
+        let mut net = sepsis_net();
+        let (place, _) = net.initial_marking.iter().next().unwrap();
+        net.initial_marking.set(place, 400);
         assert_eq!(
             ModelNet::build(&net, &CostFunction::standard()),
             Err(SyncProdNetConstructionError::MarkingTooLarge(place, 400))
@@ -696,16 +664,16 @@ mod test {
         let p: Vec<_> = (0..4).map(|_| net.add_place(None)).collect();
         // t1: p1 + p3 -> p2   (needs a token in p3, which only t2 produces)
         let t1 = net.add_transition(Some("a".to_string()), None);
-        net.add_arc(ArcType::PlaceTransition(p[0].0, t1.0), None);
-        net.add_arc(ArcType::PlaceTransition(p[2].0, t1.0), None);
-        net.add_arc(ArcType::TransitionPlace(t1.0, p[1].0), None);
+        net.add_arc(ArcType::place_to_transition(p[0], t1), None);
+        net.add_arc(ArcType::place_to_transition(p[2], t1), None);
+        net.add_arc(ArcType::transition_to_place(t1, p[1]), None);
         // t2: p2 -> p3 + p4
         let t2 = net.add_transition(Some("b".to_string()), None);
-        net.add_arc(ArcType::PlaceTransition(p[1].0, t2.0), None);
-        net.add_arc(ArcType::TransitionPlace(t2.0, p[2].0), None);
-        net.add_arc(ArcType::TransitionPlace(t2.0, p[3].0), None);
-        net.initial_marking = Some([(p[0], 1)].into_iter().collect());
-        net.final_markings = Some(vec![[(p[3], 1)].into_iter().collect()]);
+        net.add_arc(ArcType::place_to_transition(p[1], t2), None);
+        net.add_arc(ArcType::transition_to_place(t2, p[2]), None);
+        net.add_arc(ArcType::transition_to_place(t2, p[3]), None);
+        let net =
+            AcceptingPetriNet::new(net, Marking::from([(p[0], 1)]), Marking::from([(p[3], 1)]));
 
         let model = ModelNet::build(&net, &CostFunction::standard()).unwrap();
         // x = (1,1) solves initial + C x = final, so the cheap check cannot rule it out
@@ -726,20 +694,20 @@ mod test {
     #[test]
     fn place_past_the_mask_word_still_blocks() {
         let mut net = PetriNet::new();
-        // Places are indexed in id order, so `places[100]` lies past the 64-place word
-        let places: Vec<_> = (0..200)
-            .map(|i| net.add_place(Some(Uuid::from_u128(i))))
-            .collect();
+        let places: Vec<_> = (0..200).map(|_| net.add_place(None)).collect();
         // "a" carries the token from start to end
         let a = net.add_transition(Some("a".to_string()), None);
-        net.add_arc(ArcType::PlaceTransition(places[0].0, a.0), None);
-        net.add_arc(ArcType::TransitionPlace(a.0, places[1].0), None);
+        net.add_arc(ArcType::place_to_transition(places[0], a), None);
+        net.add_arc(ArcType::transition_to_place(a, places[1]), None);
         // "b" needs a token in a place nothing ever marks, so it can never fire
         let b = net.add_transition(Some("b".to_string()), None);
-        net.add_arc(ArcType::PlaceTransition(places[100].0, b.0), None);
-        net.add_arc(ArcType::TransitionPlace(b.0, places[1].0), None);
-        net.initial_marking = Some([(places[0], 1)].into_iter().collect());
-        net.final_markings = Some(vec![[(places[1], 1)].into_iter().collect()]);
+        net.add_arc(ArcType::place_to_transition(places[100], b), None);
+        net.add_arc(ArcType::transition_to_place(b, places[1]), None);
+        let net = AcceptingPetriNet::new(
+            net,
+            Marking::from([(places[0], 1)]),
+            Marking::from([(places[1], 1)]),
+        );
 
         let options = AlignmentOptions::default();
         assert_eq!(align_trace(&net, &["a"], &options).unwrap().cost, 0);
@@ -756,12 +724,15 @@ mod test {
         let mut net = PetriNet::new();
         let places: Vec<_> = (0..3).map(|_| net.add_place(None)).collect();
         let a = net.add_transition(Some("a".to_string()), None);
-        net.add_arc(ArcType::PlaceTransition(places[0].0, a.0), None);
+        net.add_arc(ArcType::place_to_transition(places[0], a), None);
         // Takes nothing from a place that never holds a token, so it must not stop "a" firing
-        net.add_arc(ArcType::PlaceTransition(places[2].0, a.0), Some(0));
-        net.add_arc(ArcType::TransitionPlace(a.0, places[1].0), None);
-        net.initial_marking = Some([(places[0], 1)].into_iter().collect());
-        net.final_markings = Some(vec![[(places[1], 1)].into_iter().collect()]);
+        net.add_arc(ArcType::place_to_transition(places[2], a), Some(0));
+        net.add_arc(ArcType::transition_to_place(a, places[1]), None);
+        let net = AcceptingPetriNet::new(
+            net,
+            Marking::from([(places[0], 1)]),
+            Marking::from([(places[1], 1)]),
+        );
         assert_eq!(
             align_trace(&net, &["a"], &AlignmentOptions::default())
                 .unwrap()
@@ -779,22 +750,24 @@ mod test {
                 .join("Sepsis Cases - Event Log.xes.gz"),
         )
         .unwrap();
-        let mut net =
-            PetriNet::import_pnml(test_path.join("petri-net").join("sepsis-DISCovered.apnml"))
-                .unwrap();
-        let places_in_final_marking: HashSet<_> = net
-            .final_markings
-            .as_mut()
-            .expect("exists in file")
-            .first_mut()
-            .expect("not empty")
-            .keys()
-            .map(|id| id.0)
-            .collect();
-        net.arcs.retain(|arc| match arc.from_to {
-            ArcType::PlaceTransition(_, _) => true,
-            ArcType::TransitionPlace(_, place) => !places_in_final_marking.contains(&place),
-        });
+        // The Sepsis net without the arcs that mark the final places
+        let source = sepsis_net();
+        let mut net = PetriNet::new();
+        for (_, place) in source.net.places() {
+            net.add_place(place.name.clone());
+        }
+        for (_, t) in source.net.transitions() {
+            net.add_transition(t.label.clone(), t.name.clone());
+        }
+        for arc in source.net.arcs() {
+            if let ArcType::TransitionPlace(_, place) = arc.from_to {
+                if source.final_marking.tokens(place) > 0 {
+                    continue;
+                }
+            }
+            net.add_arc(arc.from_to, Some(arc.weight));
+        }
+        let net = AcceptingPetriNet::new(net, source.initial_marking, source.final_marking);
         let act_proj = log_to_activity_projection(&log);
         let options = AlignmentOptions {
             cost_fn: CostFunction::standard(),
@@ -823,9 +796,7 @@ mod test {
                 .join("Sepsis Cases - Event Log.xes.gz"),
         )
         .unwrap();
-        let net =
-            PetriNet::import_pnml(test_path.join("petri-net").join("sepsis-DISCovered.apnml"))
-                .unwrap();
+        let net = sepsis_net();
         let act_proj = log_to_activity_projection(&log);
         let options = AlignmentOptions {
             cost_fn: CostFunction::standard(),
@@ -855,7 +826,8 @@ mod test {
         )
         .unwrap();
         let net =
-            PetriNet::import_pnml(test_path.join("petri-net").join("sepsis-fodina.apnml")).unwrap();
+            AcceptingPetriNet::import_pnml(test_path.join("petri-net").join("sepsis-fodina.apnml"))
+                .unwrap();
         let act_proj = log_to_activity_projection(&log);
         let options = AlignmentOptions::default();
         // The state equation has no solution for this net, so the final marking is unreachable
@@ -874,29 +846,30 @@ mod test {
     }
 
     #[test]
-    fn alignment_ties_are_deterministic() {
-        // Each fresh `HashMap` gets new hash keys, so iteration order differs between builds
-        let build = || {
+    fn ties_break_in_transition_order() {
+        let chosen = |labels: [&str; 2]| {
             let mut net = PetriNet::new();
-            let start = net.add_place(Some(Uuid::from_u128(1)));
-            let end = net.add_place(Some(Uuid::from_u128(2)));
-            for (id, label) in [(10, "A"), (11, "B")] {
-                let t = net.add_transition(Some(label.to_string()), Some(Uuid::from_u128(id)));
+            let start = net.add_place(None);
+            let end = net.add_place(None);
+            for label in labels {
+                let t = net.add_transition(Some(label.to_string()), None);
                 net.add_arc(ArcType::place_to_transition(start, t), None);
                 net.add_arc(ArcType::transition_to_place(t, end), None);
             }
-            net.initial_marking = Some([(start, 1)].into());
-            net.final_markings = Some(vec![[(end, 1)].into()]);
-            net
+            let net =
+                AcceptingPetriNet::new(net, Marking::from([(start, 1)]), Marking::from([(end, 1)]));
+            let moves = align_trace(&net, &["X"], &AlignmentOptions::default())
+                .unwrap()
+                .moves;
+            moves
+                .into_iter()
+                .find_map(|m| match m {
+                    AlignmentMove::ModelMove { transition, .. } => Some(transition),
+                    _ => None,
+                })
+                .unwrap()
         };
-        let alignments: Vec<_> = (0..20)
-            .map(|_| {
-                align_trace(&build(), &["X"], &AlignmentOptions::default())
-                    .unwrap()
-                    .moves
-            })
-            .collect();
-        assert!(alignments.windows(2).all(|pair| pair[0] == pair[1]));
+        assert_eq!(chosen(["A", "B"]), chosen(["B", "A"]));
     }
 
     #[test]
@@ -907,8 +880,8 @@ mod test {
         let a = net.add_transition(Some("a".to_string()), None);
         net.add_arc(ArcType::place_to_transition(start, a), None);
         net.add_arc(ArcType::transition_to_place(a, end), None);
-        net.initial_marking = Some([(start, 1)].into());
-        net.final_markings = Some(vec![[(end, 1)].into()]);
+        let net =
+            AcceptingPetriNet::new(net, Marking::from([(start, 1)]), Marking::from([(end, 1)]));
         let trace = vec!["a"; usize::from(TracePos::MAX) + 1];
         assert_eq!(
             align_trace(&net, &trace, &AlignmentOptions::default()),
@@ -920,46 +893,31 @@ mod test {
 
     /// Replays `moves` for `trace` on `net`, independently of the search, and returns their cost
     fn replay(
-        net: &PetriNet,
+        net: &AcceptingPetriNet,
         trace: &[&str],
         moves: &[AlignmentMove],
         cost_fn: &CostFunction,
     ) -> Result<u32, String> {
-        let mut marking: HashMap<Uuid, i64> = net
-            .initial_marking
-            .iter()
-            .flatten()
-            .map(|(place, tokens)| (place.0, *tokens as i64))
-            .collect();
+        let mut marking = net.initial_marking.clone();
         let mut fire = |transition: TransitionID| {
-            for arc in &net.arcs {
-                if let ArcType::PlaceTransition(place, t) = arc.from_to {
-                    if t == transition.0 {
-                        *marking.entry(place).or_default() -= i64::from(arc.weight);
-                    }
-                }
-            }
-            if marking.values().any(|tokens| *tokens < 0) {
-                return Err(format!("{transition:?} is not enabled"));
-            }
-            for arc in &net.arcs {
-                if let ArcType::TransitionPlace(t, place) = arc.from_to {
-                    if t == transition.0 {
-                        *marking.entry(place).or_default() += i64::from(arc.weight);
-                    }
-                }
-            }
-            Ok(())
+            marking = net
+                .net
+                .fire(&marking, transition)
+                .ok_or(format!("{transition:?} is not enabled"))?;
+            Ok::<_, String>(())
         };
-        let label = |transition: TransitionID| net.transitions[&transition.0].label.as_deref();
+        let label = |transition: TransitionID| net.net.transition(transition).label.as_deref();
         let (mut position, mut cost) = (0, 0);
         for step in moves {
             match step {
                 AlignmentMove::SyncMove {
                     transition,
+                    label: move_label,
                     trace_event_index,
                 } => {
-                    if *trace_event_index != position || label(*transition) != Some(trace[position])
+                    if *trace_event_index != position
+                        || label(*transition) != Some(trace[position])
+                        || move_label != trace[position]
                     {
                         return Err(format!("{step:?} does not match event {position}"));
                     }
@@ -967,7 +925,13 @@ mod test {
                     position += 1;
                     cost += cost_fn.sync_move_cost;
                 }
-                AlignmentMove::ModelMove { transition } => {
+                AlignmentMove::ModelMove {
+                    transition,
+                    label: move_label,
+                } => {
+                    if move_label.as_deref() != label(*transition) {
+                        return Err(format!("{step:?} has the wrong label"));
+                    }
                     fire(*transition)?;
                     cost += match label(*transition) {
                         Some(_) => cost_fn.model_move_cost,
@@ -989,13 +953,7 @@ mod test {
                 trace.len()
             ));
         }
-        marking.retain(|_, tokens| *tokens != 0);
-        let expected: HashMap<Uuid, i64> = net.final_markings.as_ref().unwrap()[0]
-            .iter()
-            .filter(|(_, tokens)| **tokens != 0)
-            .map(|(place, tokens)| (place.0, *tokens as i64))
-            .collect();
-        if marking != expected {
+        if marking != net.final_marking {
             return Err("final marking not reached".to_string());
         }
         Ok(cost)
@@ -1014,14 +972,12 @@ mod test {
     }
 
     /// A net whose transitions put back as many tokens as they take, so its state space is finite
-    fn random_net(rng: &mut Rng) -> PetriNet {
+    fn random_net(rng: &mut Rng) -> AcceptingPetriNet {
         let mut net = PetriNet::new();
-        let places: Vec<_> = (0..2 + rng.below(4))
-            .map(|i| net.add_place(Some(Uuid::from_u128(i as u128))))
-            .collect();
-        for index in 0..2 + rng.below(6) {
+        let places: Vec<_> = (0..2 + rng.below(4)).map(|_| net.add_place(None)).collect();
+        for _ in 0..2 + rng.below(6) {
             let label = ["a", "b", "c"].get(rng.below(4)).map(|l| l.to_string());
-            let t = net.add_transition(label, Some(Uuid::from_u128(1000 + index as u128)));
+            let t = net.add_transition(label, None);
             for _ in 0..1 + rng.below(2) {
                 let (input, output) = (
                     places[rng.below(places.len())],
@@ -1031,10 +987,12 @@ mod test {
                 net.add_arc(ArcType::transition_to_place(t, output), None);
             }
         }
-        let tokens = 1 + rng.below(2) as u64;
-        net.initial_marking = Some([(places[0], tokens)].into());
-        net.final_markings = Some(vec![[(places[places.len() - 1], tokens)].into()]);
-        net
+        let tokens = 1 + rng.below(2) as u32;
+        AcceptingPetriNet::new(
+            net,
+            Marking::from([(places[0], tokens)]),
+            Marking::from([(places[places.len() - 1], tokens)]),
+        )
     }
 
     #[test]
@@ -1077,7 +1035,8 @@ mod test {
             ),
         ] {
             let log = EventLog::import_from_path(test_path.join("xes").join(log)).unwrap();
-            let net = PetriNet::import_pnml(test_path.join("petri-net").join(net)).unwrap();
+            let net =
+                AcceptingPetriNet::import_pnml(test_path.join("petri-net").join(net)).unwrap();
             let options = AlignmentOptions::default();
             let model = ModelNet::build(&net, &options.cost_fn).unwrap();
             for variant in align_log(&net, &log_to_activity_projection(&log), &options) {

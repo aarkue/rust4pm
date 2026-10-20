@@ -13,7 +13,7 @@ use process_mining::conformance::alignments::{align_variants, AlignmentOptions};
 use process_mining::core::event_data::case_centric::utils::activity_projection::{
     log_to_activity_projection, EventLogActivityProjection,
 };
-use process_mining::{EventLog, Importable, PetriNet};
+use process_mining::{AcceptingPetriNet, EventLog, Importable};
 use std::error::Error;
 use std::time::Instant;
 
@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let (mode, log_path, net_path, cap) = (&args[1], &args[2], &args[3], args[4].parse::<usize>()?);
 
     let log = EventLog::import_from_path(log_path)?;
-    let net = PetriNet::import_from_path(net_path)?;
+    let net = AcceptingPetriNet::import_from_path(net_path)?;
     let proj = log_to_activity_projection(&log);
 
     let options = AlignmentOptions {

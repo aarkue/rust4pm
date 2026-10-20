@@ -2,16 +2,16 @@
 #[cfg(feature = "token-based-replay")]
 use macros_process_mining::register_binding;
 #[cfg(feature = "token-based-replay")]
-use nalgebra::{DMatrix, DVector};
+use nalgebra::DVector;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use uuid::Uuid;
 
-use crate::core::process_models::case_centric::petri_net::petri_net_struct::Marking;
+use crate::core::process_models::case_centric::petri_net::PlaceID;
+
 #[cfg(feature = "token-based-replay")]
 use crate::core::{
-    event_data::case_centric::utils::activity_projection::EventLogActivityProjection, PetriNet,
+    event_data::case_centric::utils::activity_projection::EventLogActivityProjection,
+    process_models::case_centric::petri_net::{AcceptingPetriNet, Marking},
 };
 
 ///
@@ -19,32 +19,26 @@ use crate::core::{
 ///
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum TokenBasedReplayError {
-    /// Error if no initial marking is provided
-    NoInitialMarking,
-    /// Error if the no final marking is provided
-    NoFinalMarking,
-    /// Error if there are too many final markings are provided
-    TooManyFinalMarkings,
     /// Error if Petri net contains duplicate labels or a silent transition
     DuplicateLabelOrSilentTransitionError,
+    /// Error if a marking refers to a place that is not in the net
+    InvalidPlaceInMarking(PlaceID),
 }
 
 impl std::fmt::Display for TokenBasedReplayError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TokenBasedReplayError::NoInitialMarking => {
-                write!(f, "No initial marking")
-            }
-            TokenBasedReplayError::NoFinalMarking => {
-                write!(f, "No final marking")
-            }
-            TokenBasedReplayError::TooManyFinalMarkings => {
-                write!(f, "Too many final markings")
-            }
             TokenBasedReplayError::DuplicateLabelOrSilentTransitionError => {
                 write!(
                     f,
                     "Petri net contains duplicate labels or silent transitions"
+                )
+            }
+            TokenBasedReplayError::InvalidPlaceInMarking(place) => {
+                write!(
+                    f,
+                    "A marking refers to place {}, which is not in the net",
+                    place.index()
                 )
             }
         }
@@ -85,69 +79,43 @@ impl TokenBasedReplayResult {
 #[cfg(feature = "token-based-replay")]
 #[register_binding]
 pub fn apply_token_based_replay(
-    petri_net: &PetriNet,
+    petri_net: &AcceptingPetriNet,
     event_log: &EventLogActivityProjection,
 ) -> Result<TokenBasedReplayResult, TokenBasedReplayError> {
-    if petri_net.initial_marking.is_none() {
-        return Err(TokenBasedReplayError::NoInitialMarking);
-    } else if petri_net.final_markings.as_ref().is_none()
-        || petri_net.final_markings.as_ref().unwrap().is_empty()
-    {
-        return Err(TokenBasedReplayError::NoFinalMarking);
-    } else if petri_net.final_markings.as_ref().unwrap().len() > 1 {
-        return Err(TokenBasedReplayError::TooManyFinalMarkings);
-    } else if petri_net.contains_duplicate_or_silent_transitions() {
+    let net = &petri_net.net;
+    if net.contains_duplicate_or_silent_transitions() {
         return Err(TokenBasedReplayError::DuplicateLabelOrSilentTransitionError);
+    }
+    if let Some(place) = [&petri_net.initial_marking, &petri_net.final_marking]
+        .into_iter()
+        .find_map(|marking| net.place_outside(marking))
+    {
+        return Err(TokenBasedReplayError::InvalidPlaceInMarking(place));
     }
 
     let mut result = TokenBasedReplayResult::new();
 
-    let node_to_pos = petri_net.create_vector_dictionary();
-
-    let pre_matrix =
-        change_matrix_type_to_i64(&petri_net.create_pre_incidence_matrix(&node_to_pos));
-    let post_matrix =
-        change_matrix_type_to_i64(&petri_net.create_post_incidence_matrix(&node_to_pos));
+    let pre_matrix = net.create_pre_incidence_matrix();
+    let post_matrix = net.create_post_incidence_matrix();
 
     let pos_array: Vec<Option<usize>> = event_log
         .activities
         .iter()
         .map(|activity| {
-            let pos;
-
-            if let Some((transition_id, _)) =
-                petri_net.transitions.iter().find(|(_, transition)| {
-                    transition
-                        .label
-                        .as_ref()
-                        .is_some_and(|label| label.eq(activity))
-                })
-            {
-                pos = Some(*node_to_pos.get(transition_id).unwrap());
-            } else {
-                pos = None;
-            };
-            pos
+            net.transitions()
+                .find(|(_, t)| t.label.as_ref() == Some(activity))
+                .map(|(id, _)| id.index())
         })
         .collect();
 
-    let m_init = marking_to_vector(
-        petri_net.initial_marking.as_ref().unwrap(),
-        &node_to_pos,
-        petri_net.places.len(),
-    );
-
-    let m_final = marking_to_vector(
-        petri_net.final_markings.as_ref().unwrap().first().unwrap(),
-        &node_to_pos,
-        petri_net.places.len(),
-    );
+    let m_init = marking_to_vector(&petri_net.initial_marking, net.num_places());
+    let m_final = marking_to_vector(&petri_net.final_marking, net.num_places());
 
     event_log.traces.iter().for_each(|(trace, freq)| {
         result.produced += m_init.sum() as u64 * *freq;
         result.consumed += m_final.sum() as u64 * *freq;
 
-        let mut marking: DVector<i64> = DVector::zeros(petri_net.places.len());
+        let mut marking: DVector<i64> = DVector::zeros(net.num_places());
         marking += &m_init;
 
         trace.iter().for_each(|event| {
@@ -177,26 +145,14 @@ pub fn apply_token_based_replay(
 }
 
 ///
-/// Changes the [`DMatrix`]'s data type to be [`i64`] from [`u8`]
-///
-fn change_matrix_type_to_i64(input: &DMatrix<u8>) -> DMatrix<i64> {
-    input.map(|e| e as i64)
-}
-
-///
 /// Changes the [`Marking`] object into a [`DVector<i64>`]
 ///
-pub fn marking_to_vector(
-    marking: &Marking,
-    node_to_pos: &HashMap<Uuid, usize>,
-    vector_len: usize,
-) -> DVector<i64> {
+/// Panics if a place of the marking is not below `vector_len`.
+pub fn marking_to_vector(marking: &Marking, vector_len: usize) -> DVector<i64> {
     let mut result: DVector<i64> = DVector::zeros(vector_len);
-
-    marking.iter().for_each(|(place, count)| {
-        result[*node_to_pos.get(&place.get_uuid()).unwrap()] += *count as i64;
-    });
-
+    for (place, count) in marking.iter() {
+        result[place.index()] += i64::from(count);
+    }
     result
 }
 
@@ -220,11 +176,26 @@ pub fn count_missing(marking: &mut DVector<i64>) -> u64 {
 mod tests {
     use crate::core::{
         event_data::case_centric::{Event, Trace},
-        process_models::case_centric::petri_net::petri_net_struct::ArcType,
+        process_models::case_centric::petri_net::{ArcType, PetriNet, PlaceID},
         EventLog,
     };
 
     use super::*;
+
+    #[test]
+    fn foreign_marking_places_are_an_error() {
+        let mut net = PetriNet::new();
+        let p = net.add_place(None);
+        let t = net.add_transition(Some("a".into()), None);
+        net.add_arc(ArcType::place_to_transition(p, t), None);
+        let foreign = PlaceID(99);
+        let net = AcceptingPetriNet::new(net, Marking::from([(foreign, 1)]), Marking::new());
+        let log = EventLogActivityProjection::from(&EventLog::new());
+        assert!(matches!(
+            apply_token_based_replay(&net, &log),
+            Err(TokenBasedReplayError::InvalidPlaceInMarking(place)) if place == foreign
+        ));
+    }
 
     #[test]
     fn token_based_replay_test() {
@@ -245,14 +216,7 @@ mod tests {
         net.add_arc(ArcType::transition_to_place(t4, p2), None);
         net.add_arc(ArcType::place_to_transition(p2, t4), None);
 
-        let mut initial_marking = Marking::new();
-        initial_marking.insert(p1, 1);
-        net.initial_marking = Some(initial_marking);
-
-        let mut final_marking = Marking::new();
-        final_marking.insert(p3, 1);
-        let final_markings = vec![final_marking];
-        net.final_markings = Some(final_markings);
+        let net = AcceptingPetriNet::new(net, Marking::from([(p1, 1)]), Marking::from([(p3, 1)]));
 
         let mut trace_1 = Trace::new();
         trace_1.events.push(Event::new("a".to_string()));

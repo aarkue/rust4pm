@@ -2,15 +2,17 @@
 use std::{borrow::Cow, hash::Hasher, ops::Range};
 
 use hashbrown::HashTable;
-use itertools::Itertools;
 use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
-use uuid::Uuid;
 
 use super::{EscapingEdgesOptions, PathStep, PrecisionError, SilentTransitions, TraceEnds};
 use crate::{
-    conformance::alignments::{petri_net::TokenCount, sync_prod_net::SyncProdNetConstructionError},
-    core::process_models::petri_net::{ArcType, Marking, TransitionID},
-    PetriNet,
+    conformance::alignments::{
+        petri_net::TokenCount,
+        sync_prod_net::{
+            arcs_as_token_counts, marking_as_token_counts, SyncProdNetConstructionError,
+        },
+    },
+    core::process_models::petri_net::{AcceptingPetriNet, Marking, TransitionID},
 };
 
 /// An activity (label id), or a transition index with [`SilentTransitions::AsActivities`]
@@ -20,7 +22,6 @@ pub(super) type MarkingId = u32;
 
 #[derive(Debug)]
 struct Transition {
-    id: TransitionID,
     label: Option<Symbol>,
     inputs: Vec<(usize, TokenCount)>,
     outputs: Vec<(usize, TokenCount)>,
@@ -143,9 +144,8 @@ pub(super) struct Replayer {
     /// The symbol for stopping, with [`TraceEnds::AsActivity`]
     end: Option<Symbol>,
     final_marking: Option<MarkingId>,
-    /// Sorted by id, so symbols and search order are the same in every run
+    /// Indexed like the net's transitions
     transitions: Vec<Transition>,
-    transition_index: FxHashMap<TransitionID, Symbol>,
     labels: Vec<String>,
     label_ids: FxHashMap<String, Symbol>,
     transitions_by_label: Vec<Vec<usize>>,
@@ -171,59 +171,28 @@ struct MarkingMemo {
 
 impl Replayer {
     pub(super) fn new(
-        net: &PetriNet,
+        net: &AcceptingPetriNet,
         options: &EscapingEdgesOptions,
     ) -> Result<Self, PrecisionError> {
         let silent = options.silent_transitions;
-        let place_index: FxHashMap<Uuid, usize> = net
-            .places
-            .keys()
-            .sorted()
-            .enumerate()
-            .map(|(i, id)| (*id, i))
-            .collect();
+        let num_places = net.net.num_places();
         let mut labels = Vec::new();
         let mut label_ids = FxHashMap::default();
-        let mut transitions: Vec<Transition> = net
-            .transitions
-            .iter()
-            .sorted_by_key(|(id, _)| *id)
-            .map(|(id, t)| Transition {
-                id: TransitionID(*id),
-                label: t.label.as_ref().map(|label| {
-                    *label_ids.entry(label.clone()).or_insert_with(|| {
-                        labels.push(label.clone());
-                        (labels.len() - 1) as Symbol
-                    })
-                }),
-                inputs: Vec::new(),
-                outputs: Vec::new(),
-            })
-            .collect();
-        let transition_index: FxHashMap<TransitionID, Symbol> = transitions
-            .iter()
-            .enumerate()
-            .map(|(i, t)| (t.id, i as Symbol))
-            .collect();
-
-        for arc in &net.arcs {
-            let (place, transition, is_input) = match arc.from_to {
-                ArcType::PlaceTransition(place, transition) => (place, transition, true),
-                ArcType::TransitionPlace(transition, place) => (place, transition, false),
-            };
-            let (Some(&place), Some(&transition)) = (
-                place_index.get(&place),
-                transition_index.get(&TransitionID(transition)),
-            ) else {
-                continue;
-            };
-            let transition = &mut transitions[transition as usize];
-            let arcs = if is_input {
-                &mut transition.inputs
-            } else {
-                &mut transition.outputs
-            };
-            arcs.push((place, arc.weight as TokenCount));
+        let mut transitions = Vec::with_capacity(net.net.num_transitions());
+        // A transition's symbol (with `AsActivities`) is its index, so symbols and search order
+        // follow transition order
+        for (_, t) in net.net.transitions() {
+            let label = t.label.as_ref().map(|label| {
+                *label_ids.entry(label.clone()).or_insert_with(|| {
+                    labels.push(label.clone());
+                    (labels.len() - 1) as Symbol
+                })
+            });
+            transitions.push(Transition {
+                label,
+                inputs: arcs_as_token_counts(t.inputs())?,
+                outputs: arcs_as_token_counts(t.outputs())?,
+            });
         }
 
         let mut transitions_by_label = vec![Vec::new(); labels.len()];
@@ -236,32 +205,18 @@ impl Replayer {
         }
 
         let mut markings = Markings {
-            num_places: place_index.len(),
+            num_places,
             ..Default::default()
         };
         let mut intern = |marking: &Marking| {
-            let mut tokens = vec![0; place_index.len()];
-            for (place, &count) in marking {
-                let index = place_index
-                    .get(&place.0)
-                    .ok_or(SyncProdNetConstructionError::InvalidPlaceInMarking(*place))?;
-                tokens[*index] = count as TokenCount;
-            }
-            Ok::<_, SyncProdNetConstructionError>(markings.intern(&tokens))
+            Ok::<_, SyncProdNetConstructionError>(
+                markings.intern(&marking_as_token_counts(marking, num_places)?),
+            )
         };
-        let initial = intern(
-            net.initial_marking
-                .as_ref()
-                .ok_or(SyncProdNetConstructionError::NoInitialMarking)?,
-        )?;
+        let initial = intern(&net.initial_marking)?;
         let final_marking =
             if options.exclude_dead_ends || options.trace_ends == TraceEnds::AsActivity {
-                let marking = net
-                    .final_markings
-                    .as_ref()
-                    .and_then(|markings| markings.first())
-                    .ok_or(SyncProdNetConstructionError::NoFinalMarking)?;
-                Some(intern(marking)?)
+                Some(intern(&net.final_marking)?)
             } else {
                 None
             };
@@ -277,7 +232,6 @@ impl Replayer {
             end: (options.trace_ends == TraceEnds::AsActivity).then_some(num_symbols as Symbol),
             final_marking,
             transitions,
-            transition_index,
             labels,
             label_ids,
             transitions_by_label,
@@ -307,10 +261,10 @@ impl Replayer {
         &self,
         transition: TransitionID,
     ) -> Result<Option<Symbol>, PrecisionError> {
-        let index = *self
-            .transition_index
-            .get(&transition)
-            .ok_or(PrecisionError::UnknownTransition(transition))?;
+        if transition.index() >= self.transitions.len() {
+            return Err(PrecisionError::UnknownTransition(transition));
+        }
+        let index = transition.index() as Symbol;
         Ok(match self.silent {
             SilentTransitions::Skip => self.transitions[index as usize].label,
             SilentTransitions::AsActivities => Some(index),
@@ -354,9 +308,7 @@ impl Replayer {
         }
         match self.silent {
             SilentTransitions::Skip => PathStep::Activity(self.labels[symbol as usize].clone()),
-            SilentTransitions::AsActivities => {
-                PathStep::Transition(self.transitions[symbol as usize].id)
-            }
+            SilentTransitions::AsActivities => PathStep::Transition(TransitionID(symbol)),
         }
     }
 

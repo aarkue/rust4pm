@@ -1,7 +1,6 @@
 use std::{collections::HashMap, fs::File};
 
 use flate2::read::GzDecoder;
-use uuid::Uuid;
 
 use super::{
     escaping_edges_precision, escaping_edges_precision_from_alignments,
@@ -18,11 +17,11 @@ use crate::{
         event_data::case_centric::utils::activity_projection::{
             log_to_activity_projection, EventLogActivityProjection,
         },
-        process_models::petri_net::{ArcType, TransitionID},
+        process_models::petri_net::{ArcType, Marking, PlaceID, TransitionID},
     },
     event_log,
     test_utils::get_test_data_path,
-    EventLog, Importable, PetriNet,
+    AcceptingPetriNet, EventLog, Importable, PetriNet,
 };
 
 /// Transitions as `(label, input places, output places)`
@@ -30,19 +29,18 @@ type Spec<'a> = &'a [(Option<&'a str>, &'a [&'a str], &'a [&'a str])];
 
 /// Builds a net with one token in `initial` and the final marking `final_`.
 ///
-/// Ids are fixed (transition `i` is [`transition_id`]`(i)`), so alignment ties break the same way
-/// in every run.
-fn net(transitions: Spec<'_>, initial: &str, final_: &str) -> PetriNet {
+/// Transition `i` of `transitions` is [`transition_id`]`(i)`; places get ids in order of first
+/// mention.
+fn net(transitions: Spec<'_>, initial: &str, final_: &str) -> AcceptingPetriNet {
     let mut net = PetriNet::new();
     let mut places = HashMap::new();
     let mut place = |net: &mut PetriNet, name: &str| {
-        let id = Uuid::from_u128(places.len() as u128);
         *places
             .entry(name.to_string())
-            .or_insert_with(|| net.add_place(Some(id)))
+            .or_insert_with(|| net.add_place(Some(name.to_string())))
     };
-    for (index, (label, inputs, outputs)) in transitions.iter().enumerate() {
-        let t = net.add_transition(label.map(str::to_string), Some(transition_id(index).0));
+    for (label, inputs, outputs) in transitions {
+        let t = net.add_transition(label.map(str::to_string), None);
         for input in *inputs {
             let p = place(&mut net, input);
             net.add_arc(ArcType::place_to_transition(p, t), None);
@@ -52,13 +50,13 @@ fn net(transitions: Spec<'_>, initial: &str, final_: &str) -> PetriNet {
             net.add_arc(ArcType::transition_to_place(t, p), None);
         }
     }
-    net.initial_marking = Some([(place(&mut net, initial), 1)].into());
-    net.final_markings = Some(vec![[(place(&mut net, final_), 1)].into()]);
-    net
+    let initial = Marking::from([(place(&mut net, initial), 1)]);
+    let final_marking = Marking::from([(place(&mut net, final_), 1)]);
+    AcceptingPetriNet::new(net, initial, final_marking)
 }
 
 fn replayer(
-    net: &PetriNet,
+    net: &AcceptingPetriNet,
     silent_transitions: SilentTransitions,
     search_limit: Option<usize>,
 ) -> Result<Replayer, PrecisionError> {
@@ -71,7 +69,7 @@ fn replayer(
 }
 
 fn transition_id(index: usize) -> TransitionID {
-    TransitionID(Uuid::from_u128(1000 + index as u128))
+    TransitionID(index as u32)
 }
 
 fn activity(label: &str) -> PathStep {
@@ -185,26 +183,43 @@ fn token_generating_silent_transition_hits_limit() {
 }
 
 #[test]
-fn missing_initial_marking_is_an_error() {
-    let mut net = net(SILENT_CHOICE, "p0", "pf");
-    net.initial_marking = None;
+fn precision_rejects_foreign_marking_places() {
+    let mut net = net(SEQUENCE, "p0", "pf");
+    net.initial_marking = Marking::from([(PlaceID(999), 1)]);
     assert_eq!(
         replayer(&net, SilentTransitions::Skip, None).err(),
         Some(PrecisionError::InvalidNet(
-            SyncProdNetConstructionError::NoInitialMarking
+            SyncProdNetConstructionError::InvalidPlaceInMarking(PlaceID(999))
+        ))
+    );
+}
+
+#[test]
+fn precision_rejects_oversized_token_counts() {
+    let mut net = net(SEQUENCE, "p0", "pf");
+    net.initial_marking = Marking::from([(PlaceID(0), 300)]);
+    assert_eq!(
+        replayer(&net, SilentTransitions::Skip, None).err(),
+        Some(PrecisionError::InvalidNet(
+            SyncProdNetConstructionError::MarkingTooLarge(PlaceID(0), 300)
         ))
     );
 }
 
 fn measure(
-    net: &PetriNet,
+    net: &AcceptingPetriNet,
     log: &EventLog,
     options: &EscapingEdgesOptions,
 ) -> EscapingEdgesPrecision {
     escaping_edges_precision(net, &log_to_activity_projection(log), options).unwrap()
 }
 
-fn assert_precision(net: &PetriNet, log: &EventLog, options: &EscapingEdgesOptions, expected: f64) {
+fn assert_precision(
+    net: &AcceptingPetriNet,
+    log: &EventLog,
+    options: &EscapingEdgesOptions,
+    expected: f64,
+) {
     let precision = measure(net, log, options).precision;
     assert!(
         (precision - expected).abs() < 1e-12,
@@ -511,18 +526,18 @@ fn pm4py_preset_ignores_trace_ends() {
     );
 }
 
-fn test_data(net: &str, log: &str) -> (PetriNet, EventLogActivityProjection) {
+fn test_data(net: &str, log: &str) -> (AcceptingPetriNet, EventLogActivityProjection) {
     let path = get_test_data_path();
-    let net = PetriNet::import_pnml(path.join("petri-net").join(net)).unwrap();
+    let net = AcceptingPetriNet::import_pnml(path.join("petri-net").join(net)).unwrap();
     let log = EventLog::import_from_path(path.join("xes").join(log)).unwrap();
     (net, log_to_activity_projection(&log))
 }
 
-fn sepsis() -> (PetriNet, EventLogActivityProjection) {
+fn sepsis() -> (AcceptingPetriNet, EventLogActivityProjection) {
     test_data("sepsis-DISCovered.apnml", "Sepsis Cases - Event Log.xes.gz")
 }
 
-fn rtfm() -> (PetriNet, EventLogActivityProjection) {
+fn rtfm() -> (AcceptingPetriNet, EventLogActivityProjection) {
     test_data(
         "rtfm-imf-02.apnml",
         "Road_Traffic_Fine_Management_Process.xes.gz",
@@ -567,7 +582,8 @@ fn prom_preset_is_close_to_prom_on_its_alignments() {
         .join("rtfm-imf-02-prom-alignments.json.gz");
     let alignments: Vec<VariantAlignmentResult> =
         serde_json::from_reader(GzDecoder::new(File::open(fixture).unwrap())).unwrap();
-    let net = PetriNet::import_pnml(path.join("petri-net").join("rtfm-imf-02.apnml")).unwrap();
+    let net =
+        AcceptingPetriNet::import_pnml(path.join("petri-net").join("rtfm-imf-02.apnml")).unwrap();
     let result =
         escaping_edges_precision_from_alignments(&net, &alignments, &EscapingEdgesOptions::prom())
             .unwrap();
@@ -577,15 +593,15 @@ fn prom_preset_is_close_to_prom_on_its_alignments() {
     );
 }
 
-/// Regression values. `prom()` gives 0.7783 on RTFM (`ProM`: 0.7784) and 0.5154 on Sepsis
+/// Regression values. `prom()` gives 0.7780 on RTFM (`ProM`: 0.7784) and 0.5476 on Sepsis
 /// (`ProM`: 0.575): `ProM`'s aligner picks other optimal alignments, and on Sepsis it fires many
 /// silent transitions before they are needed. Both nets are sound, so excluding dead ends changes
 /// nothing.
 #[test]
 fn aligned_precision_regression_values() {
     for ((net, log), [default, prom]) in [
-        (sepsis(), [(48271, 22642), (64786, 31395)]),
-        (rtfm(), [(1961593, 307740), (2622593, 581333)]),
+        (sepsis(), [(48284, 22648), (63653, 28799)]),
+        (rtfm(), [(1961595, 458093), (2622596, 582184)]),
     ] {
         let alignments = align_log(&net, &log, &AlignmentOptions::default());
         let without_dead_ends = EscapingEdgesOptions {
@@ -606,13 +622,14 @@ fn aligned_precision_regression_values() {
 
 #[test]
 fn alignments_of_another_net_are_rejected() {
-    let foreign = TransitionID(Uuid::from_u128(42));
+    let foreign = TransitionID(42);
     let alignments = [VariantAlignmentResult {
         activities: vec!["A".to_string()],
         frequency: 1,
         result: Ok(AlignmentResult {
             moves: vec![AlignmentMove::SyncMove {
                 transition: foreign,
+                label: "A".to_string(),
                 trace_event_index: 0,
             }],
             cost: 0,
@@ -645,10 +662,12 @@ fn silent_transitions_count_where_they_are_needed() {
     );
     let sync = |t| AlignmentMove::SyncMove {
         transition: transition_id(t),
+        label: net.net.transition(transition_id(t)).label.clone().unwrap(),
         trace_event_index: 0,
     };
     let silent = AlignmentMove::ModelMove {
         transition: transition_id(3),
+        label: None,
     };
     let variant = |moves| VariantAlignmentResult {
         activities: Vec::new(),
@@ -740,22 +759,4 @@ fn stopping_counts_as_an_activity() {
             edge(&["A", "B", "C"], activity("B"))
         ])
     );
-}
-
-#[test]
-fn dead_end_filter_needs_a_final_marking() {
-    let mut net = net(SEQUENCE, "p0", "pf");
-    net.final_markings = None;
-    let options = EscapingEdgesOptions {
-        exclude_dead_ends: true,
-        ..EscapingEdgesOptions::pm4py()
-    };
-    let log = log_to_activity_projection(&event_log!(["A", "B"]));
-    assert_eq!(
-        escaping_edges_precision(&net, &log, &options),
-        Err(PrecisionError::InvalidNet(
-            SyncProdNetConstructionError::NoFinalMarking
-        ))
-    );
-    assert!(escaping_edges_precision(&net, &log, &EscapingEdgesOptions::pm4py()).is_ok());
 }

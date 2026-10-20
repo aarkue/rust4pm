@@ -33,7 +33,7 @@ use crate::{
         event_data::case_centric::utils::activity_projection::EventLogActivityProjection,
         process_models::petri_net::TransitionID,
     },
-    PetriNet,
+    AcceptingPetriNet,
 };
 
 use self::{
@@ -118,7 +118,7 @@ impl EscapingEdgesOptions {
     ///
     /// The result is close to `ProM`'s, but not equal: `ProM`'s aligner picks other optimal
     /// alignments, and where it fires silent transitions before they are needed, its precision
-    /// depends on that order (e.g., 0.575 instead of 0.515 on the Sepsis log).
+    /// depends on that order (e.g., 0.575 instead of 0.548 on the Sepsis log).
     pub fn prom() -> Self {
         Self {
             silent_transitions: SilentTransitions::AsActivities,
@@ -184,7 +184,7 @@ pub struct EscapingEdgesPrecision {
 /// variants.
 #[register_binding(stringify_error)]
 pub fn escaping_edges_precision(
-    net: &PetriNet,
+    net: &AcceptingPetriNet,
     log: &EventLogActivityProjection,
     #[bind(default)] options: &EscapingEdgesOptions,
 ) -> Result<EscapingEdgesPrecision, PrecisionError> {
@@ -205,7 +205,7 @@ pub fn escaping_edges_precision(
 }
 
 fn replay_precision(
-    net: &PetriNet,
+    net: &AcceptingPetriNet,
     log: &EventLogActivityProjection,
     options: &EscapingEdgesOptions,
 ) -> Result<EscapingEdgesPrecision, PrecisionError> {
@@ -232,7 +232,7 @@ fn replay_precision(
 /// whose fields are then not used.
 #[register_binding(stringify_error)]
 pub fn escaping_edges_precision_from_alignments(
-    net: &PetriNet,
+    net: &AcceptingPetriNet,
     alignments: &[VariantAlignmentResult],
     #[bind(default)] options: &EscapingEdgesOptions,
 ) -> Result<EscapingEdgesPrecision, PrecisionError> {
@@ -250,7 +250,7 @@ pub fn escaping_edges_precision_from_alignments(
                     .iter()
                     .filter_map(|step| match step {
                         AlignmentMove::SyncMove { transition, .. }
-                        | AlignmentMove::ModelMove { transition } => {
+                        | AlignmentMove::ModelMove { transition, .. } => {
                             measure.replayer.transition_symbol(*transition).transpose()
                         }
                         AlignmentMove::LogMove { .. } => None,
@@ -286,7 +286,10 @@ struct Measure<'a> {
 }
 
 impl<'a> Measure<'a> {
-    fn new(net: &PetriNet, options: &'a EscapingEdgesOptions) -> Result<Self, PrecisionError> {
+    fn new(
+        net: &AcceptingPetriNet,
+        options: &'a EscapingEdgesOptions,
+    ) -> Result<Self, PrecisionError> {
         let replayer = Replayer::new(net, options)?;
         Ok(Self {
             options,
@@ -384,7 +387,9 @@ impl std::fmt::Display for PrecisionError {
         match self {
             Self::InvalidNet(error) => write!(f, "invalid Petri net: {error}"),
             Self::IncompatibleOptions(reason) => write!(f, "incompatible options: {reason}"),
-            Self::UnknownTransition(id) => write!(f, "transition {} is not in the net", id.0),
+            Self::UnknownTransition(id) => {
+                write!(f, "transition {} is not in the net", id.index())
+            }
         }
     }
 }

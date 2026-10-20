@@ -33,7 +33,7 @@ serde_json = "1.0.105"
 serde = {version = "1.0.188", features = ["derive"]}
 serde_with = { version = "3.16.0", features = ["std", "macros", "schemars_1"]}
 tempfile = "3"
-uuid = {version = "1.16.0", features = ["v4", "v5", "serde"]}
+uuid = {version = "1.16.0", features = ["v4", "serde"]}
 schemars = { version = "1.1.0", features = ["chrono04", "uuid1"]}
 inventory = { version = "0.3", optional = true }
 # Only for the `bytes` form of a registry-reference argument, i.e. how a host with no filesystem

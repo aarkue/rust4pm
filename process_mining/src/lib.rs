@@ -30,7 +30,7 @@ pub mod utils;
 pub use core::io::{Exportable, Importable};
 
 // Re-export main structs for convenience
-pub use core::{EventLog, PetriNet, OCEL};
+pub use core::{AcceptingPetriNet, EventLog, PetriNet, OCEL};
 
 // Re-export OCEL backend traits and the streaming entry points.
 pub use core::event_data::object_centric::{

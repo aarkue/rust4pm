@@ -3,7 +3,7 @@ use process_mining::conformance::alignments::{
     align_empty_trace, align_log, compute_fitness, AlignmentOptions,
 };
 use process_mining::core::event_data::case_centric::utils::activity_projection::EventLogActivityProjection;
-use process_mining::{EventLog, Importable, PetriNet};
+use process_mining::{AcceptingPetriNet, EventLog, Importable};
 use std::env;
 use std::error::Error;
 use std::path::PathBuf;
@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let pn_path = PathBuf::from(&args[2]);
     println!("Importing Petri net from {:?}", pn_path);
-    let pn = PetriNet::import_from_path(&pn_path)?;
+    let pn = AcceptingPetriNet::import_from_path(&pn_path)?;
 
     let options = AlignmentOptions {
         cost_fn: CostFunction::standard(),

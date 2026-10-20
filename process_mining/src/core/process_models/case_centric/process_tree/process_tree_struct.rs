@@ -1,5 +1,6 @@
-use crate::core::process_models::petri_net::{ArcType, Marking, PlaceID};
-use crate::PetriNet;
+use crate::core::process_models::petri_net::{
+    AcceptingPetriNet, ArcType, Marking, PetriNet, PlaceID,
+};
 use core::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -229,20 +230,16 @@ impl ProcessTree {
 
     ///
     /// Transforms a [`ProcessTree`] into a [`PetriNet`] according to the translation rules in literature.
-    /// Returns a workflow net, consisting of the [`PetriNet`], its input, and output place's [`PlaceID`]
+    /// Returns a workflow net: one token in its input place initially, one in its output place finally.
     ///
-    pub fn to_petri_net(&self) -> PetriNet {
-        let mut petri_net = PetriNet::new();
-
-        let (start_place, end_place) = self.root.add_to_petri_net(&mut petri_net, None, None);
-
-        petri_net.initial_marking = Some(Marking::from([(start_place, 1)]));
-
-        let mut final_marking = Marking::new();
-        final_marking.insert(end_place, 1);
-        petri_net.final_markings = Some(vec![final_marking]);
-
-        petri_net
+    pub fn to_petri_net(&self) -> AcceptingPetriNet {
+        let mut net = PetriNet::new();
+        let (start_place, end_place) = self.root.add_to_petri_net(&mut net, None, None);
+        AcceptingPetriNet::new(
+            net,
+            Marking::from([(start_place, 1)]),
+            Marking::from([(end_place, 1)]),
+        )
     }
 
     #[cfg(feature = "graphviz-export")]
@@ -777,9 +774,9 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(4, net.places.len());
-        assert_eq!(3, net.transitions.len());
-        assert_eq!(6, net.arcs.len());
+        assert_eq!(4, net.net.num_places());
+        assert_eq!(3, net.net.num_transitions());
+        assert_eq!(6, net.net.arcs().count());
     }
 
     // Checking Conc(a,b,c)
@@ -799,9 +796,9 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(8, net.places.len());
-        assert_eq!(5, net.transitions.len());
-        assert_eq!(14, net.arcs.len());
+        assert_eq!(8, net.net.num_places());
+        assert_eq!(5, net.net.num_transitions());
+        assert_eq!(14, net.net.arcs().count());
     }
 
     // Checking Loop(a,b,c)
@@ -821,9 +818,9 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(4, net.places.len());
-        assert_eq!(5, net.transitions.len());
-        assert_eq!(10, net.arcs.len());
+        assert_eq!(4, net.net.num_places());
+        assert_eq!(5, net.net.num_transitions());
+        assert_eq!(10, net.net.arcs().count());
     }
 
     // Checking Xor(a,b,c)
@@ -843,9 +840,9 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(2, net.places.len());
-        assert_eq!(3, net.transitions.len());
-        assert_eq!(6, net.arcs.len());
+        assert_eq!(2, net.net.num_places());
+        assert_eq!(3, net.net.num_transitions());
+        assert_eq!(6, net.net.arcs().count());
     }
 
     // Checking Inter(a,b,c)
@@ -862,9 +859,9 @@ mod tests {
         let tree = ProcessTree::new(Node::Operator(inter));
         let net = tree.to_petri_net();
 
-        assert_eq!(15, net.places.len());
-        assert_eq!(11, net.transitions.len());
-        assert_eq!(34, net.arcs.len());
+        assert_eq!(15, net.net.num_places());
+        assert_eq!(11, net.net.num_transitions());
+        assert_eq!(34, net.net.arcs().count());
     }
 
     // Checking Or(a,b,c)
@@ -881,9 +878,9 @@ mod tests {
         let tree = ProcessTree::new(Node::Operator(or));
         let net = tree.to_petri_net();
 
-        assert_eq!(13, net.places.len());
-        assert_eq!(14, net.transitions.len());
-        assert_eq!(52, net.arcs.len());
+        assert_eq!(13, net.net.num_places());
+        assert_eq!(14, net.net.num_transitions());
+        assert_eq!(52, net.net.arcs().count());
     }
 
     // Checking tau
@@ -895,12 +892,12 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(2, net.places.len());
-        assert_eq!(1, net.transitions.len());
-        assert_eq!(2, net.arcs.len());
+        assert_eq!(2, net.net.num_places());
+        assert_eq!(1, net.net.num_transitions());
+        assert_eq!(2, net.net.arcs().count());
 
-        net.transitions
-            .iter()
+        net.net
+            .transitions()
             .for_each(|(_, t)| assert!(t.label.is_none()));
     }
 
@@ -913,12 +910,12 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(2, net.places.len());
-        assert_eq!(1, net.transitions.len());
-        assert_eq!(2, net.arcs.len());
+        assert_eq!(2, net.net.num_places());
+        assert_eq!(1, net.net.num_transitions());
+        assert_eq!(2, net.net.arcs().count());
 
-        net.transitions
-            .iter()
+        net.net
+            .transitions()
             .for_each(|(_, t)| assert_eq!("a", t.label.clone().unwrap()));
     }
 
@@ -960,8 +957,8 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(10, net.places.len());
-        assert_eq!(13, net.transitions.len());
-        assert_eq!(28, net.arcs.len());
+        assert_eq!(10, net.net.num_places());
+        assert_eq!(13, net.net.num_transitions());
+        assert_eq!(28, net.net.arcs().count());
     }
 }

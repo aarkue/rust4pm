@@ -8,7 +8,7 @@
 - Fix parallel arcs between the same place and transition counting separately (previously their weights were not summed, which could underflow a place's token count)
 - Arc weights and markings exceeding `TokenCount::MAX` now error with `SyncProdNetConstructionError::{ArcWeightTooLarge, MarkingTooLarge}` instead of being truncated (**Breaking**)
 - Traces with more events than `TracePos::MAX` now error with `SyncProdNetConstructionError::TraceTooLong` instead of being truncated (**Breaking**)
-- Alignments break ties between equally optimal alignments the same way on every run, as long as the transition ids stay the same (places and transitions are indexed in sorted id order)
+- Alignments break ties between equally optimal alignments the same way on every run, in transition order (creation or file order). Precision values that depend on the choice among optimal alignments (e.g., `prom()` on Sepsis) change accordingly
 - All search buffers reused per thread are given back once a later search needs far less, so one large trace does not keep that memory for the rest of the run
 - Added escaping-edges precision (`conformance::case_centric::precision`): `escaping_edges_precision` aligns the log, `escaping_edges_precision_from_alignments` reuses alignments (e.g., from fitness)
   - `EscapingEdgesOptions` choose between aligned paths (optionally aligning variants that ran out of memory again, see `align_variants_with_retry`) and replaying until the first deviation, and whether silent transitions are skipped or count as activities
@@ -16,7 +16,26 @@
   - `exclude_dead_ends` (off by default) only counts activities after which the final marking can still be reached, so the dead ends of unsound nets are not counted as allowed behavior
   - `TraceEnds::AsActivity` (off by default) makes stopping an activity of its own, so a model that may stop where the log never does is penalized
   - Optionally returns every escaping edge for diagnostics
-- PNML import keeps node ids that are UUIDs and derives a fixed UUID from any other id, so importing a file twice gives the same ids (before, every import generated random ids)
+- Redesigned `PetriNet` (**Breaking**)
+  - Places and transitions have dense ids (`PlaceID`, `TransitionID`) in creation order instead of random UUIDs, and everything (iteration, exports, alignments) follows that order
+  - `PetriNet` holds only places, transitions and arcs. `AcceptingPetriNet` adds exactly one initial and one final marking, and is what discovery returns and alignments, precision and token-based replay take
+  - Arcs live on their transitions: `Transition::inputs`/`outputs`, presets and postsets are lookups, and `arcs()` lists them. Arcs between the same nodes merge into one with the summed weight, and an arc of weight 0 adds nothing
+  - `Marking` is a value type (places to `u32` tokens), with the token game on the net: `is_enabled`, `fire`, `enabled_transitions`
+  - `NodeID` wrapper (a place or a transition) for Petri nets as graphs: `nodes`, `preset_of` and `postset_of` replace the UUID-based `preset_of`/`postset_of` and `PetriNetNodes`
+  - `remove_node`, `retain_nodes` and `retain_transitions` remove nodes with their arcs; the kept nodes are renumbered in order, so the ids above a removed node drop by one. On `AcceptingPetriNet`, `remove_node` and `retain_nodes` also update the markings
+  - `AcceptingPetriNet::is_in_initial_marking`/`is_in_final_marking` replace `is_in_initial_marking`/`is_in_a_final_marking`
+  - Removed `create_vector_dictionary` (ids are indices, see `index()`), `get_uuid` and the `id` fields of `Place` and `Transition`. A transition's arcs are read with `inputs`/`outputs` and written only by `add_arc`
+  - `export_petri_net_image`/`export_petri_net_to_dot_graph` take the markings to draw as options, `export_petri_net_image_svg`/`_png` take an `AcceptingPetriNet`
+  - `ProcessTree::to_petri_net` and `From<ProcessTree>` give an `AcceptingPetriNet`; `marking_to_vector` takes the vector length instead of a dictionary
+  - New JSON shape (places and transitions as lists, markings keyed by place index); JSON of earlier versions still loads
+- PNML (**Breaking**)
+  - `pnml::import_pnml*` return the net with its initial and final marking as options. `AcceptingPetriNet::import_pnml` requires both markings, `PetriNet::import_pnml` reads the structure only; `Importable`/`Exportable` work the same way for both types
+  - A node's PNML id becomes its name, and ids follow file order, so importing a file twice gives the same net. A transition without `<name>` is labelled with its PNML id. More than one final marking, a token count that is not a number, two nodes with the same id, a reference to an unknown node, or an arc between two places or two transitions is an error
+  - Export writes unique, valid PNML ids (the node names where possible, otherwise `p0`, `t0`, ...), declares the place/transition net type (`ptnet`, as it writes markings and arc weights), and the same net always gives the same file. The export functions return `PetriNetIOError`, which reports a marking with a place outside the net as `InvalidPlaceInMarking` (and then writes no file). `PNMLParseError` loses the unused `InvalidMode` and `InvalidKeyValue`
+- Alignment moves carry the transition's label (**Breaking**)
+- `SyncProdNetConstructionError` and `TokenBasedReplayError` lose their missing-marking variants, as the types now guarantee the markings; token-based replay reports a marked place outside the net as `TokenBasedReplayError::InvalidPlaceInMarking` (**Breaking**)
+- Escaping-edges precision rejects arc weights and token counts above `TokenCount::MAX` instead of truncating them
+- Token-based replay and the incidence matrices use arc weights (before, every arc counted as weight 1); `create_*_incidence_matrix` return `i64` matrices indexed by place and transition id and no longer take a dictionary (**Breaking**)
 
 ## 0.6.2
 - `stream_ocel_file_to_duckdb` / `_with` infer the format the way `OCEL` does and accept every format it imports from, bundles included

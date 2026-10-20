@@ -17,7 +17,7 @@ use process_mining::{
         process_models::petri_net::{ArcType, Marking},
     },
     utils::dijkstra_search::SearchError,
-    PetriNet,
+    AcceptingPetriNet, PetriNet,
 };
 
 /// Counts live heap bytes and their peak. A reallocation counts the old and the new block until
@@ -78,7 +78,7 @@ const MIB: usize = 1 << 20;
 const ALLOWANCE: usize = MIB;
 
 /// A silent split into `branches` branches of two activities each, then a silent join
-fn concurrent_net(branches: usize) -> PetriNet {
+fn concurrent_net(branches: usize) -> AcceptingPetriNet {
     let mut net = PetriNet::new();
     let (start, end) = (net.add_place(None), net.add_place(None));
     let (split, join) = (
@@ -98,9 +98,7 @@ fn concurrent_net(branches: usize) -> PetriNet {
         }
         net.add_arc(ArcType::place_to_transition(place, join), None);
     }
-    net.initial_marking = Some(Marking::from([(start, 1)]));
-    net.final_markings = Some(vec![Marking::from([(end, 1)])]);
-    net
+    AcceptingPetriNet::new(net, Marking::from([(start, 1)]), Marking::from([(end, 1)]))
 }
 
 /// Variants that list the second activities of all branches in reverse, then the first ones,
