@@ -23,6 +23,11 @@ pub struct AggregatedEventTimestamps {
     pub events_per_timestamp: HashMap<i64, HashMap<String, usize>>,
     /// All distinct activity names found in the log.
     pub activities: Vec<String>,
+    /// Width of each bin in milliseconds, which is also the spacing of the bin centers.
+    ///
+    /// Bins are keyed by their center, so one spans
+    /// `[center - bin_width_ms / 2, center + bin_width_ms / 2)`. `0` means there are no bins.
+    pub bin_width_ms: i64,
 }
 
 /// Options for [`get_event_timestamps`].
@@ -88,15 +93,18 @@ pub fn get_event_timestamps(
         return AggregatedEventTimestamps {
             events_per_timestamp: HashMap::default(),
             activities: activities.into_iter().cloned().collect(),
+            bin_width_ms: 0,
         };
     };
-    let bin_size = (max - min) as f64 / num_bins as f64;
+    // Bin centers are whole milliseconds, so rounding the width up keeps it equal to the center
+    // spacing even when the span is shorter than the number of bins.
+    let bin_width_ms = (((max - min) as f64 / num_bins as f64).ceil() as i64).max(1);
     let date_bins: Vec<_> = (0..num_bins)
-        .map(|bin_index| (min as f64 + (bin_index as f64 + 0.5) * bin_size).round() as i64)
+        .map(|bin_index| min + bin_index as i64 * bin_width_ms + bin_width_ms / 2)
         .collect();
     let mut ev_counts: HashMap<i64, HashMap<String, usize>> = HashMap::new();
     for (timestamp, act) in &timestamps_with_act {
-        let bin_index = (((timestamp - min) as f64 / bin_size).floor() as usize).min(num_bins - 1);
+        let bin_index = (((timestamp - min) / bin_width_ms) as usize).min(num_bins - 1);
         *ev_counts
             .entry(date_bins[bin_index])
             .or_default()
@@ -106,5 +114,6 @@ pub fn get_event_timestamps(
     AggregatedEventTimestamps {
         events_per_timestamp: ev_counts,
         activities: activities.into_iter().cloned().collect(),
+        bin_width_ms,
     }
 }

@@ -150,7 +150,13 @@ where
 fn clean_sql_name(type_name: &str) -> String {
     type_name
         .chars()
-        .map(|c| if c != '\'' && c != '\\' { c } else { '_' })
+        .map(|c| {
+            if c != '\'' && c != '\\' && c != '"' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 

@@ -19,11 +19,10 @@ use uuid::Uuid;
 use crate::{
     core::{
         event_data::object_centric::{
-            appendable::AppendableOCEL,
+            appendable::{is_streaming_format, AppendableOCEL, StreamImportOCEL},
             io::OCELIOError,
             linked_ocel::LinkedOCELAccess,
-            ocel_json::import_ocel_json_into,
-            ocel_xml::xml_ocel_import::{import_ocel_xml_into, OCELImportOptions},
+            ocel_xml::xml_ocel_import::OCELImportOptions,
             readable::{OCELLookup, ReadableOCEL},
             OCELAttributeType, OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject,
             OCELObjectAttribute, OCELRelationship, OCELType, OCELTypeAttribute,
@@ -243,7 +242,13 @@ impl EventIndex {
     }
     /// Get a mutable reference to the attribute value of this event, specified by the attribute name
     ///
-    /// Returns [`None`] if there is no such attribute.
+    /// Returns [`None`] if the event's type does not declare `attr_name`.
+    ///
+    /// An event's attribute vector is sized when the event is added, so a type that grows a new
+    /// attribute afterwards leaves earlier events of that type short of it. This grows the vector
+    /// to `index + 1`, padding with [`OCELAttributeValue::Null`], rather than reporting a declared
+    /// attribute as absent. Attributes past this one stay absent until they are themselves asked
+    /// for, and [`Self::get_attribute_value`] still answers [`None`] for them.
     pub fn get_attribute_value_mut<'a>(
         &self,
         attr_name: &str,
@@ -255,8 +260,10 @@ impl EventIndex {
             .iter()
             .enumerate()
             .find(|(_i, a)| a.name == attr_name)?;
-        let attr_val = ev.attributes.get_mut(index)?;
-        Some(attr_val)
+        if ev.attributes.len() <= index {
+            ev.attributes.resize(index + 1, OCELAttributeValue::Null);
+        }
+        ev.attributes.get_mut(index)
     }
     /// Get 'fat' version of Event (i.e., with all fields expanded, with a structure similar to the OCEL 2.0 specification)
     pub fn fat_ev(&self, locel: &SlimLinkedOCEL) -> OCELEvent {
@@ -503,8 +510,12 @@ impl ObjectIndex {
             .iter()
             .enumerate()
             .find(|(_i, a)| a.name == attr_name)?;
-        let attr_val = ob.attributes.get_mut(index)?;
-        Some(attr_val)
+        // See `EventIndex::get_attribute_value_mut`: a type that grew an attribute after this
+        // object was added leaves the object's vector short of it.
+        if ob.attributes.len() <= index {
+            ob.attributes.resize_with(index + 1, Vec::new);
+        }
+        ob.attributes.get_mut(index)
     }
 
     fn fat_ob(&self, locel: &SlimLinkedOCEL) -> OCELObject {
@@ -606,6 +617,19 @@ impl SlimLinkedOCEL {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Build a `SlimLinkedOCEL` from a `DuckDB` schema database (as written by
+    /// [`stream_ocel_file_to_duckdb`](crate::core::event_data::object_centric::ocel_sql::stream_ocel_file_to_duckdb)).
+    /// Eager, so the whole log is loaded into memory. For out-of-core access use
+    /// `DuckDbLinkedOCEL`.
+    #[cfg(feature = "ocel-duckdb")]
+    pub fn from_duckdb(con: &duckdb::Connection) -> Result<Self, OCELIOError> {
+        use crate::core::event_data::object_centric::ocel_sql::duckdb::schema::reader::DuckDbReadInto;
+        let mut slim = SlimLinkedOCEL::new();
+        slim.read_from_duckdb(con)?;
+        Ok(slim)
+    }
+
     /// Convert an unlinked [`OCEL`] to a [`SlimLinkedOCEL`].
     ///
     /// Events are sorted by time before insertion so that `events_per_type` lists are
@@ -677,7 +701,10 @@ impl SlimLinkedOCEL {
             .flat_map(|et| &self.events_per_type[*et])
     }
     /// Get all objects of the specified object type
-    fn get_obs_of_type<'a>(&'a self, object_type: &str) -> impl Iterator<Item = &'a ObjectIndex> {
+    pub(crate) fn get_obs_of_type<'a>(
+        &'a self,
+        object_type: &str,
+    ) -> impl Iterator<Item = &'a ObjectIndex> {
         self.obtype_to_index
             .get(object_type)
             .into_iter()
@@ -1743,28 +1770,59 @@ impl Importable for SlimLinkedOCEL {
         format: &str,
         _: Self::ImportOptions,
     ) -> Result<Self, Self::Error> {
-        if let Some(inner) = format.strip_suffix(".gz") {
-            // Buffer the compressed bytes; `GzDecoder` reads from its inner in chunks.
-            let gz: Box<dyn Read> = Box::new(flate2::read::GzDecoder::new(
-                std::io::BufReader::new(reader),
-            ));
-            return Self::import_from_reader_with_options(gz, inner, ());
-        }
-        if format.ends_with("xml") || format.ends_with("xmlocel") {
-            let mut xml_reader = quick_xml::Reader::from_reader(std::io::BufReader::new(reader));
+        if is_streaming_format(format) {
             let mut slim = SlimLinkedOCEL::new();
-            import_ocel_xml_into(&mut xml_reader, &mut slim, OCELImportOptions::default())?;
+            slim.stream_ocel_from_reader(reader, format, OCELImportOptions::default())?;
             slim.finalize()?;
-            Ok(slim)
-        } else if format.ends_with("json") || format.ends_with("jsonocel") {
-            let mut slim = SlimLinkedOCEL::new();
-            import_ocel_json_into(std::io::BufReader::new(reader), &mut slim)?;
-            slim.finalize()?;
-            Ok(slim)
-        } else {
-            let ocel = OCEL::import_from_reader(reader, format)?;
-            Ok(SlimLinkedOCEL::from_ocel(ocel))
+            return Ok(slim);
         }
+        #[cfg(feature = "ocel-bundle")]
+        if format.ends_with("zip") {
+            let mut reader = reader;
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes)?;
+            let mut slim = SlimLinkedOCEL::new();
+            crate::core::event_data::object_centric::ocel_bundle::Container::open_bytes(&bytes)?
+                .read_into(&mut slim)?;
+            return Ok(slim);
+        }
+        Ok(SlimLinkedOCEL::from_ocel(OCEL::import_from_reader(
+            reader, format,
+        )?))
+    }
+
+    fn import_from_path_with_options<P: AsRef<Path>>(
+        path: P,
+        _: Self::ImportOptions,
+    ) -> Result<Self, Self::Error> {
+        let path = path.as_ref();
+        let format = <Self as Importable>::infer_format(path).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Could not infer format from path",
+            )
+        })?;
+        if is_streaming_format(&format) {
+            let mut slim = SlimLinkedOCEL::new();
+            slim.stream_ocel_from_reader(
+                std::fs::File::open(path)?,
+                &format,
+                OCELImportOptions::default(),
+            )?;
+            slim.finalize()?;
+            return Ok(slim);
+        }
+        // A bundle is a directory, or an `ocel-meta.json` naming one, so it needs the path
+        // itself and not a byte stream.
+        #[cfg(feature = "ocel-bundle")]
+        if format.ends_with("zip") {
+            let mut slim = SlimLinkedOCEL::new();
+            crate::core::event_data::object_centric::ocel_bundle::Container::open(path)?
+                .read_into(&mut slim)?;
+            return Ok(slim);
+        }
+        // SQLite and DuckDB have no sink-based reader, so their importer's `OCEL` is the way in.
+        Ok(SlimLinkedOCEL::from_ocel(OCEL::import_from_path(path)?))
     }
 
     fn infer_format(path: &Path) -> Option<String> {
@@ -1787,7 +1845,7 @@ impl Exportable for SlimLinkedOCEL {
     fn export_to_path_with_options<P: AsRef<Path>>(
         &self,
         path: P,
-        _: Self::ExportOptions,
+        options: Self::ExportOptions,
     ) -> Result<(), Self::Error> {
         let path = path.as_ref();
         let format = <Self as Exportable>::infer_format(path).ok_or_else(|| {
@@ -1796,6 +1854,18 @@ impl Exportable for SlimLinkedOCEL {
                 "Could not infer format from path",
             )
         })?;
+        <Self as Exportable>::export_to_path_as(self, path, &format, options)
+    }
+
+    /// See [`Exportable::export_to_path_as`]. Formats that write a file or a directory rather
+    /// than a byte stream are handled here, everything else streams.
+    fn export_to_path_as<P: AsRef<Path>>(
+        &self,
+        path: P,
+        format: &str,
+        _: Self::ExportOptions,
+    ) -> Result<(), Self::Error> {
+        let path = path.as_ref();
         if format.ends_with("sqlite") || (format.ends_with("db") && !format.ends_with("duckdb")) {
             #[cfg(feature = "ocel-sqlite")]
             return crate::core::event_data::object_centric::ocel_sql::export_ocel_sqlite_to_path(
@@ -1818,9 +1888,37 @@ impl Exportable for SlimLinkedOCEL {
                 "DuckDB support not enabled".to_string(),
             ));
         }
+        #[cfg(feature = "ocel-bundle")]
+        if format.ends_with("zip") {
+            use crate::core::event_data::object_centric::ocel_bundle::{
+                export_ocel_bundle, BundleExportOptions, ContainerLayout, StorageFormat,
+            };
+            // An existing directory, or a name with no extension, is the uncompressed form.
+            let layout = if path.is_dir() || path.extension().is_none() {
+                ContainerLayout::Directory
+            } else {
+                ContainerLayout::Archive
+            };
+            if layout == ContainerLayout::Directory {
+                std::fs::create_dir_all(path)?;
+            }
+            return export_ocel_bundle(
+                self,
+                path,
+                BundleExportOptions {
+                    layout,
+                    storage: if format.starts_with("ocel-parquet") {
+                        StorageFormat::Parquet
+                    } else {
+                        StorageFormat::Csv
+                    },
+                },
+            )
+            .map_err(|e| OCELIOError::Other(e.to_string()));
+        }
         let file = std::fs::File::create(path)?;
         let writer = std::io::BufWriter::new(file);
-        Self::export_to_writer(self, writer, &format)
+        Self::export_to_writer(self, writer, format)
     }
 
     fn export_to_writer_with_options<W: Write>(

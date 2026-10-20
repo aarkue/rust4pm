@@ -44,7 +44,7 @@ macro_rules! ocel {
         // Timestamp are given in a distance of seconds starting at 01-01-2020 at 00:00:00
         let mut timestamp = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
 
-        // Events are labelled contiunously
+        // Events are labeled contiunously
         let mut ev_counter = 0;
         $(
             event_types_set.insert(

@@ -290,6 +290,7 @@ where
 mod tests {
     use super::*;
     use crate::core::event_data::object_centric::linked_ocel::{LinkedOCELAccess, SlimLinkedOCEL};
+    use crate::core::event_data::object_centric::ocel_struct::OCELAttributeValue;
     use crate::test_utils::{get_test_data_path, sort_ocel_for_equality_compare};
     use std::collections::HashMap;
     use std::fs;
@@ -389,6 +390,105 @@ mod tests {
             ),
             other => panic!("expected typed sink error, got {other:?}"),
         }
+    }
+
+    /// Build a minimal OCEL JSON with a single event attribute of the given raw JSON value,
+    /// declared with `attr_type` in the event type.
+    fn json_with_event_attr(attr_type: &str, raw_value: &str) -> Vec<u8> {
+        format!(
+            r#"{{
+                "eventTypes": [{{"name": "x", "attributes": [{{"name": "a", "type": "{attr_type}"}}]}}],
+                "objectTypes": [],
+                "events": [{{"id": "e1", "type": "x", "time": "2024-01-01T00:00:00Z",
+                             "attributes": [{{"name": "a", "value": {raw_value}}}], "relationships": []}}],
+                "objects": []
+            }}"#
+        )
+        .into_bytes()
+    }
+
+    fn attr_value_of(bytes: &[u8]) -> OCELAttributeValue {
+        let ocel = import_ocel_json_slice(bytes).unwrap();
+        ocel.events[0].attributes[0].value.clone()
+    }
+
+    /// Scalar inference is unchanged: strings stay strings unless they are RFC3339.
+    #[test]
+    fn import_scalar_attribute_value_inference() {
+        let cases: Vec<(&str, OCELAttributeValue)> = vec![
+            ("42", OCELAttributeValue::Integer(42)),
+            ("-7", OCELAttributeValue::Integer(-7)),
+            ("1.5", OCELAttributeValue::Float(1.5)),
+            ("true", OCELAttributeValue::Boolean(true)),
+            ("null", OCELAttributeValue::Null),
+            (
+                r#""hello""#,
+                OCELAttributeValue::String("hello".to_string()),
+            ),
+            // Not RFC3339 => stays a String at inference time.
+            (
+                r#""2023-10-06 09:30:21.890421""#,
+                OCELAttributeValue::String("2023-10-06 09:30:21.890421".to_string()),
+            ),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(
+                attr_value_of(&json_with_event_attr("string", raw)),
+                expected,
+                "raw value {raw:?}"
+            );
+        }
+        // RFC3339 strings are recognized as timestamps (pre-existing untagged behavior).
+        assert!(matches!(
+            attr_value_of(&json_with_event_attr("string", r#""2024-01-01T00:00:00Z""#)),
+            OCELAttributeValue::Time(_)
+        ));
+    }
+
+    /// Integers exceeding `i64` degrade to `Float` rather than failing the import.
+    #[test]
+    fn import_out_of_range_integer_becomes_float() {
+        assert!(matches!(
+            attr_value_of(&json_with_event_attr("integer", "18446744073709551615")),
+            OCELAttributeValue::Float(_)
+        ));
+    }
+
+    /// Event timestamps accept the same non-RFC3339 formats as object attribute times.
+    #[test]
+    fn import_event_time_accepts_loose_formats() {
+        for time in [
+            "2023-10-06 09:30:21.890421",
+            "2023-10-06T09:30:21",
+            "2023-10-06T09:30:21+0000",
+            "2023-10-06 09:30:21 UTC",
+            "Mon Apr 03 2023 12:08:18 GMT+0200 (Mitteleuropäische Sommerzeit)",
+        ] {
+            let json = format!(
+                r#"{{"eventTypes": [], "objectTypes": [],
+                     "events": [{{"id": "e1", "type": "x", "time": "{time}",
+                                  "attributes": [], "relationships": []}}],
+                     "objects": []}}"#
+            );
+            assert!(
+                import_ocel_json_slice(json.as_bytes()).is_ok(),
+                "event time {time:?} should parse"
+            );
+        }
+    }
+
+    /// A string attribute declared as `time` but not in RFC3339 is recovered by the
+    /// type-directed coercion in `SlimLinkedOCEL`.
+    #[test]
+    fn declared_time_attribute_coerced_from_loose_format() {
+        let bytes = json_with_event_attr("time", r#""2023-10-06 09:30:21.890421""#);
+        let ocel = import_ocel_json_slice(&bytes).unwrap();
+        let slim = SlimLinkedOCEL::from_ocel(ocel);
+        let back = slim.construct_ocel();
+        assert!(matches!(
+            back.events[0].attributes[0].value,
+            OCELAttributeValue::Time(_)
+        ));
     }
 
     /// Streaming import directly into `SlimLinkedOCEL` matches the via-`from_ocel` baseline.

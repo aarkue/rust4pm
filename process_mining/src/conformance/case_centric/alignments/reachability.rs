@@ -5,7 +5,7 @@ use crate::conformance::alignments::sync_prod_net::ModelNet;
 /// Whether the final marking can be reached from the initial marking.
 ///
 /// Reaching it means firing each transition some number of times, such that the tokens they
-/// consume and produce add up to `final - initial` in every place. 
+/// consume and produce add up to `final - initial` in every place.
 /// A return value of `false` proves the final marking is unreachable,
 /// while `true` only means that reachability could not be disproved (still may be unreachable).
 pub(crate) fn final_marking_reachable(net: &ModelNet) -> bool {
@@ -13,11 +13,11 @@ pub(crate) fn final_marking_reachable(net: &ModelNet) -> bool {
     // One equation per place: how much each transition changes its token count,
     // and the change the place needs overall (last entry)
     let mut equations = vec![vec![0i128; num_transitions + 1]; net.num_places];
-    for (transition_index, transition) in net.transitions.iter().enumerate() {
-        for (place, weight) in &transition.inputs {
+    for (transition_index, arcs) in net.arcs.iter().enumerate() {
+        for (place, weight) in &arcs.inputs {
             equations[*place][transition_index] -= i128::from(*weight);
         }
-        for (place, weight) in &transition.outputs {
+        for (place, weight) in &arcs.outputs {
             equations[*place][transition_index] += i128::from(*weight);
         }
     }

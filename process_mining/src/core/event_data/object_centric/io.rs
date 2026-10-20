@@ -29,6 +29,12 @@ pub enum OCELIOError {
     /// `DuckDB` Error
     #[cfg(feature = "ocel-duckdb")]
     DuckDB(duckdb::Error),
+    /// Reading a bundled CSV/Parquet container failed
+    #[cfg(feature = "ocel-bundle")]
+    BundleImport(crate::core::event_data::object_centric::ocel_bundle::BundleImportError),
+    /// Writing a bundled CSV/Parquet container failed
+    #[cfg(feature = "ocel-bundle")]
+    BundleExport(crate::core::event_data::object_centric::ocel_bundle::BundleExportError),
     /// Unsupported Format
     UnsupportedFormat(String),
     /// Other Error
@@ -46,6 +52,10 @@ impl std::fmt::Display for OCELIOError {
             OCELIOError::Sqlite(e) => write!(f, "SQLite Error: {}", e),
             #[cfg(feature = "ocel-duckdb")]
             OCELIOError::DuckDB(e) => write!(f, "DuckDB Error: {}", e),
+            #[cfg(feature = "ocel-bundle")]
+            OCELIOError::BundleImport(e) => write!(f, "Bundle Import Error: {}", e),
+            #[cfg(feature = "ocel-bundle")]
+            OCELIOError::BundleExport(e) => write!(f, "Bundle Export Error: {}", e),
             OCELIOError::UnsupportedFormat(s) => write!(f, "Unsupported Format: {}", s),
             OCELIOError::Other(s) => write!(f, "Error: {}", s),
         }
@@ -63,6 +73,10 @@ impl std::error::Error for OCELIOError {
             OCELIOError::Sqlite(e) => Some(e),
             #[cfg(feature = "ocel-duckdb")]
             OCELIOError::DuckDB(e) => Some(e),
+            #[cfg(feature = "ocel-bundle")]
+            OCELIOError::BundleImport(e) => Some(e),
+            #[cfg(feature = "ocel-bundle")]
+            OCELIOError::BundleExport(e) => Some(e),
             OCELIOError::UnsupportedFormat(_) => None,
             OCELIOError::Other(_) => None,
         }
@@ -107,6 +121,20 @@ impl From<duckdb::Error> for OCELIOError {
     }
 }
 
+#[cfg(feature = "ocel-bundle")]
+impl From<crate::core::event_data::object_centric::ocel_bundle::BundleImportError> for OCELIOError {
+    fn from(e: crate::core::event_data::object_centric::ocel_bundle::BundleImportError) -> Self {
+        OCELIOError::BundleImport(e)
+    }
+}
+
+#[cfg(feature = "ocel-bundle")]
+impl From<crate::core::event_data::object_centric::ocel_bundle::BundleExportError> for OCELIOError {
+    fn from(e: crate::core::event_data::object_centric::ocel_bundle::BundleExportError) -> Self {
+        OCELIOError::BundleExport(e)
+    }
+}
+
 #[cfg(any(feature = "ocel-duckdb", feature = "ocel-sqlite"))]
 impl From<DatabaseError> for OCELIOError {
     fn from(e: DatabaseError) -> Self {
@@ -125,6 +153,16 @@ impl Importable for OCEL {
 
     fn infer_format(path: &Path) -> Option<String> {
         let p = path.to_string_lossy().to_lowercase();
+        // Checked before `.json`, which the manifest name would otherwise match: pointing at a
+        // container's manifest means "read the directory it is in", not "parse this file".
+        #[cfg(feature = "ocel-bundle")]
+        if path.file_name().is_some_and(|n| {
+            n.eq_ignore_ascii_case(
+                crate::core::event_data::object_centric::ocel_bundle::META_FILE_NAME,
+            )
+        }) {
+            return Some("ocel.zip".to_string());
+        }
         if p.ends_with(".csv.gz") {
             Some("ocel.csv.gz".to_string())
         } else if p.ends_with(".csv") {
@@ -133,18 +171,22 @@ impl Importable for OCEL {
             Some("json".to_string())
         } else if p.ends_with(".xml") || p.ends_with(".xmlocel") {
             Some("xml".to_string())
-        } else if p.ends_with(".sqlite") || p.ends_with(".db") {
+        } else if p.ends_with(".sqlite") || p.ends_with(".sqlite3") || p.ends_with(".db") {
             Some("sqlite".to_string())
         } else if p.ends_with(".duckdb") {
             Some("duckdb".to_string())
+        } else if p.ends_with(".zip") || path.is_dir() {
+            // A directory is the bundled format's uncompressed form, with no extension to match.
+            Some("ocel.zip".to_string())
         } else {
             infer_format_from_path(path)
         }
     }
 
     fn import_from_reader_with_options<R: Read>(
-        #[cfg(feature = "ocel-sqlite")] mut reader: R,
-        #[cfg(not(feature = "ocel-sqlite"))] reader: R,
+        // A SQLite file and a ZIP are both read from their end, so they consume the whole reader.
+        #[cfg(any(feature = "ocel-sqlite", feature = "ocel-bundle"))] mut reader: R,
+        #[cfg(not(any(feature = "ocel-sqlite", feature = "ocel-bundle")))] reader: R,
         format: &str,
         options: Self::ImportOptions,
     ) -> Result<Self, Self::Error> {
@@ -190,6 +232,20 @@ impl Importable for OCEL {
             Err(OCELIOError::UnsupportedFormat(
                 "DuckDB import from reader not supported".to_string(),
             ))
+        } else if format.ends_with("zip") {
+            #[cfg(feature = "ocel-bundle")]
+            {
+                let mut b = Vec::new();
+                reader.read_to_end(&mut b)?;
+                crate::core::event_data::object_centric::ocel_bundle::import_ocel_bundle_from_bytes(
+                    &b,
+                )
+                .map_err(OCELIOError::from)
+            }
+            #[cfg(not(feature = "ocel-bundle"))]
+            Err(OCELIOError::UnsupportedFormat(
+                "bundled CSV/Parquet support not enabled".to_string(),
+            ))
         } else {
             Err(OCELIOError::UnsupportedFormat(format.to_string()))
         }
@@ -223,6 +279,16 @@ impl Importable for OCEL {
             return Err(OCELIOError::UnsupportedFormat(
                 "DuckDB support not enabled".to_string(),
             ));
+        } else if format.ends_with("zip") {
+            // A path can be a directory (the uncompressed form), and lets an archive be expanded
+            // a table at a time rather than held whole.
+            #[cfg(feature = "ocel-bundle")]
+            return crate::core::event_data::object_centric::ocel_bundle::import_ocel_bundle(path)
+                .map_err(OCELIOError::from);
+            #[cfg(not(feature = "ocel-bundle"))]
+            return Err(OCELIOError::UnsupportedFormat(
+                "bundled CSV/Parquet support not enabled".to_string(),
+            ));
         } else {
             let file = std::fs::File::open(path)?;
             let reader = std::io::BufReader::new(file);
@@ -238,6 +304,12 @@ impl Importable for OCEL {
             ExtensionWithMime::new("xml.gz", "application/gzip"),
             ExtensionWithMime::new("ocel.csv", "text/csv"),
             ExtensionWithMime::new("ocel.csv.gz", "application/gzip"),
+            #[cfg(feature = "ocel-bundle")]
+            // Both names, even though the reader ignores the difference (storage is declared in
+            // `ocel-meta.json`): export uses the `-parquet` name to pick which storage to write.
+            ExtensionWithMime::new("ocel.zip", "application/zip"),
+            #[cfg(feature = "ocel-bundle-parquet")]
+            ExtensionWithMime::new("ocel-parquet.zip", "application/zip"),
             #[cfg(feature = "ocel-sqlite")]
             ExtensionWithMime::new("sqlite", "application/x-sqlite3"),
             #[cfg(feature = "ocel-duckdb")]
@@ -264,6 +336,17 @@ impl Exportable for OCEL {
             Some("sqlite".to_string())
         } else if p.ends_with(".duckdb") {
             Some("duckdb".to_string())
+        } else if p.ends_with("-parquet.zip") || p.ends_with("-parquet") {
+            // Storage is not part of the format's own naming, so a distinct format string is how
+            // a caller asks for Parquet.
+            Some("ocel-parquet.zip".to_string())
+        } else if p.ends_with(".zip") {
+            Some("ocel.zip".to_string())
+        } else if path.is_dir() {
+            // Only an existing directory: a path that does not yet exist cannot be told apart
+            // from a misspelled filename, so writing a new directory container has to go through
+            // `export_ocel_bundle` explicitly.
+            Some("ocel.zip".to_string())
         } else {
             infer_format_from_path(path)
         }
@@ -272,7 +355,7 @@ impl Exportable for OCEL {
     fn export_to_path_with_options<P: AsRef<Path>>(
         &self,
         path: P,
-        _: Self::ExportOptions,
+        options: Self::ExportOptions,
     ) -> Result<(), Self::Error> {
         let path = path.as_ref();
         let format = <Self as Exportable>::infer_format(path).ok_or_else(|| {
@@ -281,7 +364,18 @@ impl Exportable for OCEL {
                 "Could not infer format from path",
             )
         })?;
+        <Self as Exportable>::export_to_path_as(self, path, &format, options)
+    }
 
+    /// Handles the formats that need a real path: a database driver opens its target by name, and
+    /// the bundled format's uncompressed form is a directory.
+    fn export_to_path_as<P: AsRef<Path>>(
+        &self,
+        path: P,
+        format: &str,
+        _: Self::ExportOptions,
+    ) -> Result<(), Self::Error> {
+        let path = path.as_ref();
         if format.ends_with("sqlite") || (format.ends_with("db") && !format.ends_with("duckdb")) {
             #[cfg(feature = "ocel-sqlite")]
             return crate::core::event_data::object_centric::ocel_sql::export_ocel_sqlite_to_path(
@@ -304,10 +398,43 @@ impl Exportable for OCEL {
             return Err(OCELIOError::UnsupportedFormat(
                 "DuckDB support not enabled".to_string(),
             ));
+        } else if format.ends_with("zip") {
+            #[cfg(feature = "ocel-bundle")]
+            {
+                use crate::core::event_data::object_centric::ocel_bundle::{
+                    export_ocel_bundle, BundleExportOptions, ContainerLayout, StorageFormat,
+                };
+                // A directory, or a name with no extension, means the uncompressed form.
+                let layout = if path.is_dir() || path.extension().is_none() {
+                    ContainerLayout::Directory
+                } else {
+                    ContainerLayout::Archive
+                };
+                if layout == ContainerLayout::Directory {
+                    std::fs::create_dir_all(path)?;
+                }
+                export_ocel_bundle(
+                    self,
+                    path,
+                    BundleExportOptions {
+                        layout,
+                        storage: if format.starts_with("ocel-parquet") {
+                            StorageFormat::Parquet
+                        } else {
+                            StorageFormat::Csv
+                        },
+                    },
+                )
+                .map_err(OCELIOError::from)
+            }
+            #[cfg(not(feature = "ocel-bundle"))]
+            return Err(OCELIOError::UnsupportedFormat(
+                "bundled CSV/Parquet support not enabled".to_string(),
+            ));
         } else {
             let file = std::fs::File::create(path)?;
             let writer = std::io::BufWriter::new(file);
-            Self::export_to_writer(self, writer, &format)
+            Self::export_to_writer(self, writer, format)
         }
     }
 
@@ -351,6 +478,33 @@ impl Exportable for OCEL {
             return Err(OCELIOError::UnsupportedFormat(
                 "SQLite support not enabled".to_string(),
             ));
+        } else if format.ends_with("zip") {
+            #[cfg(feature = "ocel-bundle")]
+            {
+                use crate::core::event_data::object_centric::ocel_bundle::{
+                    write_ocel_bundle_archive, StorageFormat,
+                };
+                // A ZIP is assembled by seeking back to fix up each entry's header, which a bare
+                // `Write` cannot do, so it is built in memory and handed over whole.
+                let mut buffer = std::io::Cursor::new(Vec::new());
+                write_ocel_bundle_archive(
+                    self,
+                    &mut buffer,
+                    if format.starts_with("ocel-parquet") {
+                        StorageFormat::Parquet
+                    } else {
+                        StorageFormat::Csv
+                    },
+                )
+                .map_err(OCELIOError::from)?;
+                let mut writer = writer;
+                writer.write_all(&buffer.into_inner())?;
+                Ok(())
+            }
+            #[cfg(not(feature = "ocel-bundle"))]
+            return Err(OCELIOError::UnsupportedFormat(
+                "bundled CSV/Parquet support not enabled".to_string(),
+            ));
         } else if format.ends_with("duckdb") {
             Err(OCELIOError::UnsupportedFormat(
                 "DuckDB export to writer not supported".to_string(),
@@ -368,6 +522,10 @@ impl Exportable for OCEL {
             ExtensionWithMime::new("xml.gz", "application/gzip"),
             ExtensionWithMime::new("ocel.csv", "text/csv"),
             ExtensionWithMime::new("ocel.csv.gz", "application/gzip"),
+            #[cfg(feature = "ocel-bundle")]
+            ExtensionWithMime::new("ocel.zip", "application/zip"),
+            #[cfg(feature = "ocel-bundle-parquet")]
+            ExtensionWithMime::new("ocel-parquet.zip", "application/zip"),
             #[cfg(feature = "ocel-sqlite")]
             ExtensionWithMime::new("sqlite", "application/x-sqlite3"),
             #[cfg(feature = "ocel-duckdb")]

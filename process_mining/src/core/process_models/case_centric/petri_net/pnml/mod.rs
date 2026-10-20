@@ -1,8 +1,8 @@
 //! PNML File Format for Petri nets
-pub(crate) mod export_pnml;
-pub(crate) mod import_pnml;
+pub(crate) mod read;
+pub(crate) mod write;
 
 #[doc(inline)]
-pub use export_pnml::*;
+pub use read::*;
 #[doc(inline)]
-pub use import_pnml::*;
+pub use write::*;

@@ -1,6 +1,6 @@
 [package]
 name = "process_mining"
-version = "0.6.0"
+version = "0.6.2"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Process Mining library for working with (object-centric) event data"
@@ -14,13 +14,11 @@ rust-version = "1.88"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-macros_process_mining = { version = "0.6.0", path = "../macros_process_mining" }
+macros_process_mining = { version = "0.6.2", path = "../macros_process_mining" }
 chrono = { version = "0.4.40", features = ["serde"] }
-duckdb = { version = "1.2.1", optional = true, features = ["chrono"]}
+duckdb = { version = "1.2.1", optional = true, features = ["chrono"] }
 flate2 = "1.1.1"
-graphviz-rust = { version = "0.9.3", optional = true }
 itertools = { version = "0.14.0" }
-kuzu = {version = "=0.11.2", optional = true}
 nalgebra = { version = "0.33.2", optional = true }
 ordered-float = "5.0.0"
 petgraph = "0.8.1"
@@ -28,7 +26,8 @@ polars = { version = "0.51.0", features = ["dtype-slim", "timezones", "partition
 quick-xml = { version = "0.37.4" }
 rand = { version = "0.9.1", optional = true }
 rayon = "1.7.0"
-rusqlite = { version = "0.38.0", features = ["bundled","chrono", "serialize"], optional = true }
+regex = { version = "1.11", optional = true }
+rusqlite = { version = "0.38.0", features = ["bundled","chrono", "serialize", "column_decltype"], optional = true }
 serde_json = "1.0.105"
 serde = {version = "1.0.188", features = ["derive"]}
 serde_with = { version = "3.16.0", features = ["std", "macros", "schemars_1"]}
@@ -36,33 +35,83 @@ tempfile = "3"
 uuid = {version = "1.16.0", features = ["v4", "serde"]}
 schemars = { version = "1.1.0", features = ["chrono04", "uuid1"]}
 inventory = { version = "0.3", optional = true }
+# Only for the `bytes` form of a registry-reference argument, i.e. how a host with no filesystem
+# hands a log over.
+base64 = { version = "0.22", optional = true }
 csv = "1.4.0"
+# Backends are selected by this crate's own `extraction-dbcon*` features, since not all of them are
+# portable. `dbcon`'s `default` is `[]`, and a `dbcon` with no backend recognizes no connection
+# string, so at least one must be selected.
+dbcon = {version = "0.4.1", optional = true }
 hashbrown = "0.17.1"
 rustc-hash = "2.1.2"
+zip = { version = "6", default-features = false, features = ["deflate"], optional = true }
+# `default-features = false` drops the unused `arrow` integration; the bundled format's column
+# types are written through the low-level row-group writer. `zstd` is needed because `parquet`
+# defaults to no block compression, which makes an exported container several times larger than the
+# same log as CSV. `snap` is for reading: Snappy is what most other parquet writers emit.
+parquet = { version = "58", default-features = false, features = [
+    "zstd",
+    "snap",
+], optional = true }
+# Only to hand `parquet` an in-memory `ChunkReader`; `parquet` already depends on it.
+bytes = { version = "1", optional = true }
+graphlay = { version = "0.3.0", default-features = false, features = ["svg", "parallel"], optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 dhat = "0.3.3"
 
-[build-dependencies]
-# Pin cxx-build to match kuzu's cxx; bump this together with the kuzu dependency.
-cxx-build = { version = "=1.0.138", optional = true }
-
 [features]
-# Enables exporting Petri nets as PNG/SVG/... images using graphviz.
-# Note: graphviz needs to be locally installed to the PATH for the image export functions to work.
-graphviz-export = ["dep:graphviz-rust"]
+default = ["visualization"]
 
 # Enables OCEL 2.0 SQLite/DuckDB import and export functionality
 # Note: this might not work on certain architectures or machines if SQLite is not available/cannot be build
 ocel-sqlite = ["dep:rusqlite"]
 ocel-duckdb = ["dep:duckdb"]
+ocel-duckdb-bundled = ["ocel-duckdb", "duckdb/bundled"]
+
+# Enables the relational-to-OCEL extraction blueprint model, validation, SQL compiler, extractor
+# and sinks. Carries no connector of its own: `ocel-sqlite` brings `SqliteRowProvider`, and
+# `extraction-dbcon` brings the `PostgreSQL`/CSV/Parquet one.
+extraction-blueprint = ["dep:regex"]
+
+# Adds `DbconRowProvider`, a `RowProvider` over the file-backed sources `dbcon` reads (SQLite, CSV
+# and Parquet), and the extraction bindings that open one.
+#
+# Excludes PostgreSQL, which is `extraction-dbcon-postgres` below. These three build for
+# `wasm32-unknown-unknown` (`dbcon` substitutes `sqlite-wasm-rs` there) and can be read from bytes
+# with no filesystem, as a browser needs. Bundling PostgreSQL here would pull `sqlx` and its
+# runtime into every build that only wants to read a dropped CSV.
+extraction-dbcon = [
+    "dep:dbcon",
+    "extraction-blueprint",
+    "dbcon/sqlite",
+    "dbcon/csv",
+    "dbcon/parquet",
+    # Pure Rust and byte-readable, so it belongs with the wasm-capable three.
+    "dbcon/xlsx",
+]
+
+# Adds PostgreSQL to `extraction-dbcon`. Separate because `sqlx` does not build for
+# `wasm32-unknown-unknown`, and because a server connection is meaningless from a browser page.
+extraction-dbcon-postgres = ["extraction-dbcon", "dbcon/postgres"]
+
+# Adds DuckDB to `extraction-dbcon`. Separate for the same reason as PostgreSQL: the `duckdb` crate
+# builds native code and does not build for `wasm32`.
+extraction-dbcon-duckdb = ["extraction-dbcon", "dbcon/duckdb"]
+extraction-dbcon-duckdb-bundled = ["extraction-dbcon-duckdb", "dbcon/duckdb-bundled"]
+
+# Enables reading and writing the OCEL 2.0 bundled CSV/Parquet format: a `.ocel.zip` archive or
+# a directory with the same layout, with CSV storage.
+ocel-bundle = ["dep:zip"]
+
+# Adds Parquet storage to `ocel-bundle`. Separate because `parquet` is a large dependency and
+# a CSV container needs none of it.
+ocel-bundle-parquet = ["ocel-bundle", "dep:parquet", "dep:bytes"]
 
 # Enables polars DataFrame conversion from/to event data structs
 dataframes = ["dep:polars"]
-
-# Enables kuzudb features for OCEL (e.g., exporting OCEL to kuzudb database)
-kuzudb = ["dep:kuzu", "dep:cxx-build"]
 
 # Enables event log splitting (+rand dependency)
 log-splitting = ["dep:rand"]
@@ -70,19 +119,38 @@ log-splitting = ["dep:rand"]
 # Enables algebraic functionality
 token-based-replay = ["dep:nalgebra"]
 
-# Enable bindings
+# Lays out process models with graphlay and draws them as SVG (`visualization::*`), including the
+# models' `export_svg` methods. Builds for wasm32.
+visualization = ["dep:graphlay"]
+
+# Enable bindings. With `visualization`, its functions are registered too, which needs graphlay's
+# JSON schemas.
 bindings = [
-   "dep:inventory"
+   "dep:inventory",
+   "dep:base64",
+   "graphlay?/schemars",
 ]
 
-all = ["graphviz-export","ocel-sqlite","ocel-duckdb","dataframes","kuzudb", "log-splitting", "token-based-replay", "bindings" ]
+all = ["ocel-sqlite","ocel-duckdb-bundled","extraction-blueprint","extraction-dbcon","extraction-dbcon-postgres","extraction-dbcon-duckdb-bundled","ocel-bundle","ocel-bundle-parquet","dataframes", "log-splitting", "token-based-replay", "bindings", "visualization" ]
 
 [package.metadata.docs.rs]
-all-features = true
-
-[[example]]
-name = "ocel_kuzudb_export"
-required-features = ["dataframes", "kuzudb"]
+# The same set as `all`, listed explicitly so a feature docs.rs cannot build can be dropped
+# individually.
+features = [
+    "ocel-sqlite",
+    "ocel-duckdb-bundled",
+    "extraction-blueprint",
+    "extraction-dbcon",
+    "extraction-dbcon-postgres",
+    "extraction-dbcon-duckdb-bundled",
+    "ocel-bundle",
+    "ocel-bundle-parquet",
+    "dataframes",
+    "log-splitting",
+    "token-based-replay",
+    "bindings",
+    "visualization",
+]
 
 [[example]]
 name = "ocel_duckdb_export"
@@ -109,3 +177,16 @@ harness = false
 [[bench]]
 name = "alignments"
 harness = false
+
+[[bench]]
+name = "ocel_import"
+harness = false
+required-features = ["ocel-duckdb"]
+
+[[example]]
+name = "ocel_stream_to_duckdb"
+required-features = ["ocel-duckdb"]
+
+[[example]]
+name = "ocel_dataset_crosscheck"
+required-features = ["ocel-bundle-parquet"]

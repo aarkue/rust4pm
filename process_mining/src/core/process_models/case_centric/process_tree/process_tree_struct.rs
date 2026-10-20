@@ -1,5 +1,6 @@
-use crate::core::process_models::petri_net::{ArcType, Marking, PlaceID};
-use crate::PetriNet;
+use crate::core::process_models::petri_net::{
+    AcceptingPetriNet, ArcType, Marking, PetriNet, PlaceID,
+};
 use core::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -93,7 +94,7 @@ impl Node {
 ///
 /// Operator type enum for [`Operator`]
 ///
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum OperatorType {
     /// Sequence operator
     Sequence,
@@ -103,10 +104,15 @@ pub enum OperatorType {
     Concurrency,
     /// Loop operator that, if given, restricts a given number of repetitions
     Loop,
+    /// Interleaving operator that all children's behavior needs to be replayed but strictly after
+    /// one another
+    Interleaving,
+    /// Inclusive choice operator
+    InclusiveChoice,
 }
 
 ///
-/// Functionality to translate the operators into ASCII: →, X, ∧, and ↻
+/// Functionality to translate the operators into ASCII: →, X, ∧, ↻, ↔, and ∨
 ///
 impl fmt::Display for OperatorType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -122,6 +128,12 @@ impl fmt::Display for OperatorType {
             }
             OperatorType::Loop => {
                 write!(f, "↻")
+            }
+            OperatorType::Interleaving => {
+                write!(f, "↔")
+            }
+            OperatorType::InclusiveChoice => {
+                write!(f, "∨")
             }
         }
     }
@@ -218,46 +230,33 @@ impl ProcessTree {
 
     ///
     /// Transforms a [`ProcessTree`] into a [`PetriNet`] according to the translation rules in literature.
-    /// Returns a workflow net, consisting of the [`PetriNet`], its input, and output place's [`PlaceID`]
+    /// Returns a workflow net: one token in its input place initially, one in its output place finally.
     ///
-    pub fn to_petri_net(&self) -> PetriNet {
-        let mut petri_net = PetriNet::new();
-
-        let (start_place, end_place) = self.root.add_to_petri_net(&mut petri_net, None, None);
-
-        petri_net.initial_marking = Some(Marking::from([(start_place, 1)]));
-
-        let mut final_marking = Marking::new();
-        final_marking.insert(end_place, 1);
-        petri_net.final_markings = Some(vec![final_marking]);
-
-        petri_net
+    pub fn to_petri_net(&self) -> AcceptingPetriNet {
+        let mut net = PetriNet::new();
+        let (start_place, end_place) = self.root.add_to_petri_net(&mut net, None, None);
+        AcceptingPetriNet::new(
+            net,
+            Marking::from([(start_place, 1)]),
+            Marking::from([(end_place, 1)]),
+        )
     }
 
-    #[cfg(feature = "graphviz-export")]
-    /// Export a process tree as a PNG image
-    ///
-    /// The PNG file is written to the specified filepath
-    ///
-    /// _Note_: This is an export method for __visualizing__ the process tree.
-    /// The resulting PNG file cannot be imported as a process tree again.
-    ///
-    /// Only available with the `graphviz-export` feature.
-    pub fn export_png<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        super::image_export::export_process_tree_image_png(self, path)
-    }
-
-    #[cfg(feature = "graphviz-export")]
-    /// Export a process tree as an SVG image
+    #[cfg(feature = "visualization")]
+    /// Export a process tree as an SVG image, laid out with `graphlay`
     ///
     /// The SVG file is written to the specified filepath
     ///
     /// _Note_: This is an export method for __visualizing__ the process tree.
     /// The resulting SVG file cannot be imported as a process tree again.
+    /// [`crate::visualization::process_tree`] returns the SVG as a string and the node positions.
     ///
-    /// Only available with the `graphviz-export` feature.
+    /// Only available with the `visualization` feature.
     pub fn export_svg<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        super::image_export::export_process_tree_image_svg(self, path)
+        let svg =
+            crate::visualization::process_tree::export_process_tree_svg(self, &Default::default())
+                .map_err(std::io::Error::other)?;
+        std::fs::write(path, svg)
     }
 }
 
@@ -380,7 +379,7 @@ impl Operator {
             // Inserts silent transitions to put the workflow net of the loop operator in choice
             // if other operators are in choice. All workflow nets share the same input and output
             // places. However, only the first child models the do-part going from input to output
-            // place and every other child going from output to input place modelling the redo-part.
+            // place and every other child going from output to input place modeling the redo-part.
             OperatorType::Loop => {
                 let tau_start_transition = net.add_transition(None, None);
                 let tau_end_transition = net.add_transition(None, None);
@@ -414,6 +413,188 @@ impl Operator {
                     };
 
                     child.add_to_petri_net(net, Some(child_start), Some(child_end));
+                })
+            }
+            OperatorType::Interleaving => {
+                let tau_start_transition = net.add_transition(None, None);
+                let tau_end_transition = net.add_transition(None, None);
+
+                net.add_arc(
+                    ArcType::place_to_transition(in_place, tau_start_transition),
+                    None,
+                );
+                net.add_arc(
+                    ArcType::transition_to_place(tau_end_transition, out_place),
+                    None,
+                );
+
+                let critical_section_place = net.add_place(None);
+
+                net.add_arc(
+                    ArcType::transition_to_place(tau_start_transition, critical_section_place),
+                    None,
+                );
+                net.add_arc(
+                    ArcType::place_to_transition(critical_section_place, tau_end_transition),
+                    None,
+                );
+
+                self.children.iter().for_each(|child| {
+                    let start_place = net.add_place(None);
+                    let critical_start_transition = net.add_transition(None, None);
+                    let critical_start_place = net.add_place(None);
+                    let critical_end_place = net.add_place(None);
+                    let critical_end_transition = net.add_transition(None, None);
+                    let end_place = net.add_place(None);
+
+                    net.add_arc(
+                        ArcType::transition_to_place(tau_start_transition, start_place),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::place_to_transition(
+                            critical_section_place,
+                            critical_start_transition,
+                        ),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::place_to_transition(start_place, critical_start_transition),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::transition_to_place(
+                            critical_start_transition,
+                            critical_start_place,
+                        ),
+                        None,
+                    );
+
+                    child.add_to_petri_net(
+                        net,
+                        Some(critical_start_place),
+                        Some(critical_end_place),
+                    );
+
+                    net.add_arc(
+                        ArcType::place_to_transition(critical_end_place, critical_end_transition),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::transition_to_place(
+                            critical_end_transition,
+                            critical_section_place,
+                        ),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::transition_to_place(critical_end_transition, end_place),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::place_to_transition(end_place, tau_end_transition),
+                        None,
+                    );
+                })
+            }
+            OperatorType::InclusiveChoice => {
+                let tau_start_transition = net.add_transition(None, None);
+                let tau_end_transition = net.add_transition(None, None);
+                let inclusivity_place = net.add_place(None);
+                let inclusivity_fulfilled_place = net.add_place(None);
+
+                net.add_arc(
+                    ArcType::place_to_transition(in_place, tau_start_transition),
+                    None,
+                );
+                net.add_arc(
+                    ArcType::transition_to_place(tau_end_transition, out_place),
+                    None,
+                );
+                net.add_arc(
+                    ArcType::transition_to_place(tau_start_transition, inclusivity_place),
+                    None,
+                );
+                net.add_arc(
+                    ArcType::place_to_transition(inclusivity_fulfilled_place, tau_end_transition),
+                    None,
+                );
+
+                self.children.iter().for_each(|child| {
+                    let start_child_place = net.add_place(None);
+                    let intermediate_child_place = net.add_place(None);
+                    let end_child_place = net.add_place(None);
+
+                    net.add_arc(
+                        ArcType::transition_to_place(tau_start_transition, start_child_place),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::place_to_transition(end_child_place, tau_end_transition),
+                        None,
+                    );
+
+                    child.add_to_petri_net(
+                        net,
+                        Some(intermediate_child_place),
+                        Some(end_child_place),
+                    );
+
+                    let first_transition = net.add_transition(None, None);
+                    let later_transition = net.add_transition(None, None);
+                    let skip_transition = net.add_transition(None, None);
+
+                    net.add_arc(
+                        ArcType::place_to_transition(start_child_place, first_transition),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::place_to_transition(start_child_place, later_transition),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::place_to_transition(start_child_place, skip_transition),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::transition_to_place(first_transition, intermediate_child_place),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::transition_to_place(later_transition, intermediate_child_place),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::transition_to_place(skip_transition, end_child_place),
+                        None,
+                    );
+
+                    net.add_arc(
+                        ArcType::place_to_transition(inclusivity_place, first_transition),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::transition_to_place(first_transition, inclusivity_fulfilled_place),
+                        None,
+                    );
+
+                    net.add_arc(
+                        ArcType::transition_to_place(later_transition, inclusivity_fulfilled_place),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::place_to_transition(inclusivity_fulfilled_place, later_transition),
+                        None,
+                    );
+
+                    net.add_arc(
+                        ArcType::transition_to_place(skip_transition, inclusivity_fulfilled_place),
+                        None,
+                    );
+                    net.add_arc(
+                        ArcType::place_to_transition(inclusivity_fulfilled_place, skip_transition),
+                        None,
+                    );
                 })
             }
         }
@@ -584,9 +765,9 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(4, net.places.len());
-        assert_eq!(3, net.transitions.len());
-        assert_eq!(6, net.arcs.len());
+        assert_eq!(4, net.net.num_places());
+        assert_eq!(3, net.net.num_transitions());
+        assert_eq!(6, net.net.arcs().count());
     }
 
     // Checking Conc(a,b,c)
@@ -606,9 +787,9 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(8, net.places.len());
-        assert_eq!(5, net.transitions.len());
-        assert_eq!(14, net.arcs.len());
+        assert_eq!(8, net.net.num_places());
+        assert_eq!(5, net.net.num_transitions());
+        assert_eq!(14, net.net.arcs().count());
     }
 
     // Checking Loop(a,b,c)
@@ -628,9 +809,9 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(4, net.places.len());
-        assert_eq!(5, net.transitions.len());
-        assert_eq!(10, net.arcs.len());
+        assert_eq!(4, net.net.num_places());
+        assert_eq!(5, net.net.num_transitions());
+        assert_eq!(10, net.net.arcs().count());
     }
 
     // Checking Xor(a,b,c)
@@ -650,9 +831,47 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(2, net.places.len());
-        assert_eq!(3, net.transitions.len());
-        assert_eq!(6, net.arcs.len());
+        assert_eq!(2, net.net.num_places());
+        assert_eq!(3, net.net.num_transitions());
+        assert_eq!(6, net.net.arcs().count());
+    }
+
+    // Checking Inter(a,b,c)
+    #[test]
+    fn interleaving_test() {
+        let mut inter = Operator::new(OperatorType::Interleaving);
+        let leaf_a = Leaf::new(Some("a".to_string()));
+        let leaf_b = Leaf::new(Some("b".to_string()));
+        let leaf_c = Leaf::new(Some("c".to_string()));
+        inter.children.push(Node::Leaf(leaf_a));
+        inter.children.push(Node::Leaf(leaf_b));
+        inter.children.push(Node::Leaf(leaf_c));
+
+        let tree = ProcessTree::new(Node::Operator(inter));
+        let net = tree.to_petri_net();
+
+        assert_eq!(15, net.net.num_places());
+        assert_eq!(11, net.net.num_transitions());
+        assert_eq!(34, net.net.arcs().count());
+    }
+
+    // Checking Or(a,b,c)
+    #[test]
+    fn inclusive_choice_test() {
+        let mut or = Operator::new(OperatorType::InclusiveChoice);
+        let leaf_a = Leaf::new(Some("a".to_string()));
+        let leaf_b = Leaf::new(Some("b".to_string()));
+        let leaf_c = Leaf::new(Some("c".to_string()));
+        or.children.push(Node::Leaf(leaf_a));
+        or.children.push(Node::Leaf(leaf_b));
+        or.children.push(Node::Leaf(leaf_c));
+
+        let tree = ProcessTree::new(Node::Operator(or));
+        let net = tree.to_petri_net();
+
+        assert_eq!(13, net.net.num_places());
+        assert_eq!(14, net.net.num_transitions());
+        assert_eq!(52, net.net.arcs().count());
     }
 
     // Checking tau
@@ -664,12 +883,12 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(2, net.places.len());
-        assert_eq!(1, net.transitions.len());
-        assert_eq!(2, net.arcs.len());
+        assert_eq!(2, net.net.num_places());
+        assert_eq!(1, net.net.num_transitions());
+        assert_eq!(2, net.net.arcs().count());
 
-        net.transitions
-            .iter()
+        net.net
+            .transitions()
             .for_each(|(_, t)| assert!(t.label.is_none()));
     }
 
@@ -682,12 +901,12 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(2, net.places.len());
-        assert_eq!(1, net.transitions.len());
-        assert_eq!(2, net.arcs.len());
+        assert_eq!(2, net.net.num_places());
+        assert_eq!(1, net.net.num_transitions());
+        assert_eq!(2, net.net.arcs().count());
 
-        net.transitions
-            .iter()
+        net.net
+            .transitions()
             .for_each(|(_, t)| assert_eq!("a", t.label.clone().unwrap()));
     }
 
@@ -729,8 +948,8 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(10, net.places.len());
-        assert_eq!(13, net.transitions.len());
-        assert_eq!(28, net.arcs.len());
+        assert_eq!(10, net.net.num_places());
+        assert_eq!(13, net.net.num_transitions());
+        assert_eq!(28, net.net.arcs().count());
     }
 }

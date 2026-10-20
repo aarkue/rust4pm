@@ -5,6 +5,7 @@
 //! Consumers (e.g. alignments) implement [`SearchProblem`] for their specific
 //! state space and can then reuse [`search`].
 use std::{
+    cell::Cell,
     collections::VecDeque,
     ops::{Add, Rem},
 };
@@ -56,13 +57,20 @@ pub trait SearchProblem {
     /// reached state and call `emit(successor, is_new, edge_cost, step)`:
     /// `is_new` is `true` when the state was newly created, and a new id must
     /// equal the current node count (no id may be skipped).
-    /// `via` is the edge `node` is currently best reached by (`None` for the start)
+    /// `via` is the edge `node` is currently best reached by (`None` for the start).
+    ///
+    /// Buffers that grow with the search may only grow through `budget`. Once it is exhausted,
+    /// stop expanding: the search then ends with [`SearchError::MemoryLimitReached`].
     fn expand<F: FnMut(NodeID, bool, Self::Cost, Self::Step)>(
         &mut self,
         node: NodeID,
         via: Option<Self::Step>,
+        budget: &MemoryBudget,
         emit: F,
     );
+
+    /// Bytes the problem's buffers hold (their capacity), counted against the budget
+    fn allocated_bytes(&self) -> usize;
 }
 
 /// A [`SearchProblem`] that can also be stated backwards, from the goal towards the start.
@@ -103,8 +111,8 @@ pub struct SearchResult<S, C = u32> {
 pub enum SearchError {
     /// The specified maximum number of states was reached
     LimitReached,
-    /// The specified maximum number of states held at once was reached
-    QueuedLimitReached,
+    /// The search would have needed more memory than [`SearchLimits::max_memory`]
+    MemoryLimitReached,
     /// No goal state is reachable
     Unreachable,
     /// The maximum edge cost does not fit `usize`, so the bucket queue cannot be sized
@@ -116,8 +124,8 @@ pub enum SearchError {
 pub struct SearchLimits {
     /// Maximum number of states to visit (bounds runtime). Shared by both search directions.
     pub max_states: Option<usize>,
-    /// Maximum number of states to hold at once (bounds memory). Shared by both directions.
-    pub max_states_queued: Option<usize>,
+    /// Maximum bytes the search may hold (bounds memory). Shared by both directions.
+    pub max_memory: Option<usize>,
 }
 
 /// Reusable node store and bucket queue for [`search`], cleared initially.
@@ -134,10 +142,15 @@ pub struct SearchState<S, C = u32> {
 }
 
 impl<S, C> SearchState<S, C> {
-    /// Bytes held per node, to turn a memory budget into a [`SearchLimits::max_states_queued`].
-    /// Counts the node itself plus its queue entries, of which there may be more than one.
-    pub const fn bytes_per_node() -> usize {
-        size_of::<Node<S, C>>() + 2 * size_of::<NodeID>()
+    /// Bytes held by the node store and the bucket queue (their capacity)
+    pub fn allocated_bytes(&self) -> usize {
+        self.nodes.capacity() * size_of::<Node<S, C>>()
+            + self.buckets.capacity() * size_of::<VecDeque<NodeID>>()
+            + self
+                .buckets
+                .iter()
+                .map(|bucket| bucket.capacity() * size_of::<NodeID>())
+                .sum::<usize>()
     }
 }
 
@@ -150,6 +163,147 @@ impl<S, C> Default for SearchState<S, C> {
     }
 }
 
+/// How many times larger than the last search a buffer may be before it is given back, so one
+/// large search does not leave its thread holding that much for every search after it
+const RELEASE_ABOVE_MULTIPLE: usize = 8;
+
+/// Buffer length (in elements) always worth keeping, so small searches never pay to reallocate
+const ALWAYS_KEEP_LEN: usize = 4096;
+
+/// Whether a reused buffer of `capacity` is too large to keep after a search that used `used`
+#[inline]
+pub(crate) fn worth_releasing(capacity: usize, used: usize) -> bool {
+    capacity > RELEASE_ABOVE_MULTIPLE * used.max(ALWAYS_KEEP_LEN)
+}
+
+/// The bytes one search may hold, and how many it holds so far.
+///
+/// Buffers that grow with the search ask it first. A growing buffer is copied into a larger one
+/// before the old one is freed, so for a moment both count.
+#[derive(Debug)]
+pub struct MemoryBudget {
+    limit: usize,
+    used: Cell<usize>,
+    exhausted: Cell<bool>,
+}
+
+impl MemoryBudget {
+    /// A budget of `limit` bytes (`None` means no limit)
+    pub fn new(limit: Option<usize>) -> Self {
+        Self {
+            limit: limit.unwrap_or(usize::MAX),
+            used: Cell::new(0),
+            exhausted: Cell::new(false),
+        }
+    }
+
+    /// Bytes held so far
+    pub fn used(&self) -> usize {
+        self.used.get()
+    }
+
+    /// Whether a growth was refused, which ends the search
+    pub fn exhausted(&self) -> bool {
+        self.exhausted.get()
+    }
+
+    /// Bytes a new allocation may take while everything held so far stays allocated
+    fn available(&self) -> usize {
+        self.limit.saturating_sub(self.used.get())
+    }
+
+    /// Replace an allocation of `from` bytes by one of `to` bytes, if `to` fits next to
+    /// everything held so far. Otherwise marks the budget as exhausted.
+    pub fn grow(&self, from: usize, to: usize) -> bool {
+        if to > self.available() {
+            return self.refuse();
+        }
+        self.settle(from, to);
+        true
+    }
+
+    /// Mark the budget as exhausted, returning false
+    fn refuse(&self) -> bool {
+        self.exhausted.set(true);
+        false
+    }
+
+    /// Record that an allocation of `from` bytes now has `to` bytes, once the exact size is known
+    pub fn settle(&self, from: usize, to: usize) {
+        self.used.set(self.used.get() - from + to);
+    }
+}
+
+/// Capacity a full buffer grows to: double, or else the most that still fits (at least `needed`)
+fn grown_capacity(
+    capacity: usize,
+    needed: usize,
+    elem_size: usize,
+    budget: &MemoryBudget,
+) -> Option<usize> {
+    let doubled = capacity.saturating_mul(2).max(needed).max(4);
+    let fits = |elements: usize| {
+        elements
+            .checked_mul(elem_size)
+            .is_some_and(|bytes| bytes <= budget.available())
+    };
+    if fits(doubled) {
+        return Some(doubled);
+    }
+    let most = budget
+        .available()
+        .checked_div(elem_size)
+        .unwrap_or(usize::MAX);
+    (most >= needed).then_some(most)
+}
+
+/// Make room for `additional` more elements within `budget`. Returns false (and marks the budget
+/// as exhausted) if they do not fit.
+pub(crate) fn reserve_vec<T>(vec: &mut Vec<T>, additional: usize, budget: &MemoryBudget) -> bool {
+    let (len, capacity) = (vec.len(), vec.capacity());
+    reserve(len, capacity, additional, size_of::<T>(), budget, |grown| {
+        vec.reserve_exact(grown - len);
+        vec.capacity()
+    })
+}
+
+/// [`reserve_vec`] for a [`VecDeque`]
+pub(crate) fn reserve_deque<T>(
+    deque: &mut VecDeque<T>,
+    additional: usize,
+    budget: &MemoryBudget,
+) -> bool {
+    let (len, capacity) = (deque.len(), deque.capacity());
+    reserve(len, capacity, additional, size_of::<T>(), budget, |grown| {
+        deque.reserve_exact(grown - len);
+        deque.capacity()
+    })
+}
+
+/// Grow a buffer of `len` elements in `capacity` to hold `additional` more, where `grow_to` grows
+/// it to the given capacity and returns the capacity it got
+fn reserve(
+    len: usize,
+    capacity: usize,
+    additional: usize,
+    elem_size: usize,
+    budget: &MemoryBudget,
+    grow_to: impl FnOnce(usize) -> usize,
+) -> bool {
+    let Some(needed) = len.checked_add(additional) else {
+        return budget.refuse();
+    };
+    if needed <= capacity {
+        return true;
+    }
+    let Some(grown) = grown_capacity(capacity, needed, elem_size, budget) else {
+        return budget.refuse();
+    };
+    let got = grow_to(grown);
+    budget.settle(capacity * elem_size, got * elem_size);
+    true
+}
+
 /// Search for an optimal path from the start to a goal state using Dijkstra
 #[inline]
 pub fn search<P: SearchProblem>(
@@ -159,9 +313,12 @@ pub fn search<P: SearchProblem>(
 ) -> Result<SearchResult<P::Step, P::Cost>, SearchError> {
     let start = problem.initial();
     let mut side = SearchSide::seed(state, problem.max_edge_cost(), start)?;
+    let budget = MemoryBudget::new(limits.max_memory);
+    if !budget.grow(0, side.state.allocated_bytes() + problem.allocated_bytes()) {
+        return Err(SearchError::MemoryLimitReached);
+    }
 
     let limit = limits.max_states.unwrap_or(usize::MAX);
-    let queued_limit = limits.max_states_queued.unwrap_or(usize::MAX);
     let mut states_visited: usize = 0;
     let mut improved = Vec::new();
 
@@ -178,10 +335,10 @@ pub fn search<P: SearchProblem>(
                 states_visited,
             });
         }
-        if side.state.nodes.len() > queued_limit {
-            return Err(SearchError::QueuedLimitReached);
+        side.expand(problem, node, distance, &mut improved, &budget);
+        if budget.exhausted() {
+            return Err(SearchError::MemoryLimitReached);
         }
-        side.expand(problem, node, distance, &mut improved);
         improved.clear();
     }
     Err(SearchError::Unreachable)
@@ -207,6 +364,14 @@ pub fn search_bidirectional<P: ReversibleSearchProblem>(
     let goal = backward.initial();
     let mut forward_side = SearchSide::seed(forward_state, max_edge_cost, start)?;
     let mut backward_side = SearchSide::seed(backward_state, max_edge_cost, goal)?;
+    let budget = MemoryBudget::new(limits.max_memory);
+    let held = forward_side.state.allocated_bytes()
+        + backward_side.state.allocated_bytes()
+        + forward.allocated_bytes()
+        + backward.allocated_bytes();
+    if !budget.grow(0, held) {
+        return Err(SearchError::MemoryLimitReached);
+    }
 
     // Cheapest meeting so far, as (cost, node of `forward`, node of `backward`)
     let mut best = forward
@@ -214,7 +379,6 @@ pub fn search_bidirectional<P: ReversibleSearchProblem>(
         .map(|other| (P::Cost::from(0), start, other));
 
     let limit = limits.max_states.unwrap_or(usize::MAX);
-    let queued_limit = limits.max_states_queued.unwrap_or(usize::MAX);
     let mut states_visited: usize = 0;
     let mut improved = Vec::new();
     // If either side runs dry, no meeting can be left to find
@@ -228,15 +392,15 @@ pub fn search_bidirectional<P: ReversibleSearchProblem>(
         if states_visited > limit {
             return Err(SearchError::LimitReached);
         }
-        if forward_side.state.nodes.len() + backward_side.state.nodes.len() > queued_limit {
-            return Err(SearchError::QueuedLimitReached);
-        }
         // Advance whichever side has explored less, so both grow at a similar rate. Choosing the
         // side with the cheaper next node instead stalls one side for as long as the other keeps
         // finding zero-cost edges.
         if forward_side.queued <= backward_side.queued {
             forward_side.finish(forward_node);
-            forward_side.expand(forward, forward_node, forward_top, &mut improved);
+            forward_side.expand(forward, forward_node, forward_top, &mut improved, &budget);
+            if budget.exhausted() {
+                return Err(SearchError::MemoryLimitReached);
+            }
             meet(
                 forward,
                 backward,
@@ -247,7 +411,16 @@ pub fn search_bidirectional<P: ReversibleSearchProblem>(
             );
         } else {
             backward_side.finish(backward_node);
-            backward_side.expand(backward, backward_node, backward_top, &mut improved);
+            backward_side.expand(
+                backward,
+                backward_node,
+                backward_top,
+                &mut improved,
+                &budget,
+            );
+            if budget.exhausted() {
+                return Err(SearchError::MemoryLimitReached);
+            }
             meet(
                 backward,
                 forward,
@@ -327,7 +500,12 @@ where
         let num_buckets: usize = num_buckets_cost
             .try_into()
             .map_err(|_| SearchError::MaxEdgeCostTooLarge)?;
-        state.nodes.clear();
+        if worth_releasing(state.nodes.capacity(), state.nodes.len()) {
+            state.nodes = Vec::new();
+            state.buckets = Vec::new();
+        } else {
+            state.nodes.clear();
+        }
         state.nodes.push(Node {
             distance: C::from(0),
             parent: start,
@@ -369,13 +547,15 @@ where
         self.state.nodes[node as usize].finished = true;
     }
 
-    /// Expand `node`, queueing every successor it brings closer and listing it in `improved`
+    /// Expand `node`, queueing every successor it brings closer and listing it in `improved`.
+    /// Stops early once `budget` is exhausted.
     fn expand<P: SearchProblem<Step = S, Cost = C>>(
         &mut self,
         problem: &mut P,
         node: NodeID,
         distance: C,
         improved: &mut Vec<(NodeID, C)>,
+        budget: &MemoryBudget,
     ) {
         let via = if self.state.nodes[node as usize].parent == node {
             None
@@ -386,12 +566,18 @@ where
         let buckets = &mut self.state.buckets;
         let queued = &mut self.queued;
         let num_buckets_cost = self.num_buckets_cost;
-        problem.expand(node, via, |next, is_new, cost, step| {
+        problem.expand(node, via, budget, |next, is_new, cost, step| {
+            if budget.exhausted() {
+                return;
+            }
             let new_distance = distance + cost;
             // Remainder taken in cost space, where it is `< num_buckets` and thus fits `usize`
             let idx = (new_distance % num_buckets_cost).try_into().unwrap_or(0);
             if is_new {
                 debug_assert_eq!(next as usize, nodes.len(), "no NodeID should be skipped");
+                if !reserve_vec(nodes, 1, budget) {
+                    return;
+                }
                 nodes.push(Node {
                     distance: new_distance,
                     parent: node,
@@ -406,6 +592,9 @@ where
                 entry.distance = new_distance;
                 entry.parent = node;
                 entry.step = step;
+            }
+            if !reserve_deque(&mut buckets[idx], 1, budget) || !reserve_vec(improved, 1, budget) {
+                return;
             }
             buckets[idx].push_back(next);
             *queued += 1;
@@ -427,4 +616,46 @@ fn reconstruct<S: Copy, C>(nodes: &[Node<S, C>], target: NodeID) -> Vec<S> {
     }
     path.reverse();
     path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{reserve_vec, MemoryBudget};
+
+    #[test]
+    fn growth_counts_old_and_new_allocation() {
+        let budget = MemoryBudget::new(Some(100));
+        assert!(budget.grow(0, 40));
+        assert!(!budget.grow(40, 70), "40 + 70 > 100 while both are held");
+        assert!(budget.exhausted());
+        let budget = MemoryBudget::new(Some(100));
+        assert!(budget.grow(0, 30));
+        assert!(budget.grow(30, 60));
+        assert_eq!(budget.used(), 60);
+        assert!(!budget.exhausted());
+    }
+
+    #[test]
+    fn vec_growth_doubles_then_takes_what_fits() {
+        let budget = MemoryBudget::new(Some(1200));
+        let mut v: Vec<u64> = Vec::new();
+        while reserve_vec(&mut v, 1, &budget) {
+            v.push(0);
+            assert_eq!(budget.used(), v.capacity() * 8);
+        }
+        // Doubling 64 to 128 elements would need 512 + 1024 bytes at once, so the last growth
+        // takes the 86 elements that still fit next to the old 64
+        assert_eq!(v.capacity(), 86);
+        assert_eq!(budget.used(), 86 * 8);
+        assert!(budget.exhausted());
+    }
+
+    #[test]
+    fn no_limit_never_exhausts() {
+        let budget = MemoryBudget::new(None);
+        let mut v: Vec<u8> = Vec::new();
+        assert!(reserve_vec(&mut v, 1 << 20, &budget));
+        assert!(!budget.exhausted());
+        assert_eq!(budget.used(), v.capacity());
+    }
 }

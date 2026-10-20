@@ -168,28 +168,19 @@ impl<'a> DirectlyFollowsGraph<'a> {
             .collect()
     }
 
-    #[cfg(feature = "graphviz-export")]
-    /// Export directly-follows graph as a PNG image
+    #[cfg(feature = "visualization")]
+    /// Export directly-follows graph as an SVG image, laid out with `graphlay`
     ///
-    /// The PNG file is written to the specified filepath
-    ///
-    /// _Note_: This is an export method for __visualizing__ the directly-follows graph.
-    ///
-    /// Only available with the `graphviz-export` feature.
-    pub fn export_png<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        super::image_export::export_dfg_image_png(self, path)
-    }
-
-    #[cfg(feature = "graphviz-export")]
-    /// Export directly-follows graph as an SVG image.
-    ///
-    /// The SVG file is written to the specified filepath.
+    /// The SVG file is written to the specified filepath
     ///
     /// _Note_: This is an export method for __visualizing__ the directly-follows graph.
+    /// [`crate::visualization::dfg`] returns the SVG as a string and the node positions.
     ///
-    /// Only available with the `graphviz-export` feature.
+    /// Only available with the `visualization` feature.
     pub fn export_svg<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        super::image_export::export_dfg_image_svg(self, path)
+        let svg = crate::visualization::dfg::export_dfg_svg(self, &Default::default())
+            .map_err(std::io::Error::other)?;
+        std::fs::write(path, svg)
     }
 }
 
@@ -237,7 +228,6 @@ mod tests {
     };
 
     use super::*;
-    #[cfg(feature = "graphviz-export")]
     #[test]
     fn directly_follows_graph() {
         let mut graph = DirectlyFollowsGraph::new();
@@ -298,14 +288,12 @@ mod tests {
         #[allow(unused_variables)]
         let graph = DirectlyFollowsGraph::discover(&log);
 
-        #[cfg(feature = "graphviz-export")]
+        #[cfg(feature = "visualization")]
         {
-            use crate::core::process_models::case_centric::dfg::image_export::export_dfg_image_png;
-
             let path_output = get_test_data_path()
                 .join("export")
-                .join("RepairExample-DFG.png");
-            export_dfg_image_png(&graph, &path_output).unwrap();
+                .join("RepairExample-DFG.svg");
+            graph.export_svg(&path_output).unwrap();
         }
     }
 
@@ -335,12 +323,10 @@ mod tests {
         #[allow(unused_variables)]
         let graph = DirectlyFollowsGraph::discover(&log);
 
-        #[cfg(feature = "graphviz-export")]
+        #[cfg(feature = "visualization")]
         {
-            use crate::core::process_models::case_centric::dfg::image_export::export_dfg_image_png;
-
-            let path_output = get_test_data_path().join("export").join("Sepsis-DFG.png");
-            export_dfg_image_png(&graph, &path_output).unwrap();
+            let path_output = get_test_data_path().join("export").join("Sepsis-DFG.svg");
+            graph.export_svg(&path_output).unwrap();
         }
     }
 
@@ -384,12 +370,10 @@ mod tests {
         assert!(graph.contains_df_relation(("c", "f")));
         assert!(!graph.contains_df_relation(("f", "c")));
 
-        #[cfg(feature = "graphviz-export")]
+        #[cfg(feature = "visualization")]
         {
-            use crate::core::process_models::case_centric::dfg::image_export::export_dfg_image_png;
-
-            let path_output = get_test_data_path().join("export").join("AN1-DFG.png");
-            export_dfg_image_png(&graph, &path_output).unwrap();
+            let path_output = get_test_data_path().join("export").join("AN1-DFG.svg");
+            graph.export_svg(&path_output).unwrap();
         }
     }
 }

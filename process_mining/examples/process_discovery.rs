@@ -29,8 +29,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!(
         "Discovered Petri net with {} places and {} transitions.",
-        petri_net.places.len(),
-        petri_net.transitions.len()
+        petri_net.net.num_places(),
+        petri_net.net.num_transitions()
     );
 
     println!("Exporting Petri net to {:?}", output_path);

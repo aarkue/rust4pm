@@ -12,7 +12,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::core::event_data::case_centric::{Attributes, Event, EventLogClassifier};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Copy)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Copy)]
 /// A struct to create a [`Hash`] value from an [`Event`].
 pub struct EventHash(u64);
 
@@ -175,36 +175,27 @@ impl PartialOrderTrace {
         petgraph::algo::is_isomorphic(&graph, &other_graph)
     }
 
-    #[cfg(feature = "graphviz-export")]
-    /// Export directly-follows graph as a PNG image
+    #[cfg(feature = "visualization")]
+    /// Export a partial order trace as an SVG image, laid out with `graphlay`
     ///
-    /// The PNG file is written to the specified filepath
+    /// The SVG file is written to the specified filepath
     ///
-    /// _Note_: This is an export method for __visualizing__ the directly-follows graph.
+    /// Each event is labeled with its class under `classifier`.
+    /// [`crate::visualization::partial_order`] returns the SVG as a string and the node positions.
     ///
-    /// Only available with the `graphviz-export` feature.
-    pub fn export_png<P: AsRef<std::path::Path>>(
-        &self,
-        classifier: &EventLogClassifier,
-        path: P,
-    ) -> Result<(), std::io::Error> {
-        super::image_export::export_p_trace_image_png(self, classifier, path)
-    }
-
-    #[cfg(feature = "graphviz-export")]
-    /// Export directly-follows graph as an SVG image.
-    ///
-    /// The SVG file is written to the specified filepath.
-    ///
-    /// _Note_: This is an export method for __visualizing__ the directly-follows graph.
-    ///
-    /// Only available with the `graphviz-export` feature.
+    /// Only available with the `visualization` feature.
     pub fn export_svg<P: AsRef<std::path::Path>>(
         &self,
         classifier: &EventLogClassifier,
         path: P,
     ) -> Result<(), std::io::Error> {
-        super::image_export::export_p_trace_image_svg(self, classifier, path)
+        let svg = crate::visualization::partial_order::export_partial_order_svg(
+            self,
+            classifier,
+            &Default::default(),
+        )
+        .map_err(std::io::Error::other)?;
+        std::fs::write(path, svg)
     }
 }
 
