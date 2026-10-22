@@ -63,7 +63,7 @@ impl StorageFormat {
 /// One of OCEL 2.0's primitive attribute types, as `ocel-meta.json` spells it.
 ///
 /// A separate enum rather than [`OCELAttributeType`] directly: that type carries a `Null`
-/// variant which is not an OCEL type, and its `from_type_str` maps anything unrecognised
+/// variant which is not an OCEL type, and its `from_type_str` maps anything unrecognized
 /// onto it, so a typo in a manifest would be read as a valid declaration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

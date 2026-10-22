@@ -22,7 +22,7 @@ use std::fmt::Write;
 
 use chrono::{DateTime, FixedOffset};
 
-/// A single cell of a row, normalised across data sources.
+/// A single cell of a row, normalized across data sources.
 ///
 /// Owned by this crate rather than taken from a driver, so the model and compiler need no
 /// connector dependency. Not `Serialize`: a row's values never cross a bindings boundary.
@@ -166,7 +166,7 @@ impl Value {
     /// - `Integer` and `Float` share one key space (`1` joins `1.0`, as in SQL).
     /// - Floats follow SQL's total order, not IEEE's: `NaN` joins `NaN` and `-0.0` joins `0.0`,
     ///   as `DuckDB` and `PostgreSQL` both define. Infinities are ordinary values.
-    /// - `Timestamp` is normalised to UTC first, so one instant written with two offsets joins.
+    /// - `Timestamp` is normalized to UTC first, so one instant written with two offsets joins.
     /// - Every other kind is tagged with its kind, so a `Text` `"1"` does not join `Integer` `1`.
     ///
     /// The kind tag diverges from every engine, so a compiler has to reproduce it rather than
@@ -471,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn join_keys_normalise_a_timestamp_offset() {
+    fn join_keys_normalize_a_timestamp_offset() {
         let utc =
             Value::Timestamp(chrono::DateTime::parse_from_rfc3339("2020-01-01T02:00:00Z").unwrap());
         let offset = Value::Timestamp(

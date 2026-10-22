@@ -4,7 +4,7 @@
 //! `Source` node per declared table, one mapping per thing that table produces. That reuses the
 //! rest of the extraction subsystem, including validation against the discovered schema, a
 //! per-mapping [`ExtractionReport`](super::super::extraction::ExtractionReport), and the SQL
-//! compiler, which turns a Parquet container into `DuckDB` views that never materialise the log.
+//! compiler, which turns a Parquet container into `DuckDB` views that never materialize the log.
 //! A CSV container cannot be compiled, since every column is text and the timestamps and numeric
 //! attributes need the row executor's parsing.
 
@@ -31,7 +31,7 @@ pub const SOURCE_ID: &str = "bundle";
 ///   every change row, which is not a collision but the format working as designed. First-wins
 ///   creates it once and appends the later rows' attribute values at their own timestamps.
 /// - [`MissingEndpointPolicy::Error`]: a relation naming an id no table declares is a broken
-///   container, and should be reported rather than papered over by synthesising the object.
+///   container, and should be reported rather than papered over by synthesizing the object.
 #[must_use]
 pub fn blueprint_for(meta: &BundleMeta) -> Blueprint {
     let mut nodes = Vec::new();

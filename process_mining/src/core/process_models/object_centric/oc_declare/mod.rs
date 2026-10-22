@@ -479,7 +479,7 @@ impl<'b> OCDeclareArcLabel {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 /// Stores statistics on the number of objects of a certain type involved with an activity or in an O2O relationship.
 pub struct ObjectInvolvementCounts {
     /// The minimum number of objects of a given type involved in a single instance.

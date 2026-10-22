@@ -12,8 +12,8 @@ use crate::core::{
         add_start_end_acts_proj, ActivityProjectionDFG, EventLogActivityProjection, END_ACTIVITY,
         START_ACTIVITY,
     },
-    process_models::case_centric::petri_net::petri_net_struct::{ArcType, Marking, TransitionID},
-    PetriNet,
+    process_models::case_centric::petri_net::{ArcType, Marking, TransitionID},
+    AcceptingPetriNet, PetriNet,
 };
 
 use super::{
@@ -104,13 +104,13 @@ impl Default for AlphaPPPConfig {
 }
 
 ///
-/// Discover a [`PetriNet`] using the Alpha+++ Process Discovery algorithm
+/// Discover an [`AcceptingPetriNet`] using the Alpha+++ Process Discovery algorithm
 ///
 #[register_binding(name = "discover_alpha+++")]
 pub fn alphappp_discover_petri_net(
     log_proj: &EventLogActivityProjection,
     #[bind(default = Default::default())] config: AlphaPPPConfig,
-) -> PetriNet {
+) -> AcceptingPetriNet {
     alphappp_discover_petri_net_with_timing_fn(log_proj, config, &|| 0).0
 }
 
@@ -123,7 +123,7 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
     log_proj: &EventLogActivityProjection,
     config: AlphaPPPConfig,
     get_time_millis_fn: &dyn Fn() -> u128,
-) -> (PetriNet, AlgoDuration) {
+) -> (AcceptingPetriNet, AlgoDuration) {
     println!("Started Alpha+++ Discovery");
     let mut algo_dur = AlgoDuration {
         loop_repair: 0.0,
@@ -226,31 +226,31 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
     println!("Pruning candidates took: {:.4}s", algo_dur.prune_cnd);
     start = get_time_millis_fn();
     let mut pn = PetriNet::new();
-    let mut initial_marking: Marking = Marking::new();
-    let mut final_marking: Marking = Marking::new();
+    let mut initial_marking = Marking::new();
+    let mut final_marking = Marking::new();
+    let connected: HashSet<usize> = sel
+        .iter()
+        .flat_map(|(a, b)| a.iter().chain(b))
+        .copied()
+        .collect();
+    // A silent activity no candidate place connects would become an isolated transition
     let transitions: Vec<Option<TransitionID>> = log_proj
         .activities
         .iter()
-        .map(|act_name| {
-            if act_name != &START_ACTIVITY.to_string() && act_name != &END_ACTIVITY.to_string() {
-                Some(pn.add_transition(
-                    if act_name.starts_with(SILENT_ACT_PREFIX) {
-                        None
-                    } else {
-                        Some(act_name.clone())
-                    },
-                    None,
-                ))
-            } else {
-                None
-            }
+        .enumerate()
+        .map(|(act, act_name)| {
+            let is_silent = act_name.starts_with(SILENT_ACT_PREFIX);
+            let is_start_or_end =
+                act_name == &START_ACTIVITY.to_string() || act_name == &END_ACTIVITY.to_string();
+            (!is_start_or_end && (!is_silent || connected.contains(&act)))
+                .then(|| pn.add_transition((!is_silent).then(|| act_name.clone()), None))
         })
         .collect();
     sel.iter().for_each(|(a, b)| {
         let place_id = pn.add_place(None);
         a.iter().for_each(|in_act| {
             if in_act == start_act {
-                *initial_marking.entry(place_id).or_insert(0) += 1;
+                initial_marking.add(place_id, 1);
             } else {
                 pn.add_arc(
                     ArcType::transition_to_place(transitions[*in_act].unwrap(), place_id),
@@ -260,7 +260,7 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
         });
         b.iter().for_each(|out_act| {
             if out_act == end_act {
-                *final_marking.entry(place_id).or_insert(0) += 1;
+                final_marking.add(place_id, 1);
             } else {
                 pn.add_arc(
                     ArcType::place_to_transition(place_id, transitions[*out_act].unwrap()),
@@ -269,19 +269,7 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
             }
         });
     });
-
-    let trans_copy = pn.transitions.clone();
-    trans_copy.into_iter().for_each(|(id, t)| {
-        if t.label.is_none()
-            && pn.postset_of_transition((&t).into()).is_empty()
-            && pn.preset_of_transition((&t).into()).is_empty()
-        {
-            pn.transitions.remove(&id).unwrap();
-        }
-    });
-
-    pn.initial_marking = Some(initial_marking);
-    pn.final_markings = Some(vec![final_marking]);
+    let pn = AcceptingPetriNet::new(pn, initial_marking, final_marking);
     algo_dur.build_net = (get_time_millis_fn() - start) as f32 / 1000.0;
     println!("Building PN took: {:.4}s", algo_dur.build_net);
 

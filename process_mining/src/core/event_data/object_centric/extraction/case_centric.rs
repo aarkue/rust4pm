@@ -349,7 +349,7 @@ pub fn event_log_to_slim_ocel(log: &EventLog) -> Result<SlimLinkedOCEL, SinkErro
     Ok(sink.into_ocel())
 }
 
-/// [`event_log_to_slim_ocel`], materialised as a plain [`OCEL`].
+/// [`event_log_to_slim_ocel`], materialized as a plain [`OCEL`].
 ///
 /// # Errors
 ///

@@ -566,7 +566,7 @@ fn check_version(field: &str, found: &str, implemented: &str) -> Result<(), Bund
 }
 
 /// Whether a manifest's declared path stays inside the container. Checked per component rather
-/// than by canonicalising, so it holds for an in-memory container with no filesystem to resolve
+/// than by canonicalizing, so it holds for an in-memory container with no filesystem to resolve
 /// against.
 fn is_contained(file: &str) -> bool {
     let path = Path::new(file);

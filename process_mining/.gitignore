@@ -3,3 +3,4 @@
 
 /test_data/*
 !/test_data/README.md
+!/test_data/precision/

@@ -3,3 +3,4 @@
 pub mod token_based_replay;
 
 pub mod alignments;
+pub mod precision;

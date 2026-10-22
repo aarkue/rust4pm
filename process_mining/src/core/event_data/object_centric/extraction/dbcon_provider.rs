@@ -52,7 +52,7 @@ impl fmt::Display for DbconProviderError {
 impl std::error::Error for DbconProviderError {}
 
 /// A [`RowProvider`] backed by [`dbcon`](https://github.com/aarkue/dbcon), giving [`scan`] a
-/// connection to whatever `dbcon`'s connection string dispatch recognises: `PostgreSQL`,
+/// connection to whatever `dbcon`'s connection string dispatch recognizes: `PostgreSQL`,
 /// `SQLite`, a CSV file or a Parquet file.
 ///
 /// [`scan`]: RowProvider::scan
@@ -204,7 +204,7 @@ impl RowProvider for DbconRowProvider {
 ///   the slower, lossier multi-format parse cascade.
 /// - [`NormalizedValue::Json`] and [`NormalizedValue::Unknown`] become [`Value::Text`]: both carry
 ///   real data with no dedicated `Value` case, and `Null` would leave a column a blueprint reads
-///   permanently empty. `Json` becomes its compact serialisation, `Unknown` the string `dbcon`
+///   permanently empty. `Json` becomes its compact serialization, `Unknown` the string `dbcon`
 ///   already produced, and a `Matches` predicate can search either. Extracting one JSON field
 ///   belongs in a source-side view.
 ///
@@ -233,7 +233,7 @@ fn declared_kind_of(col_type: &str) -> Option<ValueKind> {
 }
 
 /// Map a [`NormalizedType`] to the `col_type` spelling [`ColumnSchema::declared_kind`] already
-/// recognises, so a column [`discover_catalog`] finds still gets literal coercion.
+/// recognizes, so a column [`discover_catalog`] finds still gets literal coercion.
 ///
 /// The `col_type` this produces must never make `declared_kind` claim a [`ValueKind`] that
 /// `dbcon` itself declined to claim. The six classified variants map to spellings `declared_kind`
@@ -296,12 +296,12 @@ pub fn discover_catalog(
     Ok(catalog)
 }
 
-/// Translate one of `dbcon`'s `anyhow::Error` messages into a [`ProviderError`], recognising
+/// Translate one of `dbcon`'s `anyhow::Error` messages into a [`ProviderError`], recognizing
 /// the patterns its backends (`SQLite` via `rusqlite`, `PostgreSQL` via `sqlx`, and CSV) are
 /// each known to emit for an unknown table or column, and falling back to
 /// [`ProviderError::Backend`] for everything else.
 ///
-/// Best-effort: `dbcon` reports failures as a stringly-typed `anyhow::Error`. An unrecognised
+/// Best-effort: `dbcon` reports failures as a stringly-typed `anyhow::Error`. An unrecognized
 /// message still reaches the caller, as [`ProviderError::Backend`].
 fn map_err(table: &str, message: &str) -> ProviderError {
     let lower = message.to_ascii_lowercase();
@@ -537,7 +537,7 @@ mod tests {
             (NormalizedType::Boolean, Some(ValueKind::Boolean)),
             (NormalizedType::Timestamp, Some(ValueKind::Timestamp)),
             // `ValueKind` has no JSON case; `convert` lands JSON as `Value::Text`, but claiming
-            // `Text` here would let a `Compare` literal coerce against the raw serialisation.
+            // `Text` here would let a `Compare` literal coerce against the raw serialization.
             (NormalizedType::Json, None),
         ];
         for (normalized, expected) in cases {

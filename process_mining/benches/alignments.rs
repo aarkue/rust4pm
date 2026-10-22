@@ -6,14 +6,14 @@ use process_mining::{
         log_to_activity_projection, EventLogActivityProjection,
     },
     test_utils::get_test_data_path,
-    EventLog, Importable, PetriNet,
+    AcceptingPetriNet, EventLog, Importable,
 };
 use std::time::Duration;
 
-fn load(log_name: &str, net_name: &str) -> (PetriNet, EventLogActivityProjection) {
+fn load(log_name: &str, net_name: &str) -> (AcceptingPetriNet, EventLogActivityProjection) {
     let root = get_test_data_path();
     let log = EventLog::import_from_path(root.join("xes").join(log_name)).unwrap();
-    let net = PetriNet::import_pnml(root.join("petri-net").join(net_name)).unwrap();
+    let net = AcceptingPetriNet::import_pnml(root.join("petri-net").join(net_name)).unwrap();
     (net, log_to_activity_projection(&log))
 }
 

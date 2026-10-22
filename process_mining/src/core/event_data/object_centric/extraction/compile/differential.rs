@@ -2233,7 +2233,7 @@ fn a_text_versus_number_join_key_produces_no_rows_on_both_sides() {
     );
 }
 
-/// Serialises the panic-hook swap [`comparison_rejects`] performs, so two of these running
+/// Serializes the panic-hook swap [`comparison_rejects`] performs, so two of these running
 /// concurrently cannot leave the suppressing hook installed for a genuine failure elsewhere.
 static HOOK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 

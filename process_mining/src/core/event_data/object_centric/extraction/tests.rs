@@ -580,7 +580,7 @@ fn c1_a_filter_reads_the_same_row_layout_its_consumers_index_it_with() {
 
 /// The `right_<name>` rule is one rule, shared by demand routing and the runtime row assembly.
 /// A left table with a real column literally named `right_foo` used to route demand to the right
-/// input, so it was never fetched from the left and materialised as `Null`, while the runtime
+/// input, so it was never fetched from the left and materialized as `Null`, while the runtime
 /// rule resolved it from the left.
 #[test]
 fn a_left_column_literally_named_right_foo_resolves_from_the_left() {
@@ -645,7 +645,7 @@ fn a_left_column_literally_named_right_foo_resolves_from_the_left() {
     let report = extract(&bp, &catalog, &providers, &mut sink).expect("extract");
     assert!(
         sink.ocel().get_ob_by_id("from-left").is_some(),
-        "left's own right_foo column must be fetched from the left, not materialised as Null; \
+        "left's own right_foo column must be fetched from the left, not materialized as Null; \
          dropped: {:?}",
         report.per_mapping[0].dropped
     );
@@ -656,7 +656,7 @@ fn a_left_column_literally_named_right_foo_resolves_from_the_left() {
 ///
 /// Here `foo` exists on both sides but is neither a join key nor read by any mapping, so nothing
 /// demands it from the left. The runtime rule tested "does the left have `foo`?" against the
-/// projected left schema, which by then did not, so `right_foo` materialised as `Null` and the
+/// projected left schema, which by then did not, so `right_foo` materialized as `Null` and the
 /// row was dropped for an unusable id. Both rules now ask both sides' full schemas.
 #[test]
 fn a_right_prefixed_column_resolves_when_its_unprefixed_twin_is_not_a_join_key() {
@@ -720,7 +720,7 @@ fn a_right_prefixed_column_resolves_when_its_unprefixed_twin_is_not_a_join_key()
     let report = extract(&bp, &catalog, &providers, &mut sink).expect("extract");
     assert!(
         sink.ocel().get_ob_by_id("right-foo").is_some(),
-        "right_foo must be read from the right input, not materialised as Null; dropped: {:?}",
+        "right_foo must be read from the right input, not materialized as Null; dropped: {:?}",
         report.per_mapping[0].dropped
     );
 }
@@ -995,7 +995,7 @@ fn c3_an_inline_object_reference_resolves_against_every_object_whatever_the_orde
             }],
             event_attributes: vec![],
         });
-        // The generator hardcodes `Create`, which hides the ordering question by synthesising
+        // The generator hardcodes `Create`, which hides the ordering question by synthesizing
         // whatever has not been emitted yet. `Drop` exposes it, and is a setting an author may
         // legitimately choose for the same blueprint.
         bp.on_missing_endpoint = MissingEndpointPolicy::Drop;
@@ -1656,7 +1656,7 @@ fn i_g_conflicting_attribute_declarations_are_reported_and_widened() {
 /// The two rows name different missing objects on purpose. Sharing one id hid a divergence:
 /// `run_e2o` gives up before it ever looks at the object endpoint of the row whose event is
 /// missing, so under `Create` the eager sink never creates that object, while a deferring sink,
-/// which cannot fail an event endpoint at all, staged it and synthesised it at finalize.
+/// which cannot fail an event endpoint at all, staged it and synthesized it at finalize.
 fn i5_fixture(target: Target, node: &str) -> (Fixture, Blueprint, ExtractionCatalog) {
     let fx = Fixture::new();
     {
@@ -1749,11 +1749,11 @@ fn i5_run(
 
 /// `E2O`'s object side: the policy applies exactly as it does to an `O2O`'s target.
 #[test]
-fn i5_e2o_object_side_honours_every_missing_endpoint_policy() {
+fn i5_e2o_object_side_honors_every_missing_endpoint_policy() {
     for (policy, expect_objects, expect_drops, expect_error) in [
         (MissingEndpointPolicy::Drop, 0, 2u64, false),
         // One relation is still dropped: its event endpoint is missing, and `Create` cannot
-        // synthesise an event.
+        // synthesize an event.
         (MissingEndpointPolicy::Create, 1, 1, false),
         (MissingEndpointPolicy::Error, 0, 2, true),
     ] {
@@ -1789,11 +1789,11 @@ fn i5_e2o_object_side_honours_every_missing_endpoint_policy() {
     }
 }
 
-/// `E2O`'s event side, which behaves differently on purpose: `Create` cannot synthesise an
+/// `E2O`'s event side, which behaves differently on purpose: `Create` cannot synthesize an
 /// event, since there is no timestamp to give it, so it degrades to `Drop` there while still
 /// creating objects.
 #[test]
-fn i5_create_cannot_synthesise_an_event_endpoint_and_degrades_to_drop() {
+fn i5_create_cannot_synthesize_an_event_endpoint_and_degrades_to_drop() {
     let (fx, mut bp, catalog) = i5_fixture(e2o_target(), "rels");
     bp.on_missing_endpoint = MissingEndpointPolicy::Create;
     assert_eq!(validate(&bp, &catalog), vec![]);
@@ -1802,7 +1802,7 @@ fn i5_create_cannot_synthesise_an_event_endpoint_and_degrades_to_drop() {
     assert_eq!(
         sink.ocel().get_all_evs().count(),
         1,
-        "'no-such-event' is not synthesised"
+        "'no-such-event' is not synthesized"
     );
     assert_eq!(
         sink.ocel().get_obs_of_type("Thing").count(),
@@ -1824,7 +1824,7 @@ fn i5_create_cannot_synthesise_an_event_endpoint_and_degrades_to_drop() {
 /// an event's inline object reference: same policy, same code path, same counts as the `E2O`
 /// object side above.
 #[test]
-fn i5_inline_object_references_honour_every_missing_endpoint_policy() {
+fn i5_inline_object_references_honor_every_missing_endpoint_policy() {
     for (policy, expect_objects, expect_drops, expect_error) in [
         (MissingEndpointPolicy::Drop, 0, 1u64, false),
         (MissingEndpointPolicy::Create, 1, 0, false),
@@ -2529,7 +2529,7 @@ fn case_9_missing_endpoint_create() {
     assert_eq!(
         sink.ocel().get_obs_of_type("B").count(),
         1,
-        "target synthesised"
+        "target synthesized"
     );
     assert!(sink.ocel().get_ob_by_id("d1").is_some());
     let o2o_stats = report
@@ -2759,7 +2759,7 @@ fn assert_both_sinks_agree_on_separate_runs(
     );
 
     // The log snapshot is content, not counters, so it cannot catch two sinks agreeing on what
-    // they wrote while disagreeing on how they characterise it. `deduplicated` is "the sink
+    // they wrote while disagreeing on how they characterize it. `deduplicated` is "the sink
     // already had this entity", which an eager sink answers at `resolve_object` and a
     // deferring one at `add_object`, so it must be identical per mapping regardless of which sink
     // produced it.
@@ -2850,13 +2850,13 @@ fn i6_the_error_policy_reports_unresolved_endpoints_under_a_deferring_sink() {
     );
 }
 
-/// `on_missing_endpoint: Create` must synthesise the same objects under both sinks. `run_e2o`
+/// `on_missing_endpoint: Create` must synthesize the same objects under both sinks. `run_e2o`
 /// returns before it looks at the object endpoint when the event endpoint does not resolve, so
 /// the eager sink never creates that row's object; a deferring sink resolves no endpoint eagerly,
 /// staged it, and created it at finalize even though the relation was deleted immediately after.
 #[cfg(feature = "ocel-duckdb")]
 #[test]
-fn case_11_create_synthesises_the_same_objects_under_both_sinks() {
+fn case_11_create_synthesizes_the_same_objects_under_both_sinks() {
     let (fx, mut bp, catalog) = i5_fixture(e2o_target(), "rels");
     bp.on_missing_endpoint = MissingEndpointPolicy::Create;
     assert_eq!(validate(&bp, &catalog), vec![]);
@@ -2879,7 +2879,7 @@ fn case_11_create_synthesises_the_same_objects_under_both_sinks() {
 /// gate has to test the set the statement is about to produce, not the one it reads.
 #[cfg(feature = "ocel-duckdb")]
 #[test]
-fn case_11_create_synthesises_both_ends_of_a_relation_only_o2o() {
+fn case_11_create_synthesizes_both_ends_of_a_relation_only_o2o() {
     let fx = Fixture::new();
     {
         let con = fx.build();
@@ -2917,7 +2917,7 @@ fn case_11_create_synthesises_both_ends_of_a_relation_only_o2o() {
     let (_, duck_report) = assert_both_sinks_agree_on_separate_runs(&fx, &bp, &catalog);
     assert_eq!(
         duck_report.finalize.objects_created, 2,
-        "both endpoints are synthesised, the target no less than the source"
+        "both endpoints are synthesized, the target no less than the source"
     );
     assert_eq!(duck_report.finalize.resolved_relations, 1);
     assert_eq!(duck_report.finalize.unresolved_endpoints, 0);
@@ -3109,7 +3109,7 @@ fn case_11_both_sinks_agree_on_join() {
     assert_both_sinks_agree(&fx, &bp, &catalog);
 }
 
-// a Source -> Filter chain streams and never materialises; a Join does.
+// a Source -> Filter chain streams and never materializes; a Join does.
 //
 // Asserted on `ExtractionReport::rows_materialized` (see graph.rs's
 // `GraphExecutor::rows_materialized`) rather than on process-wide memory, which is not

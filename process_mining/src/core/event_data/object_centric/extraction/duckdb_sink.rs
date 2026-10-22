@@ -233,7 +233,7 @@ impl DuckDbSink {
 
     /// Whether this run needs [`T_DEFERRED`] and [`T_ENDPOINT_GATE`] at all.
     ///
-    /// [`Self::resolve_deferred`] reads them only to synthesise missing objects, so under any
+    /// [`Self::resolve_deferred`] reads them only to synthesize missing objects, so under any
     /// other policy every staged row is written and then dropped unread, costing two appender
     /// create-and-flush cycles per relation endpoint.
     fn stages_endpoints(&self) -> bool {
@@ -277,7 +277,7 @@ impl DuckDbSink {
             // - `'event'` tests `events`, which this statement does not write, so it is final.
             // - `'object'` tests the post-creation object set, not `objects`: under `Create` a
             //   relation-only source is created by this `INSERT`, so testing the pre-creation
-            //   `objects` would rule out the target ask of every synthesised source, and the
+            //   `objects` would rule out the target ask of every synthesized source, and the
             //   target would then never be created and the relation deleted for want of it.
             //
             // The post-creation set is `available` below (`objects UNION creatable`), but the gate
@@ -492,7 +492,7 @@ impl DuckDbSink {
     /// written without an intervening ask gates nothing.
     ///
     /// A failure to record the gate row is swallowed, but not harmless: an ungated ask can win
-    /// `arg_min` for an id a real row also names, so `Create` synthesises that object under a type
+    /// `arg_min` for an id a real row also names, so `Create` synthesizes that object under a type
     /// the eager path would never have used, and both sinks then hold the same id under different
     /// types. The relation itself survives either way, only its type moves; the opposite mistake,
     /// an over-eager gate, is what costs a relation (see `resolve_deferred`). It is swallowed
@@ -718,14 +718,14 @@ impl ExtractionSink for DuckDbSink {
     }
 
     /// Always [`Resolution::Deferred`], recording `object_type` so
-    /// [`finalize`](ExtractionSink::finalize) can honour `on_missing_endpoint: Create` for an
+    /// [`finalize`](ExtractionSink::finalize) can honor `on_missing_endpoint: Create` for an
     /// endpoint that turns out not to exist.
     fn resolve_object(&mut self, id: &str, object_type: Option<&str>) -> Resolution<ObjectRef> {
         // Nothing reads what would be staged unless the policy is `Create`.
         if !self.stages_endpoints() {
             return Resolution::Deferred(ObjectRef::Id(id.to_string()));
         }
-        // A failure here would only cost `Create` an object it could have synthesised. The
+        // A failure here would only cost `Create` an object it could have synthesized. The
         // relation itself is still written and still resolved (or dropped) at finalize, so this
         // is deliberately not turned into a resolution failure.
         let seq = self.deferred_seq;
@@ -852,7 +852,7 @@ mod tests {
         ));
     }
 
-    /// A relation written against a deferred endpoint that never materialises is deleted at
+    /// A relation written against a deferred endpoint that never materializes is deleted at
     /// finalize under `Drop`, and counted as the same loss an eager sink reports per mapping via
     /// `DropReason::UnresolvedEndpoint`.
     #[test]
@@ -886,7 +886,7 @@ mod tests {
         assert_eq!(e1.relationships.len(), 1, "the dangling relation is gone");
     }
 
-    /// `on_missing_endpoint: Create` is honoured at finalize, from the type the endpoint
+    /// `on_missing_endpoint: Create` is honored at finalize, from the type the endpoint
     /// declared, which is why `resolve_object` is given it.
     #[test]
     fn finalize_creates_missing_objects_under_the_create_policy() {

@@ -9,10 +9,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     conformance::alignments::{
-        sync_prod_net::{SyncProdNetConstructionError, SyncProdNetTransition, SyncProductNet},
-        AlignmentMove, AlignmentResult,
+        sync_prod_net::{Arcs, SyncProdNetConstructionError, SyncProductNet},
+        AlignmentResult,
     },
-    utils::dijkstra_search::{search, NodeID, SearchError, SearchProblem, SearchState},
+    utils::dijkstra_search::{
+        reserve_vec, search_bidirectional, worth_releasing, MemoryBudget, NodeID,
+        ReversibleSearchProblem, SearchError, SearchLimits, SearchProblem, SearchResult,
+        SearchState,
+    },
 };
 
 /// Alignment Error
@@ -54,237 +58,863 @@ pub type TracePos = u16;
 /// An edge/step of the Petri-net search: the transition fired, and whether it is a log move.
 ///
 /// The log-move-flag allows for log-before-model-moves pruning in [`PetriNetAlignment::expand`].
+/// It rides in the transition index's top bit: one step is stored per search node, so its width
+/// carries straight into the search's memory use.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub(crate) struct PetriNetStep {
+pub(crate) struct PetriNetStep(u32);
+
+impl PetriNetStep {
+    /// Marks a step as a log move, leaving 31 bits for the transition index
+    const LOG_MOVE: u32 = 1 << 31;
+
+    #[inline]
+    fn new(transition: usize, log_move: bool) -> Self {
+        debug_assert!(
+            transition < Self::LOG_MOVE as usize,
+            "the sync. prod. net may hold at most 2^31 transitions"
+        );
+        Self(transition as u32 | if log_move { Self::LOG_MOVE } else { 0 })
+    }
+
     /// Index of the fired transition in the sync. prod. net
-    transition: u32,
+    #[inline]
+    fn transition(self) -> usize {
+        (self.0 & !Self::LOG_MOVE) as usize
+    }
+
     /// Whether the fired transition is a log move
-    log_move: bool,
+    #[inline]
+    fn log_move(self) -> bool {
+        self.0 & Self::LOG_MOVE != 0
+    }
+}
+
+/// Marked places a fresh layout makes room for
+const INITIAL_MAX_MARKED: usize = 4;
+
+/// Number of places a [`PlaceSet`] can hold
+pub(crate) const PLACE_SET_LIMIT: usize = u64::BITS as usize;
+
+/// A set of places, holding only the first [`PLACE_SET_LIMIT`] of them
+///
+/// Places beyond that are silently left out. That only ever weakens a test, never makes it
+/// wrong: the set rules candidates out, and the exact check confirms whatever survives.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PlaceSet(u64);
+
+impl PlaceSet {
+    /// Add `place`, ignoring any the set cannot hold
+    #[inline]
+    pub(crate) fn insert(&mut self, place: usize) {
+        if place < PLACE_SET_LIMIT {
+            self.0 |= 1 << place;
+        }
+    }
+
+    /// Whether every place in `self` is also in `other`
+    #[inline]
+    pub(crate) fn contained_in(self, other: Self) -> bool {
+        self.0 & !other.0 == 0
+    }
+}
+
+/// The places a marking holds a token in, as one bit per place, opening every record
+#[derive(Debug, Clone, Copy)]
+struct MarkedPlaces<'a>(&'a [u8]);
+
+impl MarkedPlaces<'_> {
+    /// Whether `place` holds a token
+    #[inline]
+    fn contains(self, place: usize) -> bool {
+        self.0[place / 8] >> (place % 8) & 1 == 1
+    }
+
+    /// How many marked places come before `place`, which is where its token count sits
+    #[inline]
+    fn count_before(self, place: usize) -> usize {
+        let (group, bit) = (place / 8, place % 8);
+        let preceding: u32 = self.0[..group].iter().map(|g| g.count_ones()).sum();
+        (preceding + (self.0[group] & ((1 << bit) - 1)).count_ones()) as usize
+    }
+
+    /// How many places are marked
+    #[inline]
+    fn count(self) -> usize {
+        self.0.iter().map(|group| group.count_ones() as usize).sum()
+    }
+
+    /// The marked places as a set, for testing a transition's needs in one operation
+    #[inline]
+    fn to_place_set(self) -> PlaceSet {
+        let head = self.0.len().min(8);
+        let mut bytes = [0; 8];
+        bytes[..head].copy_from_slice(&self.0[..head]);
+        PlaceSet(u64::from_le_bytes(bytes))
+    }
+
+    /// Visit each marked place, lowest first
+    #[inline]
+    fn for_each(self, mut visit: impl FnMut(usize)) {
+        for (group, &bits) in self.0.iter().enumerate() {
+            let mut bits = bits;
+            while bits != 0 {
+                visit(group * 8 + bits.trailing_zeros() as usize);
+                bits &= bits - 1;
+            }
+        }
+    }
+}
+
+/// The marked places of a record, for adding and removing one
+struct MarkedPlacesMut<'a>(&'a mut [u8]);
+
+impl MarkedPlacesMut<'_> {
+    #[inline]
+    fn insert(&mut self, place: usize) {
+        self.0[place / 8] |= 1 << (place % 8);
+    }
+
+    #[inline]
+    fn remove(&mut self, place: usize) {
+        self.0[place / 8] &= !(1 << (place % 8));
+    }
+}
+
+/// The nodes a search has reached, as flat fixed-width records
+///
+/// A record is `[bitmask of the marked places][their token counts, in place order]`, padded to
+/// `stride`. Only a few places hold a token at any time, so this is far smaller than one count
+/// per place. Padding is kept zeroed, so a whole record stays canonical.
+#[derive(Debug, Default)]
+struct NodeRecords {
+    /// Number of model places
+    num_places: usize,
+    /// Bytes of bitmask in a record, i.e. one bit per place
+    mask_bytes: usize,
+    /// Most marked places a record has room for
+    max_marked: usize,
+    /// Bytes per record
+    stride: usize,
+    /// The records, indexed using [`NodeID`]
+    records: Vec<u8>,
+    /// Trace position per node, indexed using [`NodeID`]
+    positions: Vec<TracePos>,
+}
+
+impl NodeRecords {
+    /// Drop the previous search, keeping the layout unless the net changed
+    fn reset(&mut self, num_places: usize) {
+        if self.num_places != num_places {
+            self.num_places = num_places;
+            self.mask_bytes = num_places.div_ceil(8);
+            self.max_marked = 0;
+        }
+        if worth_releasing(self.records.capacity(), self.records.len()) {
+            self.records = Vec::new();
+            self.positions = Vec::new();
+            // Nothing left to relay out, so let this trace size the layout afresh
+            self.max_marked = 0;
+        } else {
+            self.records.clear();
+            self.positions.clear();
+        }
+    }
+
+    /// Size the layout to hold a key of `longest`, keeping any width earlier traces needed
+    fn fit_layout(&mut self, longest: usize) {
+        self.max_marked = self
+            .max_marked
+            .max(longest - self.mask_bytes)
+            .max(INITIAL_MAX_MARKED)
+            .min(self.num_places);
+        // A net without places still needs a non-zero stride to index by
+        self.stride = (self.mask_bytes + self.max_marked).max(1);
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.positions.len()
+    }
+
+    /// Encode a marking as a key.
+    ///
+    /// Keys are independent of the layout, so the two search directions stay comparable even
+    /// when their layouts differ.
+    fn encode(&self, marking: &[TokenCount], key: &mut Vec<u8>) {
+        key.clear();
+        key.resize(self.mask_bytes, 0);
+        for (place, &tokens) in marking.iter().enumerate() {
+            if tokens != 0 {
+                MarkedPlacesMut(&mut key[..self.mask_bytes]).insert(place);
+                key.push(tokens);
+            }
+        }
+    }
+
+    /// Expand `node`'s marking into one entry per place
+    #[inline]
+    fn decode(&self, node: NodeID, marking: &mut [TokenCount]) {
+        marking.fill(0);
+        let record = self.record(node);
+        let mut count = self.mask_bytes;
+        MarkedPlaces(&record[..self.mask_bytes]).for_each(|place| {
+            marking[place] = record[count];
+            count += 1;
+        });
+    }
+
+    /// Take `weight` tokens from `place`, dropping it once it runs empty.
+    ///
+    /// The place must hold at least `weight` tokens, which enabledness has already established.
+    #[inline]
+    fn consume(&self, key: &mut Vec<u8>, place: usize, weight: TokenCount) {
+        let slot = {
+            let marked = MarkedPlaces(&key[..self.mask_bytes]);
+            debug_assert!(
+                marked.contains(place),
+                "a transition may only consume from a marked place"
+            );
+            self.mask_bytes + marked.count_before(place)
+        };
+        key[slot] -= weight;
+        if key[slot] == 0 {
+            key.remove(slot);
+            MarkedPlacesMut(&mut key[..self.mask_bytes]).remove(place);
+        }
+    }
+
+    /// Add `weight` tokens to `place`, or `None` if it would hold more than [`TokenCount::MAX`],
+    /// which puts the reached marking out of bounds
+    #[inline]
+    #[must_use]
+    fn produce(&self, key: &mut Vec<u8>, place: usize, weight: TokenCount) -> Option<()> {
+        let (slot, present) = {
+            let marked = MarkedPlaces(&key[..self.mask_bytes]);
+            (
+                self.mask_bytes + marked.count_before(place),
+                marked.contains(place),
+            )
+        };
+        if present {
+            key[slot] = key[slot].checked_add(weight)?;
+        } else {
+            key.insert(slot, weight);
+            MarkedPlacesMut(&mut key[..self.mask_bytes]).insert(place);
+        }
+        Some(())
+    }
+
+    /// Make room for one more record within `budget`
+    #[inline]
+    fn reserve_one(&mut self, budget: &MemoryBudget) -> bool {
+        reserve_vec(&mut self.records, self.stride, budget)
+            && reserve_vec(&mut self.positions, 1, budget)
+    }
+
+    fn allocated_bytes(&self) -> usize {
+        self.records.capacity() + self.positions.capacity() * size_of::<TracePos>()
+    }
+
+    /// Append a node holding `key`
+    #[inline]
+    fn push(&mut self, key: &[u8], trace_pos: TracePos) {
+        let padding = self.stride - key.len();
+        self.records.extend_from_slice(key);
+        self.records.resize(self.records.len() + padding, 0);
+        self.positions.push(trace_pos);
+    }
+
+    #[inline]
+    fn fits(&self, key: &[u8]) -> bool {
+        key.len() <= self.stride
+    }
+
+    /// Widen the records so `key` fits, relaying out the existing ones.
+    ///
+    /// A state is hashed over its meaningful prefix alone, so this leaves any index valid.
+    #[cold]
+    #[must_use]
+    fn widen_for(&mut self, key: &[u8], budget: &MemoryBudget) -> bool {
+        let max_marked = (key.len() - self.mask_bytes)
+            .max(self.max_marked * 2)
+            .min(self.num_places);
+        let stride = self.mask_bytes + max_marked;
+        let additional = self.len() * (stride - self.stride);
+        if !reserve_vec(&mut self.records, additional, budget) {
+            return false;
+        }
+        // Backwards, so a record is only overwritten once it has been moved itself
+        self.records.resize(self.len() * stride, 0);
+        for node in (0..self.len()).rev() {
+            let (from, to) = (node * self.stride, node * stride);
+            self.records.copy_within(from..from + self.stride, to);
+            self.records[to + self.stride..to + stride].fill(0);
+        }
+        self.max_marked = max_marked;
+        self.stride = stride;
+        true
+    }
+
+    #[inline]
+    fn record(&self, node: NodeID) -> &[u8] {
+        let off = node as usize * self.stride;
+        &self.records[off..off + self.stride]
+    }
+
+    #[inline]
+    fn marked(&self, node: NodeID) -> MarkedPlaces<'_> {
+        MarkedPlaces(&self.record(node)[..self.mask_bytes])
+    }
+
+    #[inline]
+    fn trace_pos(&self, node: NodeID) -> TracePos {
+        self.positions[node as usize]
+    }
+
+    /// The key `node` holds, i.e. its record without the padding
+    #[inline]
+    fn key_of(&self, node: NodeID) -> &[u8] {
+        let record = self.record(node);
+        let marked = MarkedPlaces(&record[..self.mask_bytes]).count();
+        &record[..self.mask_bytes + marked]
+    }
+
+    /// Whether `node` holds the marking `key` encodes.
+    ///
+    /// Comparing the prefix is exact: equal bitmasks imply equally many counts, and differing
+    /// ones already differ inside the bitmask.
+    #[inline]
+    fn holds_key(&self, node: NodeID, key: &[u8]) -> bool {
+        // A record holds at most `max_marked` counts, so a longer key matches nothing
+        self.fits(key) && &self.record(node)[..key.len()] == key
+    }
+
+    #[inline]
+    fn hash_of(&self, node: NodeID) -> u64 {
+        hash_state(self.key_of(node), self.trace_pos(node))
+    }
+}
+
+/// The state a goal node must hold
+#[derive(Debug, Default)]
+struct Goal {
+    key: Vec<u8>,
+    trace_pos: TracePos,
+}
+
+/// Buffers reused across one node's expansion
+#[derive(Debug, Default)]
+struct Scratch {
+    /// Key of the node being expanded, which every successor is built from
+    expanding_key: Vec<u8>,
+    /// Places that node marks, to reject transitions against
+    expanding_places: PlaceSet,
+    /// That node's marking with one entry per place, for the exact enabledness check
+    expanding_marking: Vec<TokenCount>,
+    /// Model transitions its marked places could trigger
+    candidates: Vec<u32>,
+    /// Key of the successor currently being built
+    successor_key: Vec<u8>,
 }
 
 /// Reusable state storage for a Petri-net alignment search
 #[derive(Debug, Default)]
 pub(crate) struct PetriNetAlignmentSpace {
-    /// Number of model places
-    num_places: usize,
-    /// Flat storage for model markings, indexed using [`NodeID`]
-    markings: Vec<TokenCount>,
-    /// Trace position per node, indexed using [`NodeID`]
-    trace_pos: Vec<TracePos>,
+    nodes: NodeRecords,
     /// Index of visited states, mapping a `(marking, trace_pos)` tuple to a [`NodeID`]
     seen: HashTable<NodeID>,
-    /// Current marking (re-used to reduce allocations)
-    current: Vec<TokenCount>,
-    /// Next marking, reached by firing a transition (re-used to reduce allocations)
-    next: Vec<TokenCount>,
+    goal: Goal,
+    scratch: Scratch,
 }
 
 impl PetriNetAlignmentSpace {
-    fn reset(&mut self, net: &SyncProductNet) {
-        self.num_places = net.num_model_places;
-        self.markings.clear();
-        self.trace_pos.clear();
-        self.seen.clear();
-        self.current.resize(net.num_model_places, 0);
-        self.next.resize(net.num_model_places, 0);
-        self.markings
-            .extend_from_slice(&net.initial_marking[..net.num_model_places]);
-        self.trace_pos.push(0);
-        self.add_seen(0);
+    fn reset(&mut self, net: &SyncProductNet<'_>, reverse: bool) {
+        let num_places = net.model.num_places;
+        // Clearing costs the whole capacity, so an oversized index is cheaper to drop
+        if worth_releasing(self.seen.capacity(), self.nodes.len()) {
+            self.seen = HashTable::new();
+        } else {
+            self.seen.clear();
+        }
+        self.nodes.reset(num_places);
+        self.scratch.expanding_marking.resize(num_places, 0);
+        // Scratch buffers are bounded by the net, so they are sized once instead of growing
+        // during the search
+        let longest_key = num_places.div_ceil(8) + num_places;
+        for key in [
+            &mut self.scratch.expanding_key,
+            &mut self.scratch.successor_key,
+            &mut self.goal.key,
+        ] {
+            key.reserve(longest_key.saturating_sub(key.len()));
+        }
+        let num_model_trans = net.num_model_trans();
+        self.scratch
+            .candidates
+            .reserve(num_model_trans.saturating_sub(self.scratch.candidates.len()));
+        // A backward search starts where a forward one ends, and aims for the other end
+        let (start, start_pos, goal, goal_pos) = if reverse {
+            (
+                &net.model.final_marking,
+                net.trace_length,
+                &net.model.initial_marking,
+                0,
+            )
+        } else {
+            (
+                &net.model.initial_marking,
+                0,
+                &net.model.final_marking,
+                net.trace_length,
+            )
+        };
+        self.nodes
+            .encode(&start[..num_places], &mut self.scratch.successor_key);
+        self.nodes.encode(&goal[..num_places], &mut self.goal.key);
+        // The layout has to fit both ends, and is carried between traces: a trace needing a wide
+        // layout suggests the next will too
+        self.nodes
+            .fit_layout(self.scratch.successor_key.len().max(self.goal.key.len()));
+        self.goal.trace_pos = goal_pos;
+        self.nodes.push(&self.scratch.successor_key, start_pos);
+        let hash = hash_state(&self.scratch.successor_key, start_pos);
+        self.add_seen(0, hash);
+    }
+
+    /// Make room for one more node in the `seen` index within `budget`
+    #[inline]
+    fn reserve_seen(&mut self, budget: &MemoryBudget) -> bool {
+        if self.seen.len() < self.seen.capacity() {
+            return true;
+        }
+        let capacity = self.seen.capacity().max(2) * 2;
+        let (before, bound) = (self.seen.allocation_size(), table_bound(capacity));
+        if !budget.grow(before, bound) {
+            return false;
+        }
+        let nodes = &self.nodes;
+        self.seen
+            .reserve(capacity - self.seen.len(), |node| nodes.hash_of(*node));
+        debug_assert!(self.seen.allocation_size() <= bound);
+        budget.settle(bound, self.seen.allocation_size());
+        true
+    }
+
+    fn allocated_bytes(&self) -> usize {
+        let scratch = &self.scratch;
+        self.nodes.allocated_bytes()
+            + self.seen.allocation_size()
+            + scratch.expanding_key.capacity()
+            + scratch.successor_key.capacity()
+            + scratch.expanding_marking.capacity() * size_of::<TokenCount>()
+            + scratch.candidates.capacity() * size_of::<u32>()
+            + self.goal.key.capacity()
+    }
+
+    /// Record a node under the given hash of its state
+    #[inline]
+    fn add_seen(&mut self, node: NodeID, hash: u64) {
+        let nodes = &self.nodes;
+        self.seen
+            .insert_unique(hash, node, |other| nodes.hash_of(*other));
     }
 
     #[inline]
-    fn add_seen(&mut self, node: NodeID) {
-        let off = node as usize * self.num_places;
-        let hash = hash_state(
-            &self.markings[off..off + self.num_places],
-            self.trace_pos[node as usize],
-        );
-        let markings = &self.markings;
-        let trace_pos = &self.trace_pos;
-        let num_places = self.num_places;
-        self.seen.insert_unique(hash, node, |other| {
-            let off = *other as usize * num_places;
-            hash_state(&markings[off..off + num_places], trace_pos[*other as usize])
-        });
+    fn find_seen(&self, key: &[u8], trace_pos: TracePos) -> Option<NodeID> {
+        self.find_seen_hashed(hash_state(key, trace_pos), key, trace_pos)
     }
 
     #[inline]
-    fn find_seen(&self, marking: &[TokenCount], trace_position: TracePos) -> Option<NodeID> {
-        let hash = hash_state(marking, trace_position);
-        let num_places = self.num_places;
+    fn find_seen_hashed(&self, hash: u64, key: &[u8], trace_pos: TracePos) -> Option<NodeID> {
         self.seen
             .find(hash, |node| {
-                let off = *node as usize * num_places;
-                &self.markings[off..off + num_places] == marking
-                    && self.trace_pos[*node as usize] == trace_position
+                self.nodes.trace_pos(*node) == trace_pos && self.nodes.holds_key(*node, key)
             })
             .copied()
     }
+}
+
+/// An upper bound of the bytes hashbrown allocates for a `HashTable<NodeID>` with room for
+/// `capacity` entries: buckets at most 7/8 full and rounded up to a power of two, each with a slot
+/// and a control byte, plus one group of trailing control bytes and alignment
+pub(crate) const fn table_bound(capacity: usize) -> usize {
+    let buckets = match capacity {
+        0 => return 0,
+        1..4 => 4,
+        4..8 => 8,
+        _ => (capacity * 8 / 7).next_power_of_two(),
+    };
+    buckets * (size_of::<NodeID>() + 1) + 2 * 16
 }
 
 /// Alignment as a [`SearchProblem`]: a state is a `(model marking, trace position)`, an edge fires
 /// a sync. prod. net transition
 #[derive(Debug)]
 struct PetriNetAlignment<'a> {
-    net: &'a SyncProductNet,
+    net: &'a SyncProductNet<'a>,
     space: &'a mut PetriNetAlignmentSpace,
+    /// Search backwards, from the final marking, firing every transition in reverse
+    reverse: bool,
 }
 
-impl<'a> PetriNetAlignment<'a> {
-    /// Build the alignment problem over `net`, storing search state in `space`
-    fn new(net: &'a SyncProductNet, space: &'a mut PetriNetAlignmentSpace) -> Self {
-        Self { net, space }
-    }
-}
-
-/// Instantiate the search problem ([`SearchProblem`]) for the Petri net alignment
 impl SearchProblem for PetriNetAlignment<'_> {
-    /// A single step in the search corresponds to firing a sync net transition, represented by [`PetriNetStep`].
     type Step = PetriNetStep;
-    /// Costs are represented as `u32`, also see [`super::cost::CostFunction`]
     type Cost = u32;
 
-    /// Reset the search space and return the initial node ID (0)
     fn initial(&mut self) -> NodeID {
-        self.space.reset(self.net);
+        self.space.reset(self.net, self.reverse);
         0
     }
-    /// Get maximal edge cost in the synchronous product net (needed for bucket setup)
+
     fn max_edge_cost(&self) -> u32 {
         self.net.max_edge_cost
     }
 
-    /// Check whether the given node is a goal state (final marking and trace position at the end of the trace)
-    #[inline]
-    fn is_goal(&self, node: NodeID) -> bool {
-        let np = self.net.num_model_places;
-        let off = node as usize * np;
-        self.space.trace_pos[node as usize] == self.net.trace_length
-            && self.space.markings[off..off + np] == self.net.final_marking[..np]
+    fn allocated_bytes(&self) -> usize {
+        self.space.allocated_bytes()
     }
 
-    /// Expand the given node, emitting all reachable nodes and their costs via the `emit` callback
+    /// Whether the whole trace is consumed and the target marking reached
+    #[inline]
+    fn is_goal(&self, node: NodeID) -> bool {
+        self.space.nodes.trace_pos(node) == self.space.goal.trace_pos
+            && self.space.nodes.holds_key(node, &self.space.goal.key)
+    }
+
     #[inline]
     fn expand<F: FnMut(NodeID, bool, u32, PetriNetStep)>(
         &mut self,
         node: NodeID,
         via: Option<PetriNetStep>,
+        budget: &MemoryBudget,
         mut emit: F,
     ) {
+        let reverse = self.reverse;
         let net = self.net;
         let space = &mut *self.space;
-        let np = space.num_places;
-        let off = node as usize * np;
-        let trace_pos = space.trace_pos[node as usize];
-        let last_move_was_log = via.is_some_and(|s| s.log_move);
+        let trace_pos = space.nodes.trace_pos(node);
+        let last_move_was_log = via.is_some_and(PetriNetStep::log_move);
+        // Token counts are only needed where the bitmask cannot settle enabledness on its own
+        if net.model.needs_token_counts {
+            space
+                .nodes
+                .decode(node, &mut space.scratch.expanding_marking);
+        }
+        // Rejecting a transition then costs one test against the places this node marks
+        let marked = space.nodes.marked(node);
+        space.scratch.expanding_places = marked.to_place_set();
+        // Successors are built from this rather than re-encoded from a dense marking
+        space.scratch.expanding_key.clear();
         space
-            .current
-            .copy_from_slice(&space.markings[off..off + np]);
+            .scratch
+            .expanding_key
+            .extend_from_slice(space.nodes.key_of(node));
+
+        // Model moves worth trying: only what this node's marked places can trigger, rather than
+        // every transition in the net. Taken out of the space so the loop below may borrow it.
+        let mut candidates = std::mem::take(&mut space.scratch.candidates);
+        candidates.clear();
+        // After a log move, model moves are pruned, so nothing is gathered at all. Log and model
+        // moves commute at equal cost, so each side still finds exact distances. Backward, the
+        // rule keeps the opposite order, and where the sides meet the commuted path is allowed by
+        // both, so the meeting cost stays optimal.
+        if !last_move_was_log {
+            let triggers = if reverse {
+                &net.model.backward_triggers
+            } else {
+                &net.model.forward_triggers
+            };
+            candidates.extend_from_slice(triggers.consuming_nothing());
+            marked.for_each(|place| candidates.extend_from_slice(triggers.triggered_by(place)));
+        }
 
         // Log/sync moves for the current event, then model moves (fixed ordering prunes states).
-        let log_or_sync = net
-            .transitions_by_trace_pos
-            .get(trace_pos as usize)
-            .map(|v| v.as_slice())
-            .unwrap_or_default();
-        // After a log move, model moves are pruned, so the range collapses to empty.
-        let model_end = if last_move_was_log {
-            0
+        // The two commute at equal cost, so keeping one order per pair loses no shortest path.
+        // Going backwards, the event to consume is the one before the current position.
+        let event = if reverse {
+            trace_pos.checked_sub(1)
         } else {
-            net.num_model_trans
+            Some(trace_pos)
         };
-
-        for trans_idx in log_or_sync.iter().copied().chain(0..model_end) {
-            let trans = &net.transitions[trans_idx];
-            if !is_enabled(&space.current, trans) {
+        let log_or_sync = event
+            .map(|event| net.moves_at(event as usize))
+            .unwrap_or_default();
+        for trans_idx in log_or_sync
+            .iter()
+            .chain(candidates.iter())
+            .map(|index| *index as usize)
+        {
+            if budget.exhausted() {
+                break;
+            }
+            let trans = net.transition(trans_idx);
+            // Every place a transition consumes has to hold a token, so a place it consumes that
+            // is unmarked rules it out before its inputs are ever walked
+            let (consumed_places, marked_suffice) = if reverse {
+                (trans.output_places, trans.marked_outputs_suffice)
+            } else {
+                (trans.input_places, trans.marked_inputs_suffice)
+            };
+            if !consumed_places.contained_in(space.scratch.expanding_places) {
                 continue;
             }
-            if fire_transition(&space.current, &mut space.next, trans).is_none() {
+            let (inputs, outputs) = net.arcs(trans);
+            let (consumed, produced) = if reverse {
+                (outputs, inputs)
+            } else {
+                (inputs, outputs)
+            };
+            // Where every consumed place takes one token and fits the word, the test above has
+            // already established enabledness; otherwise the counts have to be checked
+            if !marked_suffice && !is_enabled(&space.scratch.expanding_marking, consumed) {
                 continue;
             }
-            let is_model_move = matches!(trans.move_type, AlignmentMove::ModelMove { .. });
-            let new_trace_pos = if is_model_move {
+            space.scratch.successor_key.clear();
+            space
+                .scratch
+                .successor_key
+                .extend_from_slice(&space.scratch.expanding_key);
+            for (place, weight) in consumed {
+                space
+                    .nodes
+                    .consume(&mut space.scratch.successor_key, *place, *weight);
+            }
+            if produced.iter().any(|(place, weight)| {
+                space
+                    .nodes
+                    .produce(&mut space.scratch.successor_key, *place, *weight)
+                    .is_none()
+            }) {
+                continue;
+            }
+            // A model move leaves the trace position alone; log and sync moves consume an event
+            let new_trace_pos = if net.is_model_transition(trans_idx) {
                 trace_pos
+            } else if reverse {
+                trace_pos - 1
             } else {
                 trace_pos + 1
             };
-            let step = PetriNetStep {
-                transition: trans_idx as u32,
-                log_move: matches!(trans.move_type, AlignmentMove::LogMove { .. }),
-            };
-
+            let step = PetriNetStep::new(trans_idx, trans.is_log_move());
             let cost = trans.cost;
-            match space.find_seen(&space.next, new_trace_pos) {
+            // One hash for both the lookup and a possible insert
+            let hash = hash_state(&space.scratch.successor_key, new_trace_pos);
+            match space.find_seen_hashed(hash, &space.scratch.successor_key, new_trace_pos) {
                 Some(existing) => emit(existing, false, cost, step),
                 None => {
-                    let new_id = space.trace_pos.len() as NodeID;
-                    space.markings.extend_from_slice(&space.next);
-                    space.trace_pos.push(new_trace_pos);
-                    space.add_seen(new_id);
+                    if !space.nodes.fits(&space.scratch.successor_key)
+                        && !space.nodes.widen_for(&space.scratch.successor_key, budget)
+                    {
+                        break;
+                    }
+                    if !space.nodes.reserve_one(budget) || !space.reserve_seen(budget) {
+                        break;
+                    }
+                    let new_id = space.nodes.len() as NodeID;
+                    space
+                        .nodes
+                        .push(&space.scratch.successor_key, new_trace_pos);
+                    space.add_seen(new_id, hash);
                     emit(new_id, true, cost, step);
                 }
             }
         }
+        space.scratch.candidates = candidates;
     }
 }
 
-/// Compute an optimal alignment using [`search`]
+impl ReversibleSearchProblem for PetriNetAlignment<'_> {
+    #[inline]
+    fn find_in(&self, node: NodeID, other: &Self) -> Option<NodeID> {
+        other.space.find_seen(
+            self.space.nodes.key_of(node),
+            self.space.nodes.trace_pos(node),
+        )
+    }
+}
+
+/// Search spaces reused across traces, one per search direction
+#[derive(Debug, Default)]
+pub(crate) struct AlignmentContext {
+    forward: (PetriNetAlignmentSpace, SearchState<PetriNetStep>),
+    backward: (PetriNetAlignmentSpace, SearchState<PetriNetStep>),
+}
+
+impl AlignmentContext {
+    pub(crate) fn allocated_bytes(&self) -> usize {
+        self.forward.0.allocated_bytes()
+            + self.forward.1.allocated_bytes()
+            + self.backward.0.allocated_bytes()
+            + self.backward.1.allocated_bytes()
+    }
+}
+
+/// Compute an optimal alignment, searching from the initial and the final marking at once
 pub(crate) fn align(
-    net: &SyncProductNet,
-    space: &mut PetriNetAlignmentSpace,
-    state: &mut SearchState<PetriNetStep>,
-    max_states: Option<usize>,
+    net: &SyncProductNet<'_>,
+    ctx: &mut AlignmentContext,
+    limits: SearchLimits,
 ) -> Result<AlignmentResult, AlignmentError> {
-    let mut problem = PetriNetAlignment::new(net, space);
-    let res = search(&mut problem, state, max_states)?;
-    Ok(AlignmentResult {
+    let kept = ctx.allocated_bytes() > 0;
+    let mut res = search_both_ends(net, ctx, limits);
+    if kept && matches!(res, Err(SearchError::MemoryLimitReached)) {
+        // Buffers kept from earlier searches count against this one, so it may fit in fresh ones
+        *ctx = AlignmentContext::default();
+        res = search_both_ends(net, ctx, limits);
+    }
+    Ok(result_from(net, res?))
+}
+
+fn search_both_ends(
+    net: &SyncProductNet<'_>,
+    ctx: &mut AlignmentContext,
+    limits: SearchLimits,
+) -> Result<SearchResult<PetriNetStep>, SearchError> {
+    let mut forward = PetriNetAlignment {
+        net,
+        space: &mut ctx.forward.0,
+        reverse: false,
+    };
+    let mut backward = PetriNetAlignment {
+        net,
+        space: &mut ctx.backward.0,
+        reverse: true,
+    };
+    search_bidirectional(
+        &mut forward,
+        &mut backward,
+        &mut ctx.forward.1,
+        &mut ctx.backward.1,
+        limits,
+    )
+}
+
+/// Compute an optimal alignment searching forward only, as a reference for the bidirectional one
+#[cfg(test)]
+pub(crate) fn align_forward(
+    net: &SyncProductNet<'_>,
+    limits: SearchLimits,
+) -> Result<AlignmentResult, AlignmentError> {
+    let mut space = PetriNetAlignmentSpace::default();
+    let mut problem = PetriNetAlignment {
+        net,
+        space: &mut space,
+        reverse: false,
+    };
+    let res =
+        crate::utils::dijkstra_search::search(&mut problem, &mut SearchState::default(), limits)?;
+    Ok(result_from(net, res))
+}
+
+fn result_from(net: &SyncProductNet<'_>, res: SearchResult<PetriNetStep>) -> AlignmentResult {
+    AlignmentResult {
         moves: res
             .path
             .iter()
-            .map(|s| net.transitions[s.transition as usize].move_type.clone())
+            .map(|s| net.transition(s.transition()).move_type.clone())
             .collect(),
         cost: res.cost,
         states_visited: res.states_visited,
-    })
+    }
 }
 
+/// Tests whether the given places all hold the tokens a transition would take from them
 #[inline]
-/// Tests whether the given transition is enabled in the given marking
-fn is_enabled(marking: &[TokenCount], trans: &SyncProdNetTransition) -> bool {
-    trans
-        .inputs
+fn is_enabled(marking: &[TokenCount], consumed: Arcs<'_>) -> bool {
+    consumed
         .iter()
         .all(|(place, weight)| &marking[*place] >= weight)
 }
 
+/// Hash a given state (combination of encoded marking and trace position)
 #[inline]
-#[must_use]
-/// Fire the given transition, transforming the current marking into the `reached` marking.
-///
-/// Returns `None` if the reached marking would exceed `TokenCount::MAX` tokens.
-/// In this case, the reached marking is considered out-of-bounds and should be pruned.
-fn fire_transition(
-    current: &[TokenCount],
-    reached: &mut [TokenCount],
-    trans: &SyncProdNetTransition,
-) -> Option<()> {
-    reached.copy_from_slice(current);
-    for (place, weight) in &trans.inputs {
-        reached[*place] -= weight;
-    }
-    for (place, weight) in &trans.outputs {
-        // Handle overflow to prevent arriving at incorrect markings
-        reached[*place] = reached[*place].checked_add(*weight)?;
-    }
-    Some(())
-}
-
-#[inline]
-/// Hash a given state (combination of marking and trace position)
-fn hash_state(marking: &[TokenCount], trace_pos: TracePos) -> u64 {
+fn hash_state(key: &[u8], trace_pos: TracePos) -> u64 {
     let mut h = FxHasher::default();
-    h.write(marking);
+    h.write(key);
     h.write_u16(trace_pos);
     h.finish()
+}
+
+#[cfg(test)]
+mod test {
+    use hashbrown::HashTable;
+
+    use super::{table_bound, MarkedPlaces, MarkedPlacesMut, PetriNetStep, PlaceSet};
+    use crate::utils::dijkstra_search::NodeID;
+
+    #[test]
+    fn table_bound_covers_hashbrown() {
+        for capacity in (0..5000).chain([1 << 16, 1 << 20]) {
+            let table: HashTable<NodeID> = HashTable::with_capacity(capacity);
+            assert!(
+                table.allocation_size() <= table_bound(capacity),
+                "{capacity}: {} > {}",
+                table.allocation_size(),
+                table_bound(capacity)
+            );
+        }
+    }
+
+    /// A step is stored once per search node, so its width drives the search's memory use
+    #[test]
+    fn step_stays_four_bytes() {
+        assert_eq!(size_of::<PetriNetStep>(), 4);
+    }
+
+    #[test]
+    fn step_round_trips() {
+        for transition in [0, 1, 42, (1 << 31) - 1] {
+            for log_move in [false, true] {
+                let step = PetriNetStep::new(transition, log_move);
+                assert_eq!(step.transition(), transition);
+                assert_eq!(step.log_move(), log_move);
+            }
+        }
+    }
+
+    #[test]
+    fn marked_places_locate_their_counts() {
+        // Places 1, 9 and 17 marked, so their counts sit at 0, 1 and 2
+        let mut bytes = [0u8; 3];
+        for place in [1, 9, 17] {
+            MarkedPlacesMut(&mut bytes).insert(place);
+        }
+        let marked = MarkedPlaces(&bytes);
+        assert_eq!(marked.count(), 3);
+        for (position, place) in [1, 9, 17].into_iter().enumerate() {
+            assert!(marked.contains(place));
+            assert_eq!(marked.count_before(place), position);
+        }
+        for place in [0, 2, 8, 16, 23] {
+            assert!(!marked.contains(place));
+        }
+        let mut visited = Vec::new();
+        marked.for_each(|place| visited.push(place));
+        assert_eq!(visited, vec![1, 9, 17]);
+
+        MarkedPlacesMut(&mut bytes).remove(9);
+        let marked = MarkedPlaces(&bytes);
+        assert!(!marked.contains(9));
+        assert_eq!(
+            marked.count_before(17),
+            1,
+            "unmarking a place shifts later counts down"
+        );
+    }
+
+    #[test]
+    fn place_set_tests_containment() {
+        let mut consumed = PlaceSet::default();
+        consumed.insert(2);
+        consumed.insert(5);
+        let mut marked = PlaceSet::default();
+        marked.insert(2);
+        assert!(!consumed.contained_in(marked), "place 5 is not marked");
+        marked.insert(5);
+        assert!(consumed.contained_in(marked));
+        // Places the set cannot hold are dropped, which only weakens the test
+        let mut beyond = PlaceSet::default();
+        beyond.insert(super::PLACE_SET_LIMIT);
+        assert!(beyond.contained_in(PlaceSet::default()));
+    }
 }
