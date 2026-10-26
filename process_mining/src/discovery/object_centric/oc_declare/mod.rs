@@ -64,6 +64,11 @@ pub struct OCDeclareDiscoveryOptions {
     pub o2o_mode: O2OMode,
     /// Activities to use for the discovery. If this is `None`, all activities of the OCEL are used
     pub acts_to_use: Option<Vec<String>>,
+    /// Object types to use for the discovery. If this is `None`, all object types of the OCEL are used
+    ///
+    /// An object-to-object association is only used if both of its object types are selected.
+    #[serde(default)]
+    pub object_types_to_use: Option<Vec<String>>,
     /// What min/max counts to use for the candidate generation steps
     pub counts_for_generation: (Option<usize>, Option<usize>),
     /// What min/max counts to use for the candidate filtering step (when the arrow type is determined)
@@ -83,6 +88,7 @@ impl Default for OCDeclareDiscoveryOptions {
             noise_threshold: 0.2,
             o2o_mode: O2OMode::None,
             acts_to_use: None,
+            object_types_to_use: None,
             counts_for_generation: (Some(1), None),
             counts_for_filter: (Some(1), Some(20)),
             reduction: OCDeclareReductionMode::None,
@@ -98,18 +104,37 @@ pub fn discover_behavior_constraints(
     locel: &SlimLinkedOCEL,
     #[bind(default = Default::default())] options: OCDeclareDiscoveryOptions,
 ) -> Vec<OCDeclareArc> {
-    let act_ob_inv: HashMap<String, HashMap<String, ObjectInvolvementCounts>> =
+    let mut act_ob_inv: HashMap<String, HashMap<String, ObjectInvolvementCounts>> =
         get_activity_object_involvements(locel);
-    let ob_ob_inv: HashMap<String, HashMap<String, ObjectInvolvementCounts>> =
+    let mut ob_ob_inv: HashMap<String, HashMap<String, ObjectInvolvementCounts>> =
         get_object_to_object_involvements(locel);
-    let ob_ob_rev_inv = get_rev_object_to_object_involvements(locel);
+    let mut ob_ob_rev_inv = get_rev_object_to_object_involvements(locel);
+    // Everything below, refinement included, reads these maps, so dropping a type here keeps it
+    // out of every candidate.
+    if let Some(types) = &options.object_types_to_use {
+        let keep: HashSet<&str> = types.iter().map(String::as_str).collect();
+        for invs in act_ob_inv.values_mut() {
+            invs.retain(|ot, _| keep.contains(ot.as_str()));
+        }
+        for o2o in [&mut ob_ob_inv, &mut ob_ob_rev_inv] {
+            o2o.retain(|ot, _| keep.contains(ot.as_str()));
+            for invs in o2o.values_mut() {
+                invs.retain(|ot, _| keep.contains(ot.as_str()));
+            }
+        }
+    }
     // Built once, shared by every check below
     let index = E2ORevByTypeIndex::build(locel);
     let direction = OCDeclareArcType::AS;
-    let acts_to_use = options
-        .acts_to_use
-        .clone()
-        .unwrap_or_else(|| locel.get_ev_types().map(|et| et.to_string()).collect());
+    // Names the log lacks (e.g., settings kept from another log) have no involvements to read.
+    let acts_to_use: Vec<String> = match &options.acts_to_use {
+        Some(acts) => acts
+            .iter()
+            .filter(|a| act_ob_inv.contains_key(*a))
+            .cloned()
+            .collect(),
+        None => locel.get_ev_types().map(|et| et.to_string()).collect(),
+    };
     let ret = acts_to_use
         .iter()
         .cartesian_product(acts_to_use.iter())
@@ -906,4 +931,85 @@ fn dedup_type_label_pairs(mut pairs: Vec<ArcTypeAndLabel>) -> Vec<ArcTypeAndLabe
             .any(|b| a != b && a.0.is_dominated_by_or_eq(&b.0) && a.1.is_dominated_by(&b.1))
     });
     pairs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::io::Importable;
+    use crate::test_utils::get_test_data_path;
+    use crate::OCEL;
+
+    fn pm4py_example() -> SlimLinkedOCEL {
+        let path = get_test_data_path()
+            .join("ocel")
+            .join("pm4py-ocel20_example.jsonocel");
+        SlimLinkedOCEL::from_ocel(OCEL::import_from_path(path).unwrap())
+    }
+
+    fn types_of(a: &ObjectTypeAssociation) -> Vec<&str> {
+        match a {
+            ObjectTypeAssociation::Simple { object_type } => vec![object_type.as_str()],
+            ObjectTypeAssociation::O2O { first, second, .. } => {
+                vec![first.as_str(), second.as_str()]
+            }
+        }
+    }
+
+    #[test]
+    fn restricting_object_types_only_uses_those_types() {
+        let locel = pm4py_example();
+        let options = OCDeclareDiscoveryOptions {
+            o2o_mode: O2OMode::Bidirectional,
+            object_types_to_use: Some(vec!["Invoice".into(), "Purchase Order".into()]),
+            ..Default::default()
+        };
+        let arcs = discover_behavior_constraints(&locel, options);
+        assert!(!arcs.is_empty());
+        let assocs: Vec<_> = arcs
+            .iter()
+            .flat_map(|a| a.label.all.iter().chain(&a.label.each).chain(&a.label.any))
+            .collect();
+        assert!(assocs.iter().all(|a| types_of(a)
+            .iter()
+            .all(|t| *t == "Invoice" || *t == "Purchase Order")));
+        assert!(assocs
+            .iter()
+            .any(|a| matches!(a, ObjectTypeAssociation::O2O { .. })));
+    }
+
+    #[test]
+    fn activities_missing_from_the_log_are_ignored() {
+        let locel = pm4py_example();
+        let mut acts: Vec<String> = locel.get_ev_types().map(String::from).collect();
+        acts.push("not in the log".into());
+        let mut unrestricted = discover_behavior_constraints(&locel, Default::default());
+        let mut listed = discover_behavior_constraints(
+            &locel,
+            OCDeclareDiscoveryOptions {
+                acts_to_use: Some(acts),
+                ..Default::default()
+            },
+        );
+        unrestricted.sort();
+        listed.sort();
+        assert_eq!(unrestricted, listed);
+    }
+
+    #[test]
+    fn listing_every_object_type_matches_no_restriction() {
+        let locel = pm4py_example();
+        let all = Some(locel.get_ob_types().map(String::from).collect());
+        let mut unrestricted = discover_behavior_constraints(&locel, Default::default());
+        let mut listed = discover_behavior_constraints(
+            &locel,
+            OCDeclareDiscoveryOptions {
+                object_types_to_use: all,
+                ..Default::default()
+            },
+        );
+        unrestricted.sort();
+        listed.sort();
+        assert_eq!(unrestricted, listed);
+    }
 }

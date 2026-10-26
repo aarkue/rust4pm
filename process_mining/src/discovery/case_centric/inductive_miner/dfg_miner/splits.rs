@@ -3,7 +3,7 @@
 //!
 //! Where IM splits the log and rebuilds a graph per sub-log, the DFG variant projects the graph
 //! itself onto the parts of a cut (§6.6.3.2). An edge crossing a part boundary cannot stay an
-//! edge; depending on the operator it becomes a start or end weight of the part it touches, or an
+//! edge. Depending on the operator, it becomes a start or end weight of the part it touches, or an
 //! empty trace of a part it bypasses entirely.
 
 use crate::core::process_models::process_tree::OperatorType;
@@ -181,9 +181,8 @@ fn sequence_split(dfg: &ActivityDfg, cut: &Cut) -> Vec<ActivityDfg> {
 /// adhering to its footprint none of the three exists, but a cut from a filtered graph splits the
 /// unfiltered one, where they can.
 ///
-/// The body's start and end weights count every iteration, as in Figure 6.24. The pseudo-code of
-/// `loopDfgSplit` keeps only the trace starts and ends there, which understates them by the
-/// number of iterations and skews the frequencies `IMfd` filters by.
+/// The body's start and end weights count every iteration, as in Figure 6.24, not only the trace
+/// starts and ends as in the pseudo-code of `loopDfgSplit`.
 fn loop_split(dfg: &ActivityDfg, cut: &Cut) -> Vec<ActivityDfg> {
     const BODY: usize = 0;
     let mut parts = Parts::new(dfg, cut);

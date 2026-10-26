@@ -1575,6 +1575,13 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
         })
     }
 
+    fn get_e2o_rev_evs(
+        &'a self,
+        index: impl Borrow<Self::ObjectRepr>,
+    ) -> impl Iterator<Item = &'a Self::EventRepr> {
+        index.borrow().get_e2o_rev(self)
+    }
+
     fn get_o2o(
         &'a self,
         index: impl Borrow<Self::ObjectRepr>,

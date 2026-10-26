@@ -11,11 +11,8 @@ use super::cut::Cut;
 ///
 /// Requirement →.1 is that for `i < j`, every `a` in part `i` reaches every `b` in part `j` and no
 /// `b` reaches back. Two activities may therefore only be separated if exactly one of them reaches
-/// the other; mutually reachable ones (a loop) and mutually unreachable ones (a choice or
+/// the other. Mutually reachable ones (a loop) and mutually unreachable ones (a choice or
 /// concurrency) have to be merged. Reachability then orders the parts.
-///
-/// Almost every pair has to be merged on an unstructured log, so the parts are computed on the
-/// sparse complement of the merge relation.
 pub fn sequence_cut(dfg: &ActivityDfg) -> Option<Cut> {
     let reaches = Reachability::of(dfg);
     let may_be_separated = |a: usize, b: usize| reaches.reaches(a, b) != reaches.reaches(b, a);
@@ -36,14 +33,13 @@ pub fn sequence_cut(dfg: &ActivityDfg) -> Option<Cut> {
     cut.is_non_trivial().then_some(cut)
 }
 
-/// Merges the parts of a sequence cut that can only occur together with a skippable neighbour,
+/// Merges the parts of a sequence cut that can only occur together with a skippable neighbor,
 /// as `sequenceCutStrict` of `IMa` does (§5.6.4, §6.4.2.1).
 ///
-/// Requirement →.1 alone can separate parts that always occur together. For
-/// `⟨c,c,c,a,c⟩, ⟨b,b,d,a⟩, ⟨b,c⟩` it separates `{b}` from `{d}`, and the resulting tree accepts a
-/// `d` without a preceding `b`, which no trace does. A part `p` that some path skips is a pivot:
+/// Requirement →.1 alone can separate parts that always occur together. A part `p` that some path
+/// skips is a pivot:
 /// the parts before it that only lead up to `p`, and the parts after it that are only reached from
-/// `p` onwards, are merged into it. `ProM` and `PM4Py` apply this by default.
+/// `p` onwards, are merged into it.
 ///
 /// Returns `None` if nothing is left to cut.
 pub fn strict_sequence_cut(dfg: &ActivityDfg, cut: Cut) -> Option<Cut> {

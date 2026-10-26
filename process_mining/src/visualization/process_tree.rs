@@ -1,16 +1,20 @@
 //! Laying out and drawing a [`ProcessTree`] as a tidy tree, in one of two [`TreeLook`]s.
 
+use graphlay::json::TreeRequest;
 use graphlay::tree::{TreeEdgeStyle, TreeOptions};
-use graphlay::{Direction, Edge, Graph, LayoutError, Node, Shape, Size};
+use graphlay::{Direction, Edge, Graph, Node, Shape, Size};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::core::process_models::process_tree::{
     LeafLabel, Node as PtNode, OperatorType, ProcessTree,
 };
+use crate::visualization::engine::{tree_options_of, tree_request, VisualizationError};
 use crate::visualization::graph_build::{
-    heuristic_label_width, leaf_size_with, GraphAcc, LabelWidth, LEAF_HEIGHT, OPERATOR_SIZE,
+    leaf_size_with, GraphAcc, LabelWidth, LEAF_HEIGHT, OPERATOR_SIZE,
 };
+use crate::visualization::model::ModelLayoutRequest;
 use crate::visualization::styling::BaseStyle;
 
 /// A silent leaf in the classic look.
@@ -80,9 +84,10 @@ impl TreeLook {
     }
 }
 
-/// A node of a [`ProcessTree`], by its path of child indices from the root.
+/// A node of a [`ProcessTree`], by its path of child indices from the root, e.g.,
+/// `{"kind": "leaf", "path": [0, 2]}`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", content = "path", rename_all = "snake_case")]
 pub enum ProcessTreeNodeRef {
     /// An operator node, by path from the root.
     Operator(Vec<usize>),
@@ -112,7 +117,7 @@ pub fn node_at<'a>(tree: &'a ProcessTree, path: &[usize]) -> Option<&'a PtNode> 
 }
 
 /// How a [`ProcessTree`] is turned into a [`Graph`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(JsonSchema))]
 #[serde(default)]
 pub struct ProcessTreeBuildOptions {
@@ -120,17 +125,44 @@ pub struct ProcessTreeBuildOptions {
     pub direction: Option<Direction>,
     /// How the tree is drawn. It also sets the node sizes and gaps.
     pub look: TreeLook,
+    /// Fields of the tidy-tree options to change, as a partial [`TreeOptions`] object deep-merged
+    /// over [`ProcessTreeBuildOptions::tree_options`], e.g., `{"row_gap": 60}`. `null` changes
+    /// nothing.
+    #[cfg_attr(feature = "bindings", schemars(with = "Option<TreeOptions>"))]
+    pub layout_patch: Value,
 }
 
 impl ProcessTreeBuildOptions {
-    /// The tidy-tree options for these build options.
+    /// The tidy-tree options for these build options, without
+    /// [`ProcessTreeBuildOptions::layout_patch`].
     pub fn tree_options(&self) -> TreeOptions {
         self.look.tree_options(self.direction)
     }
+
+    /// The tidy-tree request for `graph`: [`ProcessTreeBuildOptions::tree_options`], then
+    /// [`ProcessTreeBuildOptions::layout_patch`].
+    ///
+    /// # Errors
+    ///
+    /// [`VisualizationError::InvalidOptions`] if the patch does not describe valid options.
+    pub fn layout_request(&self, graph: Graph) -> Result<TreeRequest, VisualizationError> {
+        tree_request(graph, self.tree_options(), &self.layout_patch)
+    }
+
+    /// The direction the tree grows in, after the patch.
+    fn drawn_direction(&self) -> Result<Direction, VisualizationError> {
+        Ok(tree_options_of(&self.layout_request(Graph::default())?)?.direction)
+    }
 }
 
+/// The tidy-tree request of a [`ProcessTree`]. Each edge's ref is the child it leads to; its parent
+/// is the node at that path without the last step.
+pub type ProcessTreeLayoutRequest =
+    ModelLayoutRequest<TreeRequest, ProcessTreeNodeRef, ProcessTreeNodeRef>;
+
 /// The color of each operator type in the color-coded look.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct OperatorColors {
     /// Sequence.
     pub sequence: String,
@@ -174,7 +206,8 @@ impl Default for OperatorColors {
 }
 
 /// Colors a process tree is drawn with.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct ProcessTreeStyle {
     /// Colors and paddings shared with every other model.
     pub base: BaseStyle,
@@ -252,49 +285,30 @@ fn tree_node(item: TreeItem<'_>, look: TreeLook, measure: LabelWidth<'_>) -> Nod
     }
 }
 
-/// The [`Graph`] of `tree`, the node behind each graph node in pre-order, and the child node index
-/// behind each edge.
-pub fn process_tree_to_graph(
-    tree: &ProcessTree,
-    options: &ProcessTreeBuildOptions,
-) -> (Graph, Vec<ProcessTreeNodeRef>, Vec<usize>) {
-    process_tree_to_graph_with(tree, options, &heuristic_label_width)
-}
-
-/// [`process_tree_to_graph`] with a caller's own label measurement.
-pub fn process_tree_to_graph_with(
-    tree: &ProcessTree,
-    options: &ProcessTreeBuildOptions,
-    measure: LabelWidth<'_>,
-) -> (Graph, Vec<ProcessTreeNodeRef>, Vec<usize>) {
-    let mut acc: GraphAcc<ProcessTreeNodeRef, usize> = GraphAcc::new();
-    let mut path = Vec::new();
-    add_node(&mut acc, &tree.root, &mut path, options.look, measure);
-    acc.finish()
+fn node_ref(node: &PtNode, path: &[usize]) -> ProcessTreeNodeRef {
+    match node {
+        PtNode::Operator(_) => ProcessTreeNodeRef::Operator(path.to_vec()),
+        PtNode::Leaf(_) => ProcessTreeNodeRef::Leaf(path.to_vec()),
+    }
 }
 
 fn add_node(
-    acc: &mut GraphAcc<ProcessTreeNodeRef, usize>,
+    acc: &mut GraphAcc<ProcessTreeNodeRef, ProcessTreeNodeRef>,
     node: &PtNode,
     path: &mut Vec<usize>,
     look: TreeLook,
     measure: LabelWidth<'_>,
 ) -> graphlay::NodeId {
     let key = path_key(path);
-    let id = acc.add_node(
-        key,
-        tree_node(TreeItem::of(node), look, measure),
-        || match node {
-            PtNode::Operator(_) => ProcessTreeNodeRef::Operator(path.clone()),
-            PtNode::Leaf(_) => ProcessTreeNodeRef::Leaf(path.clone()),
-        },
-    );
+    let id = acc.add_node(key, tree_node(TreeItem::of(node), look, measure), || {
+        node_ref(node, path)
+    });
     if let PtNode::Operator(op) = node {
         for (index, child) in op.children.iter().enumerate() {
             path.push(index);
             let child_id = add_node(acc, child, path, look, measure);
+            acc.add_edge(Edge::new(id, child_id), node_ref(child, path));
             path.pop();
-            acc.add_edge(Edge::new(id, child_id), child_id.index());
         }
     }
     id
@@ -309,32 +323,19 @@ fn path_key(path: &[usize]) -> String {
     key
 }
 
-/// Lay `tree` out with the tidy-tree engine.
-///
-/// # Errors
-///
-/// [`LayoutError`] from the engine.
-pub fn layout_process_tree(
-    tree: &ProcessTree,
-    options: &ProcessTreeBuildOptions,
-) -> Result<graphlay::Layout, LayoutError> {
-    let (graph, _, _) = process_tree_to_graph(tree, options);
-    graphlay::tree::layout(&graph, &options.tree_options())
-}
-
 mod draw {
     use super::*;
     use graphlay::layout::{EdgeRoute, Placement};
     use std::collections::HashMap;
 
     use graphlay::svg::{
-        MarkerRef, NodeContent, Point as SPoint, Scene, SceneEdge, SceneNode, Shape as SShape,
-        Stroke, TextRun,
+        MarkerRef, NodeContent, Point as SPoint, SceneEdge, SceneNode, Shape as SShape, Stroke,
+        TextRun,
     };
     use graphlay::Layout;
 
-    use crate::visualization::graph_build::leaf_lines;
-    use crate::visualization::styling::{scene, scene_node};
+    use crate::visualization::model::Visualize;
+    use crate::visualization::styling::{leaf_runs, scene_node};
 
     // Without a stroke the renderer falls back to the theme's.
     fn no_border() -> Option<Stroke> {
@@ -454,14 +455,15 @@ mod draw {
     }
 
     /// Where each row of a tree layout begins and ends, along the axis it grows.
+    #[derive(Debug)]
     struct Rows {
         vertical: bool,
         bands: HashMap<i32, (f64, f64)>,
     }
 
     impl Rows {
-        fn of(layout: &Layout, direction: Option<Direction>) -> Rows {
-            let vertical = direction.unwrap_or(Direction::TopBottom) == Direction::TopBottom;
+        fn of(layout: &Layout, direction: Direction) -> Rows {
+            let vertical = direction == Direction::TopBottom;
             let mut rows = Rows {
                 vertical,
                 bands: HashMap::new(),
@@ -555,114 +557,132 @@ mod draw {
         })
     }
 
-    /// The drawing of `tree` over an existing [`Layout`].
-    pub fn process_tree_scene(
-        tree: &ProcessTree,
-        layout: &Layout,
-        nodes: &[ProcessTreeNodeRef],
-        edges: &[usize],
-        options: &ProcessTreeBuildOptions,
-        style: &ProcessTreeStyle,
-    ) -> Scene {
-        let base = &style.base;
-        let index: HashMap<&[usize], usize> = nodes
-            .iter()
-            .enumerate()
-            .map(|(i, meta)| (meta.path(), i))
-            .collect();
-        let parent_index = |i: usize| {
-            let (_, up) = nodes.get(i)?.path().split_last()?;
-            index.get(up).copied()
-        };
-        let operator_at = |i: usize| match node_at(tree, nodes.get(i)?.path()) {
+    /// The rows of the layout and where each tree node went, for drawing the edges.
+    #[derive(Debug)]
+    pub struct TreeContext {
+        rows: Rows,
+        index: HashMap<Vec<usize>, usize>,
+        placements: Vec<Placement>,
+    }
+
+    fn operator_at(tree: &ProcessTree, path: &[usize]) -> Option<OperatorType> {
+        match node_at(tree, path) {
             Some(PtNode::Operator(op)) => Some(op.operator_type),
             _ => None,
-        };
-        let mut scene_nodes = Vec::with_capacity(nodes.len());
-        for (i, (placement, meta)) in layout.nodes.iter().zip(nodes).enumerate() {
-            scene_nodes.push(match node_at(tree, meta.path()) {
-                Some(node) => tree_scene_node(
-                    TreeItem::of(node),
+        }
+    }
+
+    fn parent_operator(tree: &ProcessTree, path: &[usize]) -> Option<OperatorType> {
+        operator_at(tree, path.split_last()?.1)
+    }
+
+    impl Visualize for ProcessTree {
+        type NodeRef = ProcessTreeNodeRef;
+        type EdgeRef = ProcessTreeNodeRef;
+        type Options = ProcessTreeBuildOptions;
+        type Style = ProcessTreeStyle;
+        type Request = TreeRequest;
+        type Context = TreeContext;
+
+        fn to_graph(
+            &self,
+            options: &ProcessTreeBuildOptions,
+            measure: LabelWidth<'_>,
+        ) -> (Graph, Vec<ProcessTreeNodeRef>, Vec<ProcessTreeNodeRef>) {
+            let mut acc: GraphAcc<ProcessTreeNodeRef, ProcessTreeNodeRef> = GraphAcc::new();
+            let mut path = Vec::new();
+            add_node(&mut acc, &self.root, &mut path, options.look, measure);
+            acc.finish()
+        }
+
+        fn request(
+            graph: Graph,
+            options: &ProcessTreeBuildOptions,
+        ) -> Result<TreeRequest, VisualizationError> {
+            options.layout_request(graph)
+        }
+
+        fn base(style: &ProcessTreeStyle) -> &BaseStyle {
+            &style.base
+        }
+
+        fn context(
+            &self,
+            layout: &Layout,
+            nodes: &[ProcessTreeNodeRef],
+            options: &ProcessTreeBuildOptions,
+        ) -> Result<TreeContext, VisualizationError> {
+            Ok(TreeContext {
+                rows: Rows::of(layout, options.drawn_direction()?),
+                index: nodes
+                    .iter()
+                    .enumerate()
+                    .map(|(i, node)| (node.path().to_vec(), i))
+                    .collect(),
+                placements: layout.nodes.clone(),
+            })
+        }
+
+        fn draw_node(
+            &self,
+            node: &ProcessTreeNodeRef,
+            placement: &Placement,
+            _context: &TreeContext,
+            options: &ProcessTreeBuildOptions,
+            style: &ProcessTreeStyle,
+        ) -> SceneNode {
+            match node_at(self, node.path()) {
+                Some(tree_node) => tree_scene_node(
+                    TreeItem::of(tree_node),
                     placement,
                     options.look,
-                    parent_index(i).and_then(operator_at),
+                    parent_operator(self, node.path()),
                     style,
                 ),
-                // A meta table that does not match the tree.
-                None => scene_node(
-                    placement,
-                    Shape::Box,
-                    Some(base.node_fill.clone()),
-                    Some(Stroke::new(&base.node_border, base.border_width)),
-                    base,
-                ),
-            });
+                // A ref that does not match the tree.
+                None => {
+                    let base = &style.base;
+                    scene_node(
+                        placement,
+                        Shape::Box,
+                        Some(base.node_fill.clone()),
+                        Some(Stroke::new(&base.node_border, base.border_width)),
+                        base,
+                    )
+                }
+            }
         }
-        let rows = Rows::of(layout, options.direction);
-        let scene_edges = layout
-            .edges
-            .iter()
-            .zip(edges)
-            .filter_map(|(route, &child)| {
-                let parent = parent_index(child)?;
-                let ends = (layout.nodes.get(parent)?, layout.nodes.get(child)?);
-                tree_scene_edge(route, ends, &rows, options.look, operator_at(parent), style)
-            })
-            .collect();
-        scene(base, scene_nodes, scene_edges)
-    }
 
-    pub(crate) fn leaf_runs(label: &str, base: &BaseStyle, color: &str) -> Vec<NodeContent> {
-        let lines = leaf_lines(label);
-        let line_height = base.label_size + 3.5;
-        let first = -(lines.len() as f64 - 1.0) * line_height / 2.0;
-        lines
-            .into_iter()
-            .enumerate()
-            .map(|(i, line)| {
-                NodeContent::Text(TextRun {
-                    text: line,
-                    dy: first + i as f64 * line_height,
-                    size: Some(base.label_size),
-                    weight: Some(500.0),
-                    color: Some(color.to_string()),
-                    ..TextRun::default()
-                })
-            })
-            .collect()
-    }
-
-    /// Lay `tree` out and draw it, as one standalone SVG document.
-    ///
-    /// # Errors
-    ///
-    /// As [`layout_process_tree`].
-    pub fn export_process_tree_svg(
-        tree: &ProcessTree,
-        options: &ProcessTreeBuildOptions,
-    ) -> Result<String, LayoutError> {
-        let (graph, nodes, edges) = process_tree_to_graph(tree, options);
-        let layout = graphlay::tree::layout(&graph, &options.tree_options())?;
-        Ok(crate::visualization::styling::render_scene(
-            &process_tree_scene(
-                tree,
-                &layout,
-                &nodes,
-                &edges,
-                options,
-                &ProcessTreeStyle::default(),
-            ),
-        ))
+        fn draw_edge(
+            &self,
+            child: &ProcessTreeNodeRef,
+            _graph_edge: &Edge,
+            route: &EdgeRoute,
+            context: &TreeContext,
+            options: &ProcessTreeBuildOptions,
+            style: &ProcessTreeStyle,
+        ) -> Option<SceneEdge> {
+            let path = child.path();
+            let parent = path.split_last()?.1;
+            let ends = (
+                context.placements.get(*context.index.get(parent)?)?,
+                context.placements.get(*context.index.get(path)?)?,
+            );
+            let parent = operator_at(self, parent);
+            tree_scene_edge(route, ends, &context.rows, options.look, parent, style)
+        }
     }
 }
 
-pub(crate) use draw::leaf_runs;
-pub use draw::{export_process_tree_svg, process_tree_scene};
+pub use draw::TreeContext;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::core::process_models::process_tree::{Leaf, Operator};
+    use crate::visualization::graph_build::heuristic_label_width;
+    use crate::visualization::model::{self, Visualize};
+    use crate::visualization::StyleOverrides;
     use graphlay::svg::{MarkerRef, Paint, Scene};
 
     /// Every operator type, with a silent leaf.
@@ -704,31 +724,66 @@ mod tests {
                 ..Default::default()
             },
         );
-        let (graph, nodes, edges) = process_tree_to_graph(&tree, &options);
-        let layout = graphlay::tree::layout(&graph, &options.tree_options()).unwrap();
-        process_tree_scene(
-            &tree,
-            &layout,
-            &nodes,
-            &edges,
-            &options,
-            &ProcessTreeStyle::default(),
-        )
+        let layout = model::layout(&tree, &options).unwrap();
+        let style = ProcessTreeStyle::default();
+        model::scene_from_layout(&tree, &layout, &options, &style, &Default::default()).unwrap()
     }
 
     #[test]
     fn every_node_is_found_again_by_its_path() {
         let tree = tree();
         let (graph, nodes, edges) =
-            process_tree_to_graph(&tree, &ProcessTreeBuildOptions::default());
+            tree.to_graph(&ProcessTreeBuildOptions::default(), &heuristic_label_width);
         assert_eq!(nodes[0].path(), &[] as &[usize]);
         for meta in &nodes {
             let leaf = matches!(node_at(&tree, meta.path()), Some(PtNode::Leaf(_)));
             assert_eq!(matches!(meta, ProcessTreeNodeRef::Leaf(_)), leaf);
         }
-        for (edge, &child) in graph.edges.iter().zip(&edges) {
-            assert_eq!(edge.target.index(), child);
+        for (edge, child) in graph.edges.iter().zip(&edges) {
+            assert_eq!(&nodes[edge.target.index()], child);
+            let (_, parent) = child.path().split_last().unwrap();
+            assert_eq!(nodes[edge.source.index()].path(), parent);
         }
+    }
+
+    #[test]
+    fn the_tree_request_takes_a_patch_that_the_drawing_follows() {
+        use crate::visualization::engine::{layout_tree, tree_options_of};
+        let tree = tree();
+        let options = ProcessTreeBuildOptions::default();
+        let request = model::layout_request(&tree, &options).unwrap();
+        assert_eq!(
+            tree_options_of(&request.request).unwrap(),
+            options.tree_options()
+        );
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(
+            json["nodes"][0],
+            serde_json::json!({"kind": "operator", "path": []})
+        );
+        assert_eq!(
+            layout_tree(&request.request).unwrap(),
+            model::layout(&tree, &options).unwrap()
+        );
+
+        let sideways = ProcessTreeBuildOptions {
+            layout_patch: serde_json::json!({"direction": "leftright"}),
+            ..ProcessTreeBuildOptions::default()
+        };
+        let layout = model::layout(&tree, &sideways).unwrap();
+        assert!(layout.nodes[0].center.x < layout.nodes[1].center.x);
+        let scene = model::scene_from_layout(
+            &tree,
+            &layout,
+            &sideways,
+            &ProcessTreeStyle::default(),
+            &StyleOverrides::default(),
+        )
+        .unwrap();
+        // A classic line leaves its parent on the side facing the children.
+        let root = scene.nodes[0].rect;
+        let first = scene.edges[0].points[0];
+        assert!((first.x - root.max_x()).abs() < 0.01, "{first:?} {root:?}");
     }
 
     #[test]
@@ -772,7 +827,7 @@ mod tests {
                 look,
                 ..Default::default()
             };
-            let svg = export_process_tree_svg(&tree(), &options).unwrap();
+            let svg = model::svg(&tree(), &options, &ProcessTreeStyle::default()).unwrap();
             crate::test_utils::write_export(name, &svg);
         }
     }

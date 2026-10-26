@@ -14,6 +14,11 @@ This folder contains example usages of the `process_mining` crate.
   cargo run --example process_discovery -- <path_to_log.xes> <output_model.pnml>
   ```
 
+- **`inductive_miner.rs`**: Discovers a process tree with the Inductive Miner (IM, IMf, or IMd/IMfd with `--dfg`), optionally exporting it as PNML.
+  ```bash
+  cargo run --release --example inductive_miner -- <path_to_log.xes> [noise threshold] [output.pnml]
+  ```
+
 - **`petri_net_import_export.rs`**: Imports a Petri net from PNML, prints stats, and exports it again.
   ```bash
   cargo run --example petri_net_import_export -- <input_model.pnml> <output_model.pnml>
@@ -33,6 +38,11 @@ This folder contains example usages of the `process_mining` crate.
   ```
 
 ## Object-Centric Process Mining
+
+- **`object_centric_discovery.rs`**: Discovers an object-centric Petri net with the Inductive Miner, optionally for some object types only.
+  ```bash
+  cargo run --release --example object_centric_discovery -- <path_to_ocel> [noise threshold] [variable arc tolerance]
+  ```
 
 - **`ocel_stats.rs`**: Imports an OCEL and prints basic statistics.
   ```bash

@@ -12,11 +12,8 @@ use super::cut::Cut;
 /// Two requirements: every part contains a start and an end activity (∧.1), and all parts are
 /// connected to each other in both directions (∧.2). Two activities that are not connected both
 /// ways therefore have to share a part. If a minimum-self-distance relation is given, activities
-/// that loop around each other are merged as well (∧↔.1), which is what keeps a loop from being
-/// reported as concurrency.
-///
-/// Almost no pair is connected both ways on a real graph, so the parts are computed on the sparse
-/// complement of the merge relation.
+/// that loop around each other are merged as well (∧↔.1). This prevents reporting a loop as
+/// concurrency.
 pub fn concurrent_cut(
     dfg: &ActivityDfg,
     minimum_self_distance: Option<&MinimumSelfDistance>,
@@ -42,16 +39,8 @@ pub fn concurrent_cut(
 }
 
 /// Merges parts until every part has a start and an end activity (∧.1), keeping as many parts as
-/// possible.
-///
-/// Which part a deficient one joins is not determined by the requirement, and merging greedily
-/// destroys parts unnecessarily: with parts `{a}` (start only), `{b}` (start and end) and `{c}`
-/// (end only), merging `{a}` into `{b}` leaves `{c}` nowhere to go but `{a, b}`, so one part
-/// remains and there is no cut. Merging `{a}` with `{c}` keeps two. Parts that complement each
-/// other are therefore paired up first, and only the rest joins an already complete part.
-///
-/// Several partitions of that maximal size can exist. The requirements leave open which one comes
-/// out, and other implementations pick differently.
+/// possible: parts that complement each other are paired first, and only the rest joins an
+/// already complete part.
 fn complete_parts(dfg: &ActivityDfg, groups: Vec<Vec<usize>>) -> Vec<Vec<usize>> {
     let mut absorbing = Vec::new();
     let mut missing_end = Vec::new();

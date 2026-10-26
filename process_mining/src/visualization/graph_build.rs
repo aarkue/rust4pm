@@ -4,7 +4,8 @@ use std::collections::HashMap;
 
 use graphlay::{Edge, EdgeId, Graph, Node, NodeId, Size};
 
-/// The drawn width of a node label in px, for a host with real font metrics.
+/// The width of a node label in px plus 24px of box padding, as [`heuristic_label_width`] measures
+/// it. A host with real font metrics passes its own.
 pub type LabelWidth<'a> = &'a dyn Fn(&str) -> f64;
 
 /// A Petri net place.

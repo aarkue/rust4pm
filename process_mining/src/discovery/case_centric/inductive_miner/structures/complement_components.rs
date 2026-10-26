@@ -1,14 +1,7 @@
-//! Connected components of the *complement* of a sparse relation.
+//! Connected components of the *complement* of a sparse relation, in `O(n + m)`.
 //!
-//! The concurrent and sequence cuts group activities that may not be separated, and on a real
-//! graph almost every pair has to be merged, so that relation is nearly complete. Building it and
-//! merging pair by pair costs `O(n²)` union-find operations.
-//!
-//! Computing the components on the complement, which is the sparse relation, avoids that. The
-//! search keeps the vertices it has not placed in one list and, for every vertex it visits, walks
-//! that list once: everything not separated from the vertex joins its component and leaves the
-//! list. Each step either removes a vertex, at most `n` times, or passes over one edge of the
-//! sparse relation, so this is `O(n + m)`.
+//! The concurrent and sequence cuts merge almost every pair of activities, so they are computed
+//! from the sparse relation of the pairs that stay apart.
 
 /// Groups `0..n` into the connected components of the complement of `separate`.
 ///

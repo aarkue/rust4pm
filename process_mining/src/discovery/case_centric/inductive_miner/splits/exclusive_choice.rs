@@ -5,10 +5,8 @@ use super::super::log::ActivityLog;
 
 /// Splits a log according to an exclusive choice cut.
 ///
-/// A trace belongs to exactly one branch, so each trace goes into a single sub-log: the one whose
-/// part covers most of its events. Events outside that part are dropped. For a cut adhering to
-/// ×.1 no trace can contain events from two parts anyway, since that would need an edge between
-/// them somewhere along the trace.
+/// Each trace goes into the sub-log of the part covering most of its events, and events outside
+/// that part are dropped.
 ///
 /// Sub-logs may come out empty, which the empty-log base case handles.
 pub fn exclusive_choice_split(log: &ActivityLog, cut: &Cut) -> Vec<ActivityLog> {

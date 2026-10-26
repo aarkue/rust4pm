@@ -22,7 +22,7 @@ pub use tau_loop::{strict_tau_loop, tau_loop};
 pub enum Fallthrough {
     /// `×(τ, IM(log))`, for a log with empty traces.
     OptionalEmptyTraces(ActivityLog),
-    /// `IM(log)`, the log having contained too few empty traces to be worth modelling, so they were
+    /// `IM(log)`, the log having contained too few empty traces to be worth modeling, so they were
     /// dropped. Only `IMf` produces this.
     DroppedEmptyTraces(ActivityLog),
     /// `∧(IM(activity_log), IM(rest))`, taking one activity out of the log and putting it next
@@ -35,25 +35,33 @@ pub enum Fallthrough {
     },
     /// `↺(IM(log), τ)`, for a log that looks like repeated execution of a smaller one.
     TauLoop(ActivityLog),
-    /// `↺(×(a₁, …, aₙ), τ)`, the flower model.
+    /// `↺(×(a₁, ..., aₙ), τ)`, the flower model.
     FlowerModel(Vec<ActivityID>),
 }
 
 /// Handles empty traces, the first fall through.
 ///
-/// Empty traces mean the whole sub-process could be skipped, modelled as `×(τ, …)`. A single empty
-/// trace among thousands is more likely noise than optionality, so `IMf` only models it if at
-/// least a fraction `noise_threshold` of the traces are empty. At `0.0` every empty trace counts.
+/// Empty traces mean the whole sub-process could be skipped, modeled as `×(τ, ...)`. `IMf` only
+/// models them if at least a fraction
+/// [`noise_threshold`](InductiveMinerOptions::noise_threshold) of the traces are
+/// empty (more than that without
+/// [`keep_at_threshold`](InductiveMinerOptions::keep_at_threshold)). At `0.0` every empty trace
+/// counts.
 ///
 /// Returns `None` if the log contains no empty traces.
-pub fn empty_traces(log: &ActivityLog, noise_threshold: f64) -> Option<Fallthrough> {
+pub fn empty_traces(log: &ActivityLog, options: &InductiveMinerOptions) -> Option<Fallthrough> {
     if !log.contains_empty_trace() {
         return None;
     }
 
     let rest = log.without_empty_traces();
-    let frequent_enough =
-        log.num_empty_traces() as f64 >= log.num_traces() as f64 * noise_threshold;
+    let empty = log.num_empty_traces() as f64;
+    let cutoff = log.num_traces() as f64 * options.noise_threshold;
+    let frequent_enough = if options.keep_at_threshold {
+        empty >= cutoff
+    } else {
+        empty > cutoff
+    };
 
     Some(if frequent_enough {
         Fallthrough::OptionalEmptyTraces(rest)
@@ -85,7 +93,7 @@ pub fn find_fallthrough(
         .or_else(|| activity_concurrent(log, options))
         .or_else(|| strict_tau_loop(log, dfg, options.use_degenerate_tau_loops))
         .or_else(|| tau_loop(log, dfg, options.use_degenerate_tau_loops))
-        .or_else(|| two_activities_concurrent(log))
+        .or_else(|| two_activities_concurrent(log, options))
         .unwrap_or_else(|| flower_model(log))
 }
 
@@ -97,30 +105,43 @@ mod test_fallthrough {
     #[test]
     fn test_empty_traces() {
         let (labels, base) = log_of(&[&["a"]]);
-        assert_eq!(empty_traces(&base, 0.0), None);
+        let im = InductiveMinerOptions::default();
+        let imf = InductiveMinerOptions::imf(0.2);
+        assert_eq!(empty_traces(&base, &im), None);
 
         // Plain IM models any empty trace as optionality.
         let log = base.derive([(vec![], 1), (vec![0], 1000)]);
-        let Some(Fallthrough::OptionalEmptyTraces(rest)) = empty_traces(&log, 0.0) else {
-            panic!("expected the empty traces to be modelled as optional");
+        let Some(Fallthrough::OptionalEmptyTraces(rest)) = empty_traces(&log, &im) else {
+            panic!("expected the empty traces to be modeled as optional");
         };
         assert_eq!(describe(&rest, &labels), expect(&[(&["a"], 1000)]));
 
         // IMf drops one in a thousand but keeps a fifth.
         assert!(matches!(
-            empty_traces(&log, 0.2),
+            empty_traces(&log, &imf),
             Some(Fallthrough::DroppedEmptyTraces(_))
         ));
         let log = base.derive([(vec![], 250), (vec![0], 1000)]);
         assert!(matches!(
-            empty_traces(&log, 0.2),
+            empty_traces(&log, &imf),
             Some(Fallthrough::OptionalEmptyTraces(_))
+        ));
+
+        // A fifth of the traces exactly. `PM4Py` wants more than that.
+        let log = base.derive([(vec![], 1), (vec![0], 4)]);
+        assert!(matches!(
+            empty_traces(&log, &imf),
+            Some(Fallthrough::OptionalEmptyTraces(_))
+        ));
+        assert!(matches!(
+            empty_traces(&log, &InductiveMinerOptions::pm4py(0.2)),
+            Some(Fallthrough::DroppedEmptyTraces(_))
         ));
     }
 
     #[test]
     fn test_order_and_flower_model() {
-        // Leemans' L81, where d occurs exactly once in every trace.
+        // L81, where d occurs exactly once in every trace.
         let (_, log) = log_of(&[
             &["a", "b", "c", "d"],
             &["d", "a", "b"],

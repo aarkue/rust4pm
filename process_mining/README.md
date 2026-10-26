@@ -37,27 +37,20 @@ For more details, see the [Examples README](examples/README.md).
 - **Process Discovery**:
   - Directly-Follows Graphs (DFG)
   - Alpha Miner
+  - Inductive Miner (IM, `IMf`, `IMa` and the DFG variants `IMd` and `IMfd`)
   - Object-Centric DFG
+  - Object-Centric Petri Nets
   - OC-DECLARE Constraints with Synchronization
 - **Process Models**:
   - Petri Nets (import/export PNML)
   - (Object-Centric) Process Trees
+  - Object-Centric Petri Nets
   - OC-DECLARE Models
 - **Visualization**: Layout and SVG export for every model above except object-centric process
-  trees, and for partial order traces, in pure Rust through
+  trees, for OCEL type graphs and for partial order traces, in pure Rust through
   [graphlay](https://github.com/aarkue/graphlay) (module and feature `visualization`, on by
-  default). No Graphviz install needed.
+  default).
 - **Performance**: Built with Rust for high performance and memory safety.
-
-```rust,ignore
-use process_mining::visualization::petri_net::{export_petri_net_svg, PetriBuildOptions};
-use process_mining::{Importable, PetriNet};
-
-let net = PetriNet::import_from_path("model.pnml")?;
-let svg: String = export_petri_net_svg(&net, &PetriBuildOptions::default())?;
-```
-
-`export_petri_net_svg` returns the SVG document, and `PetriNet::export_svg` writes it to a file.
 
 ## Documentation
 

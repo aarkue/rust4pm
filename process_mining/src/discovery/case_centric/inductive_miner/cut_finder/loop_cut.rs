@@ -20,10 +20,8 @@ use super::cut::Cut;
 /// ```
 ///
 /// The body starts as `Start ∪ End` (↺.1) and the rest is grouped into connected components (↺.3).
-/// Components violating ↺.2 or ↺.4 are then absorbed into the body. One pass is enough: absorbing
-/// only adds activities to the body, components are unconnected by construction so the new
-/// activities cannot violate ↺.2 for another component, and ↺.4 only refers to the unchanged start
-/// and end activities.
+/// Components violating ↺.2 or ↺.4 are then absorbed into the body. One pass is enough, since
+/// absorbing a component cannot make another one violate them.
 pub fn loop_cut(dfg: &ActivityDfg) -> Option<Cut> {
     let n = dfg.len();
     let body: Vec<bool> = (0..n).map(|a| dfg.is_start(a) || dfg.is_end(a)).collect();

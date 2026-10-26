@@ -12,11 +12,9 @@ use crate::{core::EventLog, discovery::case_centric::dfg::discover_dfg};
 /// Activity in a directly-follows graph.
 pub type Activity = String;
 
-/// A directly-follows graph of [`Activity`]s.
-/// Graph containing a set of activities, a set of directly-follows relations, a set of start
-/// activities, and a set of end activities.
-/// Both, the number of occurrences of activities and of directly follows relations are annotated
-/// with their frequency.
+/// A directly-follows graph of [`Activity`]s, with its start and end activities.
+/// Activities and directly-follows relations are annotated with their frequency, and start and
+/// end activities with how many traces start or end with them.
 #[serde_as]
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DirectlyFollowsGraph<'a> {
@@ -26,10 +24,10 @@ pub struct DirectlyFollowsGraph<'a> {
     #[serde_as(as = "Vec<((_,_),_)>")]
     #[schemars(with = "Vec<((String,String),u32)>")]
     pub directly_follows_relations: HashMap<(Cow<'a, str>, Cow<'a, str>), u32>,
-    /// Start activities
-    pub start_activities: HashSet<Activity>,
-    /// End activities
-    pub end_activities: HashSet<Activity>,
+    /// Start activities, with how many traces start with each
+    pub start_activities: HashMap<Activity, u32>,
+    /// End activities, with how many traces end with each
+    pub end_activities: HashMap<Activity, u32>,
 }
 
 impl Default for DirectlyFollowsGraph<'_> {
@@ -44,8 +42,8 @@ impl<'a> DirectlyFollowsGraph<'a> {
         Self {
             activities: HashMap::new(),
             directly_follows_relations: HashMap::new(),
-            start_activities: HashSet::new(),
-            end_activities: HashSet::new(),
+            start_activities: HashMap::new(),
+            end_activities: HashMap::new(),
         }
     }
     /// Discover a [`DirectlyFollowsGraph`] from an [`EventLog`] using the specified [`EventLogClassifier`](crate::core::event_data::case_centric::EventLogClassifier) to derive the 'activity' names
@@ -67,14 +65,18 @@ impl<'a> DirectlyFollowsGraph<'a> {
         *self.activities.entry(activity).or_default() += frequency;
     }
 
-    /// Adds an activity to the set of start activities.
-    pub fn add_start_activity(&mut self, activity: Activity) {
-        self.start_activities.insert(activity);
+    /// Add a start activity with the number of traces starting with it.
+    ///
+    /// If the activity is already a start activity, the frequency is added to its count.
+    pub fn add_start_activity(&mut self, activity: Activity, frequency: u32) {
+        *self.start_activities.entry(activity).or_default() += frequency;
     }
 
-    /// Adds an activity to the set of end activities.
-    pub fn add_end_activity(&mut self, activity: Activity) {
-        self.end_activities.insert(activity);
+    /// Add an end activity with the number of traces ending with it.
+    ///
+    /// If the activity is already an end activity, the frequency is added to its count.
+    pub fn add_end_activity(&mut self, activity: Activity, frequency: u32) {
+        *self.end_activities.entry(activity).or_default() += frequency;
     }
 
     /// Checks if an activity is already contained in the directly-follows graph.
@@ -84,12 +86,12 @@ impl<'a> DirectlyFollowsGraph<'a> {
 
     /// Checks if an activity is a start activity in the directly-follows graph.
     pub fn is_start_activity<S: AsRef<str>>(&self, activity: S) -> bool {
-        self.start_activities.contains(activity.as_ref())
+        self.start_activities.contains_key(activity.as_ref())
     }
 
     /// Checks if an activity is an end activity in the directly-follows graph.
     pub fn is_end_activity<S: AsRef<str>>(&self, activity: S) -> bool {
-        self.end_activities.contains(activity.as_ref())
+        self.end_activities.contains_key(activity.as_ref())
     }
 
     /// Removes an activity from the directly-follows graph.
@@ -174,11 +176,11 @@ impl<'a> DirectlyFollowsGraph<'a> {
     /// The SVG file is written to the specified filepath
     ///
     /// _Note_: This is an export method for __visualizing__ the directly-follows graph.
-    /// [`crate::visualization::dfg`] returns the SVG as a string and the node positions.
+    /// [`crate::visualization::svg`] returns the same SVG as a string.
     ///
     /// Only available with the `visualization` feature.
     pub fn export_svg<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        let svg = crate::visualization::dfg::export_dfg_svg(self, &Default::default())
+        let svg = crate::visualization::svg(self, &Default::default(), &Default::default())
             .map_err(std::io::Error::other)?;
         std::fs::write(path, svg)
     }
@@ -212,14 +214,14 @@ mod tests {
             3
         ]
     ],
-    "start_activities": [
-        "Work",
-        "Cook"
-    ],
-    "end_activities": [
-        "Work",
-        "Sleep"
-    ]
+    "start_activities": {
+        "Work": 8,
+        "Cook": 3
+    },
+    "end_activities": {
+        "Work": 2,
+        "Sleep": 9
+    }
 }"#;
 
     use crate::{
@@ -232,11 +234,11 @@ mod tests {
     fn directly_follows_graph() {
         let mut graph = DirectlyFollowsGraph::new();
         graph.add_activity("Work".into(), 11);
-        graph.add_start_activity("Work".into());
-        graph.add_end_activity("Work".into());
+        graph.add_start_activity("Work".into(), 8);
+        graph.add_end_activity("Work".into(), 2);
 
         graph.add_activity("Cook".into(), 3);
-        graph.add_start_activity("Cook".into());
+        graph.add_start_activity("Cook".into(), 3);
 
         graph.add_activity("Have fun".into(), 9);
         graph.add_df_relation("Work".into(), "Have fun".into(), 6);
@@ -245,7 +247,8 @@ mod tests {
         graph.add_activity("Sleep".into(), 13);
         graph.add_df_relation("Work".into(), "Sleep".into(), 4);
         graph.add_df_relation("Have fun".into(), "Sleep".into(), 9);
-        graph.add_end_activity("Sleep".into());
+        graph.add_end_activity("Sleep".into(), 9);
+        graph.add_start_activity("Work".into(), 1);
 
         let mut test_hashmap = HashMap::new();
         test_hashmap.insert("Work".into(), 11);
@@ -253,6 +256,12 @@ mod tests {
         test_hashmap.insert("Have fun".into(), 9);
         test_hashmap.insert("Sleep".into(), 13);
         assert_eq!(graph.activities, test_hashmap);
+        assert_eq!(graph.start_activities["Work"], 9);
+        assert!(graph.is_end_activity("Sleep") && !graph.is_end_activity("Cook"));
+
+        graph.remove_activity("Work");
+        assert!(!graph.is_start_activity("Work") && !graph.is_end_activity("Work"));
+        assert_eq!(graph.start_activities.len(), 1);
     }
 
     #[test]
@@ -262,6 +271,13 @@ mod tests {
         assert!(dfg.directly_follows_relations.len() == 4);
         assert!(dfg.start_activities.len() == 2);
         assert!(dfg.end_activities.len() == 2);
+        assert_eq!(dfg.start_activities["Work"], 8);
+
+        let json = serde_json::to_value(&dfg).unwrap();
+        assert_eq!(
+            json["end_activities"],
+            serde_json::json!({"Work": 2, "Sleep": 9})
+        );
     }
 
     #[test]

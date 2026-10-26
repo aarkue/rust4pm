@@ -4,6 +4,7 @@
 use petgraph::adj::DefaultIx;
 use petgraph::graph::NodeIndex;
 use petgraph::{Directed, Graph};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use serde_with::SetLastValueWins;
@@ -12,7 +13,9 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::core::event_data::case_centric::{Attributes, Event, EventLogClassifier};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Copy)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, JsonSchema,
+)]
 /// A struct to create a [`Hash`] value from an [`Event`].
 pub struct EventHash(u64);
 
@@ -25,7 +28,7 @@ impl EventHash {
 }
 
 #[serde_as]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 /// A partial order trace of [`Event`]s.
 /// Contains all events of a trace and their particular partial relations.
 pub struct PartialOrderTrace {
@@ -34,6 +37,7 @@ pub struct PartialOrderTrace {
     /// A mapping from an [`Event`]'s hash value [`EventHash`] to the [`Event`] itself.
     pub event_map: HashMap<EventHash, Event>,
     #[serde_as(as = "SetLastValueWins<_>")]
+    #[schemars(with = "HashSet<(EventHash, EventHash)>")]
     /// The partial relations between the [`Event`]s contained in the [`PartialOrderTrace`].
     pub partial_relations: HashSet<(EventHash, EventHash)>,
 }
@@ -181,7 +185,7 @@ impl PartialOrderTrace {
     /// The SVG file is written to the specified filepath
     ///
     /// Each event is labeled with its class under `classifier`.
-    /// [`crate::visualization::partial_order`] returns the SVG as a string and the node positions.
+    /// [`crate::visualization::svg`] returns the same SVG as a string.
     ///
     /// Only available with the `visualization` feature.
     pub fn export_svg<P: AsRef<std::path::Path>>(
@@ -189,12 +193,12 @@ impl PartialOrderTrace {
         classifier: &EventLogClassifier,
         path: P,
     ) -> Result<(), std::io::Error> {
-        let svg = crate::visualization::partial_order::export_partial_order_svg(
-            self,
-            classifier,
-            &Default::default(),
-        )
-        .map_err(std::io::Error::other)?;
+        let options = crate::visualization::partial_order::PartialOrderBuildOptions {
+            classifier: classifier.clone(),
+            ..Default::default()
+        };
+        let svg = crate::visualization::svg(self, &options, &Default::default())
+            .map_err(std::io::Error::other)?;
         std::fs::write(path, svg)
     }
 }

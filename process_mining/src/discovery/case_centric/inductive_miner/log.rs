@@ -1,11 +1,7 @@
 //! The activity-projected event log the Inductive Miner recurses on.
 //!
-//! The miner only looks at the sequence of activities of a trace, never at event attributes,
-//! timestamps or trace identities. [`ActivityLog`] therefore stores a log as trace variants over
-//! `usize` activity ids with how often each occurs, which means splitting a log copies `usize`s
-//! rather than XES events, and duplicate traces collapse. Real-life logs are very repetitive (the
-//! road-traffic-fines log has 150370 traces and 231 distinct activity sequences) and every split
-//! makes its sub-logs more so, so re-aggregating after each split keeps the recursion small.
+//! The miner only looks at the activity sequence of a trace, so [`ActivityLog`] stores trace
+//! variants over `usize` activity ids with their counts.
 
 use rayon::prelude::*;
 use std::borrow::Cow;
@@ -30,8 +26,6 @@ pub struct TraceVariant {
 }
 
 /// An event log projected onto activity ids, stored as trace variants with multiplicities.
-///
-/// See the [module documentation](self) for why the miner works on this instead of an [`EventLog`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivityLog {
     /// Size of the activity alphabet of the whole mining run. Sub-logs keep the alphabet of the
@@ -47,9 +41,6 @@ impl ActivityLog {
     /// Traces with an identical activity sequence are aggregated into a single variant, and traces
     /// with a count of zero are dropped. Variants end up sorted, which makes a log independent of
     /// the order its traces arrived in and so keeps discovery reproducible.
-    ///
-    /// Aggregating by sorting rather than by hashing avoids keeping a second copy of every
-    /// sequence as a hash-map key, which would double the peak memory of a split.
     pub fn new(
         alphabet_size: usize,
         traces: impl IntoIterator<Item = (Vec<ActivityID>, u64)>,
@@ -179,11 +170,8 @@ impl ActivityLog {
     }
 }
 
-/// The activity an event belongs to, borrowed from the event where possible.
-///
-/// [`EventLogClassifier::get_class_identity`] builds a fresh `String` per event, which on a log
-/// with millions of events is millions of allocations thrown away right after being looked up.
-/// A classifier over a single attribute is the common case, and there the value can be borrowed.
+/// The activity an event belongs to, borrowed from the event if the classifier has a single
+/// attribute.
 fn class_identity<'a>(classifier: &EventLogClassifier, event: &'a Event) -> Cow<'a, str> {
     match classifier.keys.as_slice() {
         [key] => match event.attributes.get_by_key(key).map(|a| &a.value) {
@@ -199,9 +187,6 @@ fn class_identity<'a>(classifier: &EventLogClassifier, event: &'a Event) -> Cow<
 /// Returns the activity labels (an activity id is its index in that vector) and the projected log.
 /// Labels are sorted, so the ids, and with them the order in which cut detection reports its
 /// partitions, depend only on the activity names.
-///
-/// Traces are aggregated into variants as they are read, in parallel, so memory scales with the
-/// number of distinct activity sequences rather than the number of traces.
 pub fn project_event_log(
     log: &EventLog,
     classifier: &EventLogClassifier,

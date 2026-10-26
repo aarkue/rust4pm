@@ -1,7 +1,7 @@
 //! Cut detection: finding the operator that structures a (sub-)log.
 //!
 //! Every recursion step tries to split the activities of the current log into parts that follow
-//! one of the four directly-follows footprints of Leemans' Definition 5.3: see
+//! one of the four directly-follows footprints of Definition 5.3: see
 //! [`exclusive_choice_cut`], [`sequence_cut`], [`concurrent_cut`] and [`loop_cut()`]. The optional
 //! refinements of `IMa` (§6.4.2.1) are [`strict_sequence_cut`], [`interleaved_cut`] and [`coo_cut`].
 //! The last two also read the traces.
@@ -40,8 +40,8 @@ fn to_partitions(dfg: &ActivityDfg, groups: &[Vec<usize>]) -> Vec<Vec<ActivityID
 /// The cut types are tried in the order exclusive choice, sequence, interleaving, concurrency,
 /// loop, and the first non-trivial cut is returned. A log may adhere to several footprints at
 /// once, and the earlier ones lead to more precise models. The
-/// [interleaved cut](InductiveMinerOptions::use_interleaved) is optional. Its footprint implies the
-/// one of concurrency, and its model allows a subset of what the concurrency allows.
+/// [interleaved cut](InductiveMinerOptions::use_interleaved) is optional. Its model allows a subset
+/// of what the concurrency allows.
 ///
 /// `dfg` is passed separately because `IMf` runs this on a filtered graph of the same log. The log
 /// itself is read for the minimum-self-distance relation and by the cuts that look at traces.
@@ -66,10 +66,14 @@ pub fn find_cut(
                 .flatten()
         })
         .or_else(|| {
+            // Without a cut that respects the minimum self-distance, take the plain one before trying
+            // the loop. Rediscovery needs this.
             let minimum_self_distance = options
                 .use_minimum_self_distance
                 .then(|| MinimumSelfDistance::discover(log));
-            let cut = concurrent_cut(dfg, minimum_self_distance.as_ref())?;
+            let cut = minimum_self_distance
+                .and_then(|msd| concurrent_cut(dfg, Some(&msd)))
+                .or_else(|| concurrent_cut(dfg, None))?;
             Some(if options.use_inclusive_choice {
                 coo_cut(log, cut, options.noise_threshold)
             } else {
@@ -94,7 +98,7 @@ pub fn find_cut_filtering(
 ) -> Option<Cut> {
     find_cut(log, dfg, options).or_else(|| {
         (options.noise_threshold > 0.0)
-            .then(|| find_cut(log, &dfg.filtered(options.noise_threshold), options))
+            .then(|| find_cut(log, &dfg.filtered(options.noise_filter()), options))
             .flatten()
     })
 }
@@ -107,8 +111,7 @@ pub(crate) mod test_utils {
     use super::MinimumSelfDistance;
     use crate::core::process_models::process_tree::OperatorType;
 
-    /// Largest graph [`all_valid_cuts`] will enumerate over. A set of 8 elements has 4140
-    /// partitions and one of 9 has 21147, so this is a limit on patience.
+    /// Largest graph [`all_valid_cuts`] enumerates over.
     pub const EXHAUSTIVE_LIMIT: usize = 8;
 
     /// Runs a cut finder on a log given as activity names and returns the parts as names.
@@ -138,13 +141,9 @@ pub(crate) mod test_utils {
     /// Finds every non-trivial cut of the graph by testing all partitions of its activities
     /// against all four footprints.
     ///
-    /// Checking the cut the miner took says nothing about one it failed to take, and a missed cut
-    /// is invisible to fitness since falling through only adds behaviour. Enumerating all cuts
-    /// makes that checkable.
-    ///
     /// `minimum_self_distance` must be passed whenever the miner uses it, since it forbids
-    /// concurrent cuts the footprints alone allow (∧↔.1). Interleaved cuts are not enumerated,
-    /// since they are not a footprint of the graph. Returns `None` if the graph has more than
+    /// concurrent cuts the footprints alone allow (∧↔.1), unless it forbids all of them.
+    /// Interleaved cuts are not enumerated. Returns `None` if the graph has more than
     /// [`EXHAUSTIVE_LIMIT`] activities.
     pub fn all_valid_cuts(
         log: &ActivityLog,
@@ -157,6 +156,7 @@ pub(crate) mod test_utils {
         }
 
         let mut cuts = Vec::new();
+        let mut separating_loops = Vec::new();
         for partition in set_partitions(n) {
             if partition.len() < 2 {
                 continue;
@@ -183,12 +183,19 @@ pub(crate) mod test_utils {
                             })
                         });
                         if separated_loop {
+                            separating_loops.push(cut);
                             continue;
                         }
                     }
                 }
                 cuts.push(cut);
             }
+        }
+        if !cuts
+            .iter()
+            .any(|cut| cut.operator() == OperatorType::Concurrency)
+        {
+            cuts.extend(separating_loops);
         }
         Some(cuts)
     }
@@ -241,7 +248,7 @@ pub(crate) mod test_utils {
         footprint_violation(log, dfg, &cut).is_none().then_some(cut)
     }
 
-    /// All partitions of `{0, …, n-1}`, as restricted growth strings.
+    /// All partitions of `{0, ..., n-1}`, as restricted growth strings.
     fn set_partitions(n: usize) -> Vec<Vec<Vec<usize>>> {
         if n == 0 {
             return vec![];
@@ -275,9 +282,8 @@ pub(crate) mod test_utils {
         }
     }
 
-    /// Checks a cut against the requirements of its operator, transcribed from Definition 5.3 and
-    /// sharing none of the cut finders' reasoning. Every cut plain IM takes is checked with it, so
-    /// a mistake in a cut finder shows up as a violated requirement rather than a wrong tree.
+    /// Checks a cut against the requirements of its operator, transcribed from Definition 5.3
+    /// independently of the cut finders.
     ///
     /// Returns the first violated requirement, or `None` if the cut adheres to them.
     pub fn footprint_violation(log: &ActivityLog, dfg: &ActivityDfg, cut: &Cut) -> Option<String> {
@@ -543,7 +549,7 @@ mod test_find_cut {
 
     #[test]
     fn test_filtering_is_only_tried_after_plain_cut_detection() {
-        // A clean sequence a to b plus a single deviating trace b, a. IM sees the two as
+        // A clean sequence a to b with a single deviating trace b, a. IM sees the two as
         // concurrent since both edges are present, and so does IMf, because IM's cut detection is
         // tried first and succeeds.
         let (_, log) = log_of(&[&["a", "b"], &["b", "a"]]);

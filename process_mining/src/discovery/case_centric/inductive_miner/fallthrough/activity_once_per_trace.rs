@@ -13,8 +13,7 @@ use super::Fallthrough;
 ///
 /// Whatever structure the remaining activities have, such an `a` can happen anywhere in it, which
 /// is concurrency. The log is split into the projection onto `a`, which is `[⟨a⟩ⁿ]` and discovers
-/// the leaf `a`, and the log without `a`, giving `∧(a, IM(L \ a))`. Taking `a` out loses no
-/// information, which makes this the most precise of the fall throughs.
+/// the leaf `a`, and the log without `a`, giving `∧(a, IM(L \ a))`.
 ///
 /// If several activities qualify, the one whose remaining log admits the earliest cut is taken.
 /// Returns `None` if none does, or if the log has only one activity.
@@ -51,14 +50,8 @@ pub fn activity_once_per_trace(
     })
 }
 
-/// Of the activities that qualify, the one whose remaining log the miner can structure best.
-///
-/// Taking any of them out fits the log, but the choice decides what is left to discover. In
-/// `⟨a,b,c⟩, ⟨c,a,b⟩` all three occur once per trace. Leaving out `c` leaves the sequence `a, b`,
-/// and leaving out `a` leaves the less precise concurrency of `b` and `c`. Candidates are ranked by
-/// the cut their remaining log admits, in the order cut detection tries them, then by activity id.
-///
-/// Cut detection has to run once per candidate, so it is skipped where there is nothing to choose.
+/// Of the activities that qualify, the one whose remaining log admits the earliest cut, in the
+/// order cut detection tries them, then by activity id.
 fn best_candidate(
     log: &ActivityLog,
     candidates: &[ActivityID],
@@ -116,7 +109,7 @@ mod test_activity_once_per_trace {
 
     #[test]
     fn test_which_activity_is_taken() {
-        // All three qualify; taking a or b out leaves a sequence, taking c out leaves a
+        // All three qualify. Taking a or b out leaves a sequence, taking c out leaves a
         // concurrency, so the id decides between the first two.
         let (labels, log) = log_of(&[&["a", "b", "c"], &["b", "a", "c"]]);
         let Some(Fallthrough::ActivityConcurrent { activity_log, .. }) = once_per_trace(&log)

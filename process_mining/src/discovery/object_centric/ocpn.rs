@@ -5,83 +5,90 @@
 //! object type, discover a Petri net per type, stitch those together on their shared activities,
 //! and decide which arcs are variable.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
+use macros_process_mining::register_binding;
 use rayon::prelude::*;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::core::event_data::case_centric::EventLogClassifier;
-use crate::core::event_data::object_centric::linked_ocel::LinkedOCELAccess;
+use crate::core::event_data::object_centric::linked_ocel::{LinkedOCELAccess, SlimLinkedOCEL};
 use crate::core::event_data::object_centric::utils::flatten::flatten_ocel_on;
+use crate::core::process_models::object_centric::ocpn::json::ObjectCentricPetriNetJson;
 use crate::core::process_models::object_centric::ocpn::ObjectCentricPetriNet;
-use crate::discovery::case_centric::inductive_miner::{inductive_miner, InductiveMinerOptions};
-
-/// Which object types to discover a net for.
-///
-/// Each type's net and variable arcs are discovered independently, so leaving a type out does not
-/// change the nets of the others.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum ObjectTypeFilter {
-    /// Every object type of the log.
-    #[default]
-    All,
-    /// Only the named object types.
-    Only(BTreeSet<String>),
-    /// Every object type but the named ones.
-    Except(BTreeSet<String>),
-}
-
-impl ObjectTypeFilter {
-    /// Discovers only the given object types.
-    pub fn only<S: Into<String>>(object_types: impl IntoIterator<Item = S>) -> Self {
-        Self::Only(object_types.into_iter().map(Into::into).collect())
-    }
-
-    /// Discovers every object type but the given ones.
-    pub fn except<S: Into<String>>(object_types: impl IntoIterator<Item = S>) -> Self {
-        Self::Except(object_types.into_iter().map(Into::into).collect())
-    }
-
-    /// Whether a net is discovered for the given object type.
-    pub fn includes(&self, object_type: &str) -> bool {
-        match self {
-            Self::All => true,
-            Self::Only(types) => types.contains(object_type),
-            Self::Except(types) => !types.contains(object_type),
-        }
-    }
-}
+use crate::discovery::case_centric::inductive_miner::{
+    discover_inductive_tree_from_log, InductiveMiner,
+};
 
 /// Settings for object-centric Petri net discovery.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct ObjectCentricDiscoveryOptions {
-    /// How the Petri net of each object type is discovered from its flattened log.
-    pub inductive_miner: InductiveMinerOptions,
-    /// Which object types to discover a net for.
-    pub object_types: ObjectTypeFilter,
+///
+/// In JSON, fields left out take their default value.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct OcpnDiscoveryOptions {
+    /// How the Petri net of each object type is discovered from its flattened log. The
+    /// [DFG variant](InductiveMiner::Dfg) reads each log once, which suits large logs.
+    pub miner: InductiveMiner,
+    /// Object types to discover a net for. If this is `None`, every object type of the log is used.
+    ///
+    /// Each type's net and variable arcs are discovered independently, so leaving a type out does
+    /// not change the nets of the others.
+    pub object_types_to_use: Option<Vec<String>>,
+    /// Activities to keep. If this is `None`, every activity is kept.
+    ///
+    /// The other activities' events are removed from each flattened log before mining, so the
+    /// nets describe the log without them. An object left without events adds no trace.
+    pub activities_to_use: Option<Vec<String>>,
     /// Fraction of an activity's executions that may involve other than exactly one object of a
     /// type while its arc to that type still counts as normal.
     ///
     /// The default `0.0` is the strict reading. A small tolerance keeps data-quality noise from
-    /// making arcs variable. `PM4Py` implicitly uses `0.2` (its `double_arc_threshold` of `0.8`).
+    /// making arcs variable.
     pub variable_arc_tolerance: f64,
 }
 
-impl ObjectCentricDiscoveryOptions {
-    /// Discovery with the given Inductive Miner settings, every object type, and no tolerance for
-    /// variable arcs.
-    pub fn new(inductive_miner: InductiveMinerOptions) -> Self {
+impl OcpnDiscoveryOptions {
+    /// Discovery with the given Inductive Miner, every object type and activity, and no tolerance
+    /// for variable arcs.
+    pub fn new(miner: impl Into<InductiveMiner>) -> Self {
         Self {
-            inductive_miner,
+            miner: miner.into(),
             ..Self::default()
         }
     }
 
-    /// Sets which [object types](Self::object_types) to discover.
-    pub fn with_object_types(self, object_types: ObjectTypeFilter) -> Self {
+    /// Keeps only the given [activities](Self::activities_to_use).
+    pub fn with_activities<S: Into<String>>(self, activities: impl IntoIterator<Item = S>) -> Self {
         Self {
-            object_types,
+            activities_to_use: Some(activities.into_iter().map(Into::into).collect()),
             ..self
         }
+    }
+
+    /// Whether `activity` is kept.
+    pub fn uses_activity(&self, activity: &str) -> bool {
+        self.activities_to_use
+            .as_ref()
+            .is_none_or(|activities| activities.iter().any(|a| a == activity))
+    }
+
+    /// Discovers only the given [object types](Self::object_types_to_use).
+    pub fn with_object_types<S: Into<String>>(
+        self,
+        object_types: impl IntoIterator<Item = S>,
+    ) -> Self {
+        Self {
+            object_types_to_use: Some(object_types.into_iter().map(Into::into).collect()),
+            ..self
+        }
+    }
+
+    /// Whether a net is discovered for `object_type`.
+    pub fn uses_object_type(&self, object_type: &str) -> bool {
+        self.object_types_to_use
+            .as_ref()
+            .is_none_or(|types| types.iter().any(|t| t == object_type))
     }
 
     /// Sets the [`variable_arc_tolerance`](Self::variable_arc_tolerance), clamped to `[0, 1]`.
@@ -97,11 +104,10 @@ impl ObjectCentricDiscoveryOptions {
 ///
 /// Flattens the log on every selected object type (one case per object), mines a Petri net from
 /// each in parallel with the Inductive Miner, and determines the
-/// [variable arcs](discover_variable_arcs). Transitions with the same activity label are shared
-/// between the per-type nets, so no explicit merging step is needed.
-pub fn discover_ocpn<'a, O>(
+/// [variable arcs](discover_variable_arcs).
+pub fn discover_ocpn_from<'a, O>(
     ocel: &'a O,
-    options: ObjectCentricDiscoveryOptions,
+    options: OcpnDiscoveryOptions,
 ) -> ObjectCentricPetriNet
 where
     O: LinkedOCELAccess<'a> + Sync,
@@ -109,33 +115,50 @@ where
 {
     let object_types: Vec<String> = ocel
         .get_ob_types()
-        .filter(|object_type| options.object_types.includes(object_type))
+        .filter(|object_type| options.uses_object_type(object_type))
         .map(str::to_string)
         .collect();
 
+    let classifier = EventLogClassifier::default();
     let nets = object_types
         .par_iter()
         .map(|object_type| {
             let mut flattened = flatten_ocel_on(ocel, object_type);
+            if options.activities_to_use.is_some() {
+                for trace in &mut flattened.traces {
+                    trace
+                        .events
+                        .retain(|e| options.uses_activity(&classifier.get_class_identity(e)));
+                }
+            }
             // Objects without events would add empty traces, which make the whole net optional.
             flattened.traces.retain(|trace| !trace.events.is_empty());
 
-            let tree = inductive_miner(
-                &flattened,
-                &EventLogClassifier::default(),
-                options.inductive_miner,
-            );
+            let tree = discover_inductive_tree_from_log(&flattened, &classifier, options.miner);
             (object_type.clone(), tree.to_petri_net())
         })
         .collect();
 
     let mut variable_arcs = discover_variable_arcs(ocel, options.variable_arc_tolerance);
-    variable_arcs.retain(|object_type, _| options.object_types.includes(object_type));
+    variable_arcs.retain(|object_type, _| options.uses_object_type(object_type));
+    for activities in variable_arcs.values_mut() {
+        activities.retain(|activity| options.uses_activity(activity));
+    }
+    variable_arcs.retain(|_, activities| !activities.is_empty());
 
     ObjectCentricPetriNet {
         nets,
         variable_arcs,
     }
+}
+
+/// [`discover_ocpn_from`] on a [`SlimLinkedOCEL`], returning the flat JSON form.
+#[register_binding]
+pub fn discover_ocpn(
+    locel: &SlimLinkedOCEL,
+    #[bind(default)] options: OcpnDiscoveryOptions,
+) -> ObjectCentricPetriNetJson {
+    discover_ocpn_from(locel, options).to_json_form()
 }
 
 /// Determines, per object type, which activities have variable arcs.
@@ -289,7 +312,7 @@ mod test_discover_ocpn {
 
     #[test]
     fn test_variable_arc_tolerance() {
-        // A second "pick" that touches no item at all: one of two executions deviates.
+        // A third "pick" that touches no item at all: one of three executions deviates.
         let mut ocel = example_ocel();
         ocel.events.push(event("e5", "pick", &["o1"]));
         let locel = IndexLinkedOCEL::from(ocel);
@@ -303,30 +326,50 @@ mod test_discover_ocpn {
     #[test]
     fn test_selecting_object_types_leaves_the_rest_alone() {
         let locel = IndexLinkedOCEL::from(example_ocel());
-        let options = ObjectCentricDiscoveryOptions::default();
-        let all = discover_ocpn(&locel, options.clone());
+        let options = OcpnDiscoveryOptions::default();
+        let all = discover_ocpn_from(&locel, options.clone());
 
-        for filter in [
-            ObjectTypeFilter::only(["item"]),
-            ObjectTypeFilter::except(["order"]),
-        ] {
-            let some = discover_ocpn(&locel, options.clone().with_object_types(filter));
-            assert_eq!(some.object_types(), vec!["item"]);
-            assert_eq!(some.num_places(), all.nets["item"].places.len());
-            assert_eq!(some.num_arcs(), all.nets["item"].arcs.len());
-            assert_eq!(some.activities(), vec!["pick", "place order"]);
-            assert_eq!(some.variable_arcs, {
-                let mut expected = all.variable_arcs.clone();
-                expected.retain(|object_type, _| object_type == "item");
-                expected
-            });
+        let some = discover_ocpn_from(&locel, options.with_object_types(["item"]));
+        assert_eq!(some.object_types(), vec!["item"]);
+        assert_eq!(some.num_places(), all.nets["item"].net.num_places());
+        assert_eq!(some.num_arcs(), all.nets["item"].net.arcs().count());
+        assert_eq!(some.activities(), vec!["pick", "place order"]);
+        let mut expected = all.variable_arcs;
+        expected.retain(|object_type, _| object_type == "item");
+        assert_eq!(some.variable_arcs, expected);
+    }
+
+    #[test]
+    fn test_keeping_some_activities() {
+        let locel = IndexLinkedOCEL::from(example_ocel());
+        let ocpn = discover_ocpn_from(
+            &locel,
+            OcpnDiscoveryOptions::default().with_activities(["place order", "pay"]),
+        );
+        assert_eq!(ocpn.activities(), vec!["pay", "place order"]);
+        assert!(ocpn.is_variable_arc("item", "place order"));
+        assert!(!ocpn.variable_arcs["item"].contains("pick"));
+    }
+
+    #[test]
+    fn test_the_dfg_variant_discovers_the_same_nets_here() {
+        use crate::discovery::case_centric::inductive_miner::InductiveMinerDfgOptions;
+        let locel = IndexLinkedOCEL::from(example_ocel());
+        let log = discover_ocpn_from(&locel, OcpnDiscoveryOptions::default());
+        let dfg = discover_ocpn_from(
+            &locel,
+            OcpnDiscoveryOptions::new(InductiveMinerDfgOptions::default()),
+        );
+        assert_eq!(dfg.activities(), log.activities());
+        for (object_type, net) in &log.nets {
+            assert_eq!(dfg.nets[object_type].net.num_places(), net.net.num_places());
         }
     }
 
     #[test]
     fn test_discovers_a_net_per_object_type() {
         let locel = IndexLinkedOCEL::from(example_ocel());
-        let ocpn = discover_ocpn(&locel, ObjectCentricDiscoveryOptions::default());
+        let ocpn = discover_ocpn_from(&locel, OcpnDiscoveryOptions::default());
 
         assert_eq!(ocpn.object_types(), vec!["item", "order"]);
         assert_eq!(ocpn.activities(), vec!["pay", "pick", "place order"]);
@@ -339,11 +382,11 @@ mod test_discover_ocpn {
 
         for (object_type, net) in &ocpn.nets {
             assert!(
-                net.initial_marking.is_some(),
+                !net.initial_marking.is_empty(),
                 "{object_type} has no initial marking"
             );
             assert!(
-                net.final_markings.is_some(),
+                !net.final_marking.is_empty(),
                 "{object_type} has no final marking"
             );
         }
@@ -357,11 +400,11 @@ mod test_discover_ocpn {
         ocel.objects.push(object("i3", "item"));
         let locel = IndexLinkedOCEL::from(ocel);
 
-        let ocpn = discover_ocpn(&locel, ObjectCentricDiscoveryOptions::default());
+        let ocpn = discover_ocpn_from(&locel, OcpnDiscoveryOptions::default());
         assert_eq!(ocpn.object_types_of("pick"), vec!["item"]);
         assert!(ocpn.nets["item"]
-            .transitions
-            .values()
-            .any(|t| t.label.as_deref() == Some("pick")));
+            .net
+            .transitions()
+            .any(|(_, t)| t.label.as_deref() == Some("pick")));
     }
 }

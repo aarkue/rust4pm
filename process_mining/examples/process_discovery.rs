@@ -1,6 +1,6 @@
 use process_mining::core::event_data::case_centric::utils::activity_projection::EventLogActivityProjection;
 use process_mining::discovery::case_centric::alphappp::full::{
-    alphappp_discover_petri_net, AlphaPPPConfig,
+    discover_alphappp_net, AlphaPPPConfig,
 };
 use process_mining::{EventLog, Exportable, Importable};
 use std::env;
@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("Discovering Petri net using Alpha+++...");
     let config = AlphaPPPConfig::default();
-    let petri_net = alphappp_discover_petri_net(&projection, config);
+    let petri_net = discover_alphappp_net(&projection, config);
 
     println!(
         "Discovered Petri net with {} places and {} transitions.",

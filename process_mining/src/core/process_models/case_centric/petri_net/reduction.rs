@@ -1,88 +1,74 @@
 //! Structural reduction of Petri nets
 
-use uuid::Uuid;
-
-use super::petri_net_struct::{ArcType, Marking, PetriNet, PlaceID, TransitionID};
+use super::net::{AcceptingPetriNet, ArcType, NodeID, PlaceID, TransitionID};
 
 /// A silent transition to fuse into the only transition feeding it.
 struct Fusion {
-    silent: Uuid,
+    silent: TransitionID,
     /// The only input place of `silent`, removed along with it.
-    place: Uuid,
+    place: PlaceID,
     /// The only transition producing `place`, which takes over the outputs of `silent`.
-    producer: Uuid,
-    outputs: Vec<Uuid>,
+    producer: TransitionID,
+    outputs: Vec<PlaceID>,
 }
 
-impl PetriNet {
+impl AcceptingPetriNet {
     /// Removes silent transitions that only pass a token on, and returns how many were removed.
     ///
     /// A silent transition qualifies if its only input place is unmarked, is produced by exactly
     /// one other transition and is consumed by nothing else. It can then always fire right after
     /// that transition without being observed, so the producer may produce its outputs directly.
     ///
-    /// The language is unchanged. Nets with weighted arcs are left as they are.
+    /// The language is unchanged. Nets with weighted arcs are left as they are. Removing nodes
+    /// renumbers the remaining ones, as with [`AcceptingPetriNet::retain_nodes`].
     pub fn reduce_silent_transitions(&mut self) -> usize {
-        if self.arcs.iter().any(|arc| arc.weight != 1) {
+        if self.net.arcs().any(|arc| arc.weight != 1) {
             return 0;
         }
         let mut removed = 0;
         while let Some(fusion) = self.next_fusion() {
-            self.arcs.retain(|arc| {
-                let (place, transition) = match arc.from_to {
-                    ArcType::PlaceTransition(place, transition)
-                    | ArcType::TransitionPlace(transition, place) => (place, transition),
-                };
-                place != fusion.place && transition != fusion.silent
-            });
             for output in fusion.outputs {
-                self.add_arc(ArcType::TransitionPlace(fusion.producer, output), None);
+                self.net
+                    .add_arc(ArcType::TransitionPlace(fusion.producer, output), None);
             }
-            self.transitions.remove(&fusion.silent);
-            self.places.remove(&fusion.place);
+            self.retain_nodes(|node| {
+                node != NodeID::Place(fusion.place) && node != NodeID::Transition(fusion.silent)
+            });
             removed += 1;
         }
         removed
     }
 
     fn next_fusion(&self) -> Option<Fusion> {
-        let marked = |place: PlaceID| {
-            let holds = |marking: &Marking| marking.contains_key(&place);
-            self.initial_marking.iter().any(holds)
-                || self.final_markings.iter().flatten().any(holds)
-        };
-
-        self.transitions
-            .iter()
+        let net = &self.net;
+        net.transitions()
             .filter(|(_, transition)| transition.label.is_none())
-            .find_map(|(&silent, _)| {
-                let [place] = self.preset_of_transition(TransitionID(silent))[..] else {
+            .find_map(|(silent, _)| {
+                let [place] = net.preset_of_transition(silent).collect::<Vec<_>>()[..] else {
                     return None;
                 };
-                let [producer] = self.preset_of_place(place)[..] else {
+                let [producer] = net.preset_of_place(place).collect::<Vec<_>>()[..] else {
                     return None;
                 };
-                if producer.0 == silent || self.postset_of_place(place).len() != 1 || marked(place)
+                if producer == silent
+                    || net.postset_of_place(place).len() != 1
+                    || self.is_in_initial_marking(place)
+                    || self.is_in_final_marking(place)
                 {
                     return None;
                 }
-                let outputs: Vec<Uuid> = self
-                    .postset_of_transition(TransitionID(silent))
-                    .into_iter()
-                    .map(|output| output.0)
-                    .collect();
+                let outputs: Vec<PlaceID> = net.postset_of_transition(silent).collect();
                 // Producing a place twice would need an arc of weight two.
-                if self
+                if net
                     .postset_of_transition(producer)
-                    .iter()
-                    .any(|output| outputs.contains(&output.0))
+                    .any(|output| outputs.contains(&output))
                 {
                     return None;
                 }
                 Some(Fusion {
                     silent,
-                    place: place.0,
-                    producer: producer.0,
+                    place,
+                    producer,
                     outputs,
                 })
             })
@@ -92,6 +78,7 @@ impl PetriNet {
 #[cfg(test)]
 mod test_reduction {
     use super::*;
+    use crate::core::process_models::case_centric::petri_net::{Marking, PetriNet};
 
     /// `p0 -a-> p1 -tau-> p2 -b-> p3`: the silent transition can only pass the token on, so `a` may
     /// produce `p2` directly.
@@ -108,13 +95,18 @@ mod test_reduction {
         net.add_arc(ArcType::transition_to_place(tau, places[2]), None);
         net.add_arc(ArcType::place_to_transition(places[2], b), None);
         net.add_arc(ArcType::transition_to_place(b, places[3]), None);
-        net.initial_marking = Some(Marking::from([(places[0], 1)]));
-        net.final_markings = Some(vec![Marking::from([(places[3], 1)])]);
+        let mut net = AcceptingPetriNet::new(
+            net,
+            Marking::from([(places[0], 1)]),
+            Marking::from([(places[3], 1)]),
+        );
 
         assert_eq!(net.reduce_silent_transitions(), 1);
-        assert_eq!(net.transitions.len(), 2);
-        assert_eq!(net.places.len(), 3);
-        assert_eq!(net.arcs.len(), 4);
+        assert_eq!(net.net.num_transitions(), 2);
+        assert_eq!(net.net.num_places(), 3);
+        assert_eq!(net.net.arcs().count(), 4);
+        assert_eq!(net.initial_marking, Marking::from([(PlaceID(0), 1)]));
+        assert_eq!(net.final_marking, Marking::from([(PlaceID(2), 1)]));
         assert_eq!(net.reduce_silent_transitions(), 0);
     }
 
@@ -133,6 +125,7 @@ mod test_reduction {
         net.add_arc(ArcType::transition_to_place(tau, places[2]), None);
         net.add_arc(ArcType::place_to_transition(places[1], b), None);
         net.add_arc(ArcType::transition_to_place(b, places[3]), None);
+        let mut net = AcceptingPetriNet::new(net, Marking::new(), Marking::new());
 
         assert_eq!(net.reduce_silent_transitions(), 0);
     }
@@ -148,7 +141,7 @@ mod test_reduction {
         net.add_arc(ArcType::transition_to_place(a, places[1]), None);
         net.add_arc(ArcType::place_to_transition(places[1], tau), None);
         net.add_arc(ArcType::transition_to_place(tau, places[2]), None);
-        net.final_markings = Some(vec![Marking::from([(places[1], 1)])]);
+        let mut net = AcceptingPetriNet::new(net, Marking::new(), Marking::from([(places[1], 1)]));
 
         assert_eq!(net.reduce_silent_transitions(), 0);
     }

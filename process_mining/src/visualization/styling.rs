@@ -1,5 +1,10 @@
 //! Colors and [`Scene`](graphlay::svg::Scene) helpers shared by all model drawings.
 
+use std::collections::BTreeMap;
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
 /// `color` moved `amount` (0 to 1) towards white. A color that is not `#rrggbb` is kept.
 pub fn lighten(color: &str, amount: f64) -> String {
     let Some(rgb) = parse_hex(color) else {
@@ -20,7 +25,7 @@ pub fn darken(color: &str, amount: f64) -> String {
     format!("#{:02x}{:02x}{:02x}", mix(rgb.0), mix(rgb.1), mix(rgb.2))
 }
 
-/// The color propel's `colorForKey` gives `key` in `scope` (`"objectType"` or `"activity"`).
+/// The color of `key` in `scope` (`"objectType"` or `"activity"`), the same for the same name.
 pub fn key_color(scope: &str, key: &str) -> String {
     const SEED: u32 = 0x0101_cedc;
     const L_TIERS: [f64; 3] = [0.62, 0.7, 0.55];
@@ -75,7 +80,8 @@ fn parse_hex(color: &str) -> Option<(u8, u8, u8)> {
 }
 
 /// Colors, sizes and paddings shared by all model drawings.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct BaseStyle {
     /// Page background. `None` leaves the SVG transparent.
     pub background: Option<String>,
@@ -116,20 +122,50 @@ impl Default for BaseStyle {
     }
 }
 
-pub use scene_build::*;
+/// A change to how one node or edge is drawn, e.g., to highlight, dim or annotate it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ElementStyle {
+    /// Fill of a node. Ignored on an edge.
+    pub fill: Option<String>,
+    /// Border color of a node, or line color of an edge and its markers.
+    pub stroke: Option<String>,
+    /// Border width of a node, or line width of an edge, in px.
+    pub stroke_width: Option<f64>,
+    /// Opacity of the whole element, e.g., `0.35` to dim it.
+    pub opacity: Option<f64>,
+    /// Dash pattern of an edge's line or a node's border, as an SVG `stroke-dasharray`, e.g.,
+    /// `"4 3"`. An empty string draws a solid line.
+    pub dash: Option<String>,
+    /// One more line of text, under a node's label or under an edge's labels.
+    pub extra_label: Option<String>,
+}
+
+/// Per-element style changes, keyed by the index of the node or edge in the model's graph, which
+/// is also its index in the layout and in the layout request's `nodes` and `edges`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct StyleOverrides {
+    /// By node index.
+    pub nodes: BTreeMap<usize, ElementStyle>,
+    /// By edge index.
+    pub edges: BTreeMap<usize, ElementStyle>,
+}
+
+pub(crate) use scene_build::*;
 
 mod scene_build {
-    use super::BaseStyle;
+    use super::{BaseStyle, ElementStyle, StyleOverrides};
     use graphlay::layout::{EdgeRoute, Placement};
     use graphlay::svg::{
-        render, Attrs, BuiltinMarker, Chip, DrawOrder, EdgeAnchor, EdgeLabel, FontSpec,
-        HeuristicMeasurer, MarkerRef, NodeContent, Point as SPoint, Rect as SRect, Scene,
-        SceneEdge, SceneNode, Shape as SShape, Stroke, TextRun, TextWrap, Theme,
+        Attrs, BuiltinMarker, Chip, DrawOrder, EdgeAnchor, EdgeLabel, FontSpec, MarkerRef,
+        NodeContent, Paint, Point as SPoint, Rect as SRect, Scene, SceneEdge, SceneNode,
+        Shape as SShape, Stroke, TextRun, TextWrap,
     };
     use graphlay::{Point, Shape, Size};
 
     /// A layout point as a scene point.
-    pub fn scene_point(p: Point) -> SPoint {
+    pub(crate) fn scene_point(p: Point) -> SPoint {
         SPoint::new(p.x, p.y)
     }
 
@@ -150,7 +186,7 @@ mod scene_build {
     }
 
     /// A scene node covering the placement's box.
-    pub fn scene_node(
+    pub(crate) fn scene_node(
         placement: &Placement,
         shape: Shape,
         fill: Option<String>,
@@ -168,7 +204,12 @@ mod scene_build {
     }
 
     /// A centered node label, wrapped into at most `lines` lines.
-    pub fn node_label(text: &str, width: f64, lines: usize, base: &BaseStyle) -> NodeContent {
+    pub(crate) fn node_label(
+        text: &str,
+        width: f64,
+        lines: usize,
+        base: &BaseStyle,
+    ) -> NodeContent {
         NodeContent::Text(TextRun {
             text: text.to_string(),
             size: Some(base.label_size),
@@ -184,7 +225,7 @@ mod scene_build {
     }
 
     /// A play triangle for a start node or a stop square for an end node, `size` across.
-    pub fn terminal_mark(start: bool, size: f64, color: &str) -> NodeContent {
+    pub(crate) fn terminal_mark(start: bool, size: f64, color: &str) -> NodeContent {
         let r = size / 2.0;
         let points = if start {
             vec![SPoint::new(-r, -r), SPoint::new(-r, r), SPoint::new(r, 0.0)]
@@ -205,7 +246,7 @@ mod scene_build {
     }
 
     /// A scene edge along the route, with an arrowhead at the target.
-    pub fn scene_edge(route: &EdgeRoute, color: &str, width: f64) -> Option<SceneEdge> {
+    pub(crate) fn scene_edge(route: &EdgeRoute, color: &str, width: f64) -> Option<SceneEdge> {
         if route.points.len() < 2 {
             return None;
         }
@@ -219,7 +260,7 @@ mod scene_build {
     }
 
     /// A mid-edge label on a chip, where the layout reserved room for it.
-    pub fn edge_label(text: &str, route: &EdgeRoute, base: &BaseStyle) -> EdgeLabel {
+    pub(crate) fn edge_label(text: &str, route: &EdgeRoute, base: &BaseStyle) -> EdgeLabel {
         EdgeLabel {
             text: TextRun {
                 text: text.to_string(),
@@ -242,7 +283,7 @@ mod scene_build {
     }
 
     /// The scene holding `nodes` and `edges` in this style.
-    pub fn scene(base: &BaseStyle, nodes: Vec<SceneNode>, edges: Vec<SceneEdge>) -> Scene {
+    pub(crate) fn scene(base: &BaseStyle, nodes: Vec<SceneNode>, edges: Vec<SceneEdge>) -> Scene {
         Scene {
             background: base.background.clone(),
             padding: base.padding,
@@ -254,9 +295,168 @@ mod scene_build {
         }
     }
 
-    /// Draw a scene to a standalone SVG document.
-    pub fn render_scene(scene: &Scene) -> String {
-        render(scene, &Theme::default(), &HeuristicMeasurer::new())
+    /// The one or two [`leaf_lines`] of `label`, centered on the node together.
+    ///
+    /// [`leaf_lines`]: crate::visualization::graph_build::leaf_lines
+    pub(crate) fn leaf_runs(label: &str, base: &BaseStyle, color: &str) -> Vec<NodeContent> {
+        let lines = crate::visualization::graph_build::leaf_lines(label);
+        let line_height = base.label_size + 3.5;
+        let first = -(lines.len() as f64 - 1.0) * line_height / 2.0;
+        lines
+            .into_iter()
+            .enumerate()
+            .map(|(i, line)| {
+                NodeContent::Text(TextRun {
+                    text: line,
+                    dy: first + i as f64 * line_height,
+                    size: Some(base.label_size),
+                    weight: Some(500.0),
+                    color: Some(color.to_string()),
+                    ..TextRun::default()
+                })
+            })
+            .collect()
+    }
+
+    /// Room kept between an extra node line and the node's bottom border.
+    const EXTRA_LINE_INSET: f64 = 4.0;
+
+    /// `node` with `style` applied. Its content moves up to make room for an extra line.
+    pub(crate) fn style_node(node: &mut SceneNode, style: &ElementStyle, base: &BaseStyle) {
+        if let Some(fill) = &style.fill {
+            node.fill = Some(fill.clone());
+        }
+        if style.stroke.is_some() || style.stroke_width.is_some() || style.dash.is_some() {
+            let mut stroke = node
+                .stroke
+                .take()
+                .unwrap_or_else(|| Stroke::new(&base.node_border, base.border_width));
+            if let Some(color) = &style.stroke {
+                stroke.paint = Paint::Color(color.clone());
+                // A borderless node (e.g., an operator pill) gets a visible border.
+                if stroke.width <= 0.0 {
+                    stroke.width = base.border_width;
+                }
+            }
+            if let Some(width) = style.stroke_width {
+                stroke.width = width;
+            }
+            if let Some(dash) = &style.dash {
+                stroke.dash = dash_array(dash);
+            }
+            node.stroke = Some(stroke);
+        }
+        if let Some(opacity) = style.opacity {
+            node.attrs = std::mem::take(&mut node.attrs).attr("opacity", opacity.to_string());
+        }
+        if let Some(text) = &style.extra_label {
+            push_extra_line(node, text, base);
+        }
+    }
+
+    /// One more line of `text` at the bottom of `node`, with its content moved up to make room.
+    pub(crate) fn push_extra_line(node: &mut SceneNode, text: &str, base: &BaseStyle) {
+        let size = base.edge_label_size;
+        let shift = size / 2.0 + 1.0;
+        for content in &mut node.content {
+            match content {
+                NodeContent::Text(run) => run.dy -= shift,
+                NodeContent::Glyphs(row) => row.dy -= shift,
+                NodeContent::Polygon { points, .. } => {
+                    for p in points {
+                        p.y -= shift;
+                    }
+                }
+                _ => {}
+            }
+        }
+        node.content.push(NodeContent::Text(TextRun {
+            text: text.to_string(),
+            dy: node.rect.h / 2.0 - size / 2.0 - EXTRA_LINE_INSET,
+            size: Some(size),
+            weight: Some(600.0),
+            color: Some(base.text.clone()),
+            wrap: Some(TextWrap {
+                max_width: (node.rect.w - 8.0).max(24.0),
+                max_lines: 1,
+                line_height: size + 1.5,
+            }),
+            ..TextRun::default()
+        }));
+    }
+
+    /// `edge` with `style` applied. An extra line goes under its last label, or on a chip at its
+    /// middle.
+    pub(crate) fn style_edge(edge: &mut SceneEdge, style: &ElementStyle, base: &BaseStyle) {
+        if let Some(color) = &style.stroke {
+            edge.stroke.paint = Paint::Color(color.clone());
+            edge.marker_start = std::mem::take(&mut edge.marker_start).colored(color.clone());
+            edge.marker_end = std::mem::take(&mut edge.marker_end).colored(color.clone());
+        }
+        if let Some(width) = style.stroke_width {
+            edge.stroke.width = width;
+        }
+        if let Some(dash) = &style.dash {
+            edge.stroke.dash = dash_array(dash);
+        }
+        if let Some(opacity) = style.opacity {
+            edge.attrs = std::mem::take(&mut edge.attrs).attr("opacity", opacity.to_string());
+        }
+        if let Some(text) = &style.extra_label {
+            let line = base.edge_label_size + 5.0;
+            let (at, dy) = match edge
+                .labels
+                .iter()
+                .max_by(|a, b| a.text.dy.total_cmp(&b.text.dy))
+            {
+                Some(last) => (last.at, last.text.dy + line),
+                None => (EdgeAnchor::Fraction(0.5), 0.0),
+            };
+            edge.labels.push(EdgeLabel {
+                text: TextRun {
+                    text: text.clone(),
+                    dy,
+                    size: Some(base.edge_label_size),
+                    weight: Some(600.0),
+                    color: Some(base.text.clone()),
+                    ..TextRun::default()
+                },
+                at,
+                chip: Some(Chip {
+                    fill: "#ffffff".to_string(),
+                    ..Chip::default()
+                }),
+                attrs: Attrs::default(),
+            });
+        }
+    }
+
+    fn dash_array(dash: &str) -> Option<String> {
+        (!dash.trim().is_empty()).then(|| dash.to_string())
+    }
+
+    /// Applies the overrides of node `index`, if any.
+    pub(crate) fn style_node_at(
+        node: &mut SceneNode,
+        index: usize,
+        overrides: &StyleOverrides,
+        base: &BaseStyle,
+    ) {
+        if let Some(style) = overrides.nodes.get(&index) {
+            style_node(node, style, base);
+        }
+    }
+
+    /// Applies the overrides of edge `index`, if any.
+    pub(crate) fn style_edge_at(
+        edge: &mut SceneEdge,
+        index: usize,
+        overrides: &StyleOverrides,
+        base: &BaseStyle,
+    ) {
+        if let Some(style) = overrides.edges.get(&index) {
+            style_edge(edge, style, base);
+        }
     }
 }
 
@@ -271,9 +471,42 @@ mod tests {
         assert_eq!(lighten("currentColor", 0.5), "currentColor");
     }
 
-    /// The values propel's `colorForKey` gives, so a name has the same color in both.
     #[test]
-    fn key_colors_match_propel() {
+    fn a_dash_applies_to_edges_and_node_borders_and_an_empty_one_is_solid() {
+        use graphlay::svg::{SceneEdge, SceneNode, Stroke};
+        let base = BaseStyle::default();
+        let dash = |pattern: &str| ElementStyle {
+            dash: Some(pattern.to_string()),
+            ..ElementStyle::default()
+        };
+
+        let mut edge = SceneEdge {
+            stroke: Stroke::new("#000000", 2.0).dashed("6 3"),
+            ..SceneEdge::default()
+        };
+        style_edge(&mut edge, &dash(""), &base);
+        assert_eq!(edge.stroke.dash, None);
+        style_edge(&mut edge, &dash("4 3"), &base);
+        assert_eq!(edge.stroke.dash.as_deref(), Some("4 3"));
+        style_edge(&mut edge, &ElementStyle::default(), &base);
+        assert_eq!(edge.stroke.dash.as_deref(), Some("4 3"));
+
+        let mut node = SceneNode {
+            stroke: Some(Stroke::new("#123456", 3.0)),
+            ..SceneNode::default()
+        };
+        style_node(&mut node, &dash("2 2"), &base);
+        let stroke = node.stroke.as_ref().unwrap();
+        assert_eq!(stroke.dash.as_deref(), Some("2 2"));
+        assert_eq!(
+            (stroke.paint.clone(), stroke.width),
+            (Stroke::new("#123456", 3.0).paint, 3.0)
+        );
+    }
+
+    /// Test that colors match with expected values.
+    #[test]
+    fn key_colors_are_stable() {
         for (scope, key, hex) in [
             ("objectType", "orders", "#d48a5c"),
             ("objectType", "items", "#007abe"),

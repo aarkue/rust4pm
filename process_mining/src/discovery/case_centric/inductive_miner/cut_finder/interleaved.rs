@@ -15,10 +15,8 @@ use super::cut::Cut;
 /// without an edge between them share a part. The pseudo-code swaps the pair in this last rule,
 /// which would reject the thesis' own `↔(→(a, b), c)`.
 ///
-/// The graph does not tell whether the parts actually run one after the other, so this also reads
-/// the traces: an interleaved part runs to completion before the next starts, and its activities
-/// occupy one uninterrupted block. Activities whose blocks overlap in some trace share a part,
-/// which also covers ∧↔.1. Merging can create new overlaps, so this repeats until it settles.
+/// The graph does not show whether the parts run one after the other, so this also reads the
+/// traces: activities whose blocks overlap in some trace share a part, until nothing changes.
 pub fn interleaved_cut(log: &ActivityLog, dfg: &ActivityDfg) -> Option<Cut> {
     let alphabet_size = log.alphabet_size();
     let mut parts = UnionFind::new(alphabet_size);
@@ -68,9 +66,6 @@ fn groups_of(log: &ActivityLog, parts: &mut UnionFind) -> Vec<Vec<ActivityID>> {
 
 /// Merges the parts of the activities sharing a block of one trace, and reports whether that
 /// changed anything.
-///
-/// A block reaches at least as far as the last occurrence of every activity in it, so extending the
-/// end while sweeping divides the trace into the smallest blocks that do not overlap.
 fn merge_blocks(trace: &[ActivityID], parts: &mut UnionFind, last_position: &mut [usize]) -> bool {
     let roots: Vec<usize> = trace.iter().map(|&a| parts.find(a)).collect();
     for (position, &root) in roots.iter().enumerate() {

@@ -1,79 +1,72 @@
-//! The directly-follows variant of the Inductive Miner (`IMd` and `IMfd`), following Leemans,
-//! "Robust Process Mining with Guarantees" (§6.6).
+//! The directly-follows variant of the Inductive Miner (`IMd` and `IMfd`), following §6.6 of the
+//! book cited in the [parent module](super).
 //!
-//! Where [IM](super) recurses on the event log, this variant passes over the log once to build a
-//! directly-follows graph and recurses on that graph alone. Cut detection is IM's, the splits
-//! divide the graph itself, and base cases and fall throughs read nothing but edges, start and end
-//! weights and an empty-trace count. After the one pass the recursion never sees a trace again,
-//! which is what makes it usable on very large logs, and it can start from a graph when no log
-//! exists.
-//!
-//! The price is the fitness guarantee. A directly-follows graph does not determine the language
-//! behind it, and §6.6.6.1 shows a tree and a non-fitting log that share one, so unlike plain IM
-//! the discovered model may fail to replay parts of the log. Rediscoverability is kept.
+//! It builds a directly-follows graph in one pass over the log and recurses on that graph alone,
+//! so it suits very large logs and can start from a graph. Unlike IM, the model may not replay the
+//! whole log (§6.6.6.1). Rediscoverability is kept.
 //!
 //! [`InductiveMinerDfgOptions::prom`] and [`InductiveMinerDfgOptions::pm4py`] imitate those two
 //! tools for a comparison run.
 //!
 //! ```
 //! use process_mining::discovery::case_centric::inductive_miner::{
-//!     inductive_miner_dfg, InductiveMinerDfgOptions,
+//!     discover_inductive_tree_from_log, InductiveMinerDfgOptions,
 //! };
 //! use process_mining::core::event_data::case_centric::EventLogClassifier;
 //! use process_mining::event_log;
 //!
 //! let log = event_log!(["a", "b", "d"], ["a", "c", "d"]);
-//! let tree = inductive_miner_dfg(
+//! let tree = discover_inductive_tree_from_log(
 //!     &log,
 //!     &EventLogClassifier::default(),
 //!     InductiveMinerDfgOptions::default(),
 //! );
 //!
-//! assert_eq!(tree.to_string(), "→(a, X(b, c), d)");
+//! assert_eq!(tree.to_string(), "→(a, ×(b, c), d)");
 //! ```
 
 use std::collections::HashMap;
 
-use crate::core::event_data::case_centric::EventLogClassifier;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
 use crate::core::process_models::case_centric::dfg::DirectlyFollowsGraph;
 use crate::core::process_models::process_tree::{Node, OperatorType, ProcessTree};
-use crate::EventLog;
 
 use super::cut_finder::cut::Cut;
 use super::cut_finder::{
     concurrent_cut, exclusive_choice_cut, loop_cut, sequence_cut, strict_sequence_cut,
 };
-use super::dfg::ActivityDfg;
-use super::{choice, leaf, log, operator, tau};
+use super::dfg::{ActivityDfg, NoiseFilter};
+use super::{choice, leaf, operator, tau};
 use splits::split_dfg;
 
 mod splits;
 
-/// Settings for a run of the DFG variant of the Inductive Miner.
+/// Settings of the DFG variant of the Inductive Miner. Settings that need traces, such as the
+/// interleaved cut, do not exist here.
 ///
-/// Only the settings that read no traces carry over from
-/// [`InductiveMinerOptions`](super::InductiveMinerOptions). The trace-based refinements
-/// (interleaved and inclusive choice cuts, the minimum-self-distance relation) have nothing to
-/// read here.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Fields missing in JSON take their default value.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct InductiveMinerDfgOptions {
-    /// Deviation threshold `f ∈ [0, 1]` of `IMfd`. `0.0` is plain `IMd`.
+    /// Deviation threshold `f ∈ [0, 1]` of `IMfd`, clamped to that range. `0.0` is plain `IMd`.
     pub noise_threshold: f64,
     /// Whether to merge the parts of a sequence cut that only occur together with a skippable
-    /// neighbour. See [`strict_sequence_cut`].
+    /// neighbor.
     pub strict_sequence: bool,
-    /// Whether to collapse nested occurrences of the same associative operator, turning e.g.
+    /// Whether to collapse nested occurrences of the same associative operator, turning, e.g.,
     /// `→(→(a, b), c)` into `→(a, b, c)`.
     pub fold: bool,
     /// Whether to try the [tau loops](strict_dfg_tau_loop) before resorting to a flower model.
     pub use_tau_loops: bool,
-    /// Whether the flower model allows the empty trace, i.e. is `↺(τ, ×(a₁, …, aₙ))` instead of
-    /// the thesis' `↺(×(a₁, …, aₙ), τ)`. The empty-traces step runs before any fall through, so
+    /// Whether the flower model allows the empty trace, i.e., is `↺(τ, ×(a₁, ..., aₙ))` instead of
+    /// the thesis' `↺(×(a₁, ..., aₙ), τ)`. The empty-traces step runs before any fall through, so
     /// allowing one here only loses precision.
     pub flower_accepts_empty: bool,
     /// Whether a lone activity with a self edge becomes a flower instead of `↺(a, τ)`. The
-    /// thesis hands the case to [`strict_dfg_tau_loop`] (§6.6.3.3); with
-    /// [`flower_accepts_empty`](Self::flower_accepts_empty) this turns `a⁺` into `a*`.
+    /// thesis hands the case to [`strict_dfg_tau_loop`] (§6.6.3.3). With
+    /// [`flower_accepts_empty`](Self::flower_accepts_empty), this turns `a⁺` into `a*`.
     pub repeated_activity_to_flower: bool,
     /// Whether `IMfd` keeps the single-activity base case despite a self edge when single
     /// executions dominate (§6.6.4.3). Without it a self edge always ends the recursion in a loop.
@@ -81,7 +74,7 @@ pub struct InductiveMinerDfgOptions {
 }
 
 impl Default for InductiveMinerDfgOptions {
-    /// Plain `IMd` as Leemans defines it (§6.6.3).
+    /// Plain `IMd` as published (§6.6.3).
     fn default() -> Self {
         Self {
             noise_threshold: 0.0,
@@ -104,8 +97,8 @@ impl InductiveMinerDfgOptions {
         }
     }
 
-    /// The settings under which this variant behaves most like `ProM`'s `IMd`, for comparing the
-    /// two. `ProM` applies the strict sequence cut, sends a lone activity with a self edge to the
+    /// The settings under which this variant behaves most like `ProM`'s `IMd`.
+    /// `ProM` applies the strict sequence cut, sends a lone activity with a self edge to the
     /// flower instead of to [`strict_dfg_tau_loop`], its flower allows the empty trace, and its
     /// `IMfd` reuses the unfiltered base cases.
     pub fn prom(noise_threshold: f64) -> Self {
@@ -118,8 +111,8 @@ impl InductiveMinerDfgOptions {
         }
     }
 
-    /// The settings under which this variant behaves most like `PM4Py`'s `IMd`, for comparing the
-    /// two. `PM4Py` offers empty traces and the flower as the only fall throughs, and its flower
+    /// The settings under which this variant behaves most like `PM4Py`'s `IMd`.
+    /// `PM4Py` offers empty traces and the flower as the only fall throughs, and its flower
     /// allows the empty trace. It also ignores the deviation threshold entirely, so pass `0.0` to
     /// compare like for like.
     pub fn pm4py(noise_threshold: f64) -> Self {
@@ -130,28 +123,13 @@ impl InductiveMinerDfgOptions {
     }
 }
 
-/// Discovers a [`ProcessTree`] from an event log with the DFG variant of the Inductive Miner.
+/// Discovers a [`ProcessTree`] from an existing [`DirectlyFollowsGraph`] with `IMd` or `IMfd`.
 ///
-/// One pass over the log builds the directly-follows graph, and discovery then only looks at that
-/// graph. Prefer this over [`inductive_miner`](super::inductive_miner) when the log is too large
-/// for the log recursion; the trade-off is that the model is not guaranteed to replay the log,
-/// see the [module documentation](self).
-pub fn inductive_miner_dfg(
-    event_log: &EventLog,
-    classifier: &EventLogClassifier,
-    options: InductiveMinerDfgOptions,
-) -> ProcessTree {
-    let (labels, activity_log) = log::project_event_log(event_log, classifier);
-    discover_dfg(&labels, &ActivityDfg::discover(&activity_log), options)
-}
-
-/// Discovers a [`ProcessTree`] from an existing [`DirectlyFollowsGraph`].
-///
-/// The graph type records which activities start and end traces but not how often. Those weights
-/// are chosen so that the `IMfd` filter never drops a start or an end, so `IMfd` filters only the
-/// edges here, by their real frequencies. Empty traces cannot be represented. To mine from a log,
-/// use [`inductive_miner_dfg`], which keeps all weights exact.
-pub fn inductive_miner_dfg_from_graph(
+/// Start and end weights are the graph's start and end counts. Empty traces cannot be
+/// represented, so to mine a log that has them, use
+/// [`discover_inductive_tree_with`](super::discover_inductive_tree_with) with
+/// [`InductiveMiner::Dfg`](super::InductiveMiner::Dfg).
+pub fn discover_inductive_tree_from_dfg(
     graph: &DirectlyFollowsGraph<'_>,
     options: InductiveMinerDfgOptions,
 ) -> ProcessTree {
@@ -162,8 +140,8 @@ pub fn inductive_miner_dfg_from_graph(
             .keys()
             .flat_map(|(from, to)| [from.to_string(), to.to_string()]),
     );
-    labels.extend(graph.start_activities.iter().cloned());
-    labels.extend(graph.end_activities.iter().cloned());
+    labels.extend(graph.start_activities.keys().cloned());
+    labels.extend(graph.end_activities.keys().cloned());
     labels.sort_unstable();
     labels.dedup();
 
@@ -185,27 +163,15 @@ pub fn inductive_miner_dfg_from_graph(
             )
         })
         .collect();
-    let mut max_outgoing = vec![1u64; n];
-    for &(from, _, count) in &edges {
-        max_outgoing[from as usize] = max_outgoing[from as usize].max(count);
-    }
-
+    let count =
+        |of: &HashMap<_, u32>, label: &String| u64::from(of.get(label).copied().unwrap_or(0));
     let start = labels
         .iter()
-        .map(|label| u64::from(graph.start_activities.contains(label)))
+        .map(|l| count(&graph.start_activities, l))
         .collect();
-    // An end weight equal to the heaviest outgoing edge survives any threshold without raising
-    // the cutoff for the real edges.
     let end = labels
         .iter()
-        .zip(max_outgoing)
-        .map(|(label, max)| {
-            if graph.end_activities.contains(label) {
-                max
-            } else {
-                0
-            }
-        })
+        .map(|l| count(&graph.end_activities, l))
         .collect();
 
     let dfg = ActivityDfg::from_parts(n, (0..n).collect(), start, end, edges, 0);
@@ -213,11 +179,15 @@ pub fn inductive_miner_dfg_from_graph(
 }
 
 /// Runs the recursion and wraps the result up as a [`ProcessTree`].
-fn discover_dfg(
+pub(super) fn discover_dfg(
     labels: &[String],
     dfg: &ActivityDfg,
     options: InductiveMinerDfgOptions,
 ) -> ProcessTree {
+    let options = InductiveMinerDfgOptions {
+        noise_threshold: options.noise_threshold.clamp(0.0, 1.0),
+        ..options
+    };
     let miner = DfgMiner {
         labels,
         options: &options,
@@ -321,7 +291,9 @@ impl DfgMiner<'_> {
 
         footprint_cuts(dfg).or_else(|| {
             (self.options.noise_threshold > 0.0)
-                .then(|| footprint_cuts(&dfg.filtered(self.options.noise_threshold)))
+                .then(|| {
+                    footprint_cuts(&dfg.filtered(NoiseFilter::new(self.options.noise_threshold)))
+                })
                 .flatten()
         })
     }
@@ -383,6 +355,7 @@ fn without_edges(dfg: &ActivityDfg, drop: impl Fn(usize, usize) -> bool) -> Opti
 mod test_dfg_miner {
     use super::super::log::test_utils::log_of;
     use super::*;
+    use crate::core::event_data::case_centric::EventLogClassifier;
     use crate::event_log;
 
     fn mine(traces: &[&[&str]]) -> String {
@@ -413,11 +386,11 @@ mod test_dfg_miner {
         ];
         assert_eq!(
             mine(l113),
-            "→(a, X(∧(b, c), ↻(d, e)), ↻(X(f, g, h), tau), i)"
+            "→(a, ×(∧(b, c), ↺(d, e)), ↺(×(f, g, h), tau), i)"
         );
     }
 
-    /// On clean structured logs the DFG variant agrees with IM; these are IM's own base-case and
+    /// On clean structured logs the DFG variant agrees with IM. These are IM's own base-case and
     /// operator tests.
     #[test]
     fn test_agrees_with_im_on_structured_logs() {
@@ -426,13 +399,13 @@ mod test_dfg_miner {
             (&[&[], &[]], "tau"),
             (&[&["a"], &["a"]], "a"),
             (&[&["a", "b", "c"]], "→(a, b, c)"),
-            (&[&["a"], &["b"]], "X(a, b)"),
+            (&[&["a"], &["b"]], "×(a, b)"),
             (&[&["a", "b"], &["b", "a"]], "∧(a, b)"),
-            (&[&["a", "c"], &["a", "c", "b", "a", "c"]], "↻(→(a, c), b)"),
-            (&[&["a", "a"]], "↻(a, tau)"),
-            (&[&["a"], &[]], "X(tau, a)"),
-            (&[&[], &["a", "a"]], "X(tau, ↻(a, tau))"),
-            (&[&["a", "b", "d"], &["a", "c", "d"]], "→(a, X(b, c), d)"),
+            (&[&["a", "c"], &["a", "c", "b", "a", "c"]], "↺(→(a, c), b)"),
+            (&[&["a", "a"]], "↺(a, tau)"),
+            (&[&["a"], &[]], "×(tau, a)"),
+            (&[&[], &["a", "a"]], "×(tau, ↺(a, tau))"),
+            (&[&["a", "b", "d"], &["a", "c", "d"]], "→(a, ×(b, c), d)"),
             (
                 &[&["a", "b", "c", "d"], &["a", "c", "b", "d"]],
                 "→(a, ∧(b, c), d)",
@@ -445,13 +418,13 @@ mod test_dfg_miner {
     #[test]
     fn test_tau_loops() {
         // The end-to-start edge b → a is removed, and the rest is the repeated sequence.
-        assert_eq!(mine(&[&["a", "b", "a", "b"]]), "↻(→(a, b), tau)");
+        assert_eq!(mine(&[&["a", "b", "a", "b"]]), "↺(→(a, b), tau)");
 
         // No edge runs from an end to a start activity, but b → a re-enters the start activity a
         // mid-trace, which only the loose variant cuts.
         assert_eq!(
             mine(&[&["a", "b", "a", "c", "b", "c"]]),
-            "↻(→(a, ↻(→(X(tau, b), c), tau)), tau)"
+            "↺(→(a, ↺(→(×(tau, b), c), tau)), tau)"
         );
     }
 
@@ -469,11 +442,11 @@ mod test_dfg_miner {
         ];
         assert_eq!(
             mine(traces),
-            "→(X(tau, ↻(b, tau)), X(tau, d), ∧(a, ↻(c, tau)))"
+            "→(×(tau, ↺(b, tau)), ×(tau, d), ∧(a, ↺(c, tau)))"
         );
         assert_eq!(
             mine_with(traces, strict),
-            "→(X(tau, →(↻(b, tau), X(tau, d))), ∧(a, ↻(c, tau)))"
+            "→(×(tau, →(↺(b, tau), ×(tau, d))), ∧(a, ↺(c, tau)))"
         );
     }
 
@@ -486,7 +459,7 @@ mod test_dfg_miner {
 
         assert_eq!(
             discover_dfg(&labels, &dfg, InductiveMinerDfgOptions::default()).to_string(),
-            "↻(a, tau)"
+            "↺(a, tau)"
         );
         // IMfd tolerates it: p = 101 / 203 is close enough to 0.5.
         assert_eq!(
@@ -503,25 +476,25 @@ mod test_dfg_miner {
     fn test_comparison_presets() {
         // A lone activity with a self edge: `a⁺` for the thesis, `a*` for both tools.
         let repeated: &[&[&str]] = &[&["a", "a"]];
-        assert_eq!(mine(repeated), "↻(a, tau)");
+        assert_eq!(mine(repeated), "↺(a, tau)");
         assert_eq!(
             mine_with(repeated, InductiveMinerDfgOptions::prom(0.0)),
-            "↻(tau, a)"
+            "↺(tau, a)"
         );
         assert_eq!(
             mine_with(repeated, InductiveMinerDfgOptions::pm4py(0.0)),
-            "↻(tau, a)"
+            "↺(tau, a)"
         );
 
         // The {f, g, h} subgraph of L113: ProM takes the tau loop, PM4Py has none and flowers.
         let unordered: &[&[&str]] = &[&["f", "g", "h"], &["g", "h", "f"], &["h", "f", "g"]];
         assert_eq!(
             mine_with(unordered, InductiveMinerDfgOptions::prom(0.0)),
-            "↻(X(f, g, h), tau)"
+            "↺(×(f, g, h), tau)"
         );
         assert_eq!(
             mine_with(unordered, InductiveMinerDfgOptions::pm4py(0.0)),
-            "↻(tau, X(f, g, h))"
+            "↺(tau, ×(f, g, h))"
         );
 
         // ProM's IMfd reuses the unfiltered base cases, so a self edge stays a loop.
@@ -534,7 +507,7 @@ mod test_dfg_miner {
         );
         assert_eq!(
             discover_dfg(&labels, &dfg, InductiveMinerDfgOptions::prom(0.2)).to_string(),
-            "↻(tau, a)"
+            "↺(tau, a)"
         );
 
         // Where all three implement the same thing the presets change nothing.
@@ -557,7 +530,7 @@ mod test_dfg_miner {
 
         assert_eq!(
             discover_dfg(&labels, &dfg, InductiveMinerDfgOptions::default()).to_string(),
-            "X(tau, a)"
+            "×(tau, a)"
         );
         assert_eq!(
             discover_dfg(&labels, &dfg, InductiveMinerDfgOptions::imfd(0.2)).to_string(),
@@ -568,7 +541,7 @@ mod test_dfg_miner {
     /// IM's filtering example: a single trace in which c came first closes the cycle
     /// a → b → c → a, and only the filtered graph shows the sequence.
     #[test]
-    fn test_imfd_ignores_infrequent_behaviour() {
+    fn test_imfd_ignores_infrequent_behavior() {
         let (labels, base) = log_of(&[&["a", "b", "c"]]);
         let log = base.derive([(vec![0, 1, 2], 100), (vec![2, 0, 1], 1)]);
         let dfg = ActivityDfg::discover(&log);
@@ -583,18 +556,20 @@ mod test_dfg_miner {
     fn test_from_graph() {
         let mut graph = DirectlyFollowsGraph::default();
         graph.add_df_relation("a".into(), "b".into(), 2);
-        graph.start_activities.insert("a".to_string());
-        graph.end_activities.insert("b".to_string());
+        graph.add_start_activity("a".to_string(), 1);
+        graph.add_end_activity("b".to_string(), 1);
         assert_eq!(
-            inductive_miner_dfg_from_graph(&graph, InductiveMinerDfgOptions::default()).to_string(),
+            discover_inductive_tree_from_dfg(&graph, InductiveMinerDfgOptions::default())
+                .to_string(),
             "→(a, b)"
         );
 
         graph.add_df_relation("b".into(), "a".into(), 2);
-        graph.start_activities.insert("b".to_string());
-        graph.end_activities.insert("a".to_string());
+        graph.add_start_activity("b".to_string(), 1);
+        graph.add_end_activity("a".to_string(), 1);
         assert_eq!(
-            inductive_miner_dfg_from_graph(&graph, InductiveMinerDfgOptions::default()).to_string(),
+            discover_inductive_tree_from_dfg(&graph, InductiveMinerDfgOptions::default())
+                .to_string(),
             "∧(a, b)"
         );
     }
@@ -602,7 +577,7 @@ mod test_dfg_miner {
     #[test]
     fn test_entry_point() {
         let log = event_log!(["a", "b"], ["a", "b"]);
-        let tree = inductive_miner_dfg(
+        let tree = super::super::discover_inductive_tree_from_log(
             &log,
             &EventLogClassifier::default(),
             InductiveMinerDfgOptions::default(),
@@ -642,7 +617,7 @@ mod test_dfg_miner {
             let log = import_xes_path(path, XESImportOptions::default()).unwrap();
 
             for noise_threshold in [0.0, 0.2] {
-                let tree = inductive_miner_dfg(
+                let tree = super::super::discover_inductive_tree_from_log(
                     &log,
                     &EventLogClassifier::default(),
                     InductiveMinerDfgOptions::imfd(noise_threshold),
@@ -650,6 +625,27 @@ mod test_dfg_miner {
                 assert!(tree.is_valid(), "{name} at {noise_threshold}: {tree}");
                 assert!(!tree.find_all_leaves().is_empty(), "{name} is empty");
             }
+        }
+    }
+
+    #[test]
+    fn test_thresholds_from_json_are_clamped() {
+        let l81: &[&[&str]] = &[
+            &["a", "b", "c", "d"],
+            &["d", "a", "b"],
+            &["a", "d", "c"],
+            &["b", "c", "d"],
+        ];
+        for (json, clamped) in [
+            (r#"{"noise_threshold": -0.5}"#, 0.0),
+            (r#"{"noise_threshold": 1.5}"#, 1.0),
+        ] {
+            let options: InductiveMinerDfgOptions = serde_json::from_str(json).unwrap();
+            assert_eq!(
+                mine_with(l81, options),
+                mine_with(l81, InductiveMinerDfgOptions::imfd(clamped)),
+                "for {json}"
+            );
         }
     }
 }

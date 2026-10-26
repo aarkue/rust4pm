@@ -61,8 +61,8 @@ pub enum LogPaths {
         #[serde(default)]
         retry_out_of_memory: bool,
     },
-    /// The traces as recorded, each up to its first event the model cannot replay (as in the
-    /// original escaping-edges precision and in pm4py)
+    /// The traces as recorded, each up to its first event the model cannot replay, as in the
+    /// original escaping-edges precision
     ReplayUntilDeviation,
 }
 
@@ -85,8 +85,8 @@ pub struct EscapingEdgesOptions {
     pub silent_transitions: SilentTransitions,
     /// How traces that end in a state count there
     pub trace_ends: TraceEnds,
-    /// Whether to count escaping edges in the initial state. `ProM` does not, and only counts the
-    /// activities the traces start with as available there.
+    /// Whether to count escaping edges in the initial state. Without it, only the activities the
+    /// traces start with count as available there.
     pub count_escaping_edges_at_start: bool,
     /// Whether an activity only counts as available if the final marking can still be reached
     /// after it, so that the dead ends of an unsound net are not counted as allowed behavior
@@ -338,7 +338,7 @@ pub enum SilentTransitions {
     #[default]
     Skip,
     /// Every transition, silent ones included, is a symbol of its own, and only directly
-    /// enabled transitions are available (as in `ProM`). Silent transitions are moved behind
+    /// enabled transitions are available. Silent transitions are moved behind
     /// every following transition that does not consume what they produce, so the result does
     /// not depend on where the alignment placed them.
     AsActivities,
@@ -347,7 +347,7 @@ pub enum SilentTransitions {
 /// How traces that end in a state count there
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum TraceEnds {
-    /// They do not count towards the weight of the state (as in pm4py)
+    /// They do not count towards the weight of the state
     Ignore,
     /// They count towards the weight of the state, so a model that could continue where the log
     /// stops is penalized there

@@ -377,9 +377,14 @@ impl OCLanguageAbstraction {
                 .get(ob_type)
                 .unwrap();
 
-            start_ev_type_per_ob_type
-                .insert(ob_type.to_string(), ev_type_dfg.start_activities.clone());
-            end_ev_type_per_ob_type.insert(ob_type.to_string(), ev_type_dfg.end_activities.clone());
+            start_ev_type_per_ob_type.insert(
+                ob_type.to_string(),
+                ev_type_dfg.start_activities.keys().cloned().collect(),
+            );
+            end_ev_type_per_ob_type.insert(
+                ob_type.to_string(),
+                ev_type_dfg.end_activities.keys().cloned().collect(),
+            );
 
             let ev_type_directly_follows: HashSet<(String, String)> = ev_type_dfg
                 .directly_follows_relations

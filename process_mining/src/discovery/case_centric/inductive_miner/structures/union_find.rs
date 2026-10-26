@@ -1,7 +1,4 @@
 //! A minimal disjoint-set (union-find) structure over activity indices.
-//!
-//! Several cut detections start with every activity in its own part and merge two parts whenever
-//! some condition holds.
 
 /// Disjoint-set forest over the indices `0..n` with union by size and path halving.
 #[derive(Debug, Clone)]
@@ -30,7 +27,7 @@ impl UnionFind {
 
     /// Merges the sets containing `a` and `b`.
     ///
-    /// Returns `true` if the two elements were in different sets before, i.e. if something changed.
+    /// Returns `true` if the two elements were in different sets before, i.e., if something changed.
     pub fn union(&mut self, a: usize, b: usize) -> bool {
         let (mut ra, mut rb) = (self.find(a), self.find(b));
         if ra == rb {

@@ -8,32 +8,26 @@ use super::super::log::{ActivityID, ActivityLog};
 use super::super::InductiveMinerOptions;
 use super::Fallthrough;
 
-/// The activities of the log by descending frequency, ties broken by id.
-fn candidates(log: &ActivityLog) -> Vec<ActivityID> {
-    let mut occurrences = vec![0u64; log.alphabet_size()];
-    for variant in log.variants() {
-        for &activity in &variant.activities {
-            occurrences[activity] += variant.count;
-        }
-    }
+/// The activities of the log by name, or by descending frequency with ties by name. Ids follow the
+/// names.
+fn candidates(log: &ActivityLog, by_name: bool) -> Vec<ActivityID> {
     let mut activities = log.activities();
-    activities.sort_by_key(|&activity| (std::cmp::Reverse(occurrences[activity]), activity));
+    if !by_name {
+        let mut occurrences = vec![0u64; log.alphabet_size()];
+        for variant in log.variants() {
+            for &activity in &variant.activities {
+                occurrences[activity] += variant.count;
+            }
+        }
+        activities.sort_by_key(|&activity| (std::cmp::Reverse(occurrences[activity]), activity));
+    }
     activities
-}
-
-/// The log without `activity`, unless removing it would empty a trace, which cut detection is not
-/// defined for.
-fn rest_without(log: &ActivityLog, activity: ActivityID) -> Option<ActivityLog> {
-    let rest = log.without_activity(activity);
-    (!rest.contains_empty_trace()).then_some(rest)
 }
 
 /// Takes one activity out of the log if that makes a cut appear, and puts it next to the rest.
 ///
-/// Where [`activity_once_per_trace`](super::activity_once_per_trace) knows an activity is
-/// concurrent, this tries it. The extracted activity may occur several times in a trace, so the
-/// recursion on its projection can discover a loop, which is why this is less precise and tried
-/// second.
+/// The extracted activity may occur several times in a trace, so this comes after
+/// [`activity_once_per_trace`](super::activity_once_per_trace).
 ///
 /// The probe reads the unfiltered graph, even under `IMf`. See
 /// [`filter_activity_concurrent_probe`](InductiveMinerOptions::filter_activity_concurrent_probe).
@@ -45,13 +39,12 @@ pub fn activity_concurrent(
         return None;
     }
 
-    // Every candidate needs its own graph and a full round of cut detection, which dominates the
-    // run on a log with several hundred activities. `find_map_first` still returns the first
-    // candidate in order and cancels the rest, so the result stays deterministic.
-    candidates(log)
+    // `find_map_first` returns the first candidate in order, so the result is deterministic.
+    candidates(log, options.activity_concurrent_by_name)
         .into_par_iter()
         .find_map_first(|activity| {
-            let rest = rest_without(log, activity)?;
+            // Emptied traces don't change the graph. The recursion on the rest makes them optional.
+            let rest = log.without_activity(activity);
             let dfg = ActivityDfg::discover(&rest);
             let cut = if options.filter_activity_concurrent_probe {
                 find_cut_filtering(&rest, &dfg, options)
@@ -70,18 +63,19 @@ pub fn activity_concurrent(
 /// model.
 ///
 /// Only a log over two activities gets here, since anything larger leaves a rest that
-/// [`activity_concurrent`] has already checked for a cut. The result is never worse than the flower
-/// it replaces, which allows every alternation of the two.
-pub fn two_activities_concurrent(log: &ActivityLog) -> Option<Fallthrough> {
+/// [`activity_concurrent`] has already checked for a cut.
+pub fn two_activities_concurrent(
+    log: &ActivityLog,
+    options: &InductiveMinerOptions,
+) -> Option<Fallthrough> {
     if log.activities().len() != 2 {
         return None;
     }
 
-    candidates(log).into_iter().find_map(|activity| {
-        Some(Fallthrough::ActivityConcurrent {
-            activity_log: log.projected_onto(activity),
-            rest: rest_without(log, activity)?,
-        })
+    let activity = candidates(log, options.activity_concurrent_by_name)[0];
+    Some(Fallthrough::ActivityConcurrent {
+        activity_log: log.projected_onto(activity),
+        rest: log.without_activity(activity),
     })
 }
 
@@ -133,7 +127,7 @@ mod test_activity_concurrent {
         // flower model over both.
         let (labels, log) = log_of(&[&["a", "b", "b", "a"], &["b", "a", "a", "b"]]);
         let Some(Fallthrough::ActivityConcurrent { activity_log, rest }) =
-            two_activities_concurrent(&log)
+            two_activities_concurrent(&log, &InductiveMinerOptions::default())
         else {
             panic!("expected the fall through to apply");
         };
@@ -145,21 +139,29 @@ mod test_activity_concurrent {
 
         // Three activities are for activity_concurrent to handle.
         let (_, log) = log_of(&[&["a", "b", "c", "a"], &["c", "b", "a", "b"]]);
-        assert!(two_activities_concurrent(&log).is_none());
+        assert!(two_activities_concurrent(&log, &InductiveMinerOptions::default()).is_none());
 
-        // Taking either out empties a trace.
-        let (_, log) = log_of(&[&["a", "b"], &["b", "a"], &["a"], &["b"]]);
-        assert!(two_activities_concurrent(&log).is_none());
+        // Taking a out empties a trace, which the rest then makes optional.
+        let (labels, log) = log_of(&[&["a", "b", "b", "a"], &["a", "a"]]);
+        let Some(Fallthrough::ActivityConcurrent { rest, .. }) =
+            two_activities_concurrent(&log, &InductiveMinerOptions::default())
+        else {
+            panic!("expected the fall through to apply");
+        };
+        assert_eq!(
+            describe(&rest, &labels),
+            expect(&[(&[], 1), (&["b", "b"], 1)])
+        );
     }
 
     #[test]
     fn test_the_probe_reads_the_unfiltered_graph() {
-        // Taking out any one activity leaves b repeating in a cycle. Filtering the rest breaks
-        // that cycle and invents a cut for every candidate.
+        // Taking out any one activity leaves a cycle. Filtering the rest breaks it and invents a
+        // cut.
         let (_, log) = log_of(&[
-            &["b", "c", "b", "b", "b", "c"],
-            &["b", "b"],
-            &["a", "b", "b", "b", "a", "b"],
+            &["a", "b", "b", "b", "b"],
+            &["a", "b", "c", "b", "b", "c"],
+            &["a", "b", "c", "b", "a", "b"],
         ]);
 
         let imf = InductiveMinerOptions::imf(0.2);

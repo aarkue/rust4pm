@@ -1615,13 +1615,15 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "graphlay"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16c2807cfe2dca9e4e14c7d0c1a200f20e3ac2dd20c80545ce74c530413517ec"
+checksum = "46b97373f53dfbb42a82b9d2a42d32dfc2c4ae3d13f589a61b88e6338381fc77"
 dependencies = [
  "libm",
  "schemars 1.2.1",
  "serde",
+ "serde_json",
+ "serde_path_to_error",
 ]
 
 [[package]]
@@ -4143,6 +4145,17 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_path_to_error"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
+dependencies = [
+ "itoa",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

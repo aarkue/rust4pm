@@ -1,16 +1,39 @@
-//! The directly-follows graph the Inductive Miner detects cuts in.
-//!
-//! Not the crate's [`DirectlyFollowsGraph`](crate::core::process_models::dfg::DirectlyFollowsGraph):
-//! the miner rebuilds a graph per sub-log, and once per activity inside the activity-concurrent
-//! fall through, so [`ActivityDfg`] indexes activities densely and stores edges as a sorted
-//! adjacency list, never touching a string. Local indices ascend with the [`ActivityID`], which
-//! keeps cut detection deterministic.
+//! The directly-follows graph the Inductive Miner detects cuts in, over dense activity indices.
+//! Local indices ascend with the [`ActivityID`], which keeps cut detection deterministic.
 
 use super::log::{ActivityID, ActivityLog};
 
+/// What [`ActivityDfg::filtered`] removes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NoiseFilter {
+    /// Deviation threshold `f ∈ [0, 1]`. `0.0` removes nothing.
+    pub threshold: f64,
+    /// Whether a weight exactly at the cutoff stays.
+    pub keep_at_threshold: bool,
+    /// Whether start and end weights are filtered as well.
+    pub filter_start_end: bool,
+}
+
+impl NoiseFilter {
+    /// The filter of `IMf` as published, at the given threshold.
+    pub fn new(threshold: f64) -> Self {
+        Self {
+            threshold,
+            keep_at_threshold: true,
+            filter_start_end: true,
+        }
+    }
+
+    fn keeps(&self, weight: u64, cutoff: f64) -> bool {
+        if self.keep_at_threshold {
+            weight as f64 >= cutoff
+        } else {
+            weight as f64 > cutoff
+        }
+    }
+}
+
 /// Directly-follows graph of an [`ActivityLog`], indexed by dense local activity indices.
-///
-/// See the [module documentation](self) for the rationale.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivityDfg {
     /// Global activity id of each local index, ascending.
@@ -33,9 +56,6 @@ pub struct ActivityDfg {
 }
 
 /// Edges of the graph in compressed-sparse-row form.
-///
-/// Real graphs are sparse, so this is cheaper to build and filter than an `n x n` matrix, at the
-/// cost of a binary search per edge lookup.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct Adjacency {
     /// Neighbours of activity `a` are `flat[offsets[a]..offsets[a + 1]]`, ascending.
@@ -46,7 +66,7 @@ struct Adjacency {
 }
 
 impl Adjacency {
-    fn neighbours(&self, activity: usize) -> &[u32] {
+    fn neighbors(&self, activity: usize) -> &[u32] {
         &self.flat[self.range(activity)]
     }
 
@@ -54,11 +74,11 @@ impl Adjacency {
         self.offsets[activity] as usize..self.offsets[activity + 1] as usize
     }
 
-    /// Position of `neighbour` in `flat`.
-    fn position_of(&self, activity: usize, neighbour: usize) -> Option<usize> {
+    /// Position of `neighbor` in `flat`.
+    fn position_of(&self, activity: usize, neighbor: usize) -> Option<usize> {
         let range = self.range(activity);
         self.flat[range.clone()]
-            .binary_search(&(neighbour as u32))
+            .binary_search(&(neighbor as u32))
             .ok()
             .map(|offset| range.start + offset)
     }
@@ -91,10 +111,6 @@ impl Adjacency {
 }
 
 /// Sorts edges by source and then target, summing the counts of repeated edges.
-///
-/// Discovery yields one edge per pair of adjacent events. A counting sort by source followed by
-/// a sort per source is much faster than one sort over all of them, since activities have few
-/// distinct successors.
 fn sort_edges_by_source(n: usize, edges: Vec<(u32, u32, u64)>) -> Vec<(u32, u32, u64)> {
     let mut offsets = vec![0u32; n + 2];
     for &(from, _, _) in &edges {
@@ -196,7 +212,7 @@ impl ActivityDfg {
     ///
     /// `activities` are global ids in ascending order. `start`, `end` and `edges` use local
     /// indices, and repeated edges are merged. With no log to count in, the occurrences of an
-    /// activity are its start weight plus its incoming edge weights.
+    /// activity are its start weight, and its incoming edge weights.
     pub(crate) fn from_parts(
         alphabet_size: usize,
         activities: Vec<ActivityID>,
@@ -225,12 +241,12 @@ impl ActivityDfg {
 
     /// The activities directly following `activity`, ascending.
     pub fn successors(&self, activity: usize) -> &[u32] {
-        self.successors.neighbours(activity)
+        self.successors.neighbors(activity)
     }
 
     /// The activities directly preceding `activity`, ascending.
     pub fn predecessors(&self, activity: usize) -> &[u32] {
-        self.predecessors.neighbours(activity)
+        self.predecessors.neighbors(activity)
     }
 
     /// The number of directly-follows edges in the graph.
@@ -344,23 +360,26 @@ impl ActivityDfg {
 
     /// Removes infrequent edges, as `IMf` does before retrying cut detection.
     ///
-    /// An edge `a → b` is kept only if it occurs at least `noise_threshold` times as often as the
-    /// most frequent edge leaving `a`. Starting a trace counts as an edge from an artificial start
-    /// activity, and ending one as an edge to an artificial end activity, so infrequent start and
-    /// end weights are dropped too. Activities are never removed, and `0.0` removes nothing.
-    pub fn filtered(&self, noise_threshold: f64) -> Self {
-        let start_cutoff = noise_threshold * self.start.iter().copied().max().unwrap_or(0) as f64;
-        let start = self
-            .start
-            .iter()
-            .map(|&count| {
-                if (count as f64) < start_cutoff {
-                    0
-                } else {
-                    count
-                }
-            })
-            .collect();
+    /// An edge `a → b` is kept only if it occurs at least `f` times as often as the most frequent
+    /// edge leaving `a`. Starting a trace counts as an edge from an artificial start activity, and
+    /// ending one as an edge to an artificial end activity, so infrequent start and end weights are
+    /// dropped too, unless the filter leaves them alone. Activities are never removed.
+    pub fn filtered(&self, filter: NoiseFilter) -> Self {
+        let start = if filter.filter_start_end {
+            let cutoff = filter.threshold * self.start.iter().copied().max().unwrap_or(0) as f64;
+            self.start
+                .iter()
+                .map(|&count| {
+                    if filter.keeps(count, cutoff) {
+                        count
+                    } else {
+                        0
+                    }
+                })
+                .collect()
+        } else {
+            self.start.clone()
+        };
 
         let mut end = self.end.clone();
         let mut kept = Vec::with_capacity(self.num_edges());
@@ -370,15 +389,15 @@ impl ActivityDfg {
                 .iter()
                 .copied()
                 .fold(*end_count, u64::max);
-            let cutoff = noise_threshold * max_outgoing as f64;
+            let cutoff = filter.threshold * max_outgoing as f64;
 
             for position in range {
                 let count = self.successors.counts[position];
-                if count as f64 >= cutoff {
+                if filter.keeps(count, cutoff) {
                     kept.push((from as u32, self.successors.flat[position], count));
                 }
             }
-            if (*end_count as f64) < cutoff {
+            if filter.filter_start_end && !filter.keeps(*end_count, cutoff) {
                 *end_count = 0;
             }
         }
@@ -485,7 +504,7 @@ mod test_activity_dfg {
         let dfg = ActivityDfg::discover(&log);
         assert!(dfg.follows(0, 1) && dfg.follows(0, 2));
 
-        let filtered = dfg.filtered(0.2);
+        let filtered = dfg.filtered(NoiseFilter::new(0.2));
         assert!(filtered.follows(0, 1));
         assert!(!filtered.follows(0, 2));
         // The activity is kept, it just has no incoming edge any more.
@@ -500,9 +519,31 @@ mod test_activity_dfg {
         let log = log.derive([(vec![0, 1], 10), (vec![1, 0], 1)]);
         let dfg = ActivityDfg::discover(&log);
 
-        let filtered = dfg.filtered(0.2);
+        let filtered = dfg.filtered(NoiseFilter::new(0.2));
         assert!(filtered.is_start(0) && !filtered.is_start(1));
         assert!(filtered.is_end(1) && !filtered.is_end(0));
-        assert_eq!(dfg.filtered(0.0), dfg);
+        assert_eq!(dfg.filtered(NoiseFilter::new(0.0)), dfg);
+
+        let all_ends = NoiseFilter {
+            filter_start_end: false,
+            ..NoiseFilter::new(0.2)
+        };
+        let filtered = dfg.filtered(all_ends);
+        assert!(filtered.is_start(0) && filtered.is_start(1));
+        assert!(filtered.is_end(0) && filtered.is_end(1));
+    }
+
+    #[test]
+    fn test_filter_at_the_threshold() {
+        // 8x a to b, twice a to c: with f = 0.25 the edge a to c sits exactly at 0.25 * 8 = 2.
+        let (_, log) = log_of(&[&["a", "b", "c"]]);
+        let log = log.derive([(vec![0, 1], 8), (vec![0, 2], 2)]);
+        let dfg = ActivityDfg::discover(&log);
+        assert!(dfg.filtered(NoiseFilter::new(0.25)).follows(0, 2));
+        let above = NoiseFilter {
+            keep_at_threshold: false,
+            ..NoiseFilter::new(0.25)
+        };
+        assert!(!dfg.filtered(above).follows(0, 2));
     }
 }

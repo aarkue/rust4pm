@@ -11,9 +11,7 @@
 //! object types, `--exclude` all but them. `--json` prints only the net as JSON.
 use process_mining::core::event_data::object_centric::linked_ocel::IndexLinkedOCEL;
 use process_mining::discovery::case_centric::inductive_miner::InductiveMinerOptions;
-use process_mining::discovery::object_centric::ocpn::{
-    discover_ocpn, ObjectCentricDiscoveryOptions, ObjectTypeFilter,
-};
+use process_mining::discovery::object_centric::ocpn::{discover_ocpn_from, OcpnDiscoveryOptions};
 use process_mining::{Importable, OCEL};
 use std::env;
 use std::error::Error;
@@ -30,11 +28,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .map(str::trim)
                 .collect::<Vec<_>>(),
         )
-    };
-    let object_types = match (list("--types"), list("--exclude")) {
-        (Some(only), _) => ObjectTypeFilter::only(only),
-        (None, Some(except)) => ObjectTypeFilter::except(except),
-        (None, None) => ObjectTypeFilter::All,
     };
 
     let mut args: Vec<&String> = Vec::new();
@@ -66,13 +59,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         ocel.objects.len(),
         ocel.object_types.len(),
     );
+    let object_types_to_use = match (list("--types"), list("--exclude")) {
+        (Some(only), _) => Some(only.into_iter().map(String::from).collect()),
+        (None, Some(except)) => Some(
+            ocel.object_types
+                .iter()
+                .map(|t| t.name.clone())
+                .filter(|name| !except.contains(&name.as_str()))
+                .collect(),
+        ),
+        (None, None) => None,
+    };
     let locel = IndexLinkedOCEL::from(ocel);
 
-    let options = ObjectCentricDiscoveryOptions::new(InductiveMinerOptions::imf(noise_threshold))
-        .with_variable_arc_tolerance(tolerance)
-        .with_object_types(object_types);
+    let options = OcpnDiscoveryOptions {
+        object_types_to_use,
+        ..OcpnDiscoveryOptions::new(InductiveMinerOptions::imf(noise_threshold))
+            .with_variable_arc_tolerance(tolerance)
+    };
     let started = Instant::now();
-    let ocpn = discover_ocpn(&locel, options);
+    let ocpn = discover_ocpn_from(&locel, options);
     let elapsed = started.elapsed();
 
     if as_json {
@@ -91,7 +97,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
 
     for object_type in ocpn.object_types() {
-        let net = &ocpn.nets[object_type];
+        let net = &ocpn.nets[object_type].net;
         let variable: Vec<&str> = activities
             .iter()
             .copied()
@@ -99,9 +105,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             .collect();
         println!(
             "  {object_type:<28} {:>4} places {:>4} transitions {:>4} arcs   variable arcs: {}",
-            net.places.len(),
-            net.transitions.len(),
-            net.arcs.len(),
+            net.num_places(),
+            net.num_transitions(),
+            net.arcs().count(),
             if variable.is_empty() {
                 "-".to_string()
             } else {

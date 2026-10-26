@@ -5,7 +5,7 @@ use super::super::log::{ActivityID, ActivityLog};
 
 /// Splits a log according to a sequence cut by cutting each trace into `n` consecutive segments.
 ///
-/// If the cut adheres to →.1, every trace is already of the form `t1 · t2 · … · tn` with the
+/// If the cut adheres to →.1, every trace is already of the form `t1 · t2 · ... · tn` with the
 /// activities of `ti` in `Σi`, and the split just finds those boundaries. If it does not, which
 /// only happens for a cut `IMf` detected on a filtered graph, the boundaries are placed so that as
 /// few events as possible end up on the wrong side. Those are dropped.

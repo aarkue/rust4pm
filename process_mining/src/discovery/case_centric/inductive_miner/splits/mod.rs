@@ -1,12 +1,10 @@
 //! Log splitting: dividing a log into the sub-logs the recursion continues on.
 //!
 //! Every cut comes with a way to split the log into one sub-log per part, so that recombining the
-//! discovered sub-trees with the cut's operator reproduces the original behaviour.
+//! discovered sub-trees with the cut's operator reproduces the original behavior.
 //!
-//! Leemans defines two families: the plain splits for IM and filtering ones for `IMf` that discard
-//! events the cut cannot explain. Only the filtering ones are implemented here, since they
-//! coincide with the plain ones whenever the cut adheres to its footprint (§6.2.2.2), and plain IM
-//! only detects cuts on an unfiltered graph so its cuts always do.
+//! Only the filtering splits of `IMf`, which drop events the cut cannot explain, are implemented.
+//! On a cut that adheres to its footprint, they coincide with the plain splits of IM (§6.2.2.2).
 
 use crate::core::process_models::process_tree::OperatorType;
 

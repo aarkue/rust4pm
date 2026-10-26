@@ -1,5 +1,6 @@
 //! OCEL Struct for Efficient Usage of Relations
 use std::borrow::{Borrow, Cow};
+use std::collections::HashSet;
 
 use crate::core::event_data::object_centric::OCELAttributeValue;
 
@@ -28,9 +29,9 @@ pub use slim_linked_ocel::SlimLinkedOCEL;
 /// See also [`IndexLinkedOCEL`] and [`IDLinkedOCEL`].
 pub trait LinkedOCELAccess<'a> {
     /// Return and argument type/representation for events (i.e., what type is returned when events are accessed, e.g., through [`LinkedOCELAccess::get_e2o_rev`])
-    type EventRepr: 'a;
+    type EventRepr: 'a + Clone + Eq + std::hash::Hash;
     /// Return and argument type/representation for objects (i.e., what type is returned when objects are accessed, e.g., through [`LinkedOCELAccess::get_e2o`])
-    type ObjectRepr: 'a;
+    type ObjectRepr: 'a + Clone + Eq + std::hash::Hash;
 
     /// Get all events in the dataset
     fn get_all_evs(&'a self) -> impl Iterator<Item = Self::EventRepr>;
@@ -48,6 +49,18 @@ pub trait LinkedOCELAccess<'a> {
         &'a self,
         index: impl Borrow<Self::ObjectRepr>,
     ) -> impl Iterator<Item = (&'a str, &'a Self::EventRepr)>;
+
+    /// Get each event the given object is related to once, without the qualifiers of
+    /// [`LinkedOCELAccess::get_e2o_rev`]
+    fn get_e2o_rev_evs(
+        &'a self,
+        index: impl Borrow<Self::ObjectRepr>,
+    ) -> impl Iterator<Item = &'a Self::EventRepr> {
+        let mut seen = HashSet::new();
+        self.get_e2o_rev(index)
+            .map(|(_q, ev)| ev)
+            .filter(move |ev| seen.insert(*ev))
+    }
 
     /// Get all objects related to the given object (through O2O (object-to-object) relations)
     fn get_o2o(

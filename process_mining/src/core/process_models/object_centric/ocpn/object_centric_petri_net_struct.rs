@@ -5,12 +5,12 @@ use std::collections::{HashMap, HashSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::process_models::case_centric::petri_net::petri_net_struct::PetriNet;
+use crate::core::process_models::case_centric::petri_net::AcceptingPetriNet;
 
 /// An object-centric Petri net, as described in van der Aalst and Berti, "Discovering
 /// Object-Centric Petri Nets" (Fundamenta Informaticae, 2020).
 ///
-/// Stored as one accepting [`PetriNet`] per object type, so each place has the object type of its
+/// Stored as one [`AcceptingPetriNet`] per object type, so each place has the object type of its
 /// net. Transitions with the same non-silent label in different nets are the same transition of
 /// the object-centric net. Silent transitions are local to their object type.
 ///
@@ -20,7 +20,7 @@ use crate::core::process_models::case_centric::petri_net::petri_net_struct::Petr
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ObjectCentricPetriNet {
     /// The accepting Petri net discovered for each object type.
-    pub nets: HashMap<String, PetriNet>,
+    pub nets: HashMap<String, AcceptingPetriNet>,
     /// Per object type, the activities whose arcs to places of that type are variable.
     pub variable_arcs: HashMap<String, HashSet<String>>,
 }
@@ -43,8 +43,8 @@ impl ObjectCentricPetriNet {
         let mut activities: Vec<&str> = self
             .nets
             .values()
-            .flat_map(|net| net.transitions.values())
-            .filter_map(|transition| transition.label.as_deref())
+            .flat_map(|net| net.net.transitions())
+            .filter_map(|(_, transition)| transition.label.as_deref())
             .collect();
         activities.sort_unstable();
         activities.dedup();
@@ -57,9 +57,9 @@ impl ObjectCentricPetriNet {
             .nets
             .iter()
             .filter(|(_, net)| {
-                net.transitions
-                    .values()
-                    .any(|transition| transition.label.as_deref() == Some(activity))
+                net.net
+                    .transitions()
+                    .any(|(_, transition)| transition.label.as_deref() == Some(activity))
             })
             .map(|(object_type, _)| object_type.as_str())
             .collect();
@@ -68,7 +68,7 @@ impl ObjectCentricPetriNet {
     }
 
     /// Returns `true` if the arcs between the given activity and places of the given object type
-    /// are variable, i.e. the activity handles a varying number of objects of that type at once.
+    /// are variable, i.e., the activity handles a varying number of objects of that type at once.
     pub fn is_variable_arc(&self, object_type: &str, activity: &str) -> bool {
         self.variable_arcs
             .get(object_type)
@@ -77,18 +77,21 @@ impl ObjectCentricPetriNet {
 
     /// Total number of places over all object types.
     pub fn num_places(&self) -> usize {
-        self.nets.values().map(|net| net.places.len()).sum()
+        self.nets.values().map(|net| net.net.num_places()).sum()
     }
 
     /// Total number of transitions over all object types, counting a shared activity once per
     /// type.
     pub fn num_transitions(&self) -> usize {
-        self.nets.values().map(|net| net.transitions.len()).sum()
+        self.nets
+            .values()
+            .map(|net| net.net.num_transitions())
+            .sum()
     }
 
     /// Total number of arcs over all object types.
     pub fn num_arcs(&self) -> usize {
-        self.nets.values().map(|net| net.arcs.len()).sum()
+        self.nets.values().map(|net| net.net.arcs().count()).sum()
     }
 
     /// Serializes to a JSON string in the [flat form](super::json::ObjectCentricPetriNetJson).
@@ -107,7 +110,7 @@ mod test_object_centric_petri_net {
     use super::*;
     use crate::core::process_models::process_tree::{Node, OperatorType, ProcessTree};
 
-    fn net_of(activities: &[&str]) -> PetriNet {
+    fn net_of(activities: &[&str]) -> AcceptingPetriNet {
         let mut sequence = Node::new_operator(OperatorType::Sequence);
         for activity in activities {
             sequence.add_child(Node::new_leaf(Some((*activity).to_string())));

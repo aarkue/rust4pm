@@ -1,11 +1,11 @@
-//! The result of cut detection: a partition of the activities plus the operator it belongs to.
+//! The result of cut detection: a partition of the activities and the corresponding operator.
 
 use crate::core::process_models::process_tree::OperatorType;
 
 use super::super::log::ActivityID;
 
 /// How early [`find_cut`](super::find_cut) tries an operator. Earlier ones give more precise
-/// models, so this ranks cuts by how much structure they preserve.
+/// models.
 pub fn precedence(operator: OperatorType) -> usize {
     match operator {
         OperatorType::ExclusiveChoice => 0,
@@ -19,10 +19,8 @@ pub fn precedence(operator: OperatorType) -> usize {
 
 /// A cut of a directly-follows graph.
 ///
-/// A cut partitions the activities of a graph into parts `Σ1 … Σn` that, together with an
-/// operator, adhere to one of the directly-follows footprints of the operator (Leemans,
-/// Definition 5.3). The Inductive Miner turns a cut into an operator node whose children are
-/// discovered from the corresponding sub-logs.
+/// A cut partitions the activities of a graph into parts `Σ1 ... Σn` that, together with an
+/// operator, adhere to the directly-follows footprint of the operator (Definition 5.3).
 ///
 /// The order of the parts is significant for [`OperatorType::Sequence`] (the order of the
 /// sequence) and for [`OperatorType::Loop`] (the first part is the loop body, the remaining ones
@@ -55,11 +53,6 @@ impl Cut {
     /// The number of parts.
     pub fn len(&self) -> usize {
         self.partitions.len()
-    }
-
-    /// Returns `true` if the cut has no parts.
-    pub fn is_empty(&self) -> bool {
-        self.partitions.is_empty()
     }
 
     /// Returns `true` if the cut has more than one part and no part is empty.

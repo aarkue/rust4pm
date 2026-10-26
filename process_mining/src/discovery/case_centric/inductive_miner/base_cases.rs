@@ -16,8 +16,7 @@ pub enum BaseCase {
 ///
 /// For a log over a single activity, `IMf` reads the trace lengths as a geometric distribution
 /// with `p = |L| / (‖L‖ + |L|)` and returns the leaf if `|p - 0.5| ≤ noise_threshold` (§6.2.2.3).
-/// Only a log in which every trace holds exactly one event gives `p = 0.5`, which is what plain IM
-/// requires at a threshold of `0.0`.
+/// At a threshold of `0.0`, as in plain IM, every trace must hold exactly one event.
 pub fn find_base_case(log: &ActivityLog, noise_threshold: f64) -> Option<BaseCase> {
     if log.is_empty() {
         return Some(BaseCase::EmptyLog);

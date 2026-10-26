@@ -16,11 +16,9 @@ use super::cut::{part_lookup, Cut};
 /// the other. The remaining parts form an `∨` if two of them are interchangeable, and an `∧`
 /// otherwise.
 ///
-/// If no two of more than two parts are related, the thesis takes `∧`. When every part is skipped
-/// often enough to become optional, by at least a fraction `noise_threshold` of the traces as in
-/// the empty-traces step, that `∧` accepts the empty trace, which the log never shows, so this
-/// takes `∨` instead. For `⟨a,b⟩, ⟨b,c⟩, ⟨a,c⟩, ⟨a,b,c⟩` that is `∨(a, b, c)` in place of
-/// `∧(×(τ, a), ×(τ, b), ×(τ, c))`.
+/// If no two of more than two parts are related, the thesis takes `∧`. If every part is skipped by
+/// at least a fraction `noise_threshold` of the traces, that `∧` accepts the empty trace, which the
+/// log never shows, so this takes `∨` instead.
 pub fn coo_cut(log: &ActivityLog, cut: Cut, noise_threshold: f64) -> Cut {
     let mut parts = cut.partitions().to_vec();
     let mut combinations = Combinations::of(log, &parts);

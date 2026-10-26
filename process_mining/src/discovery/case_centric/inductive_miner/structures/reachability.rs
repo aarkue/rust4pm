@@ -1,14 +1,6 @@
-//! Transitive closure of the directly-follows relation.
-//!
-//! Sequence cut detection needs to know which activities reach which others, and the
-//! activity-concurrent fall through asks for that once per activity. On a log with several hundred
-//! activities this is the most expensive thing the miner does.
-//!
-//! Warshall's algorithm is `O(n³)` no matter how few edges there are. Instead the graph is
-//! collapsed into its strongly connected components first: within a component everything reaches
-//! everything and what is left is acyclic, so one sweep in reverse topological order suffices,
-//! with each component inheriting the union of what its successors reach. That is `O(n + m)`
-//! unions of bit rows, and directly-follows graphs are sparse.
+//! Transitive closure of the directly-follows relation, over its strongly connected components:
+//! within a component everything reaches everything, and the rest is one sweep in reverse
+//! topological order.
 
 use super::super::dfg::ActivityDfg;
 
@@ -21,7 +13,7 @@ pub struct Reachability {
     words_per_row: usize,
     /// The strongly connected component each activity belongs to.
     component_of: Vec<u32>,
-    /// One bit row per component; bit `to` is set iff the component reaches activity `to`.
+    /// One bit row per component. Bit `to` is set iff the component reaches activity `to`.
     rows: Vec<u64>,
 }
 
@@ -71,8 +63,8 @@ impl Reachability {
 /// Finds the strongly connected components with Kosaraju's algorithm.
 ///
 /// Returns the component index of each activity and the components in topological order of the
-/// condensation, so a component reaching another comes first. Both passes are iterative, since a
-/// recursive search would be bounded by the longest path in the graph.
+/// condensation, so a component reaching another comes first. Both passes are iterative, so a
+/// long path cannot overflow the stack.
 fn strongly_connected_components(dfg: &ActivityDfg) -> (Vec<u32>, Vec<Vec<u32>>) {
     let n = dfg.len();
 

@@ -9,11 +9,12 @@
 //! path, the tree is also exported as a PNML Petri net. `--json` prints only the tree as JSON.
 //! `--dfg` runs the directly-follows variant IMd/IMfd.
 //!
-//! `--thesis`, `--like-prom` and `--like-pm4py` select a preset of [`InductiveMinerOptions`] or
-//! [`InductiveMinerDfgOptions`]. The remaining flags toggle single options on top of it.
+//! `--like-prom` and `--like-pm4py` select a preset of [`InductiveMinerOptions`] or
+//! [`InductiveMinerDfgOptions`], `--thesis` one of [`InductiveMinerOptions`]. The remaining flags
+//! toggle single [`InductiveMinerOptions`] on top of it, so `--dfg` ignores them.
 use process_mining::core::event_data::case_centric::EventLogClassifier;
 use process_mining::discovery::case_centric::inductive_miner::{
-    inductive_miner, inductive_miner_dfg, InductiveMinerDfgOptions, InductiveMinerOptions,
+    discover_inductive_tree_from_log, InductiveMinerDfgOptions, InductiveMinerOptions,
 };
 use process_mining::{EventLog, Exportable, Importable};
 use std::env;
@@ -73,7 +74,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         } else {
             InductiveMinerDfgOptions::imfd(noise_threshold)
         };
-        inductive_miner_dfg(&log, &classifier, base)
+        discover_inductive_tree_from_log(&log, &classifier, base)
     } else {
         let base = if set("--thesis") {
             InductiveMinerOptions::imf_thesis(noise_threshold)
@@ -99,7 +100,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 || set("--filter-fallthrough-probe"),
             ..base
         };
-        inductive_miner(&log, &classifier, options)
+        discover_inductive_tree_from_log(&log, &classifier, options)
     };
     let elapsed = started.elapsed();
 

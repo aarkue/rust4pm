@@ -27,6 +27,7 @@ pub mod ocel_sql;
 pub(crate) mod ocel_struct;
 pub mod ocel_xml;
 pub mod readable;
+pub mod type_graph;
 pub mod utils;
 #[doc(inline)]
 pub use ocel_struct::*;

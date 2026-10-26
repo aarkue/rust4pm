@@ -4,16 +4,14 @@ use super::super::dfg::ActivityDfg;
 use super::super::log::{ActivityID, ActivityLog};
 use super::Fallthrough;
 
-/// Detects looping behaviour by cutting traces where one execution seems to end and the next to
+/// Detects looping behavior by cutting traces where one execution seems to end and the next to
 /// begin.
 ///
 /// If a trace can be cut into several pieces that each look like a full trace, the log plausibly
 /// describes something being repeated. The pieces then form a new log `L'` and the model becomes
 /// `↺(IM(L'), τ)`: do `L'`, then optionally do it again.
 ///
-/// Both variants below work this way and only differ in where they cut. They discard the
-/// information about which pieces belonged together, which is why they are tried only after the
-/// activity fall throughs.
+/// The pieces lose which ones belonged together, so this comes after the activity fall throughs.
 fn tau_loop_over(
     log: &ActivityLog,
     keep_degenerate: bool,
@@ -61,10 +59,9 @@ pub fn strict_tau_loop(
 /// Cuts traces before every occurrence of a start activity.
 ///
 /// Unlike [`strict_tau_loop`], this does not require the previous execution to have finished.
-/// With start activities `{a, b, d}`, the
-/// trace `⟨a, b, c, d⟩` is cut into `⟨a⟩`, `⟨b, c⟩` and `⟨d⟩`. The shorter pieces retain less of
-/// the original log, so [`strict_tau_loop`] is tried first. Returns `None` if no trace could be
-/// cut.
+/// With start activities `{a, b, d}`, the trace `⟨a, b, c, d⟩` is cut into `⟨a⟩`, `⟨b, c⟩` and
+/// `⟨d⟩`. The shorter pieces retain less of the original log, so [`strict_tau_loop`] is tried
+/// first. Returns `None` if no trace could be cut.
 pub fn tau_loop(
     log: &ActivityLog,
     dfg: &ActivityDfg,
@@ -90,7 +87,7 @@ mod test_tau_loop {
     use super::super::super::log::test_utils::{describe, expect, log_of};
     use super::*;
 
-    /// Leemans' running example L81, with start activities {a, b, d} and end activities {b, c, d}.
+    /// The running example L81, with start activities {a, b, d} and end activities {b, c, d}.
     fn leemans_example() -> (Vec<String>, ActivityLog) {
         log_of(&[
             &["a", "b", "c", "d"],

@@ -10,9 +10,7 @@ const BODY: usize = 0;
 /// part.
 ///
 /// A trace of a loop alternates between the body and the redo parts, so every maximal run of
-/// events in the same part becomes one trace of that part's sub-log. Splitting
-/// `[⟨a, b⟩, ⟨a, b, c, a, b⟩, ⟨a, b, c, a, b, c, a, b⟩]` on `(↺, {a, b}, {c})` gives `[⟨a, b⟩⁶]`
-/// for the body and `[⟨c⟩³]` for the redo part.
+/// events in the same part becomes one trace of that part's sub-log.
 ///
 /// A loop starts and ends with its body and runs it between any two redo parts. Where a trace
 /// skips the body, the split inserts an empty trace into the body's sub-log and lets the recursion

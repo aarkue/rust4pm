@@ -179,7 +179,7 @@ impl PetriNet {
     /// Export a drawing of the net as an SVG file, laid out with `graphlay`
     ///
     /// For visualization only: The image cannot be imported again.
-    /// [`crate::visualization::petri_net`] returns the SVG as a string and the node positions.
+    /// [`crate::visualization::svg`] returns the same SVG as a string.
     pub fn export_svg<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
         AcceptingPetriNet::new(self.clone(), Marking::new(), Marking::new()).export_svg(path)
     }
@@ -606,9 +606,9 @@ impl AcceptingPetriNet {
     /// Export a drawing of the net with its markings as an SVG file, laid out with `graphlay`
     ///
     /// For visualization only: The image cannot be imported again.
-    /// [`crate::visualization::petri_net`] returns the SVG as a string and the node positions.
+    /// [`crate::visualization::svg`] returns the same SVG as a string.
     pub fn export_svg<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        let svg = crate::visualization::petri_net::export_petri_net_svg(self, &Default::default())
+        let svg = crate::visualization::svg(self, &Default::default(), &Default::default())
             .map_err(std::io::Error::other)?;
         std::fs::write(path, svg)
     }
