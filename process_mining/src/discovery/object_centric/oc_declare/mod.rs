@@ -617,49 +617,10 @@ fn get_direct_or_indirect_object_involvements<'a>(
     res
 }
 
-// /// Reduce OC-DECLARE arcs based on lossless/lossy transitive reduction
-// pub fn reduce_oc_arcs(arcs: &Vec<OCDeclareArc>, lossless: bool) -> Vec<OCDeclareArc> {
-//     let mut ret: HashSet<_> = arcs.clone().into_iter().collect();
-
-//     for a in arcs {
-//         for b in arcs {
-//             if a != b
-//                 && a.from != a.to
-//                 && b.from != b.to
-//                 && b.from == a.to
-//                 && a.from != b.to
-//                 && ret.contains(&a)
-//                 && ret.contains(&b)
-//             {
-//                 ret.retain(|c| {
-//                     let remove = c != a
-//                         && c != b
-//                         && c.from == a.from
-//                         && c.to == b.to
-//                         && c.arc_type.is_dominated_by_or_eq(&a.arc_type)
-//                         && c.arc_type.is_dominated_by_or_eq(&b.arc_type)
-//                         && (c.label.is_dominated_by(&a.label) && c.label.is_dominated_by(&b.label));
-
-//                     let bc_any_overlap = c.label.any.iter().any(|any_label| {
-//                         let b_is_any = b.label.any.iter().any(|l| l == any_label);
-//                         b_is_any
-//                     });
-//                     if remove && c.from.0 == "W_Shortened completion " && c.to.0 == "O_Refused" {
-//                         println!("C:{:?}, A:{:?} B:{:?}\n\n ", c, a, b)
-//                     }
-
-//                     !remove || (lossless && bc_any_overlap)
-//                 })
-//             }
-//         }
-//     }
-
-//     ret.into_iter().collect()
-// }
-
 /// Reduce OC-DECLARE arcs based on lossless/lossy transitive reduction
 /// considering paths of arbitrary length.
 /// Uses sequential processing to prevent mutual elimination in cycles.
+#[register_binding]
 pub fn reduce_oc_arcs(mut arcs: Vec<OCDeclareArc>, lossless: bool) -> Vec<OCDeclareArc> {
     // Sorting ensures deterministic processing order
     arcs.sort();
@@ -810,6 +771,7 @@ fn compose_arc_labels(l1: &OCDeclareArcLabel, l2: &OCDeclareArcLabel) -> OCDecla
 ///
 /// BFSs from every target activity through non-target intermediaries, composing
 /// arc types and labels along the way.
+#[register_binding]
 pub fn project_oc_arcs(
     arcs: Vec<OCDeclareArc>,
     activities: &HashSet<String>,

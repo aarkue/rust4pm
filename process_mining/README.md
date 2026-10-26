@@ -20,7 +20,7 @@ You can find various usage examples in the [`examples/`](examples/) directory, c
 - Importing and analyzing XES event logs (`event_log_stats.rs`)
 - Working with OCEL 2.0 data (`ocel_stats.rs`)
 - Process discovery (`process_discovery.rs`)
-- Exporting to DuckDB/KuzuDB (`ocel_duckdb_export.rs`, `ocel_kuzudb_export.rs`)
+- Exporting to `DuckDB` (`ocel_duckdb_export.rs`)
 
 To run an example:
 ```bash
@@ -40,10 +40,24 @@ For more details, see the [Examples README](examples/README.md).
   - Object-Centric DFG
   - OC-DECLARE Constraints with Synchronization
 - **Process Models**:
-  - Petri Nets (import/export PNML, export to SVG/PNG via Graphviz)
+  - Petri Nets (import/export PNML)
   - (Object-Centric) Process Trees
   - OC-DECLARE Models
+- **Visualization**: Layout and SVG export for every model above except object-centric process
+  trees, and for partial order traces, in pure Rust through
+  [graphlay](https://github.com/aarkue/graphlay) (module and feature `visualization`, on by
+  default). No Graphviz install needed.
 - **Performance**: Built with Rust for high performance and memory safety.
+
+```rust,ignore
+use process_mining::visualization::petri_net::{export_petri_net_svg, PetriBuildOptions};
+use process_mining::{Importable, PetriNet};
+
+let net = PetriNet::import_from_path("model.pnml")?;
+let svg: String = export_petri_net_svg(&net, &PetriBuildOptions::default())?;
+```
+
+`export_petri_net_svg` returns the SVG document, and `PetriNet::export_svg` writes it to a file.
 
 ## Documentation
 

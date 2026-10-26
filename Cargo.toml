@@ -14,3 +14,11 @@ debug = 1
 # Full debuginfo on the --all-features test build can take a lot of disk space.
 [profile.test]
 debug = "line-tables-only"
+
+# `bundled` DuckDB compiles its amalgamation into `libduckdb.a`, which every test, example and
+# bench binary then links statically. With dev-profile debuginfo that archive is ~1.1 GB and
+# parallel links exhaust memory; at `-O0` the linked DuckDB is also far slower than the system
+# library used to be. Neither matters for C++ we never step through.
+[profile.dev.package.libduckdb-sys]
+debug = false
+opt-level = 2

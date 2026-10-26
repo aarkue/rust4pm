@@ -368,7 +368,7 @@ impl StreamingXESParser<'_> {
                             }
                         },
                         quick_xml::events::Event::End(t) => {
-                            match t.as_ref() {
+                            match t.name().as_ref() {
                                 b"event" => self.current_mode = Mode::Trace,
                                 b"trace" => {
                                     self.current_mode = Mode::Log;

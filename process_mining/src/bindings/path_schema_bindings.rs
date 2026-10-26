@@ -12,7 +12,7 @@ use crate::analysis::object_centric::path_schemas::{
     schema_stats, Connection, PathConnectionParams, PathSchemaDiscovery, PathSchemaQuery,
     ResolvedPathSchema, SchemaStats, TypeEdge, TypeGraph, TypeRef,
 };
-use crate::core::event_data::object_centric::linked_ocel::{LinkedOCELAccess, SlimLinkedOCEL};
+use crate::core::event_data::object_centric::linked_ocel::SlimLinkedOCEL;
 
 /// A node (event or object type) of the OCEL type graph, with its entity count.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

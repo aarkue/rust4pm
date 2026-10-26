@@ -1,6 +1,6 @@
 use crate::core::{
     event_data::case_centric::utils::activity_projection::EventLogActivityProjection,
-    process_models::case_centric::petri_net::petri_net_struct::Transition, PetriNet,
+    process_models::case_centric::petri_net::{AcceptingPetriNet, PlaceID, TransitionID},
 };
 
 use super::full::{alphappp_discover_petri_net, AlphaPPPConfig};
@@ -106,13 +106,13 @@ const AUTO_CONFIGS: &[AlphaPPPConfig] = &[
     },
 ];
 
-/// Automatically select parameters for Alpha+++ and discover a [`PetriNet`] using the chosen parameters
+/// Automatically select parameters for Alpha+++ and discover a [`AcceptingPetriNet`] using the chosen parameters
 ///
 /// Currently, tests out multiple paramater configurations and selects a best one based on the discovered Petri net
 pub fn alphappp_discover_with_auto_parameters(
     log_proj: &EventLogActivityProjection,
-) -> (AlphaPPPConfig, PetriNet) {
-    let mut best: Option<(AlphaPPPConfig, f32, PetriNet)> = None;
+) -> (AlphaPPPConfig, AcceptingPetriNet) {
+    let mut best: Option<(AlphaPPPConfig, f32, AcceptingPetriNet)> = None;
     for c in AUTO_CONFIGS {
         let pn = alphappp_discover_petri_net(log_proj, *c);
         let score = score_discovered_pn(&pn, c);
@@ -131,79 +131,37 @@ pub fn alphappp_discover_with_auto_parameters(
     println!("Best score: {best_score:.2} with config {best_config:?}");
     println!(
         "Resulting net has {} arcs, {} transitions and {} places",
-        best_pn.arcs.len(),
-        best_pn.transitions.len(),
-        best_pn.places.len()
+        best_pn.net.arcs().count(),
+        best_pn.net.num_transitions(),
+        best_pn.net.num_places()
     );
     (best_config, best_pn)
 }
 
-fn score_discovered_pn(pn: &PetriNet, config: &AlphaPPPConfig) -> f32 {
-    fn is_transition_well_connected(pn: &PetriNet, t: &Transition) -> bool {
-        if t.label.is_some() {
-            let preset_connected = pn
-                .preset_of_transition(t.into())
-                .into_iter()
-                .filter(|p| {
-                    pn.is_in_initial_marking(p)
-                        || pn.is_in_a_final_marking(p)
-                        || pn
-                            .preset_of_place(*p)
-                            .into_iter()
-                            .filter(|ot_id| {
-                                pn.transitions
-                                    .get(&ot_id.get_uuid())
-                                    .unwrap()
-                                    .label
-                                    .is_some()
-                            })
-                            .count()
-                            >= 1
-                })
-                .count()
-                >= 1;
-
-            let postset_connected = pn
-                .postset_of_transition(t.into())
-                .into_iter()
-                .filter(|p| {
-                    pn.is_in_initial_marking(p)
-                        || pn.is_in_a_final_marking(p)
-                        || pn
-                            .postset_of_place(*p)
-                            .into_iter()
-                            .filter(|ot_id| {
-                                pn.transitions
-                                    .get(&ot_id.get_uuid())
-                                    .unwrap()
-                                    .label
-                                    .is_some()
-                            })
-                            .count()
-                            >= 1
-                })
-                .count()
-                >= 1;
-
-            preset_connected && postset_connected
-        } else {
-            false
-        }
-    }
-    let num_disconnected_trans = pn
-        .transitions
-        .clone()
-        .into_iter()
-        .filter(|(_, t)| !is_transition_well_connected(pn, t))
+fn score_discovered_pn(pn: &AcceptingPetriNet, config: &AlphaPPPConfig) -> f32 {
+    let net = &pn.net;
+    let is_labelled = |t: TransitionID| net.transition(t).label.is_some();
+    // A place connects a transition if it is marked initially or finally, or if a labelled
+    // transition sits on its other side
+    let marked = |p: PlaceID| pn.initial_marking.tokens(p) > 0 || pn.final_marking.tokens(p) > 0;
+    let is_well_connected = |t: TransitionID| {
+        is_labelled(t)
+            && net
+                .preset_of_transition(t)
+                .any(|p| marked(p) || net.preset_of_place(p).any(is_labelled))
+            && net
+                .postset_of_transition(t)
+                .any(|p| marked(p) || net.postset_of_place(p).any(is_labelled))
+    };
+    let num_disconnected_trans = net
+        .transitions()
+        .filter(|(t, _)| !is_well_connected(*t))
         .count();
 
     config.fitness_thresh
         * (1.0 - config.balance_thresh)
         * (1.0
             - (num_disconnected_trans as f32
-                / pn.transitions
-                    .iter()
-                    .filter(|(_, t)| t.label.is_some())
-                    .count() as f32))
+                / net.transitions().filter(|(_, t)| t.label.is_some()).count() as f32))
             .powf(2.0)
 }

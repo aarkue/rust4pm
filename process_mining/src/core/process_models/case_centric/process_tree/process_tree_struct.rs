@@ -1,5 +1,6 @@
-use crate::core::process_models::petri_net::{ArcType, Marking, PlaceID};
-use crate::PetriNet;
+use crate::core::process_models::petri_net::{
+    AcceptingPetriNet, ArcType, Marking, PetriNet, PlaceID,
+};
 use core::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -90,7 +91,10 @@ impl Node {
     }
 
     /// Merges children that share this node's associative operator into it, bottom-up, so
-    /// `→(→(a, b), c)` becomes `→(a, b, c)`. Leaves are returned unchanged.
+    /// `→(→(a, b), c)` becomes `→(a, b, c)`. In an exclusive choice, repeated `τ` children merge into
+    /// one. A sequence, concurrency or interleaving drops its `τ` children, which change nothing,
+    /// and one left with a single child is replaced by it, so `→(τ, a)` becomes `a`. Leaves are
+    /// returned unchanged.
     pub fn fold(self) -> Self {
         match self {
             Node::Leaf(_) => self,
@@ -134,12 +138,33 @@ impl Node {
                     });
                 }
 
+                if matches!(
+                    op.operator_type,
+                    OperatorType::Sequence | OperatorType::Concurrency | OperatorType::Interleaving
+                ) {
+                    children.retain(|c| !c.is_tau());
+                    match children.len() {
+                        0 => return Node::new_leaf(None),
+                        1 => return children.pop().unwrap_or_else(|| Node::new_leaf(None)),
+                        _ => {}
+                    }
+                }
+
                 Node::Operator(Operator {
                     operator_type: op.operator_type,
                     children,
                 })
             }
         }
+    }
+
+    fn is_tau(&self) -> bool {
+        matches!(
+            self,
+            Node::Leaf(Leaf {
+                activity_label: LeafLabel::Tau
+            })
+        )
     }
 }
 
@@ -189,7 +214,7 @@ impl std::fmt::Display for ProcessTree {
 ///
 /// Operator type enum for [`Operator`]
 ///
-#[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum OperatorType {
     /// Sequence operator
     Sequence,
@@ -207,14 +232,10 @@ pub enum OperatorType {
 }
 
 impl OperatorType {
-    /// Returns `true` if this operator is associative.
-    ///
-    /// The associative operators are [`Sequence`](OperatorType::Sequence),
-    /// [`ExclusiveChoice`](OperatorType::ExclusiveChoice), and
-    /// [`Concurrency`](OperatorType::Concurrency).  The [`Loop`](OperatorType::Loop)
-    /// operator is **not** associative because its first child (the body) and
-    /// subsequent children (the redo / exit branches) carry different semantic
-    /// roles, so merging nested loops would change the language.
+    /// Whether a child with the same operator can merge into this node without changing the
+    /// language: true for sequence, exclusive choice, concurrency and inclusive choice. A loop's
+    /// first child is its body and the others are redo parts, and an interleaving runs each child
+    /// as one block, so neither merges.
     pub fn is_associative(self) -> bool {
         matches!(
             self,
@@ -226,9 +247,7 @@ impl OperatorType {
     }
 }
 
-///
-/// Functionality to translate the operators into ASCII: →, X, ∧, ↻, ↔, and ∨
-///
+/// The operator symbols →, ×, ∧, ↺, ↔ and ∨.
 impl fmt::Display for OperatorType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -236,13 +255,13 @@ impl fmt::Display for OperatorType {
                 write!(f, "→")
             }
             OperatorType::ExclusiveChoice => {
-                write!(f, "X")
+                write!(f, "×")
             }
             OperatorType::Concurrency => {
                 write!(f, "∧")
             }
             OperatorType::Loop => {
-                write!(f, "↻")
+                write!(f, "↺")
             }
             OperatorType::Interleaving => {
                 write!(f, "↔")
@@ -270,11 +289,8 @@ impl ProcessTree {
         Self { root }
     }
 
-    /// Folds the process tree by merging nodes whose operator is associative.
-    ///
-    /// The fold is applied recursively bottom-up across the entire tree, so
-    /// arbitrarily deep chains of the same associative operator are fully
-    /// collapsed into a single flat node.
+    /// [`Node::fold`] on the root: nested nodes of the same associative operator merge into one, at
+    /// any depth.
     pub fn fold(self) -> Self {
         ProcessTree::new(self.root.fold())
     }
@@ -354,46 +370,32 @@ impl ProcessTree {
 
     ///
     /// Transforms a [`ProcessTree`] into a [`PetriNet`] according to the translation rules in literature.
-    /// Returns a workflow net, consisting of the [`PetriNet`], its input, and output place's [`PlaceID`]
+    /// Returns a workflow net: one token in its input place initially, one in its output place finally.
     ///
-    pub fn to_petri_net(&self) -> PetriNet {
-        let mut petri_net = PetriNet::new();
-
-        let (start_place, end_place) = self.root.add_to_petri_net(&mut petri_net, None, None);
-
-        petri_net.initial_marking = Some(Marking::from([(start_place, 1)]));
-
-        let mut final_marking = Marking::new();
-        final_marking.insert(end_place, 1);
-        petri_net.final_markings = Some(vec![final_marking]);
-
-        petri_net
+    pub fn to_petri_net(&self) -> AcceptingPetriNet {
+        let mut net = PetriNet::new();
+        let (start_place, end_place) = self.root.add_to_petri_net(&mut net, None, None);
+        AcceptingPetriNet::new(
+            net,
+            Marking::from([(start_place, 1)]),
+            Marking::from([(end_place, 1)]),
+        )
     }
 
-    #[cfg(feature = "graphviz-export")]
-    /// Export a process tree as a PNG image
-    ///
-    /// The PNG file is written to the specified filepath
-    ///
-    /// _Note_: This is an export method for __visualizing__ the process tree.
-    /// The resulting PNG file cannot be imported as a process tree again.
-    ///
-    /// Only available with the `graphviz-export` feature.
-    pub fn export_png<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        super::image_export::export_process_tree_image_png(self, path)
-    }
-
-    #[cfg(feature = "graphviz-export")]
-    /// Export a process tree as an SVG image
+    #[cfg(feature = "visualization")]
+    /// Export a process tree as an SVG image, laid out with `graphlay`
     ///
     /// The SVG file is written to the specified filepath
     ///
     /// _Note_: This is an export method for __visualizing__ the process tree.
     /// The resulting SVG file cannot be imported as a process tree again.
+    /// [`crate::visualization::svg`] returns the same SVG as a string.
     ///
-    /// Only available with the `graphviz-export` feature.
+    /// Only available with the `visualization` feature.
     pub fn export_svg<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        super::image_export::export_process_tree_image_svg(self, path)
+        let svg = crate::visualization::svg(self, &Default::default(), &Default::default())
+            .map_err(std::io::Error::other)?;
+        std::fs::write(path, svg)
     }
 }
 
@@ -516,7 +518,7 @@ impl Operator {
             // Inserts silent transitions to put the workflow net of the loop operator in choice
             // if other operators are in choice. All workflow nets share the same input and output
             // places. However, only the first child models the do-part going from input to output
-            // place and every other child going from output to input place modelling the redo-part.
+            // place and every other child going from output to input place modeling the redo-part.
             OperatorType::Loop => {
                 let tau_start_transition = net.add_transition(None, None);
                 let tau_end_transition = net.add_transition(None, None);
@@ -740,11 +742,10 @@ impl Operator {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 ///
 /// A leaf in a process tree
 ///
-#[derive(PartialEq)]
 pub struct Leaf {
     /// The silent or non-silent activity label [`LeafLabel`]
     pub activity_label: LeafLabel,
@@ -825,7 +826,7 @@ mod tests {
 
     #[test]
     fn fold_nested_sequence() {
-        // SEQ(SEQ(a, b), c)  →  SEQ(a, b, c)
+        // SEQ(SEQ(a, b), c) becomes SEQ(a, b, c)
         let mut inner = Operator::new(OperatorType::Sequence);
         inner.children.push(Node::new_leaf(Some("a".into())));
         inner.children.push(Node::new_leaf(Some("b".into())));
@@ -845,7 +846,7 @@ mod tests {
 
     #[test]
     fn fold_deeply_nested_sequence() {
-        // SEQ(SEQ(SEQ(a, b), c), d)  →  SEQ(a, b, c, d)
+        // SEQ(SEQ(SEQ(a, b), c), d) becomes SEQ(a, b, c, d)
         let mut innermost = Operator::new(OperatorType::Sequence);
         innermost.children.push(Node::new_leaf(Some("a".into())));
         innermost.children.push(Node::new_leaf(Some("b".into())));
@@ -870,7 +871,7 @@ mod tests {
 
     #[test]
     fn fold_xor_nested() {
-        // XOR(XOR(a, b), c)  →  XOR(a, b, c)
+        // XOR(XOR(a, b), c) becomes XOR(a, b, c)
         let mut inner = Operator::new(OperatorType::ExclusiveChoice);
         inner.children.push(Node::new_leaf(Some("a".into())));
         inner.children.push(Node::new_leaf(Some("b".into())));
@@ -890,7 +891,7 @@ mod tests {
 
     #[test]
     fn fold_concurrency_nested() {
-        // AND(AND(a, b), c)  →  AND(a, b, c)
+        // AND(AND(a, b), c) becomes AND(a, b, c)
         let mut inner = Operator::new(OperatorType::Concurrency);
         inner.children.push(Node::new_leaf(Some("a".into())));
         inner.children.push(Node::new_leaf(Some("b".into())));
@@ -911,7 +912,6 @@ mod tests {
     #[test]
     fn fold_does_not_merge_different_operators() {
         // SEQ(XOR(a, b), c): a different operator, so it stays unchanged.
-        // Build two identical XOR nodes: one for the input, one for expected.
         let make_inner = || {
             let mut xor = Operator::new(OperatorType::ExclusiveChoice);
             xor.children.push(Node::new_leaf(Some("a".into())));
@@ -957,9 +957,8 @@ mod tests {
 
     #[test]
     fn fold_mixed_tree() {
-        // SEQ( SEQ(a, b), LOOP(c, tau), SEQ(d, e) )
-        // The two SEQ children get merged; the LOOP stays in place.
-        // Result: SEQ(a, b, LOOP(c, tau), d, e)
+        // SEQ(SEQ(a, b), LOOP(c, tau), SEQ(d, e)) becomes SEQ(a, b, LOOP(c, tau), d, e): the two
+        // SEQ children merge and the LOOP stays in place.
         let make_loop = || {
             let mut lp = Operator::new(OperatorType::Loop);
             lp.children.push(Node::new_leaf(Some("c".into())));
@@ -989,6 +988,43 @@ mod tests {
         expected.children.push(Node::new_leaf(Some("d".into())));
         expected.children.push(Node::new_leaf(Some("e".into())));
         assert_eq!(pt.root, Node::Operator(expected));
+    }
+
+    #[test]
+    fn fold_drops_tau_where_it_changes_nothing() {
+        let a = || Node::new_leaf(Some("a".into()));
+        let b = || Node::new_leaf(Some("b".into()));
+        let tau = || Node::new_leaf(None);
+        let op = |operator_type, children: Vec<Node>| {
+            let mut node = Operator::new(operator_type);
+            node.children = children;
+            Node::Operator(node)
+        };
+        let folded = |node: Node| ProcessTree::new(node).fold().root;
+        use OperatorType::*;
+
+        assert_eq!(folded(op(Sequence, vec![tau(), a()])), a());
+        assert_eq!(folded(op(Concurrency, vec![tau(), tau()])), tau());
+        assert_eq!(
+            folded(op(Interleaving, vec![a(), tau(), b()])),
+            op(Interleaving, vec![a(), b()])
+        );
+        // `→(a, →(τ, b))` loses the inner sequence, then merges b in.
+        assert_eq!(
+            folded(op(Sequence, vec![a(), op(Sequence, vec![tau(), b()])])),
+            op(Sequence, vec![a(), b()])
+        );
+        // In these, τ is behavior: skipping, a loop's redo, or one of the chosen children.
+        for operator_type in [ExclusiveChoice, InclusiveChoice] {
+            assert_eq!(
+                folded(op(operator_type, vec![tau(), a()])),
+                op(operator_type, vec![tau(), a()])
+            );
+        }
+        assert_eq!(
+            folded(op(Loop, vec![a(), tau()])),
+            op(Loop, vec![a(), tau()])
+        );
     }
 
     #[test]
@@ -1087,9 +1123,9 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(4, net.places.len());
-        assert_eq!(3, net.transitions.len());
-        assert_eq!(6, net.arcs.len());
+        assert_eq!(4, net.net.num_places());
+        assert_eq!(3, net.net.num_transitions());
+        assert_eq!(6, net.net.arcs().count());
     }
 
     // Checking Conc(a,b,c)
@@ -1109,9 +1145,9 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(8, net.places.len());
-        assert_eq!(5, net.transitions.len());
-        assert_eq!(14, net.arcs.len());
+        assert_eq!(8, net.net.num_places());
+        assert_eq!(5, net.net.num_transitions());
+        assert_eq!(14, net.net.arcs().count());
     }
 
     // Checking Loop(a,b,c)
@@ -1131,9 +1167,9 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(4, net.places.len());
-        assert_eq!(5, net.transitions.len());
-        assert_eq!(10, net.arcs.len());
+        assert_eq!(4, net.net.num_places());
+        assert_eq!(5, net.net.num_transitions());
+        assert_eq!(10, net.net.arcs().count());
     }
 
     // Checking Xor(a,b,c)
@@ -1153,9 +1189,9 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(2, net.places.len());
-        assert_eq!(3, net.transitions.len());
-        assert_eq!(6, net.arcs.len());
+        assert_eq!(2, net.net.num_places());
+        assert_eq!(3, net.net.num_transitions());
+        assert_eq!(6, net.net.arcs().count());
     }
 
     // Checking Inter(a,b,c)
@@ -1172,9 +1208,9 @@ mod tests {
         let tree = ProcessTree::new(Node::Operator(inter));
         let net = tree.to_petri_net();
 
-        assert_eq!(15, net.places.len());
-        assert_eq!(11, net.transitions.len());
-        assert_eq!(34, net.arcs.len());
+        assert_eq!(15, net.net.num_places());
+        assert_eq!(11, net.net.num_transitions());
+        assert_eq!(34, net.net.arcs().count());
     }
 
     // Checking Or(a,b,c)
@@ -1191,9 +1227,9 @@ mod tests {
         let tree = ProcessTree::new(Node::Operator(or));
         let net = tree.to_petri_net();
 
-        assert_eq!(13, net.places.len());
-        assert_eq!(14, net.transitions.len());
-        assert_eq!(52, net.arcs.len());
+        assert_eq!(13, net.net.num_places());
+        assert_eq!(14, net.net.num_transitions());
+        assert_eq!(52, net.net.arcs().count());
     }
 
     // Checking tau
@@ -1205,12 +1241,12 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(2, net.places.len());
-        assert_eq!(1, net.transitions.len());
-        assert_eq!(2, net.arcs.len());
+        assert_eq!(2, net.net.num_places());
+        assert_eq!(1, net.net.num_transitions());
+        assert_eq!(2, net.net.arcs().count());
 
-        net.transitions
-            .iter()
+        net.net
+            .transitions()
             .for_each(|(_, t)| assert!(t.label.is_none()));
     }
 
@@ -1223,12 +1259,12 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(2, net.places.len());
-        assert_eq!(1, net.transitions.len());
-        assert_eq!(2, net.arcs.len());
+        assert_eq!(2, net.net.num_places());
+        assert_eq!(1, net.net.num_transitions());
+        assert_eq!(2, net.net.arcs().count());
 
-        net.transitions
-            .iter()
+        net.net
+            .transitions()
             .for_each(|(_, t)| assert_eq!("a", t.label.clone().unwrap()));
     }
 
@@ -1270,8 +1306,8 @@ mod tests {
 
         let net = tree.to_petri_net();
 
-        assert_eq!(10, net.places.len());
-        assert_eq!(13, net.transitions.len());
-        assert_eq!(28, net.arcs.len());
+        assert_eq!(10, net.net.num_places());
+        assert_eq!(13, net.net.num_transitions());
+        assert_eq!(28, net.net.arcs().count());
     }
 }

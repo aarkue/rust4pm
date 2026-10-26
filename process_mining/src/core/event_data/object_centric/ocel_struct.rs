@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::event_data::{
     case_centric::AttributeValue,
     object_centric::linked_ocel::{index_linked_ocel::ObjectIndex, IndexLinkedOCEL},
+    timestamp_utils::parse_timestamp,
 };
 
 ///
@@ -111,6 +112,7 @@ pub struct OCELEvent {
     #[serde(rename = "type")]
     pub event_type: String,
     /// `DateTime` when event occured
+    #[serde(deserialize_with = "robust_timestamp_parsing")]
     pub time: DateTime<FixedOffset>,
     /// Event attributes
     #[serde(default)]
@@ -189,44 +191,14 @@ pub struct OCELObjectAttribute {
     pub time: DateTime<FixedOffset>,
 }
 
+/// Deserialize a timestamp field, accepting every format understood by
+/// [`parse_timestamp`] instead of only RFC3339.
 fn robust_timestamp_parsing<'de, D>(deserializer: D) -> Result<DateTime<FixedOffset>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let time: String = Deserialize::deserialize(deserializer)?;
-    if let Ok(dt) = DateTime::parse_from_rfc3339(&time) {
-        return Ok(dt);
-    }
-    if let Ok(dt) = DateTime::parse_from_rfc2822(&time) {
-        return Ok(dt);
-    }
-    // eprintln!("Encountered weird datetime format: {:?}", time);
-
-    // Some logs have this date: "2023-10-06 09:30:21.890421"
-    // Assuming that this is UTC
-    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&time, "%F %T%.f") {
-        return Ok(dt.and_utc().into());
-    }
-
-    // Also handle "2024-10-02T07:55:15.348555" as well as "2022-01-09T15:00:00"
-    // Assuming UTC time zone
-    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&time, "%FT%T%.f") {
-        return Ok(dt.and_utc().into());
-    }
-
-    // export_path
-    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&time, "%F %T UTC") {
-        return Ok(dt.and_utc().into());
-    }
-
-    // Who made me do this? 🫣
-    // Some logs have this date: "Mon Apr 03 2023 12:08:18 GMT+0200 (Mitteleuropäische Sommerzeit)"
-    // Below ignores the first "Mon " part (%Z) parses the rest (only if "GMT") and then parses the timezone (+0200)
-    // The rest of the input is ignored
-    if let Ok((dt, _)) = DateTime::parse_and_remainder(&time, "%Z %b %d %Y %T GMT%z") {
-        return Ok(dt);
-    }
-    Err(serde::de::Error::custom("Unexpected Date Format"))
+    parse_timestamp(&time, None, false).map_err(serde::de::Error::custom)
 }
 
 impl OCELObjectAttribute {
@@ -300,7 +272,7 @@ impl OCELAttributeValue {
     ///   String   -> Integer   (parse via `i64::from_str`)
     ///   String   -> Float     (parse via `f64::from_str`)
     ///   String   -> Boolean   (case-insensitive `"true"`/`"false"`)
-    ///   String   -> Time      (parse via RFC3339)
+    ///   String   -> Time      (parse via [`parse_timestamp`], i.e. RFC3339 and fallbacks)
     pub fn try_coerce_to(&self, target: OCELAttributeType) -> Option<OCELAttributeValue> {
         use OCELAttributeType as T;
         use OCELAttributeValue::*;
@@ -324,7 +296,7 @@ impl OCELAttributeValue {
                 "false" => Some(Boolean(false)),
                 _ => None,
             },
-            (T::Time, String(s)) => DateTime::parse_from_rfc3339(s).ok().map(Time),
+            (T::Time, String(s)) => parse_timestamp(s, None, false).ok().map(Time),
             _ => None,
         }
     }
@@ -417,7 +389,7 @@ impl<T: Into<OCELAttributeValue>> From<Option<T>> for OCELAttributeValue {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 /// _Types_ of attribute values in OCEL2
 pub enum OCELAttributeType {
     /// String
@@ -475,6 +447,24 @@ impl OCELAttributeType {
             "integer" => OCELAttributeType::Integer,
             "time" => OCELAttributeType::Time,
             _ => OCELAttributeType::Null,
+        }
+    }
+
+    /// The narrowest type that can hold values of both `self` and `other`: identical types
+    /// stay put, `Null` yields the other type, `Integer` + `Float` widens to `Float`, and
+    /// anything else falls back to `String`.
+    ///
+    /// Used where one attribute name carries different types (e.g. across event types, or
+    /// across rows of an untyped source) and a single column type must cover all of them.
+    pub fn coalesce(self, other: Self) -> Self {
+        use OCELAttributeType::*;
+        if self == other {
+            return self;
+        }
+        match (self, other) {
+            (Null, o) | (o, Null) => o,
+            (Integer, Float) | (Float, Integer) => Float,
+            _ => String,
         }
     }
 }

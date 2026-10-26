@@ -50,7 +50,10 @@ pub(crate) fn target_events_for_binding<'a>(
             SetFilter::Any(items) => Box::new(items.iter().flat_map(move |o| for_ob(**o))),
             SetFilter::All(items) => {
                 if items.is_empty() {
-                    Box::new(Vec::new().into_iter())
+                    // `SetFilter::check` is vacuously true for an empty `All`, i.e. it imposes
+                    // no constraint, so every event of the type is a candidate, exactly as when
+                    // `objs` itself is empty.
+                    Box::new(EventOrSynthetic::get_all_syn_evs(linked_ocel, etype).into_iter())
                 } else {
                     Box::new(for_ob(*items[0]).filter(|e| {
                         items
@@ -81,11 +84,24 @@ fn directly_adjacent_event<'a>(
     // reference_event: &'a OCELEvent,
     following: bool,
 ) -> Option<EventOrSynthetic> {
+    let in_direction = move |e: &EventOrSynthetic| {
+        let e_time = e.get_timestamp(linked_ocel);
+        if following {
+            e_time > *reference_time
+        } else {
+            e_time < *reference_time
+        }
+    };
     let initial: Box<dyn Iterator<Item = EventOrSynthetic>> = if objs.is_empty() {
         // If no requirements are specified, consider all events
         // TODO: Maybe also consider synthetic events here?
         // But in general, this is not very relevant as there are usually some object requirements
-        Box::new(linked_ocel.get_all_evs().map(EventOrSynthetic::Event))
+        Box::new(
+            linked_ocel
+                .get_all_evs()
+                .map(EventOrSynthetic::Event)
+                .filter(in_direction),
+        )
     } else {
         match &objs[0] {
             SetFilter::Any(items) => Box::new(items.iter().flat_map(|o| {
@@ -102,7 +118,14 @@ fn directly_adjacent_event<'a>(
             })),
             SetFilter::All(items) => {
                 if items.is_empty() {
-                    Box::new(Vec::new().into_iter())
+                    // `SetFilter::check` is vacuously true for an empty `All`: no constraint,
+                    // so every event is a candidate, as when `objs` itself is empty.
+                    Box::new(
+                        linked_ocel
+                            .get_all_evs()
+                            .map(EventOrSynthetic::Event)
+                            .filter(in_direction),
+                    )
                 } else {
                     Box::new(
                         EventOrSynthetic::get_all_for_ob(linked_ocel, *items[0])
@@ -473,5 +496,22 @@ mod tests {
             compared > 500,
             "expected at least 500 comparison instead of just {compared}; something is wrong with the input SlimLinked OCEL."
         );
+    }
+
+    // `SetFilter::check` is vacuously true for `All(&[])`, since an event trivially references
+    // "all of" an empty set, so the candidate iterator must not special-case it to empty.
+    #[test]
+    fn all_of_empty_items_matches_every_event_of_the_type_like_no_objs_at_all() {
+        let locel = sample_locel();
+        let no_objs: Vec<SetFilter<&ObjectIndex>> = Vec::new();
+        let empty_all: Vec<SetFilter<&ObjectIndex>> = vec![SetFilter::All(Vec::new())];
+
+        let via_no_objs: FxHashSet<_> =
+            target_events_for_binding(&no_objs, &locel, "place", None).collect();
+        let via_empty_all: FxHashSet<_> =
+            target_events_for_binding(&empty_all, &locel, "place", None).collect();
+
+        assert_eq!(via_empty_all, via_no_objs);
+        assert_eq!(via_empty_all.len(), locel.get_evs_of_type("place").count());
     }
 }

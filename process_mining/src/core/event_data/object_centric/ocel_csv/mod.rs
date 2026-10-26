@@ -5,7 +5,7 @@
 //! The CSV format for OCEL 2.0 has the following structure:
 //!
 //! ```text
-//! id,activity,timestamp,ot:order,ot:item,ea:billable,ea:area
+//! id,activity,timestamp,ot:order,ot:item,billable,area
 //! e1,place order,2026-01-22T09:57:28+0000,o1,i1#part-of{"price": "5€"}/i2#part-of{"price": "15€"},no,
 //! e2,pick item,2026-01-23T09:57:28+0000,,i1,no,outdoor
 //! e3,produce item,2026-01-24T09:57:28+0000,,i2#target,no,indoor
@@ -21,7 +21,9 @@
 //! - **`activity`**: Event type name, or "o2o" (case insensitive) for object relationships
 //! - **`timestamp`**: ISO 8601 formatted timestamp (empty for O2O relationships)
 //! - **Columns prefixed with `ot:`** (case-insensitive): Object type columns defining object involvements
-//! - **Columns prefixed with `ea:`** (case-insensitive): Event attribute columns
+//! - **Any other column**: An event attribute, named exactly as the header reads. For
+//!   compatibility with earlier versions of this format, a leading `ea:` prefix
+//!   (case-insensitive) is stripped on import; export never writes it.
 //!
 //! ## Object References
 //!
@@ -73,6 +75,7 @@
 //! Import → Export → Import may not be perfectly lossless:
 //! - Event attribute types are inferred as strings during CSV import
 //! - Column ordering may change (sorted alphabetically)
+//! - Event attribute columns written with a legacy `ea:` prefix are re-exported without it
 //! - Object types are inferred from which `ot:` column an object first appears in
 //!
 //! # Import Options
@@ -83,8 +86,11 @@
 
 mod csv_ocel_export;
 mod csv_ocel_import;
+mod escaping;
 
 #[doc(inline)]
 pub use csv_ocel_export::*;
 #[doc(inline)]
 pub use csv_ocel_import::*;
+#[doc(inline)]
+pub use escaping::{escape_reference_part, unescape_reference_part};

@@ -1,13 +1,12 @@
-//! IO implementations for `PetriNet`
+//! IO implementations for `PetriNet` and `AcceptingPetriNet`
 
 use std::io::{Read, Write};
 
 use crate::core::io::{Exportable, ExtensionWithMime, Importable};
-use crate::core::process_models::case_centric::petri_net::pnml::export_pnml::export_petri_net_to_pnml;
-use crate::core::process_models::case_centric::petri_net::pnml::import_pnml::{
-    import_pnml_reader, PNMLParseError,
+use crate::core::process_models::case_centric::petri_net::{
+    pnml::{export_petri_net_to_pnml, import_pnml_reader, read::accepting_net, PNMLParseError},
+    AcceptingPetriNet, PetriNet, PlaceID,
 };
-use crate::core::process_models::case_centric::petri_net::PetriNet;
 
 /// Error type for `PetriNet` IO operations
 #[derive(Debug)]
@@ -20,6 +19,8 @@ pub enum PetriNetIOError {
     Xml(quick_xml::Error),
     /// Unsupported Format
     UnsupportedFormat(String),
+    /// A marking refers to a place that is not in the net
+    InvalidPlaceInMarking(PlaceID),
 }
 
 impl std::fmt::Display for PetriNetIOError {
@@ -29,6 +30,11 @@ impl std::fmt::Display for PetriNetIOError {
             PetriNetIOError::Pnml(e) => write!(f, "PNML Error: {}", e),
             PetriNetIOError::Xml(e) => write!(f, "XML Error: {}", e),
             PetriNetIOError::UnsupportedFormat(s) => write!(f, "Unsupported Format: {}", s),
+            PetriNetIOError::InvalidPlaceInMarking(place) => write!(
+                f,
+                "A marking refers to place {}, which is not in the net",
+                place.index()
+            ),
         }
     }
 }
@@ -39,7 +45,9 @@ impl std::error::Error for PetriNetIOError {
             PetriNetIOError::Io(e) => Some(e),
             PetriNetIOError::Pnml(e) => Some(e),
             PetriNetIOError::Xml(e) => Some(e),
-            PetriNetIOError::UnsupportedFormat(_) => None,
+            PetriNetIOError::UnsupportedFormat(_) | PetriNetIOError::InvalidPlaceInMarking(_) => {
+                None
+            }
         }
     }
 }
@@ -62,6 +70,11 @@ impl From<quick_xml::Error> for PetriNetIOError {
     }
 }
 
+fn unsupported<T>(format: &str) -> Result<T, PetriNetIOError> {
+    Err(PetriNetIOError::UnsupportedFormat(format.to_string()))
+}
+
+/// Reads the structure only; markings in the file are ignored
 impl Importable for PetriNet {
     type Error = PetriNetIOError;
     type ImportOptions = ();
@@ -71,19 +84,41 @@ impl Importable for PetriNet {
         format: &str,
         _: Self::ImportOptions,
     ) -> Result<Self, Self::Error> {
-        if format.ends_with("pnml") {
-            let mut buf_reader = std::io::BufReader::new(reader);
-            import_pnml_reader(&mut buf_reader).map_err(PetriNetIOError::Pnml)
-        } else {
-            Err(PetriNetIOError::UnsupportedFormat(format.to_string()))
+        if !format.ends_with("pnml") {
+            return unsupported(format);
         }
+        let (net, _, _) = import_pnml_reader(&mut std::io::BufReader::new(reader))?;
+        Ok(net)
     }
 
-    fn known_import_formats() -> Vec<crate::core::io::ExtensionWithMime> {
+    fn known_import_formats() -> Vec<ExtensionWithMime> {
         vec![ExtensionWithMime::new("pnml", "text/plain")]
     }
 }
 
+/// Requires both markings
+impl Importable for AcceptingPetriNet {
+    type Error = PetriNetIOError;
+    type ImportOptions = ();
+
+    fn import_from_reader_with_options<R: Read>(
+        reader: R,
+        format: &str,
+        _: Self::ImportOptions,
+    ) -> Result<Self, Self::Error> {
+        if !format.ends_with("pnml") {
+            return unsupported(format);
+        }
+        let parts = import_pnml_reader(&mut std::io::BufReader::new(reader))?;
+        Ok(accepting_net(parts)?)
+    }
+
+    fn known_import_formats() -> Vec<ExtensionWithMime> {
+        vec![ExtensionWithMime::new("pnml", "text/plain")]
+    }
+}
+
+/// Writes the structure without markings
 impl Exportable for PetriNet {
     type Error = PetriNetIOError;
     type ExportOptions = ();
@@ -94,11 +129,37 @@ impl Exportable for PetriNet {
         format: &str,
         _: Self::ExportOptions,
     ) -> Result<(), Self::Error> {
-        if format.ends_with("pnml") {
-            export_petri_net_to_pnml(self, writer).map_err(PetriNetIOError::Xml)
-        } else {
-            Err(PetriNetIOError::UnsupportedFormat(format.to_string()))
+        if !format.ends_with("pnml") {
+            return unsupported(format);
         }
+        export_petri_net_to_pnml(self, None, None, writer)
+    }
+
+    fn known_export_formats() -> Vec<ExtensionWithMime> {
+        vec![ExtensionWithMime::new("pnml", "text/plain")]
+    }
+}
+
+/// Writes the net with both markings
+impl Exportable for AcceptingPetriNet {
+    type Error = PetriNetIOError;
+    type ExportOptions = ();
+
+    fn export_to_writer_with_options<W: Write>(
+        &self,
+        writer: W,
+        format: &str,
+        _: Self::ExportOptions,
+    ) -> Result<(), Self::Error> {
+        if !format.ends_with("pnml") {
+            return unsupported(format);
+        }
+        export_petri_net_to_pnml(
+            &self.net,
+            Some(&self.initial_marking),
+            Some(&self.final_marking),
+            writer,
+        )
     }
 
     fn known_export_formats() -> Vec<ExtensionWithMime> {

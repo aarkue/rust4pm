@@ -1,5 +1,6 @@
 //! CSV Export for OCEL 2.0
 
+use super::escaping::escape_reference_part;
 use crate::core::event_data::object_centric::{
     ocel_struct::OCELAttributeValue,
     readable::{OCELLookup, ReadableOCEL},
@@ -107,7 +108,9 @@ where
 
     let mut headers: Vec<String> = vec!["id".into(), "activity".into(), "timestamp".into()];
     headers.extend(object_type_names.iter().map(|n| format!("ot:{n}")));
-    headers.extend(event_attr_names.iter().map(|n| format!("ea:{n}")));
+    // Event attributes are written under their plain name: any column that is not `id`,
+    // `activity`, `timestamp`, or `ot:<type>` is an event attribute on import.
+    headers.extend(event_attr_names.iter().map(|n| (*n).to_string()));
     csv_writer.write_record(&headers)?;
 
     // (time, object_id) pairs covered by event rows, so the later object-attribute pass
@@ -273,10 +276,10 @@ fn format_timestamp(dt: &DateTime<FixedOffset>, options: &OCELCSVExportOptions) 
 fn format_object_refs(refs: &[ObjectRef<'_>]) -> String {
     refs.iter()
         .map(|r| {
-            let mut s = r.object_id.to_string();
+            let mut s = escape_reference_part(r.object_id).into_owned();
             if !r.qualifier.is_empty() {
                 s.push('#');
-                s.push_str(r.qualifier);
+                s.push_str(&escape_reference_part(r.qualifier));
             }
             if let Some(attrs) = &r.attributes {
                 if !attrs.is_empty() {
@@ -381,6 +384,32 @@ e4,send order,2026-01-26T09:57:28+0000,o1,i1/i2,yes,"#;
         let reimported = import_ocel_csv(exported.as_bytes()).unwrap();
         assert_eq!(ocel.events.len(), reimported.events.len());
         assert_eq!(ocel.objects.len(), reimported.objects.len());
+    }
+
+    /// Event attribute columns are written under their plain name; the legacy `ea:` prefix is
+    /// only understood on import, never produced on export.
+    #[test]
+    fn test_event_attributes_are_exported_without_prefix() {
+        let csv_input = r#"id,activity,timestamp,ot:item,ea:billable,area
+e1,place order,2026-01-22T09:57:28+0000,i1,no,outdoor"#;
+        let ocel = import_ocel_csv(csv_input.as_bytes()).unwrap();
+        let exported = export_ocel_csv_to_string(&ocel).unwrap();
+        let header = exported.lines().next().unwrap();
+        assert_eq!(header, "id,activity,timestamp,ot:item,area,billable");
+
+        let reimported = import_ocel_csv(exported.as_bytes()).unwrap();
+        let attrs = &reimported.events[0].attributes;
+        assert_eq!(
+            attrs
+                .iter()
+                .find(|a| a.name == "billable")
+                .map(|a| &a.value),
+            Some(&OCELAttributeValue::String("no".into()))
+        );
+        assert_eq!(
+            attrs.iter().find(|a| a.name == "area").map(|a| &a.value),
+            Some(&OCELAttributeValue::String("outdoor".into()))
+        );
     }
 
     /// Regression: object attributes with an "initial value" timestamp (not matching any event

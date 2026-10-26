@@ -1,7 +1,10 @@
 //! Binding wrappers for [`SlimLinkedOCEL`] functionality
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, FixedOffset};
 use macros_process_mining::register_binding;
+use rayon::prelude::*;
 
 use crate::core::event_data::object_centric::{
     linked_ocel::{
@@ -11,8 +14,6 @@ use crate::core::event_data::object_centric::{
     OCELAttributeValue, OCELEvent, OCELObject, OCELType, OCELTypeAttribute,
 };
 use crate::core::OCEL;
-
-// ── Creation ──────────────────────────────────────────────────────────
 
 /// Create a new empty [`SlimLinkedOCEL`].
 ///
@@ -24,8 +25,6 @@ use crate::core::OCEL;
 fn locel_new() -> SlimLinkedOCEL {
     SlimLinkedOCEL::new()
 }
-
-// ── Type Management ───────────────────────────────────────────────────
 
 /// Add an event type with the given ordered attribute declarations.
 ///
@@ -51,12 +50,10 @@ fn locel_add_object_type(
     ocel.add_object_type(&object_type, attributes);
 }
 
-// ── Adding Events & Objects ───────────────────────────────────────────
-
 /// Add an event and return its [`EventIndex`].
 ///
-/// The event type must have been declared via [`locel_add_event_type`] first;
-/// otherwise this returns `None`.
+/// The event type must have been declared via [`locel_add_event_type`] first.
+/// Otherwise this returns `None`.
 ///
 /// `id`: If `None`, a UUID is assigned. Returns `None` if the id is already taken.
 /// `attributes`: Positional values in the declared attribute order. Padded with `Null` or truncated on length mismatch (with a warning).
@@ -75,8 +72,8 @@ fn locel_add_event(
 
 /// Add an object and return its [`ObjectIndex`].
 ///
-/// The object type must have been declared via [`locel_add_object_type`] first;
-/// otherwise this returns `None`.
+/// The object type must have been declared via [`locel_add_object_type`] first.
+/// Otherwise this returns `None`.
 ///
 /// `id`: If `None`, a UUID is assigned. Returns `None` if the id is already taken.
 /// `attributes`: Positional list of time-indexed attribute histories (one `(timestamp, value)` list per declared attribute, in order). Use `1970-01-01T00:00:00Z` for constant/initial values. Padded with empty lists or truncated on length mismatch (with a warning).
@@ -92,11 +89,9 @@ fn locel_add_object(
     ocel.add_object(&object_type, id, attributes, relationships)
 }
 
-// ── Relationship Management ───────────────────────────────────────────
-
 /// Add an E2O (event-to-object) relationship with the given qualifier.
 ///
-/// Multiple qualifiers between the same `(event, object)` pair are allowed; re-adding the exact
+/// Multiple qualifiers between the same `(event, object)` pair are allowed. Re-adding the exact
 /// same `(event, object, qualifier)` triple is a no-op. Returns `true` on success, `false` if
 /// either index is out of bounds (with a stderr warning).
 #[register_binding]
@@ -111,7 +106,7 @@ fn locel_add_e2o(
 
 /// Add a directed O2O (object-to-object) relationship from `from_obj` to `to_obj` with the given qualifier.
 ///
-/// Multiple qualifiers between the same `(from_obj, to_obj)` pair are allowed; re-adding the exact
+/// Multiple qualifiers between the same `(from_obj, to_obj)` pair are allowed. Re-adding the exact
 /// same `(from_obj, to_obj, qualifier)` triple is a no-op. Returns `true` on success, `false` if
 /// either index is out of bounds (with a stderr warning).
 #[register_binding]
@@ -139,8 +134,6 @@ fn locel_delete_e2o(ocel: &mut SlimLinkedOCEL, event: EventIndex, object: Object
 fn locel_delete_o2o(ocel: &mut SlimLinkedOCEL, from_obj: ObjectIndex, to_obj: ObjectIndex) -> bool {
     ocel.delete_o2o(&from_obj, &to_obj)
 }
-
-// ── Read Access (LinkedOCELAccess) ────────────────────────────────────
 
 /// Get all declared event type names, in declaration order.
 #[register_binding]
@@ -244,6 +237,90 @@ fn get_obj_activity_trace(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<String>
         .collect()
 }
 
+/// Merge `b` into `a` by summing values for matching keys. Used as the rayon reduce step.
+fn merge_sum_maps<K, V>(mut a: HashMap<K, V>, b: HashMap<K, V>) -> HashMap<K, V>
+where
+    K: std::hash::Hash + Eq,
+    V: Default + std::ops::AddAssign,
+{
+    for (k, v) in b {
+        *a.entry(k).or_default() += v;
+    }
+    a
+}
+
+/// Get all activity-trace variants for objects of the given object type, with their occurrence counts
+///
+/// Each entry is a tuple `(activity_trace, count)`, where `activity_trace` is the sequence of event types
+/// connected to an object (ordered by event timestamp), and `count` is the number of objects of the
+/// requested type that share that exact trace.
+#[register_binding]
+fn get_variants_of_object_type(
+    ocel: &SlimLinkedOCEL,
+    ob_type: String,
+) -> Vec<(Vec<String>, usize)> {
+    let obs: Vec<ObjectIndex> = ocel.get_obs_of_type(&ob_type).copied().collect();
+    let counts: HashMap<Vec<usize>, usize> = obs
+        .into_par_iter()
+        .fold(HashMap::new, |mut acc, ob| {
+            let trace: Vec<usize> = ob.get_obj_activity_trace_evtype_indices(ocel).collect();
+            *acc.entry(trace).or_insert(0) += 1;
+            acc
+        })
+        .reduce(HashMap::new, merge_sum_maps);
+    let ev_type_names: Vec<&str> =
+        <SlimLinkedOCEL as LinkedOCELAccess>::get_ev_types(ocel).collect();
+    counts
+        .into_iter()
+        .map(|(trace_idx, count)| {
+            let trace: Vec<String> = trace_idx
+                .into_iter()
+                .map(|i| ev_type_names[i].to_string())
+                .collect();
+            (trace, count)
+        })
+        .collect()
+}
+
+/// Get the directly-follows graph (DFG) for objects of the given object type.
+///
+/// Each entry is `((from_activity, to_activity), count)`, counting adjacent pairs in each
+/// object's timestamp-ordered activity trace. Result order is unspecified.
+#[register_binding]
+fn get_dfg_of_object_type(
+    ocel: &SlimLinkedOCEL,
+    ob_type: String,
+) -> Vec<((String, String), usize)> {
+    let obs: Vec<ObjectIndex> = ocel.get_obs_of_type(&ob_type).copied().collect();
+    let counts: HashMap<(usize, usize), usize> = obs
+        .into_par_iter()
+        .fold(HashMap::new, |mut acc, ob| {
+            let mut iter = ob.get_obj_activity_trace_evtype_indices(ocel);
+            if let Some(mut prev) = iter.next() {
+                for next in iter {
+                    *acc.entry((prev, next)).or_insert(0) += 1;
+                    prev = next;
+                }
+            }
+            acc
+        })
+        .reduce(HashMap::new, merge_sum_maps);
+    let ev_type_names: Vec<&str> =
+        <SlimLinkedOCEL as LinkedOCELAccess>::get_ev_types(ocel).collect();
+    counts
+        .into_iter()
+        .map(|((from, to), count)| {
+            (
+                (
+                    ev_type_names[from].to_string(),
+                    ev_type_names[to].to_string(),
+                ),
+                count,
+            )
+        })
+        .collect()
+}
+
 /// Get the outgoing O2O relationships of an object as `(qualifier, object_index)` pairs.
 #[register_binding]
 fn locel_get_o2o(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<(String, ObjectIndex)> {
@@ -262,7 +339,7 @@ fn locel_get_o2o_rev(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<(String, Obj
 
 /// Get the full [`OCELEvent`] (resolved type name, named attributes, string object IDs).
 ///
-/// Allocates; prefer the specific `locel_get_ev_*` accessors for single fields.
+/// Allocates. Prefer the specific `locel_get_ev_*` accessors for single fields.
 /// Panics if the index is out of bounds.
 #[register_binding]
 fn locel_get_full_ev(ocel: &SlimLinkedOCEL, ev: EventIndex) -> OCELEvent {
@@ -271,7 +348,7 @@ fn locel_get_full_ev(ocel: &SlimLinkedOCEL, ev: EventIndex) -> OCELEvent {
 
 /// Get the full [`OCELObject`] (resolved type name, named time-indexed attributes, string object IDs).
 ///
-/// Allocates; prefer the specific `locel_get_ob_*` accessors for single fields.
+/// Allocates. Prefer the specific `locel_get_ob_*` accessors for single fields.
 /// Panics if the index is out of bounds.
 #[register_binding]
 fn locel_get_full_ob(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> OCELObject {
@@ -367,4 +444,225 @@ fn get_event_type_of_id(ocel: &SlimLinkedOCEL, ev_id: &String) -> Option<String>
 fn get_event_timestamp_of_id(ocel: &SlimLinkedOCEL, ev_id: &String) -> Option<String> {
     ocel.get_ev_by_id(ev_id)
         .map(|ev| ev.get_time(ocel).to_string())
+}
+
+/// Count E2O relationships per `(event_type, object_type)` pair.
+///
+/// Each entry is `(event_type, object_type, count)`. A single `(event, object)` pair connected
+/// by multiple qualifiers contributes once per qualifier. Pairs with zero relations are omitted.
+/// Result row order is unspecified.
+#[register_binding]
+fn locel_event_object_type_counts(ocel: &SlimLinkedOCEL) -> Vec<(String, String, i64)> {
+    let num_events = ocel.get_num_evs() as u32;
+    let counts: HashMap<(usize, usize), i64> = (0..num_events)
+        .into_par_iter()
+        .fold(HashMap::new, |mut acc, i| {
+            let ev = EventIndex::from(i).get_ev(ocel);
+            for (_q, ob) in &ev.relationships {
+                let ot = ob.get_ob(ocel).object_type;
+                *acc.entry((ev.event_type, ot)).or_insert(0) += 1;
+            }
+            acc
+        })
+        .reduce(HashMap::new, merge_sum_maps);
+    let ev_types: Vec<&str> = <SlimLinkedOCEL as LinkedOCELAccess>::get_ev_types(ocel).collect();
+    let ob_types: Vec<&str> = <SlimLinkedOCEL as LinkedOCELAccess>::get_ob_types(ocel).collect();
+    counts
+        .into_iter()
+        .map(|((e, o), c)| (ev_types[e].to_string(), ob_types[o].to_string(), c))
+        .collect()
+}
+
+/// Conversion rate from `source_type` to `target_type` via O2O, restricted to targets touched by `activity`.
+///
+/// Returns the fraction of `source_type` objects that have at least one outgoing O2O edge to a
+/// `target_type` object related (via E2O) to some event of the given event type.
+///
+/// # Errors
+/// Returns an error if `activity` names no declared event type, or if either object type is not
+/// declared, so a rate of `0.0` cannot mean a misspelled name.
+#[register_binding(stringify_error)]
+fn locel_conversion_rate(
+    ocel: &SlimLinkedOCEL,
+    activity: String,
+    source_type: String,
+    target_type: String,
+) -> Result<f64, String> {
+    if ocel.get_ev_type(&activity).is_none() {
+        return Err(format!("no event type '{activity}'"));
+    }
+    for ob_type in [&source_type, &target_type] {
+        if ocel.get_ob_type(ob_type).is_none() {
+            return Err(format!("no object type '{ob_type}'"));
+        }
+    }
+    let sources: Vec<ObjectIndex> = ocel.get_obs_of_type(&source_type).copied().collect();
+    let total = sources.len();
+    if total == 0 {
+        return Ok(0.0);
+    }
+    let reached = sources
+        .par_iter()
+        .filter(|&&s| {
+            s.get_o2o(ocel).any(|&t| {
+                t.get_ob_type(ocel) == &target_type
+                    && t.get_e2o_rev(ocel)
+                        .any(|&e| e.get_ev_type(ocel) == &activity)
+            })
+        })
+        .count();
+    Ok(reached as f64 / total as f64)
+}
+
+/// Each object's reverse-E2O events in `(time, id)` order.
+///
+/// Events are sorted per call, so this makes no assumption about global event ordering
+fn sorted_events_per_object(ocel: &SlimLinkedOCEL) -> Vec<Vec<EventIndex>> {
+    (0..ocel.get_num_obs() as u32)
+        .into_par_iter()
+        .map(|i| {
+            let mut evs: Vec<EventIndex> =
+                ObjectIndex::from(i).get_e2o_rev(ocel).copied().collect();
+            evs.sort_by(|a, b| {
+                a.get_time(ocel)
+                    .cmp(b.get_time(ocel))
+                    .then_with(|| ocel.get_ev_id(a).cmp(ocel.get_ev_id(b)))
+            });
+            evs
+        })
+        .collect()
+}
+
+/// The `(time, id)`-immediate predecessor of `e` on object `o`, using the
+/// per-object sorted lists from [`sorted_events_per_object`].
+/// `None` if `e` is the first event on `o`.
+///
+/// # Panics
+/// If `e` is not in `o`'s own list, which means the forward and reverse E2O indices disagree.
+#[inline]
+fn df_predecessor(
+    sorted: &[Vec<EventIndex>],
+    ocel: &SlimLinkedOCEL,
+    e: EventIndex,
+    o: ObjectIndex,
+) -> Option<EventIndex> {
+    let evs = &sorted[o.into_inner() as usize];
+    let key = (e.get_time(ocel), ocel.get_ev_id(&e));
+    let pos = evs
+        .binary_search_by(|x| (x.get_time(ocel), ocel.get_ev_id(x)).cmp(&key))
+        .unwrap_or_else(|_| {
+            panic!(
+                "event '{}' is related to object '{}' but missing from its reverse-E2O list",
+                ocel.get_ev_id(&e),
+                ocel.get_ob_id(&o)
+            )
+        });
+    pos.checked_sub(1).map(|p| evs[p])
+}
+
+/// Keep only the `k` rows `cmp` ranks first, still ordered by `cmp`.
+fn keep_top_k<T, F>(rows: &mut Vec<T>, k: usize, cmp: F)
+where
+    F: Fn(&T, &T) -> std::cmp::Ordering,
+{
+    if k < rows.len() {
+        rows.select_nth_unstable_by(k, &cmp);
+        rows.truncate(k);
+    }
+    rows.sort_unstable_by(&cmp);
+}
+
+/// Per-event synchronization time and the delaying object.
+///
+/// For each event with at least one directly-follows predecessor, the synchronization time is
+/// `max_predecessor_time - min_predecessor_time` in integer microseconds (the span between its
+/// earliest and latest directly-preceding event). The delaying object is the object linking the
+/// latest predecessor (ties broken by ascending object id).
+/// Returns one row `(event_id, sync_us, delaying_object_id)` per qualifying event.
+///
+/// `top_k`: if `Some(k)`, return only the `k` rows with the largest `sync_us`, ties broken by
+/// ascending event id, sorted descending. `None` returns every qualifying event.
+#[register_binding]
+fn locel_oc_perf_sync_per_event(
+    ocel: &SlimLinkedOCEL,
+    #[bind(default)] top_k: Option<usize>,
+) -> Vec<(String, i64, String)> {
+    let sorted = sorted_events_per_object(ocel);
+    let mut rows: Vec<(EventIndex, i64, ObjectIndex)> = (0..ocel.get_num_evs() as u32)
+        .into_par_iter()
+        .filter_map(|i| {
+            let e = EventIndex::from(i);
+            let mut min_us = i64::MAX;
+            // (latest predecessor time, its object) = the delaying edge.
+            let mut delaying: Option<(i64, ObjectIndex)> = None;
+            for &o in e.get_e2o(ocel) {
+                if let Some(p) = df_predecessor(&sorted, ocel, e, o) {
+                    let t = p.get_time(ocel).timestamp_micros();
+                    min_us = min_us.min(t);
+                    let keep = match delaying {
+                        Some((bt, bo)) => {
+                            bt > t || (bt == t && ocel.get_ob_id(&bo) <= ocel.get_ob_id(&o))
+                        }
+                        None => false,
+                    };
+                    if !keep {
+                        delaying = Some((t, o));
+                    }
+                }
+            }
+            delaying.map(|(max_us, o)| (e, max_us - min_us, o))
+        })
+        .collect();
+    if let Some(k) = top_k {
+        keep_top_k(&mut rows, k, |a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| ocel.get_ev_id(&a.0).cmp(ocel.get_ev_id(&b.0)))
+        });
+    }
+    rows.into_iter()
+        .map(|(e, max_minus_min, o)| {
+            (
+                ocel.get_ev_id(&e).to_string(),
+                max_minus_min,
+                ocel.get_ob_id(&o).to_string(),
+            )
+        })
+        .collect()
+}
+
+/// Per-event sojourn time.
+///
+/// For each event with at least one directly-follows predecessor, the sojourn time is
+/// `event_time - latest_predecessor_time` in integer microseconds. Returns one row
+/// `(event_id, sojourn_us)` per qualifying event.
+///
+/// `top_k`: if `Some(k)`, return only the `k` rows with the largest `sojourn_us`, ties broken by
+/// ascending event id, sorted descending. `None` returns every qualifying event.
+#[register_binding]
+fn locel_oc_perf_sojourn_per_event(
+    ocel: &SlimLinkedOCEL,
+    #[bind(default)] top_k: Option<usize>,
+) -> Vec<(String, i64)> {
+    let sorted = sorted_events_per_object(ocel);
+    let mut rows: Vec<(EventIndex, i64)> = (0..ocel.get_num_evs() as u32)
+        .into_par_iter()
+        .filter_map(|i| {
+            let e = EventIndex::from(i);
+            let latest = e
+                .get_e2o(ocel)
+                .filter_map(|&o| df_predecessor(&sorted, ocel, e, o))
+                .map(|p| p.get_time(ocel).timestamp_micros())
+                .max()?;
+            Some((e, e.get_time(ocel).timestamp_micros() - latest))
+        })
+        .collect();
+    if let Some(k) = top_k {
+        keep_top_k(&mut rows, k, |a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| ocel.get_ev_id(&a.0).cmp(ocel.get_ev_id(&b.0)))
+        });
+    }
+    rows.into_iter()
+        .map(|(e, sojourn_us)| (ocel.get_ev_id(&e).to_string(), sojourn_us))
+        .collect()
 }
