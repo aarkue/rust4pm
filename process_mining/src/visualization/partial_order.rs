@@ -2,160 +2,157 @@
 
 use std::collections::HashMap;
 
-use graphlay::{Direction, Edge, Graph, LayoutError, LayoutOptions, Node, Shape};
+use graphlay::json::LayoutRequest;
+use graphlay::layout::{EdgeRoute, Placement};
+use graphlay::svg::{SceneEdge, SceneNode, Stroke};
+use graphlay::{Direction, Edge, Graph, Layout, Node, Preset, Shape};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::core::event_data::case_centric::utils::partial_orders::{EventHash, PartialOrderTrace};
 use crate::core::event_data::case_centric::EventLogClassifier;
-use crate::visualization::graph_build::{
-    heuristic_label_width, leaf_size_with, GraphAcc, LabelWidth,
-};
+use crate::visualization::engine::VisualizationError;
+use crate::visualization::graph_build::{leaf_size_with, GraphAcc, LabelWidth};
+use crate::visualization::model::{LayoutSettings, ModelLayoutRequest, Visualize};
+use crate::visualization::styling::{leaf_runs, scene_edge, scene_node, BaseStyle};
 
 /// How a [`PartialOrderTrace`] is turned into a [`Graph`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(JsonSchema))]
 #[serde(default)]
 pub struct PartialOrderBuildOptions {
-    /// Which way the order runs. `None` means left to right.
-    pub direction: Option<Direction>,
+    /// Direction (left to right by default) and engine patch over the layered preset.
+    #[serde(flatten)]
+    pub layout: LayoutSettings,
+    /// What an event is labeled with.
+    pub classifier: EventLogClassifier,
 }
 
-impl PartialOrderBuildOptions {
-    /// The layered-engine options for these build options.
-    pub fn layout_options(&self) -> LayoutOptions {
-        let mut options = LayoutOptions::layered_default();
-        options.direction = self.direction.unwrap_or(Direction::LeftRight);
-        options
-    }
+/// The layout request of a [`PartialOrderTrace`].
+pub type PartialOrderLayoutRequest =
+    ModelLayoutRequest<LayoutRequest, EventHash, (EventHash, EventHash)>;
+
+/// Colors a partial order trace is drawn with.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct PartialOrderStyle {
+    /// Colors and paddings shared with every other model.
+    pub base: BaseStyle,
 }
 
-/// The [`Graph`] of `trace`, the event behind each graph node, and the relation behind each edge.
-pub fn partial_order_to_graph(
-    trace: &PartialOrderTrace,
-    classifier: &EventLogClassifier,
-    options: &PartialOrderBuildOptions,
-) -> (Graph, Vec<EventHash>, Vec<(EventHash, EventHash)>) {
-    partial_order_to_graph_with(trace, classifier, options, &heuristic_label_width)
-}
+const EDGE_WIDTH: f64 = 2.0;
 
-/// [`partial_order_to_graph`] with a caller's own label measurement.
-pub fn partial_order_to_graph_with(
-    trace: &PartialOrderTrace,
-    classifier: &EventLogClassifier,
-    options: &PartialOrderBuildOptions,
-    measure: LabelWidth<'_>,
-) -> (Graph, Vec<EventHash>, Vec<(EventHash, EventHash)>) {
-    let _ = options;
-    let mut events: Vec<(String, EventHash)> = trace
-        .event_map
-        .iter()
-        .map(|(hash, event)| (classifier.get_class_identity(event), *hash))
-        .collect();
-    events.sort();
+impl Visualize for PartialOrderTrace {
+    type NodeRef = EventHash;
+    type EdgeRef = (EventHash, EventHash);
+    type Options = PartialOrderBuildOptions;
+    type Style = PartialOrderStyle;
+    type Request = LayoutRequest;
+    type Context = ();
 
-    let mut acc: GraphAcc<EventHash, (EventHash, EventHash)> = GraphAcc::new();
-    let mut ids = HashMap::new();
-    for (index, (label, hash)) in events.iter().enumerate() {
-        let node = Node {
-            size: leaf_size_with(label, measure),
-            shape: Shape::Box,
-            ..Node::default()
-        };
-        ids.insert(*hash, acc.add_node(index.to_string(), node, || *hash));
-    }
-
-    let mut relations: Vec<_> = trace
-        .partial_relations
-        .iter()
-        .filter_map(|(from, to)| Some((*ids.get(from)?, *ids.get(to)?, (*from, *to))))
-        .collect();
-    relations.sort_by_key(|(from, to, _)| (from.index(), to.index()));
-    for (from, to, relation) in relations {
-        acc.add_edge(Edge::new(from, to), relation);
-    }
-    acc.finish()
-}
-
-/// Lay `trace` out.
-///
-/// # Errors
-///
-/// [`LayoutError`] from the engine.
-pub fn layout_partial_order(
-    trace: &PartialOrderTrace,
-    classifier: &EventLogClassifier,
-    options: &PartialOrderBuildOptions,
-) -> Result<graphlay::Layout, LayoutError> {
-    let (graph, _, _) = partial_order_to_graph(trace, classifier, options);
-    graphlay::layout(&graph, &options.layout_options())
-}
-
-mod draw {
-    use super::*;
-    use graphlay::svg::{Scene, Stroke};
-    use graphlay::Layout;
-
-    use crate::visualization::process_tree::leaf_runs;
-    use crate::visualization::styling::{render_scene, scene, scene_edge, scene_node, BaseStyle};
-
-    /// The drawing of `trace` over an existing [`Layout`].
-    pub fn partial_order_scene(
-        trace: &PartialOrderTrace,
-        classifier: &EventLogClassifier,
-        layout: &Layout,
-        nodes: &[EventHash],
-        style: &BaseStyle,
-    ) -> Scene {
-        let mut scene_nodes = Vec::with_capacity(nodes.len());
-        for (placement, hash) in layout.nodes.iter().zip(nodes) {
-            let mut n = scene_node(
-                placement,
-                Shape::Box,
-                Some(style.node_fill.clone()),
-                Some(Stroke::new(&style.node_border, style.border_width)),
-                style,
-            );
-            if let Some(event) = trace.event_map.get(hash) {
-                let label = classifier.get_class_identity(event);
-                n.content.extend(leaf_runs(&label, style, &style.text));
-            }
-            scene_nodes.push(n);
-        }
-        let scene_edges = layout
-            .edges
-            .iter()
-            .filter_map(|route| scene_edge(route, &style.edge, 2.0))
-            .collect();
-        scene(style, scene_nodes, scene_edges)
-    }
-
-    /// Lay `trace` out and draw it, as one standalone SVG document.
-    ///
-    /// # Errors
-    ///
-    /// As [`layout_partial_order`].
-    pub fn export_partial_order_svg(
-        trace: &PartialOrderTrace,
-        classifier: &EventLogClassifier,
+    fn to_graph(
+        &self,
         options: &PartialOrderBuildOptions,
-    ) -> Result<String, LayoutError> {
-        let (graph, nodes, _) = partial_order_to_graph(trace, classifier, options);
-        let layout = graphlay::layout(&graph, &options.layout_options())?;
-        Ok(render_scene(&partial_order_scene(
-            trace,
-            classifier,
-            &layout,
-            &nodes,
-            &BaseStyle::default(),
-        )))
+        measure: LabelWidth<'_>,
+    ) -> (Graph, Vec<EventHash>, Vec<(EventHash, EventHash)>) {
+        let mut events: Vec<(String, EventHash)> = self
+            .event_map
+            .iter()
+            .map(|(hash, event)| (options.classifier.get_class_identity(event), *hash))
+            .collect();
+        events.sort();
+
+        let mut acc: GraphAcc<EventHash, (EventHash, EventHash)> = GraphAcc::new();
+        let mut ids = HashMap::new();
+        for (index, (label, hash)) in events.iter().enumerate() {
+            let node = Node {
+                size: leaf_size_with(label, measure),
+                shape: Shape::Box,
+                ..Node::default()
+            };
+            ids.insert(*hash, acc.add_node(index.to_string(), node, || *hash));
+        }
+
+        let mut relations: Vec<_> = self
+            .partial_relations
+            .iter()
+            .filter_map(|(from, to)| Some((*ids.get(from)?, *ids.get(to)?, (*from, *to))))
+            .collect();
+        relations.sort_by_key(|(from, to, _)| (from.index(), to.index()));
+        for (from, to, relation) in relations {
+            acc.add_edge(Edge::new(from, to), relation);
+        }
+        acc.finish()
+    }
+
+    fn request(
+        graph: Graph,
+        options: &PartialOrderBuildOptions,
+    ) -> Result<LayoutRequest, VisualizationError> {
+        options.layout.layered(
+            graph,
+            Preset::Layered,
+            Some(Direction::LeftRight),
+            Value::Null,
+        )
+    }
+
+    fn base(style: &PartialOrderStyle) -> &BaseStyle {
+        &style.base
+    }
+
+    fn context(
+        &self,
+        _layout: &Layout,
+        _nodes: &[EventHash],
+        _options: &PartialOrderBuildOptions,
+    ) -> Result<(), VisualizationError> {
+        Ok(())
+    }
+
+    fn draw_node(
+        &self,
+        hash: &EventHash,
+        placement: &Placement,
+        _context: &(),
+        options: &PartialOrderBuildOptions,
+        style: &PartialOrderStyle,
+    ) -> SceneNode {
+        let base = &style.base;
+        let mut n = scene_node(
+            placement,
+            Shape::Box,
+            Some(base.node_fill.clone()),
+            Some(Stroke::new(&base.node_border, base.border_width)),
+            base,
+        );
+        if let Some(event) = self.event_map.get(hash) {
+            let label = options.classifier.get_class_identity(event);
+            n.content.extend(leaf_runs(&label, base, &base.text));
+        }
+        n
+    }
+
+    fn draw_edge(
+        &self,
+        _edge: &(EventHash, EventHash),
+        _graph_edge: &Edge,
+        route: &EdgeRoute,
+        _context: &(),
+        _options: &PartialOrderBuildOptions,
+        style: &PartialOrderStyle,
+    ) -> Option<SceneEdge> {
+        scene_edge(route, &style.base.edge, EDGE_WIDTH)
     }
 }
-
-pub use draw::{export_partial_order_svg, partial_order_scene};
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::core::event_data::case_centric::Event;
+    use crate::visualization::graph_build::heuristic_label_width;
+    use crate::visualization::model::{self, Visualize};
 
     /// Wake up, then coffee, teeth and a podcast in any order, then breakfast after coffee and
     /// teeth, then work after breakfast and the podcast.
@@ -189,10 +186,10 @@ mod tests {
 
     #[test]
     fn every_relation_runs_left_to_right() {
-        let (trace, classifier) = (trace(), EventLogClassifier::default());
+        let trace = trace();
         let options = PartialOrderBuildOptions::default();
-        let (graph, nodes, edges) = partial_order_to_graph(&trace, &classifier, &options);
-        let layout = layout_partial_order(&trace, &classifier, &options).unwrap();
+        let (graph, nodes, edges) = Visualize::to_graph(&trace, &options, &heuristic_label_width);
+        let layout = model::layout(&trace, &options).unwrap();
         assert_eq!((graph.nodes.len(), graph.edges.len()), (6, 7));
         for (edge, (from, to)) in graph.edges.iter().zip(&edges) {
             let (a, b) = (edge.source.index(), edge.target.index());
@@ -202,10 +199,25 @@ mod tests {
     }
 
     #[test]
+    fn the_layout_request_resolves_to_the_layout_options() {
+        use crate::visualization::engine::layout_options_of;
+        let trace = trace();
+        let options = PartialOrderBuildOptions::default();
+        let request = model::layout_request(&trace, &options).unwrap();
+        let mut expected = graphlay::LayoutOptions::layered_default();
+        expected.direction = Direction::LeftRight;
+        assert_eq!(layout_options_of(&request.request).unwrap(), expected);
+        assert_eq!(request.nodes.len(), 6);
+        let json = serde_json::to_string(&request).unwrap();
+        let back: PartialOrderLayoutRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, request);
+    }
+
+    #[test]
     fn writes_the_svg_export() {
         let options = PartialOrderBuildOptions::default();
-        let svg =
-            export_partial_order_svg(&trace(), &EventLogClassifier::default(), &options).unwrap();
+        let style = PartialOrderStyle::default();
+        let svg = model::svg(&trace(), &options, &style).unwrap();
         assert!(svg.contains("Breakfast"));
         crate::test_utils::write_export("partial-order-trace.svg", &svg);
     }

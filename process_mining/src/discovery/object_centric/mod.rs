@@ -1,6 +1,7 @@
 //! Object-centric Process Discovery Techniques
 pub mod dfg;
 pub mod oc_declare;
+pub mod ocpn;
 pub mod variants;
 
 use std::collections::HashMap;

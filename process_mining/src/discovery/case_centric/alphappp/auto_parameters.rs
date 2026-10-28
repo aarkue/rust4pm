@@ -3,7 +3,7 @@ use crate::core::{
     process_models::case_centric::petri_net::{AcceptingPetriNet, PlaceID, TransitionID},
 };
 
-use super::full::{alphappp_discover_petri_net, AlphaPPPConfig};
+use super::full::{discover_alphappp_net, AlphaPPPConfig};
 const AUTO_CONFIGS: &[AlphaPPPConfig] = &[
     AlphaPPPConfig {
         balance_thresh: 0.6,
@@ -114,7 +114,7 @@ pub fn alphappp_discover_with_auto_parameters(
 ) -> (AlphaPPPConfig, AcceptingPetriNet) {
     let mut best: Option<(AlphaPPPConfig, f32, AcceptingPetriNet)> = None;
     for c in AUTO_CONFIGS {
-        let pn = alphappp_discover_petri_net(log_proj, *c);
+        let pn = discover_alphappp_net(log_proj, *c);
         let score = score_discovered_pn(&pn, c);
         match best {
             Some((_, best_score, _)) => {

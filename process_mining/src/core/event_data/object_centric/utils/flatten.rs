@@ -1,4 +1,5 @@
 //!  Functionality to Flatten OCEL on an Object Type
+
 use macros_process_mining::register_binding;
 
 use crate::core::{
@@ -25,31 +26,30 @@ pub fn flatten_ocel_on<'a>(
         .map(|ob| {
             let ob_val = ocel.get_full_ob(ob);
             let mut events: Vec<_> = ocel
-                .get_e2o_rev(ob)
-                .map(|(_q, ev)| {
-                    let ev_val = ocel.get_full_ev(ev);
+                .get_e2o_rev_evs(ob)
+                .map(|ev| {
                     let mut xes_ev = Event {
                         attributes: vec![
                             Attribute::new(
                                 "concept:name".to_string(),
-                                AttributeValue::String(ev_val.event_type.clone()),
+                                AttributeValue::String(ocel.get_ev_type_of(ev).to_string()),
                             ),
                             Attribute::new(
                                 "time:timestamp".to_string(),
-                                AttributeValue::Date(ev_val.time),
+                                AttributeValue::Date(*ocel.get_ev_time(ev)),
                             ),
                         ],
                     };
-
-                    xes_ev.attributes.extend(ev_val.attributes.iter().map(|at| {
-                        let xes_attr_val: AttributeValue = at.value.clone().into();
-                        Attribute {
-                            key: at.name.clone(),
-                            value: xes_attr_val,
-                            own_attributes: None,
-                        }
-                    }));
-
+                    xes_ev
+                        .attributes
+                        .extend(ocel.get_ev_attrs(ev).flat_map(|attr_name| {
+                            let attr_value = ocel.get_ev_attr_val(ev, attr_name)?;
+                            Some(Attribute {
+                                key: attr_name.to_string(),
+                                value: attr_value.clone().into(),
+                                own_attributes: None,
+                            })
+                        }));
                     xes_ev
                 })
                 .collect();

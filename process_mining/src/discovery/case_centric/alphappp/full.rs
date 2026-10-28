@@ -103,15 +103,22 @@ impl Default for AlphaPPPConfig {
     }
 }
 
-///
-/// Discover an [`AcceptingPetriNet`] using the Alpha+++ Process Discovery algorithm
-///
-#[register_binding(name = "discover_alpha+++")]
-pub fn alphappp_discover_petri_net(
-    log_proj: &EventLogActivityProjection,
+/// Discovers an [`AcceptingPetriNet`] with the Alpha+++ process discovery algorithm.
+#[register_binding]
+pub fn discover_alphappp_net(
+    log: &EventLogActivityProjection,
     #[bind(default = Default::default())] config: AlphaPPPConfig,
 ) -> AcceptingPetriNet {
-    alphappp_discover_petri_net_with_timing_fn(log_proj, config, &|| 0).0
+    alphappp_discover_petri_net_with_timing_fn(log, config, &|| 0).0
+}
+
+/// Discovers an [`AcceptingPetriNet`] with the Alpha+++ process discovery algorithm.
+#[deprecated(note = "renamed to `discover_alphappp_net`")]
+pub fn alphappp_discover_petri_net(
+    log_proj: &EventLogActivityProjection,
+    config: AlphaPPPConfig,
+) -> AcceptingPetriNet {
+    discover_alphappp_net(log_proj, config)
 }
 
 /// Run Alpha+++ discovery

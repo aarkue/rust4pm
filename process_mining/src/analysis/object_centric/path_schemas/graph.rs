@@ -4,7 +4,9 @@ use crate::core::event_data::object_centric::linked_ocel::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+
+use crate::core::event_data::object_centric::type_graph::{OcTypeGraph, TypeKind};
 
 /// Qualifier for E2O or O2O relations.
 pub type Qualifier = String;
@@ -115,51 +117,36 @@ pub struct TypeGraph {
 impl TypeGraph {
     /// Build the type graph from a [`SlimLinkedOCEL`].
     pub fn from_linked_ocel(ocel: &SlimLinkedOCEL) -> Self {
-        let event_types: Vec<TypeName> = ocel.get_ev_types().map(|s| s.to_string()).collect();
-        let object_types: Vec<TypeName> = ocel.get_ob_types().map(|s| s.to_string()).collect();
+        Self::from(&OcTypeGraph::from_linked_ocel(ocel))
+    }
+}
 
-        // Dedup distinct type-edges over borrowed names first, so the (potentially many)
-        // per-relationship names are only cloned once per surviving edge, not per relationship.
-        let mut edge_set: HashSet<(EntityKind, &str, EntityKind, &str, &str)> = HashSet::new();
-
-        for ev in ocel.get_all_evs() {
-            let ev_type = ocel.get_ev_type_of(&ev);
-            for (qualifier, ob) in ocel.get_e2o(&ev) {
-                let ob_type = ocel.get_ob_type_of(ob);
-                edge_set.insert((
-                    EntityKind::Event,
-                    ev_type,
-                    EntityKind::Object,
-                    ob_type,
-                    qualifier,
-                ));
-            }
-        }
-
-        for ob in ocel.get_all_obs() {
-            let ob_type = ocel.get_ob_type_of(&ob);
-            for (qualifier, target_ob) in ocel.get_o2o(&ob) {
-                let target_type = ocel.get_ob_type_of(target_ob);
-                edge_set.insert((
-                    EntityKind::Object,
-                    ob_type,
-                    EntityKind::Object,
-                    target_type,
-                    qualifier,
-                ));
-            }
-        }
-
-        let make_ref = |kind, name: &str| match kind {
-            EntityKind::Event => TypeRef::Event(name.to_string()),
-            EntityKind::Object => TypeRef::Object(name.to_string()),
+impl From<&OcTypeGraph> for TypeGraph {
+    fn from(graph: &OcTypeGraph) -> Self {
+        let names = |kind: TypeKind| -> Vec<TypeName> {
+            graph
+                .nodes
+                .iter()
+                .filter(|n| n.kind == kind)
+                .map(|n| n.label.clone())
+                .collect()
         };
-        let mut edges: Vec<TypeEdge> = edge_set
-            .into_iter()
-            .map(|(src_kind, source, tgt_kind, target, qualifier)| TypeEdge {
-                source: make_ref(src_kind, source),
-                target: make_ref(tgt_kind, target),
-                qualifier: qualifier.to_string(),
+        let event_types = names(TypeKind::Event);
+        let object_types = names(TypeKind::Object);
+        let type_ref = |index: usize| {
+            let node = &graph.nodes[index];
+            match node.kind {
+                TypeKind::Event => TypeRef::Event(node.label.clone()),
+                TypeKind::Object => TypeRef::Object(node.label.clone()),
+            }
+        };
+        let mut edges: Vec<TypeEdge> = graph
+            .edges
+            .iter()
+            .map(|e| TypeEdge {
+                source: type_ref(e.source),
+                target: type_ref(e.target),
+                qualifier: e.qualifier.clone().unwrap_or_default(),
             })
             .collect();
         // Deterministic order so schema enumeration indices are reproducible.
@@ -182,7 +169,9 @@ impl TypeGraph {
             rev_adj,
         }
     }
+}
 
+impl TypeGraph {
     /// Edge indices reachable from a type, both forward and reverse (undirected traversal).
     /// Yields `(edge_index, neighbor_type, is_reverse)`.
     pub fn neighbors_undirected(&self, type_ref: &TypeRef) -> Vec<(usize, &TypeRef, bool)> {

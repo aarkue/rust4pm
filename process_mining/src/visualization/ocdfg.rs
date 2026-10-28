@@ -1,28 +1,30 @@
 //! Laying out and drawing an [`OCDirectlyFollowsGraph`]: one DFG per object type in one picture.
 
-use std::collections::BTreeMap;
-
-use graphlay::{
-    Direction, Graph, GroupId, LayoutError, LayoutOptions, Node, RankConstraint, Shape,
-};
+use graphlay::json::LayoutRequest;
+use graphlay::layout::{EdgeRoute, Placement};
+use graphlay::svg::{SceneEdge, SceneNode, Stroke};
+use graphlay::{Edge, Graph, GroupId, Layout, Preset, Shape};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use crate::core::event_data::case_centric::EventLogClassifier;
 use crate::core::process_models::ocdfg::OCDirectlyFollowsGraph;
-use crate::visualization::dfg::{
-    activity_key, boundary_counts, count_edge, sorted_relations, trace_boundary_counts, DfgEdgeRef,
-    ACTIVITY_HEIGHT,
+use crate::visualization::annotation::node_text;
+use crate::visualization::dfg::{add_dfg, count_text, DfgEdgeRef, DfgNodeRef};
+use crate::visualization::engine::VisualizationError;
+use crate::visualization::graph_build::{GraphAcc, LabelWidth};
+use crate::visualization::model::{Annotations, LayoutSettings, ModelLayoutRequest, Visualize};
+use crate::visualization::styling::{
+    edge_label, key_color, lighten, node_label, push_extra_line, scene_edge, scene_node,
+    terminal_mark, BaseStyle,
 };
-use crate::visualization::graph_build::{
-    dfg_width_with, heuristic_label_width, GraphAcc, LabelWidth, TERMINAL_SIZE,
-};
-use crate::visualization::styling::BaseStyle;
-use crate::EventLog;
 
-/// A node of an [`OCDirectlyFollowsGraph`] drawing.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+/// A node of an [`OCDirectlyFollowsGraph`] drawing, e.g., `{"kind": "start", "name": "orders"}`.
+/// The name is the object type of a terminal, or the activity.
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(tag = "kind", content = "name", rename_all = "snake_case")]
 pub enum OcdfgNodeRef {
     /// One object type's START terminal.
     Start(String),
@@ -41,65 +43,55 @@ pub struct OcdfgEdgeRef {
     pub edge: DfgEdgeRef,
 }
 
+impl OcdfgEdgeRef {
+    /// The object type, source and target, which key the edge's annotation.
+    pub(crate) fn annotation_key(&self) -> (String, DfgNodeRef, DfgNodeRef) {
+        let (from, to) = self.edge.endpoints();
+        (self.object_type.clone(), from, to)
+    }
+}
+
+/// Labels, layout weights and line widths of an [`OCDirectlyFollowsGraph`] drawing that replace
+/// the counts, e.g., durations. Edges are keyed by object type and the source and target node in
+/// that type's DFG.
+pub type OcdfgAnnotations = Annotations<OcdfgNodeRef, (String, DfgNodeRef, DfgNodeRef)>;
+
 /// How an [`OCDirectlyFollowsGraph`] is turned into a [`Graph`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(JsonSchema))]
 #[serde(default)]
 pub struct OcdfgBuildOptions {
-    /// Flow direction. `None` means top to bottom.
-    pub direction: Option<Direction>,
+    /// Direction (top to bottom by default) and engine patch over the process-map preset.
+    #[serde(flatten)]
+    pub layout: LayoutSettings,
     /// Draw each object type's START / END terminals. On by default.
     pub terminals: bool,
     /// Object types to draw, in this order. Empty draws all of them, by name.
     pub object_types: Vec<String>,
-    /// Per object type, how many of its cases begin with each activity. See
-    /// [`OcdfgBuildOptions::with_log`].
-    pub start_counts: BTreeMap<String, BTreeMap<String, u32>>,
-    /// Per object type, how many of its cases end with each activity.
-    pub end_counts: BTreeMap<String, BTreeMap<String, u32>>,
+    /// Labels, layout weights and line widths by node and edge, instead of the counts.
+    pub annotations: OcdfgAnnotations,
 }
 
 impl Default for OcdfgBuildOptions {
     fn default() -> Self {
         OcdfgBuildOptions {
-            direction: None,
+            layout: LayoutSettings::default(),
             terminals: true,
             object_types: Vec::new(),
-            start_counts: BTreeMap::new(),
-            end_counts: BTreeMap::new(),
+            annotations: OcdfgAnnotations::default(),
         }
     }
 }
 
 impl OcdfgBuildOptions {
-    /// Record the trace-boundary counts of one object type's flattened log.
-    #[must_use]
-    pub fn with_log(self, object_type: impl Into<String>, log: &EventLog) -> Self {
-        self.with_log_using(object_type, log, &EventLogClassifier::default())
-    }
-
-    /// [`OcdfgBuildOptions::with_log`] with a custom classifier.
-    #[must_use]
-    pub fn with_log_using(
-        mut self,
-        object_type: impl Into<String>,
-        log: &EventLog,
-        classifier: &EventLogClassifier,
-    ) -> Self {
-        let object_type = object_type.into();
-        let (starts, ends) = trace_boundary_counts(log, classifier);
-        self.start_counts.insert(object_type.clone(), starts);
-        self.end_counts.insert(object_type, ends);
-        self
-    }
-
-    /// The object types to draw, in group order.
+    /// The object types to draw, in group order, each once.
     pub fn types_of(&self, model: &OCDirectlyFollowsGraph<'_>) -> Vec<String> {
         if !self.object_types.is_empty() {
+            let mut seen = std::collections::HashSet::new();
             return self
                 .object_types
                 .iter()
-                .filter(|t| model.object_type_to_dfg.contains_key(*t))
+                .filter(|t| model.object_type_to_dfg.contains_key(*t) && seen.insert(*t))
                 .cloned()
                 .collect();
         }
@@ -107,23 +99,19 @@ impl OcdfgBuildOptions {
         types.sort();
         types
     }
-
-    /// The engine options for these build options.
-    pub fn layout_options(&self) -> LayoutOptions {
-        let mut options = LayoutOptions::process_map();
-        if let Some(direction) = self.direction {
-            options.direction = direction;
-        }
-        options
-    }
 }
 
+/// The layout request of an [`OCDirectlyFollowsGraph`].
+pub type OcdfgLayoutRequest = ModelLayoutRequest<LayoutRequest, OcdfgNodeRef, OcdfgEdgeRef>;
+
 /// Colors an object-centric directly-follows graph is drawn with.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct OcdfgStyle {
     /// Colors and paddings shared with every other model.
     pub base: BaseStyle,
-    /// How far towards white an object type's color is washed for a node fill.
+    /// How far towards white an object type's color is washed for the play or stop mark on its
+    /// START and END terminals.
     pub fill_lightness: f64,
 }
 
@@ -136,266 +124,157 @@ impl Default for OcdfgStyle {
     }
 }
 
-/// The [`Graph`] of `model`, plus the node and edge meta tables.
-pub fn ocdfg_to_graph(
-    model: &OCDirectlyFollowsGraph<'_>,
-    options: &OcdfgBuildOptions,
-) -> (Graph, Vec<OcdfgNodeRef>, Vec<OcdfgEdgeRef>) {
-    ocdfg_to_graph_with(model, options, &heuristic_label_width)
+fn type_color(object_type: &str) -> String {
+    key_color("objectType", object_type)
 }
 
-/// [`ocdfg_to_graph`] with a caller's own label measurement.
-pub fn ocdfg_to_graph_with(
-    model: &OCDirectlyFollowsGraph<'_>,
-    options: &OcdfgBuildOptions,
-    measure: LabelWidth<'_>,
-) -> (Graph, Vec<OcdfgNodeRef>, Vec<OcdfgEdgeRef>) {
-    let mut acc: GraphAcc<OcdfgNodeRef, OcdfgEdgeRef> = GraphAcc::new();
-    let types = options.types_of(model);
+impl Visualize for OCDirectlyFollowsGraph<'_> {
+    type NodeRef = OcdfgNodeRef;
+    type EdgeRef = OcdfgEdgeRef;
+    type Options = OcdfgBuildOptions;
+    type Style = OcdfgStyle;
+    type Request = LayoutRequest;
+    type Context = ();
 
-    for (index, object_type) in types.iter().enumerate() {
-        let group = Some(GroupId(index as u32));
-        let Some(dfg) = model.object_type_to_dfg.get(object_type) else {
-            continue;
-        };
-        let (start_key, end_key) = (format!("START:{object_type}"), format!("END:{object_type}"));
-        if options.terminals {
-            acc.add_node(
-                &start_key,
-                Node {
-                    size: TERMINAL_SIZE,
-                    shape: Shape::Box,
-                    rank: RankConstraint::First,
-                    group,
-                    ..Node::default()
-                },
-                || OcdfgNodeRef::Start(object_type.clone()),
-            );
-            acc.add_node(
-                &end_key,
-                Node {
-                    size: TERMINAL_SIZE,
-                    shape: Shape::Box,
-                    rank: RankConstraint::Last,
-                    group,
-                    ..Node::default()
-                },
-                || OcdfgNodeRef::End(object_type.clone()),
-            );
-        }
-
-        let mut activities: Vec<&String> = dfg.activities.keys().collect();
-        activities.sort();
-        for name in &activities {
-            acc.add_node(
-                activity_key(name),
-                Node {
-                    size: graphlay::Size::new(dfg_width_with(name, measure), ACTIVITY_HEIGHT),
-                    shape: Shape::Box,
-                    group,
-                    ..Node::default()
-                },
-                || OcdfgNodeRef::Activity((*name).clone()),
-            );
-        }
-
-        let empty = BTreeMap::new();
-        let relations = sorted_relations(dfg);
-        let starts = boundary_counts(
-            options.start_counts.get(object_type).unwrap_or(&empty),
-            &dfg.start_activities,
-            &dfg.activities,
-        );
-        let ends = boundary_counts(
-            options.end_counts.get(object_type).unwrap_or(&empty),
-            &dfg.end_activities,
-            &dfg.activities,
-        );
-        let max_count = relations
-            .iter()
-            .map(|(_, _, c)| *c)
-            .chain(starts.values().copied())
-            .chain(ends.values().copied())
-            .max()
-            .unwrap_or(1) as f64;
-
-        for (from, to, count) in &relations {
-            let (Some(source), Some(target)) = (
-                acc.node_id(&activity_key(from)),
-                acc.node_id(&activity_key(to)),
-            ) else {
-                continue;
-            };
-            acc.add_edge(
-                count_edge(source, target, *count, max_count, group, measure),
-                OcdfgEdgeRef {
-                    object_type: object_type.clone(),
-                    edge: DfgEdgeRef::Follows {
-                        from: from.clone(),
-                        to: to.clone(),
-                        count: *count,
-                    },
-                },
-            );
-        }
-        if options.terminals {
-            for (activity, count) in &starts {
-                let (Some(source), Some(target)) = (
-                    acc.node_id(&start_key),
-                    acc.node_id(&activity_key(activity)),
-                ) else {
-                    continue;
-                };
-                acc.add_edge(
-                    count_edge(source, target, *count, max_count, group, measure),
-                    OcdfgEdgeRef {
-                        object_type: object_type.clone(),
-                        edge: DfgEdgeRef::Start {
-                            activity: activity.clone(),
-                            count: *count,
-                        },
-                    },
-                );
-            }
-            for (activity, count) in &ends {
-                let (Some(source), Some(target)) =
-                    (acc.node_id(&activity_key(activity)), acc.node_id(&end_key))
-                else {
-                    continue;
-                };
-                acc.add_edge(
-                    count_edge(source, target, *count, max_count, group, measure),
-                    OcdfgEdgeRef {
-                        object_type: object_type.clone(),
-                        edge: DfgEdgeRef::End {
-                            activity: activity.clone(),
-                            count: *count,
-                        },
-                    },
-                );
-            }
-        }
-    }
-
-    acc.finish()
-}
-
-/// Lay `model` out.
-///
-/// # Errors
-///
-/// [`LayoutError`] from the engine.
-pub fn layout_ocdfg(
-    model: &OCDirectlyFollowsGraph<'_>,
-    options: &OcdfgBuildOptions,
-) -> Result<graphlay::Layout, LayoutError> {
-    let (graph, _, _) = ocdfg_to_graph(model, options);
-    graphlay::layout(&graph, &options.layout_options())
-}
-
-mod draw {
-    use super::*;
-    use graphlay::svg::{Scene, Stroke};
-    use graphlay::Layout;
-
-    use crate::visualization::styling::{
-        edge_label, key_color, lighten, node_label, scene, scene_edge, scene_node, terminal_mark,
-    };
-
-    /// The drawing of `model` over an existing [`Layout`], one color per object type.
-    pub fn ocdfg_scene(
-        model: &OCDirectlyFollowsGraph<'_>,
-        layout: &Layout,
-        nodes: &[OcdfgNodeRef],
-        edges: &[OcdfgEdgeRef],
-        style: &OcdfgStyle,
-    ) -> Scene {
-        let _ = model;
-        let base = &style.base;
-        let color_of = |object_type: &str| key_color("objectType", object_type);
-
-        let mut scene_nodes = Vec::with_capacity(nodes.len());
-        for (placement, node) in layout.nodes.iter().zip(nodes) {
-            let n = match node {
-                OcdfgNodeRef::Activity(name) => {
-                    let mut n = scene_node(
-                        placement,
-                        Shape::Box,
-                        Some(base.node_fill.clone()),
-                        Some(Stroke::new(&base.node_border, base.border_width)),
-                        base,
-                    );
-                    n.content
-                        .push(node_label(name, placement.size.width, 2, base));
-                    n
-                }
-                OcdfgNodeRef::Start(t) | OcdfgNodeRef::End(t) => {
-                    let start = matches!(node, OcdfgNodeRef::Start(_));
-                    let color = color_of(t);
-                    let mut n = scene_node(
-                        placement,
-                        Shape::Box,
-                        Some(color.clone()),
-                        Some(Stroke::new(&color, base.border_width)),
-                        base,
-                    );
-                    n.content.push(terminal_mark(
-                        start,
-                        placement.size.height / 2.0,
-                        &lighten(&color, style.fill_lightness),
-                    ));
-                    n
-                }
-            };
-            scene_nodes.push(n);
-        }
-
-        let max_count = edges.iter().map(|e| e.edge.count()).max().unwrap_or(1) as f64;
-        let mut scene_edges = Vec::with_capacity(edges.len());
-        for (route, meta) in layout.edges.iter().zip(edges) {
-            let width = crate::visualization::graph_build::thickness_from_count(
-                meta.edge.count() as f64,
-                max_count,
-            );
-            let Some(mut e) = scene_edge(route, &color_of(&meta.object_type), width) else {
-                continue;
-            };
-            e.labels
-                .push(edge_label(&meta.edge.count().to_string(), route, base));
-            scene_edges.push(e);
-        }
-        scene(base, scene_nodes, scene_edges)
-    }
-
-    /// Lay `model` out and draw it, as one standalone SVG document.
-    ///
-    /// # Errors
-    ///
-    /// As [`layout_ocdfg`].
-    pub fn export_ocdfg_svg(
-        model: &OCDirectlyFollowsGraph<'_>,
+    fn to_graph(
+        &self,
         options: &OcdfgBuildOptions,
-    ) -> Result<String, LayoutError> {
-        let (graph, nodes, edges) = ocdfg_to_graph(model, options);
-        let layout = graphlay::layout(&graph, &options.layout_options())?;
-        Ok(crate::visualization::styling::render_scene(&ocdfg_scene(
-            model,
-            &layout,
-            &nodes,
-            &edges,
-            &OcdfgStyle::default(),
-        )))
+        measure: LabelWidth<'_>,
+    ) -> (Graph, Vec<OcdfgNodeRef>, Vec<OcdfgEdgeRef>) {
+        let mut acc: GraphAcc<OcdfgNodeRef, OcdfgEdgeRef> = GraphAcc::new();
+        let annotations = &options.annotations;
+        for (index, object_type) in options.types_of(self).iter().enumerate() {
+            let Some(dfg) = self.object_type_to_dfg.get(object_type) else {
+                continue;
+            };
+            let (start_key, end_key) =
+                (format!("START:{object_type}"), format!("END:{object_type}"));
+            add_dfg(
+                &mut acc,
+                dfg,
+                options
+                    .terminals
+                    .then_some((start_key.as_str(), end_key.as_str())),
+                Some(GroupId(index as u32)),
+                |node| {
+                    let node = match node {
+                        DfgNodeRef::Start => OcdfgNodeRef::Start(object_type.clone()),
+                        DfgNodeRef::End => OcdfgNodeRef::End(object_type.clone()),
+                        DfgNodeRef::Activity(name) => OcdfgNodeRef::Activity(name),
+                    };
+                    let note = node_text(annotations.nodes.get(&node));
+                    (node, note)
+                },
+                |edge| {
+                    let edge = OcdfgEdgeRef {
+                        object_type: object_type.clone(),
+                        edge,
+                    };
+                    let annotation = annotations.edges.get(&edge.annotation_key());
+                    (edge, annotation)
+                },
+                measure,
+            );
+        }
+        acc.finish()
+    }
+
+    fn request(
+        graph: Graph,
+        options: &OcdfgBuildOptions,
+    ) -> Result<LayoutRequest, VisualizationError> {
+        options
+            .layout
+            .layered(graph, Preset::ProcessMap, None, Value::Null)
+    }
+
+    fn base(style: &OcdfgStyle) -> &BaseStyle {
+        &style.base
+    }
+
+    fn context(
+        &self,
+        _layout: &Layout,
+        _nodes: &[OcdfgNodeRef],
+        _options: &OcdfgBuildOptions,
+    ) -> Result<(), VisualizationError> {
+        Ok(())
+    }
+
+    fn draw_node(
+        &self,
+        node: &OcdfgNodeRef,
+        placement: &Placement,
+        _context: &(),
+        options: &OcdfgBuildOptions,
+        style: &OcdfgStyle,
+    ) -> SceneNode {
+        let base = &style.base;
+        let mut n = match node {
+            OcdfgNodeRef::Activity(name) => {
+                let mut n = scene_node(
+                    placement,
+                    Shape::Box,
+                    Some(base.node_fill.clone()),
+                    Some(Stroke::new(&base.node_border, base.border_width)),
+                    base,
+                );
+                n.content
+                    .push(node_label(name, placement.size.width, 2, base));
+                n
+            }
+            OcdfgNodeRef::Start(t) | OcdfgNodeRef::End(t) => {
+                let start = matches!(node, OcdfgNodeRef::Start(_));
+                let color = type_color(t);
+                let mut n = scene_node(
+                    placement,
+                    Shape::Box,
+                    Some(color.clone()),
+                    Some(Stroke::new(&color, base.border_width)),
+                    base,
+                );
+                n.content.push(terminal_mark(
+                    start,
+                    placement.size.height / 2.0,
+                    &lighten(&color, style.fill_lightness),
+                ));
+                n
+            }
+        };
+        if let Some(note) = node_text(options.annotations.nodes.get(node)) {
+            push_extra_line(&mut n, note, base);
+        }
+        n
+    }
+
+    fn draw_edge(
+        &self,
+        edge: &OcdfgEdgeRef,
+        graph_edge: &Edge,
+        route: &EdgeRoute,
+        _context: &(),
+        options: &OcdfgBuildOptions,
+        style: &OcdfgStyle,
+    ) -> Option<SceneEdge> {
+        let mut e = scene_edge(route, &type_color(&edge.object_type), graph_edge.thickness)?;
+        let annotation = options.annotations.edges.get(&edge.annotation_key());
+        if let Some(text) = count_text(&edge.edge, annotation) {
+            e.labels.push(edge_label(&text, route, &style.base));
+        }
+        Some(e)
     }
 }
-
-pub use draw::{export_ocdfg_svg, ocdfg_scene};
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::core::event_data::object_centric::linked_ocel::IndexLinkedOCEL;
     use crate::test_utils::get_test_data_path;
+    use crate::visualization::graph_build::heuristic_label_width;
+    use crate::visualization::model::{self, Visualize};
     use crate::visualization::styling::key_color;
+    use crate::visualization::StyleOverrides;
+    use crate::visualization::{EdgeAnnotation, NodeAnnotation};
     use crate::{Importable, OCEL};
 
     /// The model borrows the linked OCEL, so the two have to live in one scope.
@@ -414,7 +293,7 @@ mod tests {
         with_model("pm4py-ocel20_example.jsonocel", |_, model| {
             let options = OcdfgBuildOptions::default();
             let types = options.types_of(model);
-            let (graph, nodes, edges) = ocdfg_to_graph(model, &options);
+            let (graph, nodes, edges) = model.to_graph(&options, &heuristic_label_width);
             let distinct: std::collections::BTreeSet<&String> = model
                 .object_type_to_dfg
                 .values()
@@ -432,6 +311,28 @@ mod tests {
         });
     }
 
+    #[test]
+    fn the_layout_request_names_each_terminal_by_its_object_type() {
+        use crate::visualization::engine::layout_options_of;
+        with_model("pm4py-ocel20_example.jsonocel", |_, model| {
+            let options = OcdfgBuildOptions::default();
+            let request = model::layout_request(model, &options).unwrap();
+            assert_eq!(
+                layout_options_of(&request.request).unwrap(),
+                graphlay::LayoutOptions::process_map()
+            );
+            let json = serde_json::to_value(&request).unwrap();
+            let first_type = &options.types_of(model)[0];
+            assert_eq!(
+                json["nodes"][0],
+                serde_json::json!({"kind": "start", "name": first_type})
+            );
+            let back: OcdfgLayoutRequest = serde_json::from_value(json).unwrap();
+            assert_eq!(back.nodes, request.nodes);
+            assert_eq!(back.edges, request.edges);
+        });
+    }
+
     /// A type's color depends only on its name, so it stays the same when other types are left out.
     #[test]
     fn object_types_take_their_key_color() {
@@ -442,10 +343,13 @@ mod tests {
                 ..OcdfgBuildOptions::default()
             };
             for options in [all, one] {
-                let (graph, nodes, edges) = ocdfg_to_graph(model, &options);
-                let layout = graphlay::layout(&graph, &options.layout_options()).unwrap();
-                let scene = ocdfg_scene(model, &layout, &nodes, &edges, &OcdfgStyle::default());
-                for (node, meta) in scene.nodes.iter().zip(&nodes) {
+                let request = model::layout_request(model, &options).unwrap();
+                let layout = crate::visualization::engine::layout_graph(&request.request).unwrap();
+                let style = OcdfgStyle::default();
+                let overrides = StyleOverrides::default();
+                let scene =
+                    model::scene_from_layout(model, &layout, &options, &style, &overrides).unwrap();
+                for (node, meta) in scene.nodes.iter().zip(&request.nodes) {
                     if let OcdfgNodeRef::Start(t) | OcdfgNodeRef::End(t) = meta {
                         assert_eq!(node.fill, Some(key_color("objectType", t)), "{meta:?}");
                     }
@@ -455,22 +359,124 @@ mod tests {
     }
 
     #[test]
+    fn annotations_replace_the_counts_of_one_object_type() {
+        use crate::visualization::graph_build::edge_label_size;
+        with_model("pm4py-ocel20_example.jsonocel", |_, model| {
+            let plain = OcdfgBuildOptions::default();
+            let (plain_graph, nodes, edges) = model.to_graph(&plain, &heuristic_label_width);
+            let start = edges
+                .iter()
+                .position(|e| matches!(e.edge, DfgEdgeRef::Start { .. }))
+                .unwrap();
+            let (object_type, from, to) = edges[start].annotation_key();
+            let DfgNodeRef::Activity(activity) = &to else {
+                unreachable!()
+            };
+            let mut options = OcdfgBuildOptions::default();
+            options.annotations.edges.insert(
+                (object_type.clone(), from, to.clone()),
+                EdgeAnnotation {
+                    label: Some("3 h".to_string()),
+                    thickness: Some(8.0),
+                    ..EdgeAnnotation::default()
+                },
+            );
+            options.annotations.nodes.insert(
+                OcdfgNodeRef::Activity(activity.clone()),
+                NodeAnnotation {
+                    label: Some("avg 2 h".to_string()),
+                },
+            );
+            let json = serde_json::to_value(&options.annotations).unwrap();
+            assert_eq!(json["edges"][0][0][0], serde_json::json!(object_type));
+            let back: OcdfgAnnotations = serde_json::from_value(json).unwrap();
+            assert_eq!(back, options.annotations);
+
+            let request = model::layout_request(model, &options).unwrap();
+            let graph = &request.request.graph;
+            assert_eq!(graph.edges[start].label_size, Some(edge_label_size("3 h")));
+            assert_eq!(graph.edges[start].thickness, 8.0);
+            for i in (0..edges.len()).filter(|&i| i != start) {
+                assert_eq!(graph.edges[i], plain_graph.edges[i], "{:?}", edges[i]);
+            }
+
+            let layout = crate::visualization::engine::layout_graph(&request.request).unwrap();
+            let scene = model::scene_from_layout(
+                model,
+                &layout,
+                &options,
+                &OcdfgStyle::default(),
+                &StyleOverrides::default(),
+            )
+            .unwrap();
+            assert_eq!(scene.edges[start].labels[0].text.text, "3 h");
+            assert_eq!(scene.edges[start].stroke.width, 8.0);
+            let node = nodes
+                .iter()
+                .position(|n| *n == OcdfgNodeRef::Activity(activity.clone()))
+                .unwrap();
+            let last = scene.nodes[node].content.last();
+            assert!(
+                matches!(last, Some(graphlay::svg::NodeContent::Text(run)) if run.text == "avg 2 h")
+            );
+        });
+    }
+
+    #[test]
     fn writes_the_svg_export() {
-        use crate::core::event_data::object_centric::utils::flatten::flatten_ocel_on;
-        with_model("order-management.json", |locel, model| {
+        with_model("order-management.json", |_, model| {
             let types = ["orders", "items", "packages"];
-            let mut options = OcdfgBuildOptions {
+            let options = OcdfgBuildOptions {
                 object_types: types.map(String::from).to_vec(),
                 ..OcdfgBuildOptions::default()
             };
-            for object_type in types {
-                let mut flattened = flatten_ocel_on(locel, object_type);
-                flattened.traces.retain(|t| !t.events.is_empty());
-                options = options.with_log(object_type, &flattened);
-            }
-            let svg = export_ocdfg_svg(model, &options).unwrap();
+            let svg = model::svg(model, &options, &OcdfgStyle::default()).unwrap();
             assert!(svg.contains("<polygon") && !svg.contains("<use"));
             crate::test_utils::write_export("order-management-OCDFG.svg", &svg);
+        });
+    }
+
+    #[test]
+    fn an_object_type_named_twice_is_drawn_once() {
+        with_model("order-management.json", |_, model| {
+            let options = OcdfgBuildOptions {
+                object_types: ["orders", "items", "orders"].map(String::from).to_vec(),
+                ..OcdfgBuildOptions::default()
+            };
+            assert_eq!(options.types_of(model), ["orders", "items"]);
+        });
+    }
+
+    /// Each object type's edges are widened against that type's busiest edge, in the layout and in
+    /// the drawing.
+    #[test]
+    fn edges_are_drawn_as_wide_as_the_layout_keeps_them() {
+        with_model("order-management.json", |_, model| {
+            let options = OcdfgBuildOptions::default();
+            let request = model::layout_request(model, &options).unwrap();
+            let layout = crate::visualization::engine::layout_graph(&request.request).unwrap();
+            let style = OcdfgStyle::default();
+            let overrides = StyleOverrides::default();
+            let scene =
+                model::scene_from_layout(model, &layout, &options, &style, &overrides).unwrap();
+            let drawn: Vec<f64> = scene.edges.iter().map(|e| e.stroke.width).collect();
+            let kept: Vec<f64> = request
+                .request
+                .graph
+                .edges
+                .iter()
+                .map(|e| e.thickness)
+                .collect();
+            assert_eq!(drawn, kept);
+            let widest = crate::visualization::graph_build::thickness_from_count(1.0, 1.0);
+            for object_type in options.types_of(model) {
+                let of_type = request.edges.iter().zip(&kept);
+                let max = of_type
+                    .filter(|(e, _)| e.object_type == object_type)
+                    .map(|(_, &t)| t)
+                    .reduce(f64::max);
+                assert!(max.is_none_or(|m| m == widest), "{object_type}: {max:?}");
+            }
         });
     }
 }

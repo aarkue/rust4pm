@@ -24,13 +24,13 @@ pub fn discover_dfg_with_classifier<'a, 'b>(
             if let Some(last_ev_id) = last_event_identity.take() {
                 result.add_df_relation(last_ev_id.into(), curr_event_identity.clone().into(), 1)
             } else {
-                result.add_start_activity(curr_event_identity.clone());
+                result.add_start_activity(curr_event_identity.clone(), 1);
             }
 
             last_event_identity = Some(curr_event_identity);
         });
         if let Some(last_ev_id) = last_event_identity.take() {
-            result.add_end_activity(last_ev_id);
+            result.add_end_activity(last_ev_id, 1);
         }
     });
 
@@ -41,4 +41,29 @@ pub fn discover_dfg_with_classifier<'a, 'b>(
 #[register_binding]
 pub fn discover_dfg<'b>(event_log: &EventLog) -> DirectlyFollowsGraph<'b> {
     discover_dfg_with_classifier(event_log, &EventLogClassifier::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event_log;
+
+    #[test]
+    fn start_and_end_activities_count_their_traces() {
+        let log = event_log!(["a", "b"], ["a", "c"], ["b"], []);
+        let dfg = discover_dfg(&log);
+        let counts = |map: &std::collections::HashMap<String, u32>| {
+            let mut counts: Vec<(String, u32)> = map.iter().map(|(a, &c)| (a.clone(), c)).collect();
+            counts.sort();
+            counts
+        };
+        assert_eq!(
+            counts(&dfg.start_activities),
+            [("a".to_string(), 2), ("b".to_string(), 1)]
+        );
+        assert_eq!(
+            counts(&dfg.end_activities),
+            [("b".to_string(), 2), ("c".to_string(), 1)]
+        );
+    }
 }

@@ -1,9 +1,11 @@
-//! Laying out and drawing [`OCDeclareArc`]s like propel's OC-DECLARE viewer: a ball on each
-//! arc's source, its arc type's arrows, and its object types in their colors.
+//! Laying out and drawing OC-Declare models (i.e., multiple [`OCDeclareArc`]s).
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use graphlay::{Direction, Edge, Graph, LayoutError, LayoutOptions, Node, Shape, Size};
+use graphlay::json::LayoutRequest;
+use graphlay::{
+    Direction, Edge, Graph, LabelReservation, LayoutOptions, Node, Preset, Shape, Size,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -12,9 +14,9 @@ use crate::core::process_models::oc_declare::{
     get_activity_object_involvements, OCDeclareArc, OCDeclareArcLabel, OCDeclareArcType,
     ObjectInvolvementCounts, ObjectTypeAssociation,
 };
-use crate::visualization::graph_build::{
-    dfg_width_with, heuristic_label_width, GraphAcc, LabelWidth, DECLARE_NODE_SIZE,
-};
+use crate::visualization::engine::{json_of, layout_options_of, VisualizationError};
+use crate::visualization::graph_build::{dfg_width_with, GraphAcc, LabelWidth, DECLARE_NODE_SIZE};
+use crate::visualization::model::{LayoutSettings, ModelLayoutRequest, Visualize};
 use crate::visualization::styling::BaseStyle;
 
 /// An activity of an OC-DECLARE model.
@@ -54,13 +56,16 @@ pub enum OCDeclareLabels {
     Dots,
 }
 
-/// How a slice of [`OCDeclareArc`]s is turned into a [`Graph`].
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// How a slice of [`OCDeclareArc`]s is turned into a [`Graph`]. Missing fields take the values of
+/// [`OCDeclareBuildOptions::new`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(JsonSchema))]
 #[serde(default)]
 pub struct OCDeclareBuildOptions {
-    /// Flow direction. `None` means left to right.
-    pub direction: Option<Direction>,
+    /// Direction (left to right by default) and engine patch over the process-map preset with room
+    /// reserved for every label and labels kept by their line.
+    #[serde(flatten)]
+    pub layout: LayoutSettings,
     /// Widen each activity box to fit its label.
     pub fit_node_width: bool,
     /// Rank EP and DP arcs backwards, so the drawing reads forwards in time.
@@ -70,45 +75,57 @@ pub struct OCDeclareBuildOptions {
     pub merge_mirrored_arcs: bool,
     /// How the arcs show their object types.
     pub labels: OCDeclareLabels,
-    /// Draw the activities in the base node colors instead of tinting each one.
-    pub plain_activities: bool,
     /// Per activity, how many objects of each type one of its events involves, shown under its
     /// name.
     pub involvements: BTreeMap<String, BTreeMap<String, ObjectInvolvementCounts>>,
+    /// Activities that become nodes even if no arc connects them, e.g., one just added in an
+    /// editor.
+    pub extra_activities: Vec<String>,
+}
+
+impl Default for OCDeclareBuildOptions {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OCDeclareBuildOptions {
     /// Backward arcs reversed, mirrored arcs merged, types as names.
     pub fn new() -> Self {
         OCDeclareBuildOptions {
-            direction: None,
+            layout: LayoutSettings::default(),
             fit_node_width: false,
             reverse_backward_arcs: true,
             merge_mirrored_arcs: true,
             labels: OCDeclareLabels::Names,
-            plain_activities: false,
             involvements: BTreeMap::new(),
+            extra_activities: Vec::new(),
         }
     }
 
     /// These options with the involvements of every activity of `locel`.
     pub fn with_involvements_of(mut self, locel: &SlimLinkedOCEL) -> Self {
-        self.involvements = get_activity_object_involvements(locel)
-            .into_iter()
-            .map(|(activity, types)| (activity, types.into_iter().collect()))
-            .collect();
+        self.involvements = oc_declare_involvements(locel);
         self
     }
-
-    /// The engine options for these build options.
-    pub fn layout_options(&self) -> LayoutOptions {
-        let mut options = LayoutOptions::process_map();
-        options.direction = self.direction.unwrap_or(Direction::LeftRight);
-        // A label pushed further than just clear of its line no longer reads as its arc's.
-        options.tuning.labels.side_steps = [1.0; 4];
-        options
-    }
 }
+
+/// Per activity of `locel`, how many objects of each type one of its events involves, as
+/// [`OCDeclareBuildOptions::involvements`] takes them.
+pub fn oc_declare_involvements(
+    locel: &SlimLinkedOCEL,
+) -> BTreeMap<String, BTreeMap<String, ObjectInvolvementCounts>> {
+    get_activity_object_involvements(locel)
+        .into_iter()
+        .map(|(activity, types)| (activity, types.into_iter().collect()))
+        .collect()
+}
+
+const SIDE_STEPS: [f64; 4] = [1.0; 4];
+
+/// The layout request of OC-DECLARE arcs.
+pub type OCDeclareLayoutRequest =
+    ModelLayoutRequest<LayoutRequest, OCDeclareNodeRef, OCDeclareEdgeRef>;
 
 /// Whether an arc type points against temporal order.
 pub fn points_backwards(arc_type: OCDeclareArcType) -> bool {
@@ -199,7 +216,7 @@ enum Quantifier {
     All,
 }
 
-/// Each, then any, then all, the order propel draws them in from the source.
+/// Each, then any, then all.
 fn references(label: &OCDeclareArcLabel) -> Vec<(Quantifier, &ObjectTypeAssociation)> {
     [
         (Quantifier::Each, &label.each),
@@ -260,6 +277,23 @@ fn label_size(arc: &OCDeclareArc, labels: OCDeclareLabels) -> Option<Size> {
     }
 }
 
+/// The room an arc needs along its line: its label, and for a negated arc also the `//`, which
+/// sits [`draw::SLASH_DISTANCE`] before the target end. The label stays centered, so the same
+/// room is reserved on the source side. The `margin` the layout adds around a reserved label
+/// counts towards that room.
+fn reserved_size(arc: &OCDeclareArc, labels: OCDeclareLabels, margin: f64) -> Option<Size> {
+    let size = label_size(arc, labels);
+    if !is_negated(arc.counts) {
+        return size;
+    }
+    let slashes = 2.0 * (draw::SLASH_DISTANCE + draw::slash_half() + draw::SLASH_CLEARANCE);
+    let (width, height) = size.map_or((0.0, 0.0), |s| (s.width, s.height));
+    Some(Size::new(
+        width + (slashes - margin).max(0.0),
+        height.max(draw::SLASH_LENGTH),
+    ))
+}
+
 fn edge_refs(arcs: &[OCDeclareArc], merge: bool) -> Vec<OCDeclareEdgeRef> {
     let mut mirrored: Vec<Option<usize>> = vec![None; arcs.len()];
     let mut merged_away = vec![false; arcs.len()];
@@ -317,96 +351,18 @@ fn edge_refs(arcs: &[OCDeclareArc], merge: bool) -> Vec<OCDeclareEdgeRef> {
         .collect()
 }
 
-/// The [`Graph`] of `arcs`, the activity behind each node, and the arcs behind each edge.
-pub fn oc_declare_to_graph(
-    arcs: &[OCDeclareArc],
-    options: &OCDeclareBuildOptions,
-) -> (Graph, Vec<OCDeclareNodeRef>, Vec<OCDeclareEdgeRef>) {
-    oc_declare_to_graph_with(arcs, options, &heuristic_label_width)
-}
-
-/// [`oc_declare_to_graph`] with a caller's own label measurement.
-pub fn oc_declare_to_graph_with(
-    arcs: &[OCDeclareArc],
-    options: &OCDeclareBuildOptions,
-    measure: LabelWidth<'_>,
-) -> (Graph, Vec<OCDeclareNodeRef>, Vec<OCDeclareEdgeRef>) {
-    let mut acc: GraphAcc<OCDeclareNodeRef, OCDeclareEdgeRef> = GraphAcc::new();
-
-    let mut activities: BTreeSet<&str> = BTreeSet::new();
-    for arc in arcs {
-        activities.insert(arc.from.as_str());
-        activities.insert(arc.to.as_str());
-    }
-    for activity in &activities {
-        let width = if options.fit_node_width {
-            dfg_width_with(activity, measure).max(DECLARE_NODE_SIZE.width)
-        } else {
-            DECLARE_NODE_SIZE.width
-        };
-        acc.add_node(
-            *activity,
-            Node {
-                size: Size::new(width, DECLARE_NODE_SIZE.height),
-                shape: Shape::Box,
-                ..Node::default()
-            },
-            || OCDeclareNodeRef((*activity).to_string()),
-        );
-    }
-
-    let mut edges = edge_refs(arcs, options.merge_mirrored_arcs);
-    edges.sort_by(|a, b| {
-        let (x, y) = (&arcs[a.arc], &arcs[b.arc]);
-        (x.from.as_str(), x.to.as_str(), x.arc_type, &x.label).cmp(&(
-            y.from.as_str(),
-            y.to.as_str(),
-            y.arc_type,
-            &y.label,
-        ))
-    });
-    for edge in edges {
-        let arc = &arcs[edge.arc];
-        let (Some(source), Some(target)) =
-            (acc.node_id(arc.from.as_str()), acc.node_id(arc.to.as_str()))
-        else {
-            continue;
-        };
-        acc.add_edge(
-            Edge {
-                label_size: label_size(arc, options.labels),
-                reverse_for_ranking: options.reverse_backward_arcs
-                    && edge.mirrored.is_none()
-                    && points_backwards(arc.arc_type),
-                ..Edge::new(source, target)
-            },
-            edge,
-        );
-    }
-
-    acc.finish()
-}
-
-/// Lay `arcs` out.
-///
-/// # Errors
-///
-/// [`LayoutError`] from the engine.
-pub fn layout_oc_declare(
-    arcs: &[OCDeclareArc],
-    options: &OCDeclareBuildOptions,
-) -> Result<graphlay::Layout, LayoutError> {
-    let (graph, _, _) = oc_declare_to_graph(arcs, options);
-    graphlay::layout(&graph, &options.layout_options())
-}
-
 const MARKER_COLOR: &str = "#4b5563";
 
-/// Sizes and the neutral color of an OC-DECLARE drawing.
-#[derive(Debug, Clone, PartialEq)]
+/// Colors and sizes of an OC-DECLARE drawing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct OCDeclareStyle {
     /// Colors and paddings shared with every other model.
     pub base: BaseStyle,
+    /// Draw the activities in the base node colors instead of tinting each one.
+    pub plain_activities: bool,
+    /// How far towards white an activity's color is washed for its fill.
+    pub fill_lightness: f64,
     /// Color of the markers, and of an arc that names no object type.
     pub marker: String,
     /// Width of an arc's line.
@@ -419,6 +375,8 @@ impl Default for OCDeclareStyle {
     fn default() -> Self {
         OCDeclareStyle {
             base: BaseStyle::default(),
+            plain_activities: false,
+            fill_lightness: 0.85,
             marker: MARKER_COLOR.to_string(),
             arc_width: 2.5,
             marker_size: 15.0,
@@ -428,26 +386,26 @@ impl Default for OCDeclareStyle {
 
 mod draw {
     use super::*;
+    use graphlay::layout::{EdgeRoute, Placement};
     use graphlay::svg::{
         Attrs, BuiltinMarker, Chip, Decoration, DrawOrder, EdgeAnchor, EdgeLabel, ExactLayout,
         Glyph, GlyphCluster, GlyphLayout, GlyphRow, Gradient, GradientStop, LineCap, MarkerRef,
-        NodeContent, Paint, Point as SPoint, Scene, SceneEdge, Shape as SShape, Stroke, TextRun,
-        TextSpan, TextWrap,
+        NodeContent, Paint, Point as SPoint, SceneEdge, SceneNode, Shape as SShape, Stroke,
+        TextAnchor, TextRun, TextSpan, TextWrap,
     };
     use graphlay::Layout;
 
     use crate::core::process_models::oc_declare::{EXIT_EVENT_PREFIX, INIT_EVENT_PREFIX};
-    use crate::visualization::styling::{
-        darken, key_color, lighten, scene, scene_node, scene_point,
-    };
+    use crate::visualization::styling::{darken, key_color, lighten, scene_node, scene_point};
 
     pub(super) const NEGATION_COLOR: &str = "#dc2626";
-    /// As in propel's arc glyph: 5 along the line for 12 across it.
-    const SLASH_LENGTH: f64 = 13.0;
+    pub(super) const SLASH_LENGTH: f64 = 13.0;
     const SLASH_SLANT: f64 = -22.6;
     const SLASH_GAP: f64 = 5.0;
     /// How far before the target end the `//` sits, clear of every target marker.
-    const SLASH_DISTANCE: f64 = 27.0;
+    pub(super) const SLASH_DISTANCE: f64 = 27.0;
+    /// Space kept between the `//` and a label.
+    pub(super) const SLASH_CLEARANCE: f64 = 3.0;
     const END_CLEARANCE: f64 = 20.0;
     const CHIP_TEXT: &str = "#1c2024";
     const CHIP_BORDER: &str = "#d9d9e0";
@@ -597,17 +555,24 @@ mod draw {
         }
     }
 
+    /// Half of the `//` along the line: half its gap plus the lean of a stroke.
+    pub(super) fn slash_half() -> f64 {
+        SLASH_GAP / 2.0 + SLASH_LENGTH / 2.0 * SLASH_SLANT.to_radians().sin().abs()
+    }
+
     /// Before the target end, or beside the discs or label (`taken`, relative to the middle)
     /// when they are there.
     fn push_slashes(edge: &mut SceneEdge, length: f64, taken: Option<(f64, f64)>) {
-        // Half of the `//` along the line: half its gap plus the lean of a stroke.
-        let half = SLASH_GAP / 2.0 + SLASH_LENGTH / 2.0 * SLASH_SLANT.to_radians().sin().abs();
+        let half = slash_half();
         let room = length / 2.0 - END_CLEARANCE - half;
         let default = length / 2.0 - SLASH_DISTANCE;
         let (fraction, center) = match taken {
-            Some((lo, hi)) if default - half < hi + 3.0 && default + half > lo - 3.0 => {
-                let after = hi + 3.0 + half;
-                let before = lo - 3.0 - half;
+            Some((lo, hi))
+                if default - half < hi + SLASH_CLEARANCE
+                    && default + half > lo - SLASH_CLEARANCE =>
+            {
+                let after = hi + SLASH_CLEARANCE + half;
+                let before = lo - SLASH_CLEARANCE - half;
                 if after <= room || before < -room {
                     (0.5, after)
                 } else {
@@ -675,92 +640,344 @@ mod draw {
         })
     }
 
-    /// One disc for at most one object, three for more, and a dashed ring when an event may
-    /// involve none.
-    fn involvement_strip(
+    // The strip's room inside the node, its gap between items and its height in rows. The rest
+    // of the object types go into a "+k" at the end of the second row.
+    const STRIP_INSET: f64 = 16.0;
+    const STRIP_GAP: f64 = 6.0;
+    const STRIP_ROWS: usize = 2;
+    // Width of a 9px character, the cap on a name and the width of its `0..1`.
+    const STRIP_CHAR: f64 = 5.4;
+    const STRIP_NAME_MAX: f64 = 52.0;
+    const STRIP_CARD: f64 = 18.0;
+    const DOTS_DY: f64 = 8.5;
+    const NAMES_DY: f64 = 9.0;
+    const NAMES_LINE: f64 = 11.0;
+
+    fn plus_width(hidden: usize) -> f64 {
+        format!("+{hidden}").len() as f64 * STRIP_CHAR + 2.0
+    }
+
+    /// `widths` packed greedily into rows of at most `usable`, as item indices per row.
+    fn strip_rows(widths: &[f64], usable: f64) -> Vec<Vec<usize>> {
+        let mut rows: Vec<Vec<usize>> = Vec::new();
+        let mut row = 0.0;
+        for (i, &w) in widths.iter().enumerate() {
+            match rows.last_mut() {
+                Some(last) if row + STRIP_GAP + w <= usable => {
+                    last.push(i);
+                    row += STRIP_GAP + w;
+                }
+                _ => {
+                    rows.push(vec![i]);
+                    row = w;
+                }
+            }
+        }
+        rows
+    }
+
+    /// How many items of `widths` fit the strip, in order. Fewer than all leaves room for a "+k".
+    fn strip_shown(widths: &[f64], usable: f64) -> usize {
+        if strip_rows(widths, usable).len() <= STRIP_ROWS {
+            return widths.len();
+        }
+        (1..widths.len())
+            .rev()
+            .find(|&shown| {
+                let mut packed = widths[..shown].to_vec();
+                packed.push(plus_width(widths.len() - shown));
+                strip_rows(&packed, usable).len() <= STRIP_ROWS
+            })
+            .unwrap_or(0)
+    }
+
+    fn involvement_cluster(object_type: &str, c: &ObjectInvolvementCounts) -> GlyphCluster {
+        let color = object_type_color(object_type);
+        let optional = c.min == 0;
+        GlyphCluster {
+            glyph: Glyph::Dot,
+            count: if c.max > 1 { 3 } else { 1 },
+            outline: Some(Stroke {
+                paint: Paint::Color(darken(&color, 0.35)),
+                width: if optional { 1.3 } else { 1.0 },
+                dash: optional.then(|| "2.2 1.6".to_string()),
+                ..Stroke::default()
+            }),
+            color: Some(color),
+            radius: DISC_RADIUS,
+            step: Some(DISC_STEP),
+            ..GlyphCluster::default()
+        }
+    }
+
+    /// A name shortened to the strip's cap (truncated).
+    fn strip_name(name: &str) -> String {
+        let max = (STRIP_NAME_MAX / STRIP_CHAR) as usize;
+        if name.chars().count() <= max {
+            return name.to_string();
+        }
+        let mut short: String = name.chars().take(max.saturating_sub(1)).collect();
+        short.push('\u{2026}');
+        short
+    }
+
+    fn plus_text(hidden: usize, dx: f64, dy: f64, anchor: TextAnchor) -> NodeContent {
+        NodeContent::Text(TextRun {
+            text: format!("+{hidden}"),
+            dx,
+            dy,
+            size: Some(9.0),
+            weight: Some(600.0),
+            color: Some(INVOLVEMENT_TEXT.to_string()),
+            anchor,
+            ..TextRun::default()
+        })
+    }
+
+    /// The object types under an activity's name, in at most two rows. A disc for at most one
+    /// object, three for more, and a dashed ring when an event may involve none.
+    pub(super) fn involvement_strip(
         involved: &[(&String, &ObjectInvolvementCounts)],
         labels: OCDeclareLabels,
         node_width: f64,
-    ) -> NodeContent {
+    ) -> Vec<NodeContent> {
+        let usable = node_width - STRIP_INSET;
         match labels {
-            OCDeclareLabels::Dots => NodeContent::Glyphs(GlyphRow {
-                clusters: involved
+            OCDeclareLabels::Dots => {
+                let clusters: Vec<GlyphCluster> = involved
                     .iter()
-                    .map(|(object_type, c)| {
-                        let color = object_type_color(object_type);
-                        let optional = c.min == 0;
-                        GlyphCluster {
-                            glyph: Glyph::Dot,
-                            count: if c.max > 1 { 3 } else { 1 },
-                            outline: Some(Stroke {
-                                paint: Paint::Color(darken(&color, 0.35)),
-                                width: if optional { 1.3 } else { 1.0 },
-                                dash: optional.then(|| "2.2 1.6".to_string()),
-                                ..Stroke::default()
-                            }),
-                            color: Some(color),
-                            radius: DISC_RADIUS,
-                            step: Some(DISC_STEP),
-                            ..GlyphCluster::default()
-                        }
+                    .map(|(object_type, c)| involvement_cluster(object_type, c))
+                    .collect();
+                let widths: Vec<f64> = clusters.iter().map(GlyphCluster::width).collect();
+                let shown = strip_shown(&widths, usable);
+                let row = |clusters: Vec<GlyphCluster>, dx: f64, dy: f64, wrap_width: f64| {
+                    NodeContent::Glyphs(GlyphRow {
+                        clusters,
+                        dx,
+                        dy,
+                        layout: GlyphLayout::Exact(ExactLayout {
+                            wrap_width,
+                            cluster_gap: STRIP_GAP,
+                            ..ExactLayout::default()
+                        }),
+                        ..GlyphRow::default()
                     })
-                    .collect(),
-                dy: 8.5,
-                layout: GlyphLayout::Exact(ExactLayout {
-                    wrap_width: node_width - 16.0,
-                    cluster_gap: 6.0,
-                    ..ExactLayout::default()
-                }),
-                ..GlyphRow::default()
-            }),
-            OCDeclareLabels::Names => {
-                let mut spans = Vec::new();
-                for (i, (object_type, c)) in involved.iter().enumerate() {
-                    if i > 0 {
-                        spans.push(TextSpan {
-                            text: "  ".to_string(),
-                            ..TextSpan::default()
-                        });
-                    }
-                    spans.push(TextSpan {
-                        text: object_type.to_string(),
-                        color: Some(object_type_color(object_type)),
-                        weight: Some(600.0),
-                    });
-                    spans.push(TextSpan {
-                        text: format!(
-                            " {}..{}",
-                            if c.min >= 1 { "1" } else { "0" },
-                            if c.max > 1 { "*" } else { "1" }
-                        ),
-                        ..TextSpan::default()
-                    });
+                };
+                if shown == clusters.len() {
+                    return vec![row(clusters, 0.0, DOTS_DY, usable)];
                 }
-                NodeContent::Text(TextRun {
-                    spans,
-                    dy: 9.0,
-                    size: Some(9.0),
-                    color: Some(INVOLVEMENT_TEXT.to_string()),
-                    ..TextRun::default()
-                })
+                // The second row and its "+k" are centered together.
+                let hidden = clusters.len() - shown;
+                let rows = strip_rows(&widths[..shown], usable);
+                let row_h = 2.0 * DISC_RADIUS + ExactLayout::default().row_gap;
+                let mut out = Vec::new();
+                for (ri, items) in rows.iter().enumerate() {
+                    let dy = DOTS_DY + ri as f64 * row_h;
+                    let members: Vec<GlyphCluster> =
+                        items.iter().map(|&i| clusters[i].clone()).collect();
+                    if ri + 1 < rows.len() {
+                        out.push(row(members, 0.0, dy, f64::INFINITY));
+                        continue;
+                    }
+                    let width: f64 = items.iter().map(|&i| widths[i]).sum::<f64>()
+                        + STRIP_GAP * items.len().saturating_sub(1) as f64;
+                    let tail = STRIP_GAP + plus_width(hidden);
+                    out.push(row(members, -tail / 2.0, dy, f64::INFINITY));
+                    out.push(plus_text(
+                        hidden,
+                        (width - tail) / 2.0 + STRIP_GAP,
+                        dy,
+                        TextAnchor::Start,
+                    ));
+                }
+                out
+            }
+            OCDeclareLabels::Names => {
+                let card = |c: &ObjectInvolvementCounts| {
+                    format!(
+                        " {}..{}",
+                        if c.min >= 1 { "1" } else { "0" },
+                        if c.max > 1 { "*" } else { "1" }
+                    )
+                };
+                let widths: Vec<f64> = involved
+                    .iter()
+                    .map(|(t, _)| {
+                        (t.chars().count() as f64 * STRIP_CHAR).min(STRIP_NAME_MAX)
+                            + 2.0
+                            + STRIP_CARD
+                    })
+                    .collect();
+                let shown = strip_shown(&widths, usable);
+                let hidden = involved.len() - shown;
+                let rows = strip_rows(&widths[..shown], usable);
+                let last = rows.len().saturating_sub(1);
+                rows.iter()
+                    .enumerate()
+                    .map(|(ri, items)| {
+                        let mut spans = Vec::new();
+                        for (k, &i) in items.iter().enumerate() {
+                            let (object_type, c) = involved[i];
+                            if k > 0 {
+                                spans.push(TextSpan {
+                                    text: "  ".to_string(),
+                                    ..TextSpan::default()
+                                });
+                            }
+                            spans.push(TextSpan {
+                                text: strip_name(object_type),
+                                color: Some(object_type_color(object_type)),
+                                weight: Some(600.0),
+                            });
+                            spans.push(TextSpan {
+                                text: card(c),
+                                ..TextSpan::default()
+                            });
+                        }
+                        if ri == last && hidden > 0 {
+                            spans.push(TextSpan {
+                                text: format!("  +{hidden}"),
+                                weight: Some(600.0),
+                                ..TextSpan::default()
+                            });
+                        }
+                        NodeContent::Text(TextRun {
+                            spans,
+                            dy: NAMES_DY + ri as f64 * NAMES_LINE,
+                            size: Some(9.0),
+                            color: Some(INVOLVEMENT_TEXT.to_string()),
+                            ..TextRun::default()
+                        })
+                    })
+                    .collect()
             }
         }
     }
 
-    /// The drawing of `arcs` over an existing [`Layout`].
-    pub fn oc_declare_scene(
-        arcs: &[OCDeclareArc],
-        layout: &Layout,
-        nodes: &[OCDeclareNodeRef],
-        edges: &[OCDeclareEdgeRef],
-        options: &OCDeclareBuildOptions,
-        style: &OCDeclareStyle,
-    ) -> Scene {
-        let base = &style.base;
-        let mut scene_nodes = Vec::with_capacity(nodes.len());
-        for (placement, node) in layout.nodes.iter().zip(nodes) {
+    impl Visualize for [OCDeclareArc] {
+        type NodeRef = OCDeclareNodeRef;
+        type EdgeRef = OCDeclareEdgeRef;
+        type Options = OCDeclareBuildOptions;
+        type Style = OCDeclareStyle;
+        type Request = LayoutRequest;
+        type Context = ();
+
+        fn to_graph(
+            &self,
+            options: &OCDeclareBuildOptions,
+            measure: LabelWidth<'_>,
+        ) -> (Graph, Vec<OCDeclareNodeRef>, Vec<OCDeclareEdgeRef>) {
+            let mut acc: GraphAcc<OCDeclareNodeRef, OCDeclareEdgeRef> = GraphAcc::new();
+
+            let mut activities: BTreeSet<&str> = options
+                .extra_activities
+                .iter()
+                .map(String::as_str)
+                .collect();
+            for arc in self {
+                activities.insert(arc.from.as_str());
+                activities.insert(arc.to.as_str());
+            }
+            for activity in &activities {
+                let width = if options.fit_node_width {
+                    dfg_width_with(activity, measure).max(DECLARE_NODE_SIZE.width)
+                } else {
+                    DECLARE_NODE_SIZE.width
+                };
+                acc.add_node(
+                    *activity,
+                    Node {
+                        size: Size::new(width, DECLARE_NODE_SIZE.height),
+                        shape: Shape::Box,
+                        ..Node::default()
+                    },
+                    || OCDeclareNodeRef((*activity).to_string()),
+                );
+            }
+
+            let mut edges = edge_refs(self, options.merge_mirrored_arcs);
+            edges.sort_by(|a, b| {
+                let (x, y) = (&self[a.arc], &self[b.arc]);
+                (x.from.as_str(), x.to.as_str(), x.arc_type, &x.label).cmp(&(
+                    y.from.as_str(),
+                    y.to.as_str(),
+                    y.arc_type,
+                    &y.label,
+                ))
+            });
+            // With the patch, so a patched margin is the one subtracted. An invalid patch fails later, in
+            // the layout request.
+            let margin = <[OCDeclareArc] as Visualize>::request(Graph::default(), options)
+                .and_then(|request| layout_options_of(&request))
+                .unwrap_or_else(|_| LayoutOptions::process_map())
+                .spacing
+                .edge_label_margin;
+            for edge in edges {
+                let arc = &self[edge.arc];
+                let (Some(source), Some(target)) =
+                    (acc.node_id(arc.from.as_str()), acc.node_id(arc.to.as_str()))
+                else {
+                    continue;
+                };
+                acc.add_edge(
+                    Edge {
+                        label_size: reserved_size(arc, options.labels, margin),
+                        reverse_for_ranking: options.reverse_backward_arcs
+                            && edge.mirrored.is_none()
+                            && points_backwards(arc.arc_type),
+                        ..Edge::new(source, target)
+                    },
+                    edge,
+                );
+            }
+
+            acc.finish()
+        }
+
+        fn request(
+            graph: Graph,
+            options: &OCDeclareBuildOptions,
+        ) -> Result<LayoutRequest, VisualizationError> {
+            let patch = serde_json::json!({
+                // The default reserves room only for a label too large across the line, and a
+                // names chip or the `//` of a negated arc is small across it but long along it.
+                "labels": {"reservation": json_of(LabelReservation::Always)},
+                // A label pushed further than just clear of its line no longer reads as its arc's.
+                "tuning": {"labels": {"side_steps": SIDE_STEPS}},
+            });
+            options
+                .layout
+                .layered(graph, Preset::ProcessMap, Some(Direction::LeftRight), patch)
+        }
+
+        fn base(style: &OCDeclareStyle) -> &BaseStyle {
+            &style.base
+        }
+
+        fn context(
+            &self,
+            _layout: &Layout,
+            _nodes: &[OCDeclareNodeRef],
+            _options: &OCDeclareBuildOptions,
+        ) -> Result<(), VisualizationError> {
+            Ok(())
+        }
+
+        fn draw_order() -> DrawOrder {
+            DrawOrder::EdgesOverNodes
+        }
+
+        fn draw_node(
+            &self,
+            node: &OCDeclareNodeRef,
+            placement: &Placement,
+            _context: &(),
+            options: &OCDeclareBuildOptions,
+            style: &OCDeclareStyle,
+        ) -> SceneNode {
+            let base = &style.base;
             let (color, dashed) = node_color(node.as_str());
-            let (fill, border, border_opacity, text) = if options.plain_activities {
+            let (fill, border, border_opacity, text) = if style.plain_activities {
                 (
                     base.node_fill.clone(),
                     base.node_border.clone(),
@@ -769,7 +986,7 @@ mod draw {
                 )
             } else {
                 (
-                    lighten(&color, 0.85),
+                    lighten(&color, style.fill_lightness),
                     color.clone(),
                     Some(0.8),
                     darken(&color, 0.25),
@@ -810,33 +1027,38 @@ mod draw {
                 ..TextRun::default()
             }));
             if !involved.is_empty() {
-                n.content.push(involvement_strip(
+                n.content.extend(involvement_strip(
                     &involved,
                     options.labels,
                     placement.size.width,
                 ));
             }
-            scene_nodes.push(n);
+            n
         }
 
-        let marker = |kind: Option<BuiltinMarker>| match kind {
-            Some(marker) => MarkerRef::Builtin {
-                marker,
-                color: Some(style.marker.clone()),
-                size: Some(style.marker_size),
-            },
-            None => MarkerRef::None,
-        };
-        let mut scene_edges = Vec::with_capacity(edges.len());
-        for (route, edge) in layout.edges.iter().zip(edges) {
-            let Some(arc) = arcs.get(edge.arc) else {
-                continue;
+        fn draw_edge(
+            &self,
+            edge: &OCDeclareEdgeRef,
+            _graph_edge: &Edge,
+            route: &EdgeRoute,
+            _context: &(),
+            options: &OCDeclareBuildOptions,
+            style: &OCDeclareStyle,
+        ) -> Option<SceneEdge> {
+            let marker = |kind: Option<BuiltinMarker>| match kind {
+                Some(marker) => MarkerRef::Builtin {
+                    marker,
+                    color: Some(style.marker.clone()),
+                    size: Some(style.marker_size),
+                },
+                None => MarkerRef::None,
             };
+            let arc = self.get(edge.arc)?;
             if route.points.len() < 2 {
-                continue;
+                return None;
             }
             let points: Vec<SPoint> = route.points.iter().copied().map(scene_point).collect();
-            let mirror = edge.mirrored.and_then(|i| arcs.get(i));
+            let mirror = edge.mirrored.and_then(|i| self.get(i));
             let (start, end) = markers(arc.arc_type, mirror.is_some());
             let mut attrs = Attrs::default().data("template", arc.as_template_string());
             attrs = match mirror {
@@ -888,46 +1110,20 @@ mod draw {
             if is_negated(arc.counts) && length > 0.0 {
                 push_slashes(&mut e, length, taken);
             }
-            scene_edges.push(e);
+            Some(e)
         }
-
-        let mut s = scene(base, scene_nodes, scene_edges);
-        s.order = DrawOrder::EdgesOverNodes;
-        s
-    }
-
-    /// Lay `arcs` out and draw them, as one standalone SVG document.
-    ///
-    /// # Errors
-    ///
-    /// As [`layout_oc_declare`].
-    pub fn export_oc_declare_svg(
-        arcs: &[OCDeclareArc],
-        options: &OCDeclareBuildOptions,
-    ) -> Result<String, LayoutError> {
-        let (graph, nodes, edges) = oc_declare_to_graph(arcs, options);
-        let layout = graphlay::layout(&graph, &options.layout_options())?;
-        Ok(crate::visualization::styling::render_scene(
-            &oc_declare_scene(
-                arcs,
-                &layout,
-                &nodes,
-                &edges,
-                options,
-                &OCDeclareStyle::default(),
-            ),
-        ))
     }
 }
-
-pub use draw::{export_oc_declare_svg, oc_declare_scene};
 
 #[cfg(test)]
 mod tests {
     use super::draw::NEGATION_COLOR;
     use super::*;
     use crate::core::process_models::oc_declare::OCDeclareNode;
+    use crate::visualization::graph_build::heuristic_label_width;
+    use crate::visualization::model::{self, Visualize};
     use crate::visualization::styling::{key_color, lighten};
+    use crate::visualization::StyleOverrides;
     use graphlay::svg::{
         BuiltinMarker, Decoration, EdgeAnchor, MarkerRef, NodeContent, Paint, Scene, SceneEdge,
     };
@@ -967,9 +1163,7 @@ mod tests {
         )
     }
 
-    /// The sample of propel's OC-DECLARE story, plus an AS arc, an EP arc that mirrors the first
-    /// EF arc, a negated arc and an O2O reference.
-    fn propel_sample() -> Vec<OCDeclareArc> {
+    fn sample_arcs() -> Vec<OCDeclareArc> {
         serde_json::from_str(
             r#"[
                 {"arc_type":"EF","counts":[1,null],"from":"place order","to":"ship",
@@ -997,6 +1191,14 @@ mod tests {
         .unwrap()
     }
 
+    #[test]
+    fn partial_options_keep_the_defaults() {
+        let options: OCDeclareBuildOptions =
+            serde_json::from_value(serde_json::json!({ "extra_activities": ["x"] })).unwrap();
+        assert!(options.reverse_backward_arcs && options.merge_mirrored_arcs);
+        assert_eq!(options.extra_activities, ["x"]);
+    }
+
     fn with(change: impl FnOnce(&mut OCDeclareBuildOptions)) -> OCDeclareBuildOptions {
         let mut options = OCDeclareBuildOptions::new();
         change(&mut options);
@@ -1007,13 +1209,19 @@ mod tests {
         arcs: &[OCDeclareArc],
         options: &OCDeclareBuildOptions,
     ) -> (Scene, Vec<OCDeclareNodeRef>) {
-        let (graph, nodes, edges) = oc_declare_to_graph(arcs, options);
-        let layout = graphlay::layout(&graph, &options.layout_options()).unwrap();
-        let style = OCDeclareStyle::default();
-        (
-            oc_declare_scene(arcs, &layout, &nodes, &edges, options, &style),
-            nodes,
-        )
+        styled_scene_of(arcs, options, &OCDeclareStyle::default())
+    }
+
+    fn styled_scene_of(
+        arcs: &[OCDeclareArc],
+        options: &OCDeclareBuildOptions,
+        style: &OCDeclareStyle,
+    ) -> (Scene, Vec<OCDeclareNodeRef>) {
+        let request = model::layout_request(arcs, options).unwrap();
+        let layout = crate::visualization::engine::layout_graph(&request.request).unwrap();
+        let overrides = StyleOverrides::default();
+        let scene = model::scene_from_layout(arcs, &layout, options, style, &overrides);
+        (scene.unwrap(), request.nodes)
     }
 
     fn texts(edge: &SceneEdge) -> Vec<String> {
@@ -1063,7 +1271,7 @@ mod tests {
     fn mirrored_arcs_merge_unless_their_types_or_negation_differ() {
         let (ef, ep) = (orders("a", "b", EF), orders("b", "a", EP));
         let options = OCDeclareBuildOptions::new();
-        let (graph, _, edges) = oc_declare_to_graph(&[ef.clone(), ep.clone()], &options);
+        let (graph, _, edges) = [ef.clone(), ep.clone()].to_graph(&options, &heuristic_label_width);
         assert_eq!(
             edges,
             [OCDeclareEdgeRef {
@@ -1079,8 +1287,29 @@ mod tests {
             ..ep
         };
         for mirror in [other_types, negated] {
-            let (_, _, edges) = oc_declare_to_graph(&[ef.clone(), mirror], &options);
+            let (_, _, edges) = [ef.clone(), mirror].to_graph(&options, &heuristic_label_width);
             assert_eq!(edges.len(), 2);
+        }
+    }
+
+    #[test]
+    fn the_layout_request_resolves_to_the_layout_options() {
+        use crate::visualization::engine::layout_options_of;
+        for options in [
+            OCDeclareBuildOptions::new(),
+            with(|o| o.layout.direction = Some(Direction::TopBottom)),
+            with(|o| o.labels = OCDeclareLabels::Dots),
+        ] {
+            let request = model::layout_request(sample_arcs().as_slice(), &options).unwrap();
+            let resolved = layout_options_of(&request.request).unwrap();
+            let mut expected = LayoutOptions::process_map();
+            expected.direction = options.layout.direction.unwrap_or(Direction::LeftRight);
+            expected.labels.reservation = LabelReservation::Always;
+            expected.tuning.labels.side_steps = SIDE_STEPS;
+            assert_eq!(resolved, expected);
+            let json = serde_json::to_value(&request).unwrap();
+            assert!(json["nodes"][0].is_string());
+            assert!(json["edges"][0]["arc"].is_number());
         }
     }
 
@@ -1169,7 +1398,7 @@ mod tests {
     }
 
     #[test]
-    fn count_labels_follow_propel() {
+    fn count_labels_show_the_bounds() {
         for (counts, expected) in [
             ((Some(1), None), None),
             ((None, None), None),
@@ -1241,17 +1470,75 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_negated_arc_has_room_for_its_slashes() {
+        let negated = [arc(
+            ("a", "b"),
+            EF,
+            [&["orders"], &["items"], &["packages"]],
+            (Some(0), Some(0)),
+        )];
+        for labels in [OCDeclareLabels::Dots, OCDeclareLabels::Names] {
+            let edge = &scene_of(&negated, &with(|o| o.labels = labels)).0.edges[0];
+            let end = position(edge, &EdgeAnchor::Fraction(1.0));
+            for s in slashes(edge) {
+                assert!(
+                    (s - (end - draw::SLASH_DISTANCE)).abs() <= draw::slash_half(),
+                    "{labels:?}: the // at {s} left its spot before the end at {end}"
+                );
+            }
+        }
+        // No longer than the discs in the middle and the // beside them need.
+        let edge = &scene_of(&negated, &with(|o| o.labels = OCDeclareLabels::Dots))
+            .0
+            .edges[0];
+        let discs = label_size(&negated[0], OCDeclareLabels::Dots)
+            .unwrap()
+            .width;
+        let needed =
+            discs + 2.0 * (draw::SLASH_DISTANCE + draw::slash_half() + draw::SLASH_CLEARANCE);
+        let end = position(edge, &EdgeAnchor::Fraction(1.0));
+        assert!(
+            end <= needed + 1.0,
+            "{end} is longer than the {needed} needed"
+        );
+    }
+
+    #[test]
+    fn a_names_label_widens_the_gap_it_crosses() {
+        let long = arc(
+            ("a", "b"),
+            EF,
+            [
+                &["orders", "customers"],
+                &["items", "packages"],
+                &["products"],
+            ],
+            (Some(1), None),
+        );
+        let gap = |labels| {
+            let options = with(|o| o.labels = labels);
+            let layout = model::layout(std::slice::from_ref(&long), &options).unwrap();
+            let [a, b] = [&layout.nodes[0], &layout.nodes[1]];
+            (b.center.x - a.center.x).abs() - (a.size.width + b.size.width) / 2.0
+        };
+        let chip = label_size(&long, OCDeclareLabels::Names).unwrap().width;
+        assert!(gap(OCDeclareLabels::Names) >= chip);
+        assert!(gap(OCDeclareLabels::Dots) < chip);
+    }
+
     /// The layout may push a label off its line to avoid an overlap, but only until it just
     /// clears the line, which for a wide label beside an upright segment is half its width.
     #[test]
     fn every_label_stays_by_its_line() {
-        let (scene, _) = scene_of(&propel_sample(), &OCDeclareBuildOptions::new());
+        let (scene, _) = scene_of(&sample_arcs(), &OCDeclareBuildOptions::new());
         for edge in &scene.edges {
             let widest = texts(edge)
                 .iter()
                 .map(|t| t.chars().count())
                 .max()
-                .unwrap_or(0);
+                // With two rows, one item and the "+k" always fit, each on its own row.
+                .unwrap_or(1);
             let reach = (NAME_CHAR_WIDTH * widest as f64 + 10.0) / 2.0 + 12.0;
             for label in &edge.labels {
                 let EdgeAnchor::At(p) = label.at else {
@@ -1316,11 +1603,102 @@ mod tests {
     }
 
     #[test]
+    fn involvements_take_at_most_two_rows() {
+        let many: BTreeMap<String, ObjectInvolvementCounts> = (0..30)
+            .map(|i| {
+                (
+                    format!("t{i:02}"),
+                    ObjectInvolvementCounts { min: 1, max: 1 },
+                )
+            })
+            .collect();
+        let arcs = [orders("place order", "pay", EF)];
+        let options = with(|o| {
+            o.labels = OCDeclareLabels::Dots;
+            o.involvements.insert("pay".into(), many.clone());
+        });
+        let (scene, nodes) = scene_of(&arcs, &options);
+        let pay = &scene.nodes[nodes.iter().position(|n| n.as_str() == "pay").unwrap()];
+        // Name, two rows of discs and "+14"
+        let rows: Vec<usize> = pay
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                NodeContent::Glyphs(row) => Some(row.clusters.len()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rows.iter().sum::<usize>(), 16);
+        assert_eq!(rows.len(), 2);
+        let texts: Vec<&str> = pay
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                NodeContent::Text(run) => Some(run.text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, ["pay", "+14"]);
+
+        let options = with(|o| {
+            o.labels = OCDeclareLabels::Names;
+            o.involvements.insert("pay".into(), many.clone());
+        });
+        let (scene, nodes) = scene_of(&arcs, &options);
+        let pay = &scene.nodes[nodes.iter().position(|n| n.as_str() == "pay").unwrap()];
+        let lines: Vec<String> = pay.content[1..]
+            .iter()
+            .map(|c| match c {
+                NodeContent::Text(run) => run.spans.iter().map(|s| s.text.as_str()).collect(),
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].ends_with("+25"), "{lines:?}");
+    }
+
+    #[test]
+    fn extra_activities_become_nodes_without_arcs() {
+        use crate::visualization::engine::layout_graph;
+        let names = |request: &OCDeclareLayoutRequest| -> Vec<String> {
+            request
+                .nodes
+                .iter()
+                .map(|n| n.as_str().to_string())
+                .collect()
+        };
+        let arcs = [orders("place order", "ship", EF)];
+        let options = with(|o| o.extra_activities = vec!["review".into(), "ship".into()]);
+        let request = model::layout_request(arcs.as_slice(), &options).unwrap();
+        assert_eq!(names(&request), ["place order", "review", "ship"]);
+        assert_eq!(request.edges.len(), 1);
+        let layout = layout_graph(&request.request).unwrap();
+        let style = OCDeclareStyle::default();
+        let overrides = StyleOverrides::default();
+        let scene =
+            model::scene_from_layout(arcs.as_slice(), &layout, &options, &style, &overrides)
+                .unwrap();
+        assert_eq!((scene.nodes.len(), scene.edges.len()), (3, 1));
+
+        let options = with(|o| o.extra_activities = vec!["review".into()]);
+        let request = model::layout_request(&[][..], &options).unwrap();
+        assert_eq!(names(&request), ["review"]);
+        let layout = layout_graph(&request.request).unwrap();
+        let scene =
+            model::scene_from_layout(&[][..], &layout, &options, &style, &overrides).unwrap();
+        assert_eq!(scene.nodes.len(), 1);
+    }
+
+    #[test]
     fn nodes_are_tinted_unless_plain() {
         let arcs = [orders("<init> orders", "pay", EF)];
         let base = BaseStyle::default();
         for plain in [false, true] {
-            let (scene, nodes) = scene_of(&arcs, &with(|o| o.plain_activities = plain));
+            let style = OCDeclareStyle {
+                plain_activities: plain,
+                ..OCDeclareStyle::default()
+            };
+            let (scene, nodes) = styled_scene_of(&arcs, &OCDeclareBuildOptions::new(), &style);
             for (node, meta) in scene.nodes.iter().zip(&nodes) {
                 let init = meta.as_str() != "pay";
                 let color = match init {
@@ -1330,7 +1708,7 @@ mod tests {
                 let fill = if plain {
                     base.node_fill.clone()
                 } else {
-                    lighten(&color, 0.85)
+                    lighten(&color, style.fill_lightness)
                 };
                 assert_eq!(node.fill, Some(fill), "{meta:?}");
                 assert_eq!(node.stroke.as_ref().unwrap().dash.is_some(), init);
@@ -1370,10 +1748,13 @@ mod tests {
         ] {
             let options = with(|o| {
                 o.labels = labels;
-                o.plain_activities = plain_activities;
                 o.involvements = involvements.clone();
             });
-            let svg = export_oc_declare_svg(&propel_sample(), &options).unwrap();
+            let style = OCDeclareStyle {
+                plain_activities,
+                ..OCDeclareStyle::default()
+            };
+            let svg = model::svg(sample_arcs().as_slice(), &options, &style).unwrap();
             assert!(svg.contains("data-template"));
             write_export(name, &svg);
         }
@@ -1384,7 +1765,44 @@ mod tests {
         let locel = SlimLinkedOCEL::from_ocel(OCEL::import_from_path(path).unwrap());
         let arcs = discover_behavior_constraints(&locel, Default::default());
         let options = OCDeclareBuildOptions::new().with_involvements_of(&locel);
-        let svg = export_oc_declare_svg(&arcs, &options).unwrap();
+        let svg = model::svg(arcs.as_slice(), &options, &OCDeclareStyle::default()).unwrap();
         write_export("pm4py-ocel20-OC-DECLARE.svg", &svg);
+    }
+
+    /// A node too narrow for even one involvement shows the first one and how many it leaves out.
+    #[test]
+    fn a_strip_without_room_for_any_item_still_counts_the_rest() {
+        let counts = ObjectInvolvementCounts { min: 1, max: 1 };
+        let types: Vec<String> = ["orders", "items", "packages"].map(String::from).to_vec();
+        let involved: Vec<(&String, &ObjectInvolvementCounts)> =
+            types.iter().map(|t| (t, &counts)).collect();
+        let strip = draw::involvement_strip(&involved, OCDeclareLabels::Names, 22.0);
+        let text: Vec<String> = strip
+            .iter()
+            .map(|c| match c {
+                NodeContent::Text(run) => run.spans.iter().map(|s| s.text.as_str()).collect(),
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(text, ["orders 1..1  +2"]);
+        let strip = draw::involvement_strip(&involved, OCDeclareLabels::Dots, 22.0);
+        assert!(
+            matches!(&strip[..], [NodeContent::Glyphs(row), NodeContent::Text(plus)]
+            if row.clusters.len() == 1 && plus.text == "+2")
+        );
+    }
+
+    #[test]
+    fn involvements_are_read_per_activity() {
+        use crate::test_utils::get_test_data_path;
+        use crate::{Importable, OCEL};
+        let path = get_test_data_path()
+            .join("ocel")
+            .join("order-management.json");
+        let locel = SlimLinkedOCEL::from_ocel(OCEL::import_from_path(path).unwrap());
+        let involvements = oc_declare_involvements(&locel);
+        assert!(involvements.contains_key("place order"), "{involvements:?}");
+        let options = OCDeclareBuildOptions::new().with_involvements_of(&locel);
+        assert_eq!(options.involvements, involvements);
     }
 }

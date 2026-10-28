@@ -1,6 +1,12 @@
 # Changelog
 
 ## Unreleased
+- Process tree operators display as in the literature: `×` for exclusive choice (was `X`) and `↺` for loops (instead of `↻`)
+- New: `LinkedOCELAccess::get_e2o_rev_evs` yields each event an object is related to once, without qualifiers.
+- `alphappp_discover_petri_net` is now `discover_alphappp_net`, also as a binding, formerly `discover_alpha+++`. The old Rust name remains, deprecated (but **Breaking** for bindings because of rename)
+- `OCDeclareDiscoveryOptions::object_types_to_use` (default `None`, all types) restricts OC-DECLARE discovery to the given object types.
+- `discover_behavior_constraints` now ignores activities in `OCDeclareDiscoveryOptions::acts_to_use` that the log does not have, instead of panicking
+- `discover_dfg_from_ocel` now counts each object's events directly, in parallel over the objects of a type, instead of discovering on one flattened log per type (**Breaking**)
 - Alignments now search from both ends at once (`utils::dijkstra_search::search_bidirectional` + `ReversibleSearchProblem`), and detect unreachable final markings up front
 - `search` takes `SearchLimits` (states visited, memory) instead of `Option<usize>` and reports `SearchError::MemoryLimitReached` when its memory budget runs out (**Breaking**)
 - `SearchProblem::expand` takes the search's `MemoryBudget`, through which buffers that grow during the search must reserve, and `SearchProblem` requires `allocated_bytes` (**Breaking**)
@@ -26,7 +32,7 @@
   - `AcceptingPetriNet::is_in_initial_marking`/`is_in_final_marking` replace `is_in_initial_marking`/`is_in_a_final_marking`
   - Removed `create_vector_dictionary` (ids are indices, see `index()`), `get_uuid` and the `id` fields of `Place` and `Transition`. A transition's arcs are read with `inputs`/`outputs` and written only by `add_arc`
   - `ProcessTree::to_petri_net` and `From<ProcessTree>` give an `AcceptingPetriNet`; `marking_to_vector` takes the vector length instead of a dictionary
-  - New JSON shape (places and transitions as lists, markings keyed by place index); JSON of earlier versions still loads
+  - New JSON shape (places and transitions as lists, markings keyed by place index); JSON of earlier versions still loads (backwards-compatability)
 - PNML (**Breaking**)
   - `pnml::import_pnml*` return the net with its initial and final marking as options. `AcceptingPetriNet::import_pnml` requires both markings, `PetriNet::import_pnml` reads the structure only; `Importable`/`Exportable` work the same way for both types
   - A node's PNML id becomes its name, and ids follow file order, so importing a file twice gives the same net. A transition without `<name>` is labelled with its PNML id. More than one final marking, a token count that is not a number, two nodes with the same id, a reference to an unknown node, or an arc between two places or two transitions is an error
@@ -39,8 +45,37 @@
   - The `graphviz-export` feature and the `graphviz-rust` dependency are removed, and `visualization` takes their place (enabled by default)
   - `export_svg` on `PetriNet`, `AcceptingPetriNet` (with its markings), `ProcessTree`, `DirectlyFollowsGraph` and `PartialOrderTrace` now lays the model out with graphlay
   - `export_png` and the `image_export` modules (`export_*_image*`, `export_*_to_dot_graph`) are removed
-- Added the `visualization` module (feature `visualization`): positions and SVG drawings for Petri nets, process trees, DFGs, OC-DFGs, OC-DECLARE models and partial order traces, and registered bindings for all but the partial order traces
+- Added the `visualization` module (feature `visualization`): positions and SVG drawings for Petri nets, process trees, DFGs, OC-DFGs, OC-DECLARE models and partial order traces, and registered bindings for all of them
+  - Every model implements `Visualize`, and `layout_request`, `layout`, `scene_from_layout` and `svg` take any of them. The bindings are `<model>_layout_request`, `<model>_layout`, `<model>_scene_from_layout`, `<model>_svg` and `<model>_svg_from_layout`
   - Process trees come in a classic look (operator circles, straight lines) and a color-coded one (named operator pills, one color per operator type), chosen with `TreeLook`
+  - `layout_request` returns the graphlay `LayoutRequest` (graph, preset and options patch; a `TreeRequest` for process trees) with the model element behind each node and edge, for hosts that draw the model themselves. The node and edge references serialize, e.g., `{"kind": "activity", "name": "pay"}` or `{"kind": "place", "index": 3}`
+  - `visualization::engine` lays out any such request (`layout_graph`, `layout_tree`), routes its edges again over dragged node positions (`reroute_graph`), and draws a scene as SVG with an optional `Palette` (`render_scene_svg`)
+  - `scene_from_layout` draws a model over any layout of its graph, e.g., one the user rearranged, with `StyleOverrides` by node and edge index (fill, stroke, stroke width, opacity, a `dash` pattern for an edge's line or a node's border, and an extra label line, e.g., for a deviation heatmap). An empty `dash` draws the line solid
+  - Every build options type takes a `direction` and a `layout_patch` (`LayoutSettings`, except for process trees), deep-merged over the model's engine options, e.g., `{"routing": {"style": "diagonal"}}`
+  - The build options of DFGs, OC-DFGs, Petri nets and object-centric Petri nets take `Annotations` keyed by model element (an edge by its source and target node, for OC-DFGs also its object type, for object-centric Petri nets by its index in `arcs`): an edge `label` replacing its count or arc weight, a layout `weight` and a line `thickness`, and a node `label` line under its name. In JSON, each map is a list of `[key, annotation]` pairs, e.g., `[[{"kind": "start"}, {"kind": "activity", "name": "pay"}], {"label": "1.5 d"}]`
+  - `OCDeclareBuildOptions::extra_activities` makes activities nodes even if no arc connects them, e.g., one just added in an editor
+  - `visualization::ocpn` lays out and draws an object-centric Petri net in its flat JSON form (`ObjectCentricPetriNetJson`) as one Petri net, with the same entry points and bindings as the other models. Places and arcs take their object type's color, variable arcs are bold and dashed, and transitions and markings look as in a Petri net drawing. The layout request names each place, transition and arc by its index in the JSON, e.g., `{"kind": "place", "index": 3}`. `OcpnStyle` sets the place fill lightness and the variable arcs' width and dash pattern
+  - `visualization::oc_type_graph` lays out and draws an OCEL type graph (event and object types with counts, E2O and O2O relations with qualifiers) with graphlay's hub-and-spoke flow preset. `OcTypeGraph` (`core::event_data::object_centric::type_graph`, with `from_linked_ocel`) is the one type graph of an OCEL; path schemas build their `TypeGraph` from it
+  - `svg` takes the model's style. `layout` and `svg` return a `VisualizationError` (an invalid patch, or the engine's `LayoutError`)
+- Implemented the Inductive Miner (`discovery::case_centric::inductive_miner`)
+  - Initial structure and implementation parts by @Kuhlkrypto. Thanks!
+  - Infrequency handling (IMf) via `InductiveMinerOptions::imf(f)`
+  - The cuts of IMa as options: `strict_sequence` (on by default, also available for IMd), `use_interleaved` and `use_inclusive_choice`, which regroups concurrent cuts into inclusive choices and nested concurrency. `InductiveMinerOptions::ima()` turns on all of them
+  - Mines on an activity-projected log with an index-based directly-follows graph, and mines sub-logs and fall-through candidates in parallel
+  - `discover_inductive_net(log, variant, noise_threshold, preset)` and `discover_inductive_tree(...)` (bindings) discover an `AcceptingPetriNet` or a `ProcessTree` with one of the published variants, IMf at `0.2` by default
+  - `discover_inductive_net_with` and `discover_inductive_tree_with` (bindings) and `discover_inductive_tree_from_log` (Rust, with a classifier) take an `InductiveMiner`: `InductiveMiner::Log(InductiveMinerOptions)` for IM, IMf and IMa, or `InductiveMiner::Dfg(InductiveMinerDfgOptions)` for IMd and IMfd, in JSON `{"kind": "log" | "dfg", ...}`. The bindings take an `EventLogActivityProjection` (an `EventLog` is converted)
+  - Directly-follows variant IMd/IMfd reads the log once and recurses on the graph alone, and `discover_inductive_tree_from_dfg` mines an existing `DirectlyFollowsGraph`. Scales to larger logs but does not guarantee fitness
+  - Presets `InductiveMinerOptions::{prom, pm4py}` and `InductiveMinerDfgOptions::{prom, pm4py}` imitate those tools, built from individual options such as `filter_single_activity`, `keep_at_threshold`, `filter_start_end`, `activity_concurrent_by_name`, `use_tau_loops`, `flower_accepts_empty` and `repeated_activity_to_flower`.
+  - `filter_activity_concurrent_probe` makes IMf's activity-concurrent fall through probe the filtered instead of the unfiltered directly-follows graph
+  - `InductiveMinerVariant` (IM, IMf, IMa, IMd, IMfd) and `InductiveMinerPreset` (default, thesis, ProM, PM4Py) name the published variants and whose behavior to follow. The binding `inductive_miner_options` returns a variant's `InductiveMiner` under a preset and threshold, e.g., for a host's settings menu
+- `ProcessTree::fold` (and `Node::fold`) merges nested nodes of the same associative operator (`OperatorType::is_associative`) and drops `τ` children of sequences, concurrencies and interleavings. Process trees implement `Display`, e.g., `→(a, X(b, c), d)`, and `PartialEq`
+- Added `AcceptingPetriNet::reduce_silent_transitions`, which removes silent transitions that only pass a token on (language-preserving). Like `retain_nodes`, it renumbers the remaining nodes
+- Added `ObjectCentricPetriNet`, one `AcceptingPetriNet` per object type, with a flat JSON form (`to_json`, `from_json`)
+- Added object-centric Petri net discovery (`discovery::object_centric::ocpn::discover_ocpn_from`), optionally restricted to some object types (`OcpnDiscoveryOptions::object_types_to_use`) and activities (`activities_to_use`)
+  - Binding `discover_ocpn` on a `SlimLinkedOCEL`, with `OcpnDiscoveryOptions` (including the `InductiveMiner` for each object type, which may be IMd or IMfd). It returns the flat JSON form, which the visualization takes
+  - Variable arcs come from the object-centric log (`discover_variable_arcs`). `OcpnDiscoveryOptions::variable_arc_tolerance` (default `0.0`) lets a fraction of an activity's executions involve other than one object of a type while its arc stays normal
+- `flatten_ocel_on` no longer repeats an event that relates to the same object several times (e.g., under different qualifiers). This also affects `OCDirectlyFollowsGraph`
+- `DirectlyFollowsGraph::start_activities` and `end_activities` count how many traces start or end with each activity (`HashMap<Activity, u32>`, in JSON an object instead of a list), and `add_start_activity`/`add_end_activity` take the frequency to add. `discover_dfg` and `discover_dfg_from_ocel` fill in the counts (one per trace, or per object of the type), and the DFG and OC-DFG drawings label their START and END edges with them (**Breaking**)
 
 ## 0.6.2
 - `stream_ocel_file_to_duckdb` / `_with` infer the format the way `OCEL` does and accept every format it imports from, bundles included

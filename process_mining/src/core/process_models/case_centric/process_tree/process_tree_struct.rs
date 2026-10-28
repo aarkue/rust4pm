@@ -19,7 +19,7 @@ pub enum LeafLabel {
 ///
 /// Node in a process tree
 ///
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub enum Node {
     /// Operator node of a process tree
     Operator(Operator),
@@ -89,6 +89,126 @@ impl Node {
             Node::Leaf(leaf) => leaf.add_to_petri_net(net, in_place, out_place),
         }
     }
+
+    /// Merges children that share this node's associative operator into it, bottom-up, so
+    /// `→(→(a, b), c)` becomes `→(a, b, c)`. In an exclusive choice, repeated `τ` children merge into
+    /// one. A sequence, concurrency or interleaving drops its `τ` children, which change nothing,
+    /// and one left with a single child is replaced by it, so `→(τ, a)` becomes `a`. Leaves are
+    /// returned unchanged.
+    pub fn fold(self) -> Self {
+        match self {
+            Node::Leaf(_) => self,
+            Node::Operator(op) => {
+                let folded_children: Vec<Node> =
+                    op.children.into_iter().map(|child| child.fold()).collect();
+
+                let mut children = if op.operator_type.is_associative() {
+                    let mut flattened = Vec::with_capacity(folded_children.len());
+                    for child in folded_children {
+                        match child {
+                            Node::Operator(ref inner)
+                                if inner.operator_type == op.operator_type =>
+                            {
+                                if let Node::Operator(inner) = child {
+                                    flattened.extend(inner.children);
+                                }
+                            }
+                            other => flattened.push(other),
+                        }
+                    }
+                    flattened
+                } else {
+                    folded_children
+                };
+
+                // Folding `×(τ, ×(τ, a))` repeats the τ, and one is enough.
+                if op.operator_type == OperatorType::ExclusiveChoice {
+                    let tau = Node::Leaf(Leaf {
+                        activity_label: LeafLabel::Tau,
+                    });
+                    let mut tau_seen = false;
+                    children.retain(|c| {
+                        if *c == tau {
+                            if tau_seen {
+                                return false;
+                            }
+                            tau_seen = true;
+                        }
+                        true
+                    });
+                }
+
+                if matches!(
+                    op.operator_type,
+                    OperatorType::Sequence | OperatorType::Concurrency | OperatorType::Interleaving
+                ) {
+                    children.retain(|c| !c.is_tau());
+                    match children.len() {
+                        0 => return Node::new_leaf(None),
+                        1 => return children.pop().unwrap_or_else(|| Node::new_leaf(None)),
+                        _ => {}
+                    }
+                }
+
+                Node::Operator(Operator {
+                    operator_type: op.operator_type,
+                    children,
+                })
+            }
+        }
+    }
+
+    fn is_tau(&self) -> bool {
+        matches!(
+            self,
+            Node::Leaf(Leaf {
+                activity_label: LeafLabel::Tau
+            })
+        )
+    }
+}
+
+impl std::fmt::Display for LeafLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LeafLabel::Activity(s) => write!(f, "{s}"),
+            LeafLabel::Tau => write!(f, "tau"),
+        }
+    }
+}
+
+impl std::fmt::Display for Leaf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.activity_label)
+    }
+}
+
+impl std::fmt::Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Node::Leaf(leaf) => write!(f, "{leaf}"),
+            Node::Operator(op) => write!(f, "{op}"),
+        }
+    }
+}
+
+impl std::fmt::Display for Operator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}(", self.operator_type)?;
+        for (i, child) in self.children.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{child}")?;
+        }
+        write!(f, ")")
+    }
+}
+
+impl std::fmt::Display for ProcessTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.root)
+    }
 }
 
 ///
@@ -111,9 +231,23 @@ pub enum OperatorType {
     InclusiveChoice,
 }
 
-///
-/// Functionality to translate the operators into ASCII: →, X, ∧, ↻, ↔, and ∨
-///
+impl OperatorType {
+    /// Whether a child with the same operator can merge into this node without changing the
+    /// language: true for sequence, exclusive choice, concurrency and inclusive choice. A loop's
+    /// first child is its body and the others are redo parts, and an interleaving runs each child
+    /// as one block, so neither merges.
+    pub fn is_associative(self) -> bool {
+        matches!(
+            self,
+            OperatorType::Sequence
+                | OperatorType::ExclusiveChoice
+                | OperatorType::Concurrency
+                | OperatorType::InclusiveChoice
+        )
+    }
+}
+
+/// The operator symbols →, ×, ∧, ↺, ↔ and ∨.
 impl fmt::Display for OperatorType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -121,13 +255,13 @@ impl fmt::Display for OperatorType {
                 write!(f, "→")
             }
             OperatorType::ExclusiveChoice => {
-                write!(f, "X")
+                write!(f, "×")
             }
             OperatorType::Concurrency => {
                 write!(f, "∧")
             }
             OperatorType::Loop => {
-                write!(f, "↻")
+                write!(f, "↺")
             }
             OperatorType::Interleaving => {
                 write!(f, "↔")
@@ -153,6 +287,12 @@ impl ProcessTree {
     ///
     pub fn new(root: Node) -> Self {
         Self { root }
+    }
+
+    /// [`Node::fold`] on the root: nested nodes of the same associative operator merge into one, at
+    /// any depth.
+    pub fn fold(self) -> Self {
+        ProcessTree::new(self.root.fold())
     }
 
     ///
@@ -249,13 +389,12 @@ impl ProcessTree {
     ///
     /// _Note_: This is an export method for __visualizing__ the process tree.
     /// The resulting SVG file cannot be imported as a process tree again.
-    /// [`crate::visualization::process_tree`] returns the SVG as a string and the node positions.
+    /// [`crate::visualization::svg`] returns the same SVG as a string.
     ///
     /// Only available with the `visualization` feature.
     pub fn export_svg<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), std::io::Error> {
-        let svg =
-            crate::visualization::process_tree::export_process_tree_svg(self, &Default::default())
-                .map_err(std::io::Error::other)?;
+        let svg = crate::visualization::svg(self, &Default::default(), &Default::default())
+            .map_err(std::io::Error::other)?;
         std::fs::write(path, svg)
     }
 }
@@ -263,7 +402,7 @@ impl ProcessTree {
 ///
 /// An operator node in a process tree
 ///
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct Operator {
     /// The [`OperatorType`] of the tree itself
     pub operator_type: OperatorType,
@@ -603,7 +742,7 @@ impl Operator {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 ///
 /// A leaf in a process tree
 ///
@@ -668,6 +807,225 @@ mod tests {
     use crate::core::process_models::case_centric::process_tree::process_tree_struct::{
         Leaf, Node, Operator, OperatorType, ProcessTree,
     };
+
+    #[test]
+    fn fold_flat_sequence_unchanged() {
+        // SEQ(a, b, c) has no nested SEQ, so the tree must be returned as-is.
+        let mut seq = Operator::new(OperatorType::Sequence);
+        seq.children.push(Node::new_leaf(Some("a".into())));
+        seq.children.push(Node::new_leaf(Some("b".into())));
+        seq.children.push(Node::new_leaf(Some("c".into())));
+        let pt = ProcessTree::new(Node::Operator(seq)).fold();
+
+        let mut expected = Operator::new(OperatorType::Sequence);
+        expected.children.push(Node::new_leaf(Some("a".into())));
+        expected.children.push(Node::new_leaf(Some("b".into())));
+        expected.children.push(Node::new_leaf(Some("c".into())));
+        assert_eq!(pt.root, Node::Operator(expected));
+    }
+
+    #[test]
+    fn fold_nested_sequence() {
+        // SEQ(SEQ(a, b), c) becomes SEQ(a, b, c)
+        let mut inner = Operator::new(OperatorType::Sequence);
+        inner.children.push(Node::new_leaf(Some("a".into())));
+        inner.children.push(Node::new_leaf(Some("b".into())));
+
+        let mut outer = Operator::new(OperatorType::Sequence);
+        outer.children.push(Node::Operator(inner));
+        outer.children.push(Node::new_leaf(Some("c".into())));
+
+        let pt = ProcessTree::new(Node::Operator(outer)).fold();
+
+        let mut expected = Operator::new(OperatorType::Sequence);
+        expected.children.push(Node::new_leaf(Some("a".into())));
+        expected.children.push(Node::new_leaf(Some("b".into())));
+        expected.children.push(Node::new_leaf(Some("c".into())));
+        assert_eq!(pt.root, Node::Operator(expected));
+    }
+
+    #[test]
+    fn fold_deeply_nested_sequence() {
+        // SEQ(SEQ(SEQ(a, b), c), d) becomes SEQ(a, b, c, d)
+        let mut innermost = Operator::new(OperatorType::Sequence);
+        innermost.children.push(Node::new_leaf(Some("a".into())));
+        innermost.children.push(Node::new_leaf(Some("b".into())));
+
+        let mut middle = Operator::new(OperatorType::Sequence);
+        middle.children.push(Node::Operator(innermost));
+        middle.children.push(Node::new_leaf(Some("c".into())));
+
+        let mut outer = Operator::new(OperatorType::Sequence);
+        outer.children.push(Node::Operator(middle));
+        outer.children.push(Node::new_leaf(Some("d".into())));
+
+        let pt = ProcessTree::new(Node::Operator(outer)).fold();
+
+        let mut expected = Operator::new(OperatorType::Sequence);
+        expected.children.push(Node::new_leaf(Some("a".into())));
+        expected.children.push(Node::new_leaf(Some("b".into())));
+        expected.children.push(Node::new_leaf(Some("c".into())));
+        expected.children.push(Node::new_leaf(Some("d".into())));
+        assert_eq!(pt.root, Node::Operator(expected));
+    }
+
+    #[test]
+    fn fold_xor_nested() {
+        // XOR(XOR(a, b), c) becomes XOR(a, b, c)
+        let mut inner = Operator::new(OperatorType::ExclusiveChoice);
+        inner.children.push(Node::new_leaf(Some("a".into())));
+        inner.children.push(Node::new_leaf(Some("b".into())));
+
+        let mut outer = Operator::new(OperatorType::ExclusiveChoice);
+        outer.children.push(Node::Operator(inner));
+        outer.children.push(Node::new_leaf(Some("c".into())));
+
+        let pt = ProcessTree::new(Node::Operator(outer)).fold();
+
+        let mut expected = Operator::new(OperatorType::ExclusiveChoice);
+        expected.children.push(Node::new_leaf(Some("a".into())));
+        expected.children.push(Node::new_leaf(Some("b".into())));
+        expected.children.push(Node::new_leaf(Some("c".into())));
+        assert_eq!(pt.root, Node::Operator(expected));
+    }
+
+    #[test]
+    fn fold_concurrency_nested() {
+        // AND(AND(a, b), c) becomes AND(a, b, c)
+        let mut inner = Operator::new(OperatorType::Concurrency);
+        inner.children.push(Node::new_leaf(Some("a".into())));
+        inner.children.push(Node::new_leaf(Some("b".into())));
+
+        let mut outer = Operator::new(OperatorType::Concurrency);
+        outer.children.push(Node::Operator(inner));
+        outer.children.push(Node::new_leaf(Some("c".into())));
+
+        let pt = ProcessTree::new(Node::Operator(outer)).fold();
+
+        let mut expected = Operator::new(OperatorType::Concurrency);
+        expected.children.push(Node::new_leaf(Some("a".into())));
+        expected.children.push(Node::new_leaf(Some("b".into())));
+        expected.children.push(Node::new_leaf(Some("c".into())));
+        assert_eq!(pt.root, Node::Operator(expected));
+    }
+
+    #[test]
+    fn fold_does_not_merge_different_operators() {
+        // SEQ(XOR(a, b), c): a different operator, so it stays unchanged.
+        let make_inner = || {
+            let mut xor = Operator::new(OperatorType::ExclusiveChoice);
+            xor.children.push(Node::new_leaf(Some("a".into())));
+            xor.children.push(Node::new_leaf(Some("b".into())));
+            xor
+        };
+
+        let mut outer = Operator::new(OperatorType::Sequence);
+        outer.children.push(Node::Operator(make_inner()));
+        outer.children.push(Node::new_leaf(Some("c".into())));
+
+        let pt = ProcessTree::new(Node::Operator(outer)).fold();
+
+        let mut expected_outer = Operator::new(OperatorType::Sequence);
+        expected_outer.children.push(Node::Operator(make_inner()));
+        expected_outer
+            .children
+            .push(Node::new_leaf(Some("c".into())));
+        assert_eq!(pt.root, Node::Operator(expected_outer));
+    }
+
+    #[test]
+    fn fold_does_not_merge_loop() {
+        // LOOP(LOOP(a, tau), tau): Loop is not associative, so it stays unchanged.
+        let make_inner = || {
+            let mut lp = Operator::new(OperatorType::Loop);
+            lp.children.push(Node::new_leaf(Some("a".into())));
+            lp.children.push(Node::new_leaf(None));
+            lp
+        };
+
+        let mut outer = Operator::new(OperatorType::Loop);
+        outer.children.push(Node::Operator(make_inner()));
+        outer.children.push(Node::new_leaf(None));
+
+        let pt = ProcessTree::new(Node::Operator(outer)).fold();
+
+        let mut expected = Operator::new(OperatorType::Loop);
+        expected.children.push(Node::Operator(make_inner()));
+        expected.children.push(Node::new_leaf(None));
+        assert_eq!(pt.root, Node::Operator(expected));
+    }
+
+    #[test]
+    fn fold_mixed_tree() {
+        // SEQ(SEQ(a, b), LOOP(c, tau), SEQ(d, e)) becomes SEQ(a, b, LOOP(c, tau), d, e): the two
+        // SEQ children merge and the LOOP stays in place.
+        let make_loop = || {
+            let mut lp = Operator::new(OperatorType::Loop);
+            lp.children.push(Node::new_leaf(Some("c".into())));
+            lp.children.push(Node::new_leaf(None));
+            lp
+        };
+
+        let mut seq1 = Operator::new(OperatorType::Sequence);
+        seq1.children.push(Node::new_leaf(Some("a".into())));
+        seq1.children.push(Node::new_leaf(Some("b".into())));
+
+        let mut seq2 = Operator::new(OperatorType::Sequence);
+        seq2.children.push(Node::new_leaf(Some("d".into())));
+        seq2.children.push(Node::new_leaf(Some("e".into())));
+
+        let mut root = Operator::new(OperatorType::Sequence);
+        root.children.push(Node::Operator(seq1));
+        root.children.push(Node::Operator(make_loop()));
+        root.children.push(Node::Operator(seq2));
+
+        let pt = ProcessTree::new(Node::Operator(root)).fold();
+
+        let mut expected = Operator::new(OperatorType::Sequence);
+        expected.children.push(Node::new_leaf(Some("a".into())));
+        expected.children.push(Node::new_leaf(Some("b".into())));
+        expected.children.push(Node::Operator(make_loop()));
+        expected.children.push(Node::new_leaf(Some("d".into())));
+        expected.children.push(Node::new_leaf(Some("e".into())));
+        assert_eq!(pt.root, Node::Operator(expected));
+    }
+
+    #[test]
+    fn fold_drops_tau_where_it_changes_nothing() {
+        let a = || Node::new_leaf(Some("a".into()));
+        let b = || Node::new_leaf(Some("b".into()));
+        let tau = || Node::new_leaf(None);
+        let op = |operator_type, children: Vec<Node>| {
+            let mut node = Operator::new(operator_type);
+            node.children = children;
+            Node::Operator(node)
+        };
+        let folded = |node: Node| ProcessTree::new(node).fold().root;
+        use OperatorType::*;
+
+        assert_eq!(folded(op(Sequence, vec![tau(), a()])), a());
+        assert_eq!(folded(op(Concurrency, vec![tau(), tau()])), tau());
+        assert_eq!(
+            folded(op(Interleaving, vec![a(), tau(), b()])),
+            op(Interleaving, vec![a(), b()])
+        );
+        // `→(a, →(τ, b))` loses the inner sequence, then merges b in.
+        assert_eq!(
+            folded(op(Sequence, vec![a(), op(Sequence, vec![tau(), b()])])),
+            op(Sequence, vec![a(), b()])
+        );
+        // In these, τ is behavior: skipping, a loop's redo, or one of the chosen children.
+        for operator_type in [ExclusiveChoice, InclusiveChoice] {
+            assert_eq!(
+                folded(op(operator_type, vec![tau(), a()])),
+                op(operator_type, vec![tau(), a()])
+            );
+        }
+        assert_eq!(
+            folded(op(Loop, vec![a(), tau()])),
+            op(Loop, vec![a(), tau()])
+        );
+    }
 
     #[test]
     fn is_valid_test() {
