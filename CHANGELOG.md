@@ -30,7 +30,7 @@
   - Object-centric Petri net discovery with variable arcs (`discover_ocpn_from`)
   - OC-DECLARE discovery can be restricted to some object types
 - Conformance
-  - Escaping-edges precision
+  - Escaping-edges precision (Thanks @cpitsch!)
   - Alignments are bounded by memory, search from both ends, and detect unreachable final markings up front
 - Object-centric analysis
   - Reflow (`analysis::object_centric::reflow`) tags per activity which object types carry the control flow, and draws the others as annotations of an object-centric Petri net
@@ -42,7 +42,7 @@
   - The `visualization` module draws Petri nets, object-centric Petri nets, process trees, DFGs, OC-DFGs and OC-DECLARE models as SVG with [graphlay](https://github.com/aarkue/graphlay), including annotations and object type badges
 
 ### Fixed
-- OCEL round trips between `SQLite`, `DuckDB`, XML, JSON, CSV and bundles keep `Null` and boolean values, read values as their declared type, and keep every object and relation
+- OCEL round trips between `SQLite`, `DuckDB`, XML, JSON, CSV and bundles keep `Null` and boolean values, read values as their declared type, and keep every object and relation (Thanks @cpitsch!)
 - XES, OCEL XML and PNML import no longer panic on malformed input, and read gzip files with several members completely
 - `SQLite` and `DuckDB` files are opened read-only, so a missing file is an error instead of a new empty database
 - A failed export no longer leaves a truncated or empty file behind
