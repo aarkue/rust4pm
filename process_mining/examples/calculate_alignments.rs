@@ -1,6 +1,6 @@
 use process_mining::conformance::alignments::cost::CostFunction;
 use process_mining::conformance::alignments::{
-    align_empty_trace, align_log, compute_fitness, AlignmentOptions,
+    align_trace, align_variants, compute_fitness, AlignmentOptions,
 };
 use process_mining::core::event_data::case_centric::utils::activity_projection::EventLogActivityProjection;
 use process_mining::{AcceptingPetriNet, EventLog, Importable};
@@ -30,17 +30,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         ..AlignmentOptions::default()
     };
     let now = Instant::now();
-    let empty_trace = align_empty_trace(&pn, &options);
+    let empty_trace = align_trace(&pn, &[], &options);
     println!(
         "Empty-trace alignment took {:?}. Result: {:?}",
         now.elapsed(),
         empty_trace
     );
     let now = Instant::now();
-    let alignments_res = align_log(&pn, &EventLogActivityProjection::from(&log), &options);
+    let alignments_res = align_variants(&pn, &EventLogActivityProjection::from(&log), &options);
     println!("All trace alignments took {:?}.", now.elapsed());
 
-    let f = compute_fitness(&alignments_res, &pn, &options);
+    let f = compute_fitness(&pn, &alignments_res, &options);
 
     println!("{:?}", f);
 

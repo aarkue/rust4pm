@@ -1,16 +1,16 @@
 //! Writing Petri nets as PNML
-use std::{collections::HashSet, fs::File, io::Write};
+use std::{collections::HashSet, io::Write};
 
 use quick_xml::{events::BytesText, Writer};
 use uuid::Uuid;
 
-use crate::{
-    core::process_models::case_centric::petri_net::{
+use crate::core::{
+    io::xml_chars,
+    process_models::case_centric::petri_net::{
         io::PetriNetIOError,
         marking::Marking,
         net::{ArcType, PetriNet},
     },
-    XMLWriterWrapper,
 };
 
 const OK: Result<(), std::io::Error> = Ok(());
@@ -26,34 +26,45 @@ fn is_ncname(id: &str) -> bool {
 
 /// The ids of the places, the transitions and the arcs
 ///
-/// Nodes keep their names as ids if every node has one and the document's ids stay unique, valid
-/// `NCNames`. Otherwise all nodes get generated ids, as mixing both could collide.
+/// A node keeps its name as its id if the name is a valid `NCName` not taken by an earlier node.
+/// Every other node gets a generated id (`p0`, `t0`, ...) that no name or other id uses.
 fn ids(net: &PetriNet) -> (Vec<String>, Vec<String>, Vec<String>) {
     let arcs: Vec<String> = (0..net.arcs().count()).map(|i| format!("a{i}")).collect();
-    let names: Option<Vec<String>> = net
+    let mut taken: HashSet<String> = [NET_ID, PAGE_ID].map(String::from).into();
+    taken.extend(arcs.iter().cloned());
+    let names: Vec<Option<&str>> = net
         .places()
-        .map(|(_, p)| p.name.clone())
-        .chain(net.transitions().map(|(_, t)| t.name.clone()))
+        .map(|(_, p)| p.name.as_deref())
+        .chain(net.transitions().map(|(_, t)| t.name.as_deref()))
         .collect();
-    if let Some(mut names) = names {
-        let mut seen: HashSet<&str> = HashSet::from([NET_ID, PAGE_ID]);
-        seen.extend(arcs.iter().map(String::as_str));
-        if names
-            .iter()
-            .all(|name| is_ncname(name) && seen.insert(name.as_str()))
-        {
-            let transitions = names.split_off(net.num_places());
-            return (names, transitions, arcs);
+    let kept: Vec<Option<String>> = names
+        .iter()
+        .map(|name| {
+            name.filter(|n| is_ncname(n) && taken.insert(n.to_string()))
+                .map(String::from)
+        })
+        .collect();
+    let mut generate = |prefix: char, i: usize| {
+        let mut id = format!("{prefix}{i}");
+        while !taken.insert(id.clone()) {
+            id.push('_');
         }
+        id
+    };
+    let mut ids: Vec<String> = Vec::with_capacity(kept.len());
+    for (i, id) in kept.into_iter().enumerate() {
+        let id = match id {
+            Some(id) => id,
+            None if i < net.num_places() => generate('p', i),
+            None => generate('t', i - net.num_places()),
+        };
+        ids.push(id);
     }
-    let places = (0..net.num_places()).map(|i| format!("p{i}")).collect();
-    let transitions = (0..net.num_transitions())
-        .map(|i| format!("t{i}"))
-        .collect();
-    (places, transitions, arcs)
+    let transitions = ids.split_off(net.num_places());
+    (ids, transitions, arcs)
 }
 
-fn check_markings(
+pub(crate) fn check_markings(
     net: &PetriNet,
     initial_marking: Option<&Marking>,
     final_marking: Option<&Marking>,
@@ -68,40 +79,34 @@ fn check_markings(
     }
 }
 
-///
-/// Export a [`PetriNet`] to PNML and write it to the given writer ([`quick_xml::Writer`] or [`std::io::Write`])
+/// Export a [`PetriNet`] as indented PNML to `writer`, and flush it
 ///
 /// Writes `<initialMarking>`s if `initial_marking` is given, and `ProM`'s `<finalmarkings>` with one
-/// marking if `final_marking` is given; a marking with a place outside the net is an error. Node
-/// ids are the nodes' names when those form valid, unique PNML ids, and generated (`p0`, `t0`, ...)
-/// otherwise. The output only depends on the net.
-pub fn export_petri_net_to_pnml<'a, W>(
+/// marking if `final_marking` is given. A marking with a place outside the net is an error, and
+/// nothing is written then. A node's id is its name when that is a valid, unique PNML id, and
+/// generated (`p0`, `t0`, ...) otherwise. The output only depends on the net.
+pub fn export_pnml<W: Write>(
+    mut writer: W,
     net: &PetriNet,
     initial_marking: Option<&Marking>,
     final_marking: Option<&Marking>,
-    into_writer: impl Into<XMLWriterWrapper<'a, W>>,
-) -> Result<(), PetriNetIOError>
-where
-    W: Write + 'a,
-{
+) -> Result<(), PetriNetIOError> {
     check_markings(net, initial_marking, final_marking)?;
-    Ok(write_pnml(
+    write_pnml(
+        &mut Writer::new_with_indent(&mut writer, b' ', 4),
         net,
         initial_marking,
         final_marking,
-        into_writer,
-    )?)
+    )?;
+    Ok(writer.flush()?)
 }
 
-fn write_pnml<'a, W>(
+fn write_pnml<W: Write>(
+    writer: &mut Writer<W>,
     net: &PetriNet,
     initial_marking: Option<&Marking>,
     final_marking: Option<&Marking>,
-    into_writer: impl Into<XMLWriterWrapper<'a, W>>,
-) -> Result<(), quick_xml::Error>
-where
-    W: Write + 'a,
-{
+) -> Result<(), std::io::Error> {
     let (place_ids, transition_ids, arc_ids) = ids(net);
     let text = |writer: &mut Writer<W>, element: &str, text: &str| {
         writer
@@ -109,15 +114,14 @@ where
             .write_inner_content(|writer| {
                 writer
                     .create_element("text")
-                    .write_text_content(BytesText::new(text))?;
+                    .write_text_content(BytesText::new(&xml_chars(text)))?;
                 OK
             })?;
         OK
     };
-    let mut xml_writer: XMLWriterWrapper<'_, W> = into_writer.into();
-    let writer = xml_writer.to_xml_writer();
     writer
         .create_element("pnml")
+        .with_attribute(("xmlns", "http://www.pnml.org/version-2009/grammar/pnml"))
         .write_inner_content(|writer| {
             writer
                 .create_element("net")
@@ -140,9 +144,17 @@ where
                                             "name",
                                             place.name.as_deref().unwrap_or(pnml_id),
                                         )?;
-                                        let tokens = initial_marking.map_or(0, |m| m.tokens(id));
-                                        if tokens > 0 {
-                                            text(writer, "initialMarking", &tokens.to_string())?;
+                                        // An empty initial marking is written as 0 tokens
+                                        // everywhere, so it reads back as present
+                                        if let Some(marking) = initial_marking {
+                                            let tokens = marking.tokens(id);
+                                            if tokens > 0 || marking.is_empty() {
+                                                text(
+                                                    writer,
+                                                    "initialMarking",
+                                                    &tokens.to_string(),
+                                                )?;
+                                            }
                                         }
                                         OK
                                     })?;
@@ -234,42 +246,25 @@ where
     Ok(())
 }
 
-/// Export a [`PetriNet`] to a `.pnml` file (specified through path)
-///
-/// See [`export_petri_net_to_pnml`] for what is written. Nothing is written if the markings refer
-/// to places outside the net.
-pub fn export_petri_net_to_pnml_path<P: AsRef<std::path::Path>>(
-    net: &PetriNet,
-    initial_marking: Option<&Marking>,
-    final_marking: Option<&Marking>,
-    path: P,
-) -> Result<(), PetriNetIOError> {
-    check_markings(net, initial_marking, final_marking)?;
-    let mut writer = Writer::new_with_indent(File::create(path)?, b' ', 4);
-    Ok(write_pnml(
-        net,
-        initial_marking,
-        final_marking,
-        &mut writer,
-    )?)
-}
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
 
-    use super::{export_petri_net_to_pnml, export_petri_net_to_pnml_path, is_ncname};
+    use super::{export_pnml, is_ncname};
     use crate::{
+        core::io::Exportable,
         core::process_models::case_centric::petri_net::{
             io::PetriNetIOError,
             marking::Marking,
-            net::{ArcType, PetriNet, PlaceID},
-            pnml::read::{import_pnml_from_path, import_pnml_reader},
+            net::{AcceptingPetriNet, ArcType, PetriNet, PlaceID},
+            pnml::read::{accepting_net, import_pnml},
         },
         test_utils::get_test_data_path,
     };
 
     fn import(name: &str) -> (PetriNet, Option<Marking>, Option<Marking>) {
-        import_pnml_from_path(get_test_data_path().join("petri-net").join(name)).unwrap()
+        let path = get_test_data_path().join("petri-net").join(name);
+        import_pnml(std::io::BufReader::new(std::fs::File::open(path).unwrap())).unwrap()
     }
 
     fn export(
@@ -278,7 +273,7 @@ mod tests {
         final_marking: Option<&Marking>,
     ) -> String {
         let mut out = Vec::new();
-        export_petri_net_to_pnml(net, initial, final_marking, &mut out).unwrap();
+        export_pnml(&mut out, net, initial, final_marking).unwrap();
         String::from_utf8(out).unwrap()
     }
 
@@ -292,11 +287,29 @@ mod tests {
     #[test]
     fn round_trip_keeps_names_and_markings() {
         let (net, initial, final_marking) = import("sepsis-DISCovered.apnml");
+        assert_eq!(net.places().next().unwrap().1.name.as_deref(), Some("i"));
         let pnml = export(&net, initial.as_ref(), final_marking.as_ref());
-        assert!(pnml.contains("id=\"n1\""));
+        // `i` and the transition ids are kept, names such as `pi_[0, 1]@1` get generated ids
+        for id in ["i", "o", "n20", "p2"] {
+            assert!(pnml.contains(&format!("id=\"{id}\"")), "{id}");
+        }
         assert!(pnml.contains(r#"type="http://www.pnml.org/version-2009/grammar/ptnet""#));
-        let back = import_pnml_reader(&mut pnml.as_bytes()).unwrap();
+        assert!(pnml.starts_with(r#"<pnml xmlns="http://www.pnml.org/version-2009/grammar/pnml">"#));
+        assert!(pnml.contains("\n    <net "));
+        let back = import_pnml(pnml.as_bytes()).unwrap();
         assert_eq!(back, (net, initial, final_marking));
+    }
+
+    #[test]
+    fn invalid_xml_chars_are_dropped() {
+        let mut net = PetriNet::new();
+        net.add_place(Some("p\u{1}".into()));
+        net.add_transition(Some("a\u{1}b\u{FFFE}".into()), None);
+        let pnml = export(&net, None, None);
+        crate::core::io::assert_xml_well_formed(pnml.as_bytes());
+        let (back, _, _) = import_pnml(pnml.as_bytes()).unwrap();
+        let labels: Vec<_> = back.transitions().map(|(_, t)| t.label.clone()).collect();
+        assert_eq!(labels, [Some("ab".to_string())]);
     }
 
     #[test]
@@ -307,7 +320,7 @@ mod tests {
         let ids = ids(&pnml);
         assert!(ids.iter().all(|id| is_ncname(id)), "{ids:?}");
         assert_eq!(ids.iter().collect::<HashSet<_>>().len(), ids.len());
-        let (back, back_initial, back_final) = import_pnml_reader(&mut pnml.as_bytes()).unwrap();
+        let (back, back_initial, back_final) = import_pnml(pnml.as_bytes()).unwrap();
         let labels = |net: &PetriNet| {
             net.transitions()
                 .map(|(_, t)| t.label.clone())
@@ -326,24 +339,51 @@ mod tests {
         let (net, initial, final_marking) = import("pn.pnml");
         let pnml = export(&net, initial.as_ref(), final_marking.as_ref());
         let ids = ids(&pnml);
-        assert!(ids.contains(&"p0") && ids.contains(&"t0"), "{ids:?}");
-        assert!(ids.iter().all(|id| uuid::Uuid::parse_str(id).is_err()));
+        assert!(ids.contains(&"p0") && ids.contains(&"t2"), "{ids:?}");
+        assert!(ids.iter().all(|id| is_ncname(id)), "{ids:?}");
+        assert_eq!(ids.iter().collect::<HashSet<_>>().len(), ids.len());
     }
 
     #[test]
     fn export_generates_ids_on_collision() {
         let mut net = PetriNet::new();
+        // `a0` is an arc id, `p1` is taken by the third place's name
         let p = net.add_place(Some("a0".into()));
-        net.add_place(Some("x".into()));
+        net.add_place(Some("bad name".into()));
+        net.add_place(Some("p1".into()));
         let t = net.add_transition(Some("act".into()), Some("y".into()));
         net.add_arc(ArcType::place_to_transition(p, t), None);
         let pnml = export(&net, None, None);
         let ids = ids(&pnml);
-        assert!(
-            ids.contains(&"p0") && ids.contains(&"p1") && ids.contains(&"t0"),
-            "{ids:?}"
+        for id in ["p0", "p1_", "p1", "y"] {
+            assert!(ids.contains(&id), "{ids:?}");
+        }
+        assert_eq!(ids.iter().collect::<HashSet<_>>().len(), ids.len());
+    }
+
+    #[test]
+    fn empty_initial_marking_round_trips() {
+        let mut net = PetriNet::new();
+        let p = net.add_place(Some("p".into()));
+        let t = net.add_transition(Some("a".into()), Some("t".into()));
+        net.add_arc(ArcType::transition_to_place(t, p), None);
+        let final_marking = Marking::from([(p, 1)]);
+        let pnml = export(&net, Some(&Marking::new()), Some(&final_marking));
+        let back = import_pnml(pnml.as_bytes()).unwrap();
+        assert_eq!(
+            back,
+            (net.clone(), Some(Marking::new()), Some(final_marking))
         );
-        assert!(!ids.contains(&"x"));
+        assert!(accepting_net(back).is_ok());
+
+        let pnml = export(&net, None, None);
+        let (_, initial, _) = import_pnml(pnml.as_bytes()).unwrap();
+        assert_eq!(initial, None);
+
+        let empty = PetriNet::new();
+        let pnml = export(&empty, Some(&Marking::new()), Some(&Marking::new()));
+        let back = accepting_net(import_pnml(pnml.as_bytes()).unwrap()).unwrap();
+        assert!(back.initial_marking.is_empty() && back.final_marking.is_empty());
     }
 
     #[test]
@@ -366,28 +406,14 @@ mod tests {
             )
         };
         let mut out = Vec::new();
-        assert!(rejected(export_petri_net_to_pnml(
-            &net,
-            Some(&foreign),
-            None,
-            &mut out
-        )));
-        assert!(rejected(export_petri_net_to_pnml(
-            &net,
-            None,
-            Some(&foreign),
-            &mut out
-        )));
-        let path = get_test_data_path()
-            .join("export")
-            .join("foreign-marking.pnml");
-        let _ = std::fs::remove_file(&path);
-        assert!(rejected(export_petri_net_to_pnml_path(
-            &net,
-            None,
-            Some(&foreign),
-            &path
-        )));
+        assert!(rejected(export_pnml(&mut out, &net, Some(&foreign), None)));
+        assert!(rejected(export_pnml(&mut out, &net, None, Some(&foreign))));
+        assert!(out.is_empty(), "nothing is written for a rejected net");
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("foreign-marking.pnml");
+        let accepting = AcceptingPetriNet::new(net, Marking::new(), foreign);
+        assert!(rejected(accepting.export_to_path(&path)));
         assert!(!path.exists(), "no file is written for a rejected net");
     }
 
@@ -396,5 +422,34 @@ mod tests {
         let (net, _, _) = import("sepsis-DISCovered.apnml");
         let pnml = export(&net, None, None);
         assert!(!pnml.contains("initialMarking") && !pnml.contains("finalmarkings"));
+    }
+
+    /// Markings and arcs still resolve by PNML id when it differs from the name.
+    #[test]
+    fn place_names_round_trip() {
+        let mut net = PetriNet::new();
+        let named = net.add_place(Some("order placed".into()));
+        let unnamed = net.add_place(None);
+        let t = net.add_transition(Some("a".into()), Some("t".into()));
+        net.add_arc(ArcType::place_to_transition(named, t), None);
+        net.add_arc(ArcType::transition_to_place(t, unnamed), None);
+        let initial = Marking::from([(named, 1)]);
+        let final_marking = Marking::from([(unnamed, 1)]);
+        let pnml = export(&net, Some(&initial), Some(&final_marking));
+        let (back, back_initial, back_final) = import_pnml(pnml.as_bytes()).unwrap();
+        let names: Vec<_> = back.places().map(|(_, p)| p.name.clone()).collect();
+        // A place without a name is written with its generated id as its name.
+        assert_eq!(
+            names,
+            [Some("order placed".to_string()), Some("p1".to_string())]
+        );
+        assert_eq!(
+            back.arcs().collect::<Vec<_>>(),
+            net.arcs().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            (back_initial, back_final),
+            (Some(initial), Some(final_marking))
+        );
     }
 }

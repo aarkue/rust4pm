@@ -1,19 +1,20 @@
 //! Binding wrappers for [`SlimLinkedOCEL`] functionality
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, FixedOffset};
 use macros_process_mining::register_binding;
-use rayon::prelude::*;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::core::event_data::object_centric::{
+    appendable::AppendableOCEL,
     linked_ocel::{
         slim_linked_ocel::{EventIndex, ObjectIndex},
         LinkedOCELAccess, SlimLinkedOCEL,
     },
     OCELAttributeValue, OCELEvent, OCELObject, OCELType, OCELTypeAttribute,
 };
-use crate::core::OCEL;
 
 /// Create a new empty [`SlimLinkedOCEL`].
 ///
@@ -53,12 +54,15 @@ fn locel_add_object_type(
 /// Add an event and return its [`EventIndex`].
 ///
 /// The event type must have been declared via [`locel_add_event_type`] first.
-/// Otherwise this returns `None`.
 ///
-/// `id`: If `None`, a UUID is assigned. Returns `None` if the id is already taken.
+/// `id`: If `None`, a UUID is assigned.
 /// `attributes`: Positional values in the declared attribute order. Padded with `Null` or truncated on length mismatch (with a warning).
 /// `relationships`: E2O relationships as `(qualifier, object_index)` pairs (can also be added later via [`locel_add_e2o`]).
-#[register_binding]
+///
+/// # Errors
+/// If the event type is undeclared, the id is already taken, or a relationship names an object
+/// index that does not exist. The OCEL is left unchanged.
+#[register_binding(stringify_error)]
 fn locel_add_event(
     ocel: &mut SlimLinkedOCEL,
     event_type: String,
@@ -66,73 +70,330 @@ fn locel_add_event(
     #[bind(default)] id: Option<String>,
     #[bind(default)] attributes: Vec<OCELAttributeValue>,
     #[bind(default)] relationships: Vec<(String, ObjectIndex)>,
-) -> Option<EventIndex> {
+) -> Result<EventIndex, String> {
+    if ocel.get_ev_type(&event_type).is_none() {
+        return Err(format!("no event type '{event_type}'"));
+    }
+    if let Some(id) = &id {
+        if ocel.get_ev_by_id(id).is_some() {
+            return Err(format!("event id '{id}' is already taken"));
+        }
+    }
+    check_object_indices(ocel, &relationships)?;
     ocel.add_event(&event_type, time, id, attributes, relationships)
+        .ok_or_else(|| "event was not added".to_string())
 }
 
 /// Add an object and return its [`ObjectIndex`].
 ///
 /// The object type must have been declared via [`locel_add_object_type`] first.
-/// Otherwise this returns `None`.
 ///
-/// `id`: If `None`, a UUID is assigned. Returns `None` if the id is already taken.
+/// `id`: If `None`, a UUID is assigned.
 /// `attributes`: Positional list of time-indexed attribute histories (one `(timestamp, value)` list per declared attribute, in order). Use `1970-01-01T00:00:00Z` for constant/initial values. Padded with empty lists or truncated on length mismatch (with a warning).
 /// `relationships`: Outgoing O2O relationships as `(qualifier, object_index)` pairs (can also be added later via [`locel_add_o2o`]).
-#[register_binding]
+///
+/// # Errors
+/// If the object type is undeclared, the id is already taken, or a relationship names an object
+/// index that does not exist yet. The OCEL is left unchanged.
+#[register_binding(stringify_error)]
 fn locel_add_object(
     ocel: &mut SlimLinkedOCEL,
     object_type: String,
     #[bind(default)] id: Option<String>,
     #[bind(default)] attributes: Vec<Vec<(DateTime<FixedOffset>, OCELAttributeValue)>>,
     #[bind(default)] relationships: Vec<(String, ObjectIndex)>,
-) -> Option<ObjectIndex> {
+) -> Result<ObjectIndex, String> {
+    if ocel.get_ob_type(&object_type).is_none() {
+        return Err(format!("no object type '{object_type}'"));
+    }
+    if let Some(id) = &id {
+        if ocel.get_ob_by_id(id).is_some() {
+            return Err(format!("object id '{id}' is already taken"));
+        }
+    }
+    check_object_indices(ocel, &relationships)?;
     ocel.add_object(&object_type, id, attributes, relationships)
+        .ok_or_else(|| "object was not added".to_string())
+}
+
+fn check_object_indices(
+    ocel: &SlimLinkedOCEL,
+    relationships: &[(String, ObjectIndex)],
+) -> Result<(), String> {
+    let num_obs = ocel.get_num_obs();
+    match relationships
+        .iter()
+        .find(|(_q, o)| o.into_inner() as usize >= num_obs)
+    {
+        Some((q, o)) => Err(format!(
+            "relationship '{q}' names object index {} but the OCEL has {num_obs} object(s)",
+            o.into_inner()
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Add a value to the history of an object attribute.
+///
+/// Inserted after the last change at or before its time. The attribute must be declared on the
+/// object's type.
+///
+/// # Errors
+/// If the object index does not exist or the object's type does not declare `attribute`.
+/// The OCEL is left unchanged.
+#[register_binding(stringify_error)]
+fn locel_add_object_attribute_value(
+    ocel: &mut SlimLinkedOCEL,
+    object: ObjectIndex,
+    attribute: String,
+    time: DateTime<FixedOffset>,
+    value: OCELAttributeValue,
+) -> Result<(), String> {
+    let index = object.into_inner();
+    if index as usize >= ocel.get_num_obs() {
+        return Err(format!("no object with index {index}"));
+    }
+    if ocel.add_object_attribute_value(object, &attribute, time, value) {
+        Ok(())
+    } else {
+        Err(format!(
+            "the type of object {index} declares no attribute '{attribute}'"
+        ))
+    }
+}
+
+/// Events, objects and type declarations to add with [`locel_append_batch`]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct OCELAppendBatch {
+    /// Event types to declare. Attributes of an already declared type are merged.
+    #[serde(default)]
+    pub event_types: Vec<OCELType>,
+    /// Object types to declare. Attributes of an already declared type are merged.
+    #[serde(default)]
+    pub object_types: Vec<OCELType>,
+    /// Objects to add. An object whose id already exists, or occurs earlier in the batch, is
+    /// updated instead: Its attribute values are added to the histories and its relationships
+    /// are added as O2O relationships.
+    #[serde(default)]
+    pub objects: Vec<OCELObject>,
+    /// Events to add
+    #[serde(default)]
+    pub events: Vec<OCELEvent>,
+}
+
+/// What a [`locel_append_batch`] call added
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OCELAppendSummary {
+    /// Number of events added
+    pub events_added: usize,
+    /// Number of objects added
+    pub objects_added: usize,
+    /// Number of objects that existed before the batch and received attribute values or
+    /// relationships
+    pub objects_updated: usize,
+}
+
+/// Add many events and objects, referring to objects by id.
+///
+/// Unlike [`locel_add_event`] and [`locel_add_object`], types and attributes that are not
+/// declared yet are declared on the fly, and relationships name their target by object id. A
+/// relationship may refer to an object that appears later in the same batch. A relationship to
+/// an object id that is unknown after the whole batch is dropped with a warning.
+///
+/// An object whose id already exists is updated, see [`OCELAppendBatch::objects`].
+///
+/// # Errors
+/// If an event id is already taken or occurs twice in the batch, or an object id is given with
+/// two different types. The OCEL is left unchanged.
+#[register_binding(stringify_error)]
+fn locel_append_batch(
+    ocel: &mut SlimLinkedOCEL,
+    batch: OCELAppendBatch,
+) -> Result<OCELAppendSummary, String> {
+    let mut event_ids = HashSet::with_capacity(batch.events.len());
+    for event in &batch.events {
+        if ocel.get_ev_by_id(&event.id).is_some() {
+            return Err(format!("event id '{}' is already taken", event.id));
+        }
+        if !event_ids.insert(event.id.as_str()) {
+            return Err(format!("event id '{}' occurs twice in the batch", event.id));
+        }
+    }
+    let mut new_object_types: HashMap<&str, &str> = HashMap::new();
+    for object in &batch.objects {
+        let known_type = match ocel.get_ob_by_id(&object.id) {
+            Some(existing) => existing.get_ob_type(ocel).as_str(),
+            None => new_object_types
+                .entry(object.id.as_str())
+                .or_insert(object.object_type.as_str()),
+        };
+        if known_type != object.object_type {
+            return Err(format!(
+                "object '{}' has type '{}', not '{}'",
+                object.id, known_type, object.object_type
+            ));
+        }
+    }
+
+    let mut summary = OCELAppendSummary::default();
+    for event_type in batch.event_types {
+        ocel.declare_event_type(event_type)
+            .map_err(|e| e.to_string())?;
+    }
+    for object_type in batch.object_types {
+        ocel.declare_object_type(object_type)
+            .map_err(|e| e.to_string())?;
+    }
+    let num_obs_before = ocel.get_num_obs();
+    let mut updates = Vec::new();
+    for object in batch.objects {
+        match ocel.get_ob_by_id(&object.id) {
+            Some(index) => updates.push((index, object)),
+            None => {
+                ocel.append_object(
+                    object.id,
+                    &object.object_type,
+                    object.attributes,
+                    object.relationships,
+                )
+                .map_err(|e| e.to_string())?;
+                summary.objects_added += 1;
+            }
+        }
+    }
+    let mut updated = HashSet::new();
+    for (index, object) in updates {
+        let mut changed = false;
+        for attribute in object.attributes {
+            let declared = ocel
+                .get_ob_type(&object.object_type)
+                .is_some_and(|t| t.attributes.iter().any(|a| a.name == attribute.name));
+            if !declared {
+                ocel.declare_object_type(OCELType {
+                    name: object.object_type.clone(),
+                    attributes: vec![OCELTypeAttribute {
+                        name: attribute.name.clone(),
+                        value_type: attribute.value.get_type().as_type_str().to_string(),
+                    }],
+                })
+                .map_err(|e| e.to_string())?;
+            }
+            if !ocel.add_object_attribute_value(
+                index,
+                &attribute.name,
+                attribute.time,
+                attribute.value,
+            ) {
+                return Err(format!(
+                    "object '{}' takes no attribute '{}'",
+                    object.id, attribute.name
+                ));
+            }
+            changed = true;
+        }
+        for relationship in object.relationships {
+            match ocel.get_ob_by_id(&relationship.object_id) {
+                Some(target) => {
+                    let present = ocel
+                        .get_o2o(index)
+                        .any(|(q, o)| *o == target && q == relationship.qualifier);
+                    if !present {
+                        ocel.add_o2o(index, target, relationship.qualifier);
+                        changed = true;
+                    }
+                }
+                None => log::warn!(
+                    "dropping O2O reference to unknown object id {:?}",
+                    relationship.object_id
+                ),
+            }
+        }
+        if changed && (index.into_inner() as usize) < num_obs_before {
+            updated.insert(index);
+        }
+    }
+    summary.objects_updated = updated.len();
+    for event in batch.events {
+        ocel.append_event(
+            event.id,
+            &event.event_type,
+            event.time,
+            event.attributes,
+            event.relationships,
+        )
+        .map_err(|e| e.to_string())?;
+        summary.events_added += 1;
+    }
+    ocel.finalize().map_err(|e| e.to_string())?;
+    Ok(summary)
 }
 
 /// Add an E2O (event-to-object) relationship with the given qualifier.
 ///
 /// Multiple qualifiers between the same `(event, object)` pair are allowed. Re-adding the exact
-/// same `(event, object, qualifier)` triple is a no-op. Returns `true` on success, `false` if
-/// either index is out of bounds (with a stderr warning).
-#[register_binding]
+/// same `(event, object, qualifier)` triple is a no-op. Returns `true` on success.
+///
+/// # Errors
+/// If either index is out of range.
+#[register_binding(stringify_error)]
 fn locel_add_e2o(
     ocel: &mut SlimLinkedOCEL,
     event: EventIndex,
     object: ObjectIndex,
     qualifier: String,
-) -> bool {
-    ocel.add_e2o(event, object, qualifier)
+) -> Result<bool, String> {
+    let (event, object) = (check_ev(ocel, event)?, check_ob(ocel, object)?);
+    Ok(ocel.add_e2o(event, object, qualifier))
 }
 
 /// Add a directed O2O (object-to-object) relationship from `from_obj` to `to_obj` with the given qualifier.
 ///
 /// Multiple qualifiers between the same `(from_obj, to_obj)` pair are allowed. Re-adding the exact
-/// same `(from_obj, to_obj, qualifier)` triple is a no-op. Returns `true` on success, `false` if
-/// either index is out of bounds (with a stderr warning).
-#[register_binding]
+/// same `(from_obj, to_obj, qualifier)` triple is a no-op. Returns `true` on success.
+///
+/// # Errors
+/// If either index is out of range.
+#[register_binding(stringify_error)]
 fn locel_add_o2o(
     ocel: &mut SlimLinkedOCEL,
     from_obj: ObjectIndex,
     to_obj: ObjectIndex,
     qualifier: String,
-) -> bool {
-    ocel.add_o2o(from_obj, to_obj, qualifier)
+) -> Result<bool, String> {
+    let (from_obj, to_obj) = (check_ob(ocel, from_obj)?, check_ob(ocel, to_obj)?);
+    Ok(ocel.add_o2o(from_obj, to_obj, qualifier))
 }
 
 /// Remove all E2O relationships between the given event and object (across every qualifier).
 ///
-/// Returns `true` on success, `false` if either index is out of bounds (with a stderr warning).
-#[register_binding]
-fn locel_delete_e2o(ocel: &mut SlimLinkedOCEL, event: EventIndex, object: ObjectIndex) -> bool {
-    ocel.delete_e2o(&event, &object)
+/// Returns `true` on success.
+///
+/// # Errors
+/// If either index is out of range.
+#[register_binding(stringify_error)]
+fn locel_delete_e2o(
+    ocel: &mut SlimLinkedOCEL,
+    event: EventIndex,
+    object: ObjectIndex,
+) -> Result<bool, String> {
+    let (event, object) = (check_ev(ocel, event)?, check_ob(ocel, object)?);
+    Ok(ocel.delete_e2o(&event, &object))
 }
 
 /// Remove all O2O relationships from `from_obj` to `to_obj` (across every qualifier).
 ///
-/// Returns `true` on success, `false` if either index is out of bounds (with a stderr warning).
-#[register_binding]
-fn locel_delete_o2o(ocel: &mut SlimLinkedOCEL, from_obj: ObjectIndex, to_obj: ObjectIndex) -> bool {
-    ocel.delete_o2o(&from_obj, &to_obj)
+/// Returns `true` on success.
+///
+/// # Errors
+/// If either index is out of range.
+#[register_binding(stringify_error)]
+fn locel_delete_o2o(
+    ocel: &mut SlimLinkedOCEL,
+    from_obj: ObjectIndex,
+    to_obj: ObjectIndex,
+) -> Result<bool, String> {
+    let (from_obj, to_obj) = (check_ob(ocel, from_obj)?, check_ob(ocel, to_obj)?);
+    Ok(ocel.delete_o2o(&from_obj, &to_obj))
 }
 
 /// Get all declared event type names, in declaration order.
@@ -183,486 +444,462 @@ fn locel_get_ob_by_id(ocel: &SlimLinkedOCEL, ob_id: String) -> Option<ObjectInde
     ocel.get_ob_by_id(&ob_id)
 }
 
-/// Get the ID string of an event. Panics if the index is out of bounds.
-#[register_binding]
-fn locel_get_ev_id(ocel: &SlimLinkedOCEL, ev: EventIndex) -> String {
-    ocel.get_ev_id(&ev).to_string()
+/// The error for an event index that does not name an event of `ocel`.
+fn check_ev(ocel: &SlimLinkedOCEL, ev: EventIndex) -> Result<EventIndex, String> {
+    match ev.get_ev_opt(ocel) {
+        Some(_) => Ok(ev),
+        None => Err(format!(
+            "event index {} is out of range: the OCEL has {} event(s)",
+            ev.into_inner(),
+            ocel.get_num_evs()
+        )),
+    }
 }
 
-/// Get the ID string of an object. Panics if the index is out of bounds.
-#[register_binding]
-fn locel_get_ob_id(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> String {
-    ocel.get_ob_id(&ob).to_string()
+/// The error for an object index that does not name an object of `ocel`.
+fn check_ob(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Result<ObjectIndex, String> {
+    match ob.get_ob_opt(ocel) {
+        Some(_) => Ok(ob),
+        None => Err(format!(
+            "object index {} is out of range: the OCEL has {} object(s)",
+            ob.into_inner(),
+            ocel.get_num_obs()
+        )),
+    }
 }
 
-/// Get the event type (activity) of an event. Panics if the index is out of bounds.
-#[register_binding]
-fn locel_get_ev_type_of(ocel: &SlimLinkedOCEL, ev: EventIndex) -> String {
-    ocel.get_ev_type_of(&ev).to_string()
+/// Get the ID string of an event.
+///
+/// # Errors
+/// If the index is out of range.
+#[register_binding(stringify_error)]
+fn locel_get_ev_id(ocel: &SlimLinkedOCEL, ev: EventIndex) -> Result<String, String> {
+    Ok(ocel.get_ev_id(check_ev(ocel, ev)?).to_string())
 }
 
-/// Get the object type of an object. Panics if the index is out of bounds.
-#[register_binding]
-fn locel_get_ob_type_of(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> String {
-    ocel.get_ob_type_of(&ob).to_string()
+/// Get the ID string of an object.
+///
+/// # Errors
+/// If the index is out of range.
+#[register_binding(stringify_error)]
+fn locel_get_ob_id(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Result<String, String> {
+    Ok(ocel.get_ob_id(check_ob(ocel, ob)?).to_string())
 }
 
-/// Get the timestamp of an event. Panics if the index is out of bounds.
-#[register_binding]
-fn locel_get_ev_time(ocel: &SlimLinkedOCEL, ev: EventIndex) -> DateTime<FixedOffset> {
-    *ocel.get_ev_time(&ev)
+/// Get the event type (activity) of an event.
+///
+/// # Errors
+/// If the index is out of range.
+#[register_binding(stringify_error)]
+fn locel_get_ev_type_of(ocel: &SlimLinkedOCEL, ev: EventIndex) -> Result<String, String> {
+    Ok(ocel.get_ev_type_of(check_ev(ocel, ev)?).to_string())
+}
+
+/// Get the object type of an object.
+///
+/// # Errors
+/// If the index is out of range.
+#[register_binding(stringify_error)]
+fn locel_get_ob_type_of(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Result<String, String> {
+    Ok(ocel.get_ob_type_of(check_ob(ocel, ob)?).to_string())
+}
+
+/// Get the timestamp of an event.
+///
+/// # Errors
+/// If the index is out of range.
+#[register_binding(stringify_error)]
+fn locel_get_ev_time(
+    ocel: &SlimLinkedOCEL,
+    ev: EventIndex,
+) -> Result<DateTime<FixedOffset>, String> {
+    Ok(*ocel.get_ev_time(check_ev(ocel, ev)?))
 }
 
 /// Get the E2O relationships of an event as `(qualifier, object_index)` pairs.
-#[register_binding]
-fn locel_get_e2o(ocel: &SlimLinkedOCEL, ev: EventIndex) -> Vec<(String, ObjectIndex)> {
-    ocel.get_e2o(&ev)
+///
+/// # Errors
+/// If the index is out of range.
+#[register_binding(stringify_error)]
+fn locel_get_e2o(
+    ocel: &SlimLinkedOCEL,
+    ev: EventIndex,
+) -> Result<Vec<(String, ObjectIndex)>, String> {
+    Ok(ocel
+        .get_e2o(check_ev(ocel, ev)?)
         .map(|(q, o)| (q.to_string(), *o))
-        .collect()
+        .collect())
 }
 
-/// Get the reverse E2O relationships of an object (events relating to it) as `(qualifier, event_index)` pairs.
-#[register_binding]
-fn locel_get_e2o_rev(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<(String, EventIndex)> {
-    ocel.get_e2o_rev(&ob)
+/// Get the reverse E2O relationships of an object (events relating to it) as
+/// `(qualifier, event_index)` pairs.
+///
+/// # Errors
+/// If the index is out of range.
+#[register_binding(stringify_error)]
+fn locel_get_e2o_rev(
+    ocel: &SlimLinkedOCEL,
+    ob: ObjectIndex,
+) -> Result<Vec<(String, EventIndex)>, String> {
+    Ok(ocel
+        .get_e2o_rev(check_ob(ocel, ob)?)
         .map(|(q, e)| (q.to_string(), *e))
-        .collect()
+        .collect())
 }
 
-/// Get the activity trace of an object (i.e., the sequence of event types connected to the object, ordered by event timestamp)
-#[register_binding]
-fn get_obj_activity_trace(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<String> {
-    ob.get_obj_activity_trace(ocel)
+/// Get the activity trace of an object (i.e., the sequence of event types connected to the object,
+/// ordered by event timestamp)
+///
+/// # Errors
+/// If the index is out of range.
+#[register_binding(stringify_error)]
+fn locel_get_ob_activity_trace(
+    ocel: &SlimLinkedOCEL,
+    ob: ObjectIndex,
+) -> Result<Vec<String>, String> {
+    Ok(check_ob(ocel, ob)?
+        .get_obj_activity_trace(ocel)
         .map(|act| act.to_string())
-        .collect()
-}
-
-/// Merge `b` into `a` by summing values for matching keys. Used as the rayon reduce step.
-fn merge_sum_maps<K, V>(mut a: HashMap<K, V>, b: HashMap<K, V>) -> HashMap<K, V>
-where
-    K: std::hash::Hash + Eq,
-    V: Default + std::ops::AddAssign,
-{
-    for (k, v) in b {
-        *a.entry(k).or_default() += v;
-    }
-    a
-}
-
-/// Get all activity-trace variants for objects of the given object type, with their occurrence counts
-///
-/// Each entry is a tuple `(activity_trace, count)`, where `activity_trace` is the sequence of event types
-/// connected to an object (ordered by event timestamp), and `count` is the number of objects of the
-/// requested type that share that exact trace.
-#[register_binding]
-fn get_variants_of_object_type(
-    ocel: &SlimLinkedOCEL,
-    ob_type: String,
-) -> Vec<(Vec<String>, usize)> {
-    let obs: Vec<ObjectIndex> = ocel.get_obs_of_type(&ob_type).copied().collect();
-    let counts: HashMap<Vec<usize>, usize> = obs
-        .into_par_iter()
-        .fold(HashMap::new, |mut acc, ob| {
-            let trace: Vec<usize> = ob.get_obj_activity_trace_evtype_indices(ocel).collect();
-            *acc.entry(trace).or_insert(0) += 1;
-            acc
-        })
-        .reduce(HashMap::new, merge_sum_maps);
-    let ev_type_names: Vec<&str> =
-        <SlimLinkedOCEL as LinkedOCELAccess>::get_ev_types(ocel).collect();
-    counts
-        .into_iter()
-        .map(|(trace_idx, count)| {
-            let trace: Vec<String> = trace_idx
-                .into_iter()
-                .map(|i| ev_type_names[i].to_string())
-                .collect();
-            (trace, count)
-        })
-        .collect()
-}
-
-/// Get the directly-follows graph (DFG) for objects of the given object type.
-///
-/// Each entry is `((from_activity, to_activity), count)`, counting adjacent pairs in each
-/// object's timestamp-ordered activity trace. Result order is unspecified.
-#[register_binding]
-fn get_dfg_of_object_type(
-    ocel: &SlimLinkedOCEL,
-    ob_type: String,
-) -> Vec<((String, String), usize)> {
-    let obs: Vec<ObjectIndex> = ocel.get_obs_of_type(&ob_type).copied().collect();
-    let counts: HashMap<(usize, usize), usize> = obs
-        .into_par_iter()
-        .fold(HashMap::new, |mut acc, ob| {
-            let mut iter = ob.get_obj_activity_trace_evtype_indices(ocel);
-            if let Some(mut prev) = iter.next() {
-                for next in iter {
-                    *acc.entry((prev, next)).or_insert(0) += 1;
-                    prev = next;
-                }
-            }
-            acc
-        })
-        .reduce(HashMap::new, merge_sum_maps);
-    let ev_type_names: Vec<&str> =
-        <SlimLinkedOCEL as LinkedOCELAccess>::get_ev_types(ocel).collect();
-    counts
-        .into_iter()
-        .map(|((from, to), count)| {
-            (
-                (
-                    ev_type_names[from].to_string(),
-                    ev_type_names[to].to_string(),
-                ),
-                count,
-            )
-        })
-        .collect()
+        .collect())
 }
 
 /// Get the outgoing O2O relationships of an object as `(qualifier, object_index)` pairs.
-#[register_binding]
-fn locel_get_o2o(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<(String, ObjectIndex)> {
-    ocel.get_o2o(&ob)
+///
+/// # Errors
+/// If the index is out of range.
+#[register_binding(stringify_error)]
+fn locel_get_o2o(
+    ocel: &SlimLinkedOCEL,
+    ob: ObjectIndex,
+) -> Result<Vec<(String, ObjectIndex)>, String> {
+    Ok(ocel
+        .get_o2o(check_ob(ocel, ob)?)
         .map(|(q, o)| (q.to_string(), *o))
-        .collect()
+        .collect())
 }
 
 /// Get the reverse O2O relationships of an object (objects with an O2O to it) as `(qualifier, object_index)` pairs.
-#[register_binding]
-fn locel_get_o2o_rev(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Vec<(String, ObjectIndex)> {
-    ocel.get_o2o_rev(&ob)
+///
+/// # Errors
+/// If the index is out of range.
+#[register_binding(stringify_error)]
+fn locel_get_o2o_rev(
+    ocel: &SlimLinkedOCEL,
+    ob: ObjectIndex,
+) -> Result<Vec<(String, ObjectIndex)>, String> {
+    Ok(ocel
+        .get_o2o_rev(check_ob(ocel, ob)?)
         .map(|(q, o)| (q.to_string(), *o))
-        .collect()
+        .collect())
 }
 
 /// Get the full [`OCELEvent`] (resolved type name, named attributes, string object IDs).
 ///
 /// Allocates. Prefer the specific `locel_get_ev_*` accessors for single fields.
-/// Panics if the index is out of bounds.
-#[register_binding]
-fn locel_get_full_ev(ocel: &SlimLinkedOCEL, ev: EventIndex) -> OCELEvent {
-    ocel.get_full_ev(&ev).into_owned()
+///
+/// # Errors
+/// If the index is out of range.
+#[register_binding(stringify_error)]
+fn locel_get_full_ev(ocel: &SlimLinkedOCEL, ev: EventIndex) -> Result<OCELEvent, String> {
+    Ok(ocel.get_full_ev(check_ev(ocel, ev)?).into_owned())
 }
 
 /// Get the full [`OCELObject`] (resolved type name, named time-indexed attributes, string object IDs).
 ///
 /// Allocates. Prefer the specific `locel_get_ob_*` accessors for single fields.
-/// Panics if the index is out of bounds.
-#[register_binding]
-fn locel_get_full_ob(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> OCELObject {
-    ocel.get_full_ob(&ob).into_owned()
+///
+/// # Errors
+/// If the index is out of range.
+#[register_binding(stringify_error)]
+fn locel_get_full_ob(ocel: &SlimLinkedOCEL, ob: ObjectIndex) -> Result<OCELObject, String> {
+    Ok(ocel.get_full_ob(check_ob(ocel, ob)?).into_owned())
 }
 
 /// Get the value of an event attribute by name. `None` if the attribute does not exist.
 ///
-/// Panics if the index is out of bounds.
-#[register_binding]
+/// # Errors
+/// If the index is out of range.
+#[register_binding(stringify_error)]
 fn locel_get_ev_attr_val(
     ocel: &SlimLinkedOCEL,
     ev: EventIndex,
     attr_name: String,
-) -> Option<OCELAttributeValue> {
-    ocel.get_ev_attr_val(&ev, &attr_name).cloned()
+) -> Result<Option<OCELAttributeValue>, String> {
+    Ok(ocel
+        .get_ev_attr_val(check_ev(ocel, ev)?, &attr_name)
+        .cloned())
 }
 
 /// Get the time-indexed history of an object attribute by name as `(timestamp, value)` pairs. Empty if absent.
 ///
-/// Panics if the index is out of bounds.
-#[register_binding]
+/// # Errors
+/// If the index is out of range.
+#[register_binding(stringify_error)]
 fn locel_get_ob_attr_vals(
     ocel: &SlimLinkedOCEL,
     ob: ObjectIndex,
     attr_name: String,
-) -> Vec<(DateTime<FixedOffset>, OCELAttributeValue)> {
-    ocel.get_ob_attr_vals(&ob, &attr_name)
+) -> Result<Vec<(DateTime<FixedOffset>, OCELAttributeValue)>, String> {
+    Ok(ocel
+        .get_ob_attr_vals(check_ob(ocel, ob)?, &attr_name)
         .map(|(t, v)| (*t, v.clone()))
-        .collect()
+        .collect())
 }
 
-/// Reconstruct a full [`OCEL`] from a [`SlimLinkedOCEL`]. Can be expensive for large logs.
+/// Get the ids of all objects of a type.
 #[register_binding]
-fn locel_construct_ocel(ocel: &SlimLinkedOCEL) -> OCEL {
-    ocel.construct_ocel()
-}
-
-#[register_binding]
-fn get_object_ids_of_type(ocel: &SlimLinkedOCEL, ob_type: String) -> Vec<String> {
+fn locel_get_ob_ids_of_type(ocel: &SlimLinkedOCEL, ob_type: String) -> Vec<String> {
     ocel.get_obs_of_type(&ob_type)
         .map(|ob| ocel.get_ob_id(ob).to_string())
         .collect()
 }
 
+/// Get the ids of all events of a type.
 #[register_binding]
-fn get_event_ids_of_type(ocel: &SlimLinkedOCEL, ev_type: String) -> Vec<String> {
+fn locel_get_ev_ids_of_type(ocel: &SlimLinkedOCEL, ev_type: String) -> Vec<String> {
     ocel.get_evs_of_type(&ev_type)
         .map(|ev| ocel.get_ev_id(ev).to_string())
         .collect()
 }
 
+/// Get the ids of the events related to an object, or `None` for an unknown object id.
 #[register_binding]
-fn get_object_type_of_id(ocel: &SlimLinkedOCEL, ob_id: &String) -> Option<String> {
-    ocel.get_ob_by_id(ob_id)
-        .map(|ob| ob.get_ob_type(ocel).to_string())
-}
-
-#[register_binding]
-fn get_e2o_rev_ids(ocel: &SlimLinkedOCEL, ob_id: &String) -> Option<Vec<String>> {
-    ocel.get_ob_by_id(ob_id).map(|ob| {
+fn locel_get_e2o_rev_ids(ocel: &SlimLinkedOCEL, ob_id: String) -> Option<Vec<String>> {
+    ocel.get_ob_by_id(&ob_id).map(|ob| {
         ob.get_e2o_rev(ocel)
             .map(|ev| ocel.get_ev_id(ev).to_string())
             .collect()
     })
 }
 
-#[register_binding]
-fn get_e2o_ids(ocel: &SlimLinkedOCEL, ev_id: &String) -> Option<Vec<String>> {
-    ocel.get_ev_by_id(ev_id).map(|ev| {
-        ev.get_e2o(ocel)
-            .map(|ob| ocel.get_ob_id(ob).to_string())
-            .collect()
-    })
-}
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
 
-#[register_binding]
-fn get_o2o_ids(ocel: &SlimLinkedOCEL, ob_id: &String) -> Option<Vec<String>> {
-    ocel.get_ob_by_id(ob_id).map(|ob| {
-        ob.get_o2o(ocel)
-            .map(|target_ob| ocel.get_ob_id(target_ob).to_string())
-            .collect()
-    })
-}
+    use super::*;
 
-#[register_binding]
-fn get_event_type_of_id(ocel: &SlimLinkedOCEL, ev_id: &String) -> Option<String> {
-    ocel.get_ev_by_id(ev_id)
-        .map(|ev| ev.get_ev_type(ocel).to_string())
-}
-
-#[register_binding]
-fn get_event_timestamp_of_id(ocel: &SlimLinkedOCEL, ev_id: &String) -> Option<String> {
-    ocel.get_ev_by_id(ev_id)
-        .map(|ev| ev.get_time(ocel).to_string())
-}
-
-/// Count E2O relationships per `(event_type, object_type)` pair.
-///
-/// Each entry is `(event_type, object_type, count)`. A single `(event, object)` pair connected
-/// by multiple qualifiers contributes once per qualifier. Pairs with zero relations are omitted.
-/// Result row order is unspecified.
-#[register_binding]
-fn locel_event_object_type_counts(ocel: &SlimLinkedOCEL) -> Vec<(String, String, i64)> {
-    let num_events = ocel.get_num_evs() as u32;
-    let counts: HashMap<(usize, usize), i64> = (0..num_events)
-        .into_par_iter()
-        .fold(HashMap::new, |mut acc, i| {
-            let ev = EventIndex::from(i).get_ev(ocel);
-            for (_q, ob) in &ev.relationships {
-                let ot = ob.get_ob(ocel).object_type;
-                *acc.entry((ev.event_type, ot)).or_insert(0) += 1;
-            }
-            acc
-        })
-        .reduce(HashMap::new, merge_sum_maps);
-    let ev_types: Vec<&str> = <SlimLinkedOCEL as LinkedOCELAccess>::get_ev_types(ocel).collect();
-    let ob_types: Vec<&str> = <SlimLinkedOCEL as LinkedOCELAccess>::get_ob_types(ocel).collect();
-    counts
-        .into_iter()
-        .map(|((e, o), c)| (ev_types[e].to_string(), ob_types[o].to_string(), c))
-        .collect()
-}
-
-/// Conversion rate from `source_type` to `target_type` via O2O, restricted to targets touched by `activity`.
-///
-/// Returns the fraction of `source_type` objects that have at least one outgoing O2O edge to a
-/// `target_type` object related (via E2O) to some event of the given event type.
-///
-/// # Errors
-/// Returns an error if `activity` names no declared event type, or if either object type is not
-/// declared, so a rate of `0.0` cannot mean a misspelled name.
-#[register_binding(stringify_error)]
-fn locel_conversion_rate(
-    ocel: &SlimLinkedOCEL,
-    activity: String,
-    source_type: String,
-    target_type: String,
-) -> Result<f64, String> {
-    if ocel.get_ev_type(&activity).is_none() {
-        return Err(format!("no event type '{activity}'"));
+    fn batch(value: serde_json::Value) -> OCELAppendBatch {
+        serde_json::from_value(value).unwrap()
     }
-    for ob_type in [&source_type, &target_type] {
-        if ocel.get_ob_type(ob_type).is_none() {
-            return Err(format!("no object type '{ob_type}'"));
+
+    #[test]
+    fn append_batch_adds_and_updates() {
+        let mut ocel = SlimLinkedOCEL::new();
+        let first = locel_append_batch(
+            &mut ocel,
+            batch(json!({
+                "events": [{
+                    "id": "e1", "type": "craft", "time": "2026-01-01T10:00:00Z",
+                    "attributes": [{"name": "count", "value": 1}],
+                    "relationships": [
+                        {"objectId": "p1", "qualifier": "actor"},
+                        {"objectId": "pick", "qualifier": "output"}
+                    ]
+                }],
+                "objects": [
+                    {"id": "pick", "type": "item",
+                     "attributes": [{"name": "durability", "time": "2026-01-01T10:00:00Z", "value": 250}],
+                     "relationships": [{"objectId": "p1", "qualifier": "owner"}]},
+                    {"id": "p1", "type": "player"}
+                ]
+            })),
+        )
+        .unwrap();
+        assert_eq!(
+            first,
+            OCELAppendSummary {
+                events_added: 1,
+                objects_added: 2,
+                objects_updated: 0
+            }
+        );
+        let event = ocel.get_ev_by_id("e1").unwrap();
+        assert_eq!(event.get_e2o(&ocel).count(), 2);
+        let pick = ocel.get_ob_by_id("pick").unwrap();
+        assert_eq!(pick.get_o2o(&ocel).count(), 1);
+
+        let second = locel_append_batch(
+            &mut ocel,
+            batch(json!({
+                "objects": [
+                    {"id": "pick", "type": "item",
+                     "attributes": [
+                        {"name": "durability", "time": "2026-01-01T11:00:00Z", "value": 249},
+                        {"name": "enchanted", "time": "2026-01-01T11:00:00Z", "value": true}
+                     ],
+                     "relationships": [{"objectId": "chest", "qualifier": "stored in"}]},
+                    {"id": "chest", "type": "container"}
+                ]
+            })),
+        )
+        .unwrap();
+        assert_eq!(second.objects_added, 1);
+        assert_eq!(second.objects_updated, 1);
+        assert_eq!(
+            pick.get_attribute_value("durability", &ocel).unwrap().len(),
+            2
+        );
+        assert_eq!(
+            pick.get_attribute_value("enchanted", &ocel).unwrap().len(),
+            1
+        );
+        assert_eq!(pick.get_o2o(&ocel).count(), 2);
+
+        let exported = ocel.construct_ocel();
+        assert_eq!(exported.events.len(), 1);
+        assert_eq!(exported.objects.len(), 3);
+    }
+
+    #[test]
+    fn append_batch_rejects_without_changes() {
+        let mut ocel = SlimLinkedOCEL::new();
+        let one = json!({
+            "events": [{"id": "e1", "type": "a", "time": "2026-01-01T10:00:00Z"}],
+            "objects": [{"id": "o1", "type": "x"}]
+        });
+        locel_append_batch(&mut ocel, batch(one.clone())).unwrap();
+        assert!(locel_append_batch(&mut ocel, batch(one)).is_err());
+        let wrong_type = json!({
+            "objects": [{"id": "o2", "type": "x"}, {"id": "o1", "type": "y"}]
+        });
+        assert!(locel_append_batch(&mut ocel, batch(wrong_type)).is_err());
+        let new_id_two_types = json!({
+            "objects": [{"id": "o3", "type": "x"}, {"id": "o3", "type": "y"}]
+        });
+        let err = locel_append_batch(&mut ocel, batch(new_id_two_types)).unwrap_err();
+        assert_eq!(err, "object 'o3' has type 'x', not 'y'");
+        let twice = json!({
+            "events": [
+                {"id": "e2", "type": "a", "time": "2026-01-01T10:00:00Z"},
+                {"id": "e2", "type": "a", "time": "2026-01-01T11:00:00Z"}
+            ]
+        });
+        let err = locel_append_batch(&mut ocel, batch(twice)).unwrap_err();
+        assert_eq!(err, "event id 'e2' occurs twice in the batch");
+        assert_eq!(ocel.get_num_obs(), 1);
+        assert_eq!(ocel.get_num_evs(), 1);
+    }
+
+    #[test]
+    fn append_batch_counts_only_changed_existing_objects() {
+        let mut ocel = SlimLinkedOCEL::new();
+        let first = json!({
+            "objects": [{"id": "o1", "type": "x"}, {"id": "o2", "type": "x"}]
+        });
+        locel_append_batch(&mut ocel, batch(first)).unwrap();
+        let second = locel_append_batch(
+            &mut ocel,
+            batch(json!({
+                "objects": [
+                    {"id": "o1", "type": "x"},
+                    {"id": "o2", "type": "x",
+                     "attributes": [{"name": "n", "time": "2026-01-01T10:00:00Z", "value": 1}]},
+                    {"id": "o2", "type": "x",
+                     "attributes": [{"name": "n", "time": "2026-01-01T11:00:00Z", "value": 2}]},
+                    {"id": "o3", "type": "x"},
+                    {"id": "o3", "type": "x",
+                     "attributes": [{"name": "n", "time": "2026-01-01T10:00:00Z", "value": 3}]}
+                ]
+            })),
+        )
+        .unwrap();
+        assert_eq!(
+            second,
+            OCELAppendSummary {
+                events_added: 0,
+                objects_added: 1,
+                objects_updated: 1
+            }
+        );
+        let o2 = ocel.get_ob_by_id("o2").unwrap();
+        assert_eq!(o2.get_attribute_value("n", &ocel).unwrap().len(), 2);
+        let o3 = ocel.get_ob_by_id("o3").unwrap();
+        assert_eq!(o3.get_attribute_value("n", &ocel).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn append_batch_does_not_count_a_present_o2o_as_update() {
+        let mut ocel = SlimLinkedOCEL::new();
+        let linked = json!({
+            "objects": [
+                {"id": "o1", "type": "x", "relationships": [{"objectId": "o2", "qualifier": "q"}]},
+                {"id": "o2", "type": "x"}
+            ]
+        });
+        locel_append_batch(&mut ocel, batch(linked)).unwrap();
+        let again = json!({
+            "objects": [{"id": "o1", "type": "x",
+                         "relationships": [{"objectId": "o2", "qualifier": "q"}]}]
+        });
+        let summary = locel_append_batch(&mut ocel, batch(again)).unwrap();
+        assert_eq!(summary.objects_updated, 0);
+        let other_qualifier = json!({
+            "objects": [{"id": "o1", "type": "x",
+                         "relationships": [{"objectId": "o2", "qualifier": "r"}]}]
+        });
+        let summary = locel_append_batch(&mut ocel, batch(other_qualifier)).unwrap();
+        assert_eq!(summary.objects_updated, 1);
+    }
+
+    #[test]
+    fn relationship_edits_reject_out_of_range_indices() {
+        let mut ocel = SlimLinkedOCEL::new();
+        ocel.add_event_type("a", Vec::new());
+        ocel.add_object_type("x", Vec::new());
+        let ob = ocel.add_object("x", None, Vec::new(), Vec::new()).unwrap();
+        let at = DateTime::parse_from_rfc3339("2026-01-01T10:00:00Z").unwrap();
+        let ev = ocel
+            .add_event("a", at, None, Vec::new(), Vec::new())
+            .unwrap();
+        let (bad_ev, bad_ob) = (EventIndex::from(7), ObjectIndex::from(7));
+
+        assert!(locel_add_e2o(&mut ocel, ev, ob, "q".to_string()).unwrap());
+        assert!(locel_add_o2o(&mut ocel, ob, ob, "q".to_string()).unwrap());
+        assert!(locel_delete_e2o(&mut ocel, ev, ob).unwrap());
+        assert!(locel_delete_o2o(&mut ocel, ob, ob).unwrap());
+
+        let err = locel_add_e2o(&mut ocel, bad_ev, ob, "q".to_string()).unwrap_err();
+        assert!(err.contains("event index 7 is out of range"), "{err}");
+        let err = locel_add_o2o(&mut ocel, ob, bad_ob, "q".to_string()).unwrap_err();
+        assert!(err.contains("object index 7 is out of range"), "{err}");
+        assert!(locel_delete_e2o(&mut ocel, ev, bad_ob).is_err());
+        assert!(locel_delete_o2o(&mut ocel, bad_ob, ob).is_err());
+    }
+
+    #[test]
+    fn attribute_value_keeps_history_ordered() {
+        let mut ocel = SlimLinkedOCEL::new();
+        ocel.add_object_type(
+            "item",
+            vec![OCELTypeAttribute {
+                name: "durability".to_string(),
+                value_type: "integer".to_string(),
+            }],
+        );
+        let item = ocel
+            .add_object("item", None, Vec::new(), Vec::new())
+            .unwrap();
+        let at = |s: &str| DateTime::parse_from_rfc3339(s).unwrap();
+        for (time, value) in [("2026-01-01T12:00:00Z", 3), ("2026-01-01T10:00:00Z", 1)] {
+            locel_add_object_attribute_value(
+                &mut ocel,
+                item,
+                "durability".to_string(),
+                at(time),
+                OCELAttributeValue::Integer(value),
+            )
+            .unwrap();
         }
+        let history = item.get_attribute_value("durability", &ocel).unwrap();
+        assert_eq!(history[0].1, OCELAttributeValue::Integer(1));
+        assert_eq!(history[1].1, OCELAttributeValue::Integer(3));
+        assert!(locel_add_object_attribute_value(
+            &mut ocel,
+            item,
+            "missing".to_string(),
+            at("2026-01-01T10:00:00Z"),
+            OCELAttributeValue::Null,
+        )
+        .is_err());
     }
-    let sources: Vec<ObjectIndex> = ocel.get_obs_of_type(&source_type).copied().collect();
-    let total = sources.len();
-    if total == 0 {
-        return Ok(0.0);
-    }
-    let reached = sources
-        .par_iter()
-        .filter(|&&s| {
-            s.get_o2o(ocel).any(|&t| {
-                t.get_ob_type(ocel) == &target_type
-                    && t.get_e2o_rev(ocel)
-                        .any(|&e| e.get_ev_type(ocel) == &activity)
-            })
-        })
-        .count();
-    Ok(reached as f64 / total as f64)
-}
-
-/// Each object's reverse-E2O events in `(time, id)` order.
-///
-/// Events are sorted per call, so this makes no assumption about global event ordering
-fn sorted_events_per_object(ocel: &SlimLinkedOCEL) -> Vec<Vec<EventIndex>> {
-    (0..ocel.get_num_obs() as u32)
-        .into_par_iter()
-        .map(|i| {
-            let mut evs: Vec<EventIndex> =
-                ObjectIndex::from(i).get_e2o_rev(ocel).copied().collect();
-            evs.sort_by(|a, b| {
-                a.get_time(ocel)
-                    .cmp(b.get_time(ocel))
-                    .then_with(|| ocel.get_ev_id(a).cmp(ocel.get_ev_id(b)))
-            });
-            evs
-        })
-        .collect()
-}
-
-/// The `(time, id)`-immediate predecessor of `e` on object `o`, using the
-/// per-object sorted lists from [`sorted_events_per_object`].
-/// `None` if `e` is the first event on `o`.
-///
-/// # Panics
-/// If `e` is not in `o`'s own list, which means the forward and reverse E2O indices disagree.
-#[inline]
-fn df_predecessor(
-    sorted: &[Vec<EventIndex>],
-    ocel: &SlimLinkedOCEL,
-    e: EventIndex,
-    o: ObjectIndex,
-) -> Option<EventIndex> {
-    let evs = &sorted[o.into_inner() as usize];
-    let key = (e.get_time(ocel), ocel.get_ev_id(&e));
-    let pos = evs
-        .binary_search_by(|x| (x.get_time(ocel), ocel.get_ev_id(x)).cmp(&key))
-        .unwrap_or_else(|_| {
-            panic!(
-                "event '{}' is related to object '{}' but missing from its reverse-E2O list",
-                ocel.get_ev_id(&e),
-                ocel.get_ob_id(&o)
-            )
-        });
-    pos.checked_sub(1).map(|p| evs[p])
-}
-
-/// Keep only the `k` rows `cmp` ranks first, still ordered by `cmp`.
-fn keep_top_k<T, F>(rows: &mut Vec<T>, k: usize, cmp: F)
-where
-    F: Fn(&T, &T) -> std::cmp::Ordering,
-{
-    if k < rows.len() {
-        rows.select_nth_unstable_by(k, &cmp);
-        rows.truncate(k);
-    }
-    rows.sort_unstable_by(&cmp);
-}
-
-/// Per-event synchronization time and the delaying object.
-///
-/// For each event with at least one directly-follows predecessor, the synchronization time is
-/// `max_predecessor_time - min_predecessor_time` in integer microseconds (the span between its
-/// earliest and latest directly-preceding event). The delaying object is the object linking the
-/// latest predecessor (ties broken by ascending object id).
-/// Returns one row `(event_id, sync_us, delaying_object_id)` per qualifying event.
-///
-/// `top_k`: if `Some(k)`, return only the `k` rows with the largest `sync_us`, ties broken by
-/// ascending event id, sorted descending. `None` returns every qualifying event.
-#[register_binding]
-fn locel_oc_perf_sync_per_event(
-    ocel: &SlimLinkedOCEL,
-    #[bind(default)] top_k: Option<usize>,
-) -> Vec<(String, i64, String)> {
-    let sorted = sorted_events_per_object(ocel);
-    let mut rows: Vec<(EventIndex, i64, ObjectIndex)> = (0..ocel.get_num_evs() as u32)
-        .into_par_iter()
-        .filter_map(|i| {
-            let e = EventIndex::from(i);
-            let mut min_us = i64::MAX;
-            // (latest predecessor time, its object) = the delaying edge.
-            let mut delaying: Option<(i64, ObjectIndex)> = None;
-            for &o in e.get_e2o(ocel) {
-                if let Some(p) = df_predecessor(&sorted, ocel, e, o) {
-                    let t = p.get_time(ocel).timestamp_micros();
-                    min_us = min_us.min(t);
-                    let keep = match delaying {
-                        Some((bt, bo)) => {
-                            bt > t || (bt == t && ocel.get_ob_id(&bo) <= ocel.get_ob_id(&o))
-                        }
-                        None => false,
-                    };
-                    if !keep {
-                        delaying = Some((t, o));
-                    }
-                }
-            }
-            delaying.map(|(max_us, o)| (e, max_us - min_us, o))
-        })
-        .collect();
-    if let Some(k) = top_k {
-        keep_top_k(&mut rows, k, |a, b| {
-            b.1.cmp(&a.1)
-                .then_with(|| ocel.get_ev_id(&a.0).cmp(ocel.get_ev_id(&b.0)))
-        });
-    }
-    rows.into_iter()
-        .map(|(e, max_minus_min, o)| {
-            (
-                ocel.get_ev_id(&e).to_string(),
-                max_minus_min,
-                ocel.get_ob_id(&o).to_string(),
-            )
-        })
-        .collect()
-}
-
-/// Per-event sojourn time.
-///
-/// For each event with at least one directly-follows predecessor, the sojourn time is
-/// `event_time - latest_predecessor_time` in integer microseconds. Returns one row
-/// `(event_id, sojourn_us)` per qualifying event.
-///
-/// `top_k`: if `Some(k)`, return only the `k` rows with the largest `sojourn_us`, ties broken by
-/// ascending event id, sorted descending. `None` returns every qualifying event.
-#[register_binding]
-fn locel_oc_perf_sojourn_per_event(
-    ocel: &SlimLinkedOCEL,
-    #[bind(default)] top_k: Option<usize>,
-) -> Vec<(String, i64)> {
-    let sorted = sorted_events_per_object(ocel);
-    let mut rows: Vec<(EventIndex, i64)> = (0..ocel.get_num_evs() as u32)
-        .into_par_iter()
-        .filter_map(|i| {
-            let e = EventIndex::from(i);
-            let latest = e
-                .get_e2o(ocel)
-                .filter_map(|&o| df_predecessor(&sorted, ocel, e, o))
-                .map(|p| p.get_time(ocel).timestamp_micros())
-                .max()?;
-            Some((e, e.get_time(ocel).timestamp_micros() - latest))
-        })
-        .collect();
-    if let Some(k) = top_k {
-        keep_top_k(&mut rows, k, |a, b| {
-            b.1.cmp(&a.1)
-                .then_with(|| ocel.get_ev_id(&a.0).cmp(ocel.get_ev_id(&b.0)))
-        });
-    }
-    rows.into_iter()
-        .map(|(e, sojourn_us)| (ocel.get_ev_id(&e).to_string(), sojourn_us))
-        .collect()
 }

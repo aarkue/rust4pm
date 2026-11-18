@@ -15,7 +15,9 @@
 //!
 //! ## Usage
 //!
-//! 1. Define a function and annotate it with `#[register_binding]`.
+//! 1. Define a function and annotate it with `#[register_binding]`. An argument
+//!    `#[bind(ctx)] ctl: &Control<'_>` receives the call's [`Control`], for progress and
+//!    cancellation.
 //! 2. Use `list_functions()` to discover available commands.
 //! 3. Use `call()` to execute them.
 //!
@@ -23,7 +25,9 @@
 //!
 //! - **Simple Types**: Serialized/Deserialized via `serde_json`.
 //! - **Big Types**: Stored in `AppState`. Arguments are string IDs pointing to the state.
-//!   Return values are stored in state, and their new ID is returned.
+//!   Return values are stored in state, and their new ID is returned. A function returning a
+//!   `(BigType, T)` pair stores the first element under the then required `output_id` argument
+//!   and returns `T`. Its `output_id` schema names the stored kind as `x-registry-out`.
 //!
 //! ## Helper Features
 //!
@@ -49,6 +53,8 @@ use serde_json::Value;
 use std::{collections::HashMap, fmt::Display};
 use std::{str::FromStr, sync::RwLock};
 
+use crate::utils::control::{Cancelled, Control};
+
 /// The formats the object-centric kinds accept on top of what an OCEL reader handles, by way of
 /// the case-centric conversion. Empty without the feature that brings it.
 fn case_centric_import_formats() -> Vec<ExtensionWithMime> {
@@ -68,7 +74,7 @@ fn reads_as_case_centric(item_kind: &RegistryItemKind, format: &str) -> bool {
     matches!(
         item_kind,
         RegistryItemKind::OCEL | RegistryItemKind::SlimLinkedOCEL
-    ) && (format.ends_with("xes") || format.ends_with("xes.gz"))
+    ) && crate::core::event_data::case_centric::io::EventLogFormat::parse_xes_gz(format).is_ok()
 }
 
 /// Convert an already-parsed case-centric log into whichever object-centric kind was asked for.
@@ -86,7 +92,7 @@ fn case_centric_as(item_kind: &RegistryItemKind, log: &EventLog) -> Result<Regis
 
 /// Manually maintained Registry enum of 'big' types
 ///
-/// NOTE: When extending this with a new variant, make sure to also update `BIG_TYPES_NAMES` in the macro crate.
+/// A new variant also needs an entry in `BIG_TYPES_NAMES` in the macro crate.
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant, missing_docs)]
 pub enum RegistryItem {
@@ -147,7 +153,42 @@ impl Display for RegistryItemKind {
     }
 }
 
+/// Every `(from, to)` pair [`RegistryItem::convert`] and [`RegistryItem::convert_into`] handle.
+///
+/// The conversions themselves stay a `match` there, since each arm destructures a different
+/// variant. The test `conversion_table_matches_convert` checks every pair of kinds against this
+/// table.
+const CONVERSIONS: &[(RegistryItemKind, RegistryItemKind)] = &[
+    (
+        RegistryItemKind::EventLog,
+        RegistryItemKind::EventLogActivityProjection,
+    ),
+    (RegistryItemKind::OCEL, RegistryItemKind::IndexLinkedOCEL),
+    (RegistryItemKind::OCEL, RegistryItemKind::SlimLinkedOCEL),
+    (RegistryItemKind::IndexLinkedOCEL, RegistryItemKind::OCEL),
+    (
+        RegistryItemKind::IndexLinkedOCEL,
+        RegistryItemKind::SlimLinkedOCEL,
+    ),
+    (RegistryItemKind::SlimLinkedOCEL, RegistryItemKind::OCEL),
+    (
+        RegistryItemKind::SlimLinkedOCEL,
+        RegistryItemKind::IndexLinkedOCEL,
+    ),
+];
+
 impl RegistryItemKind {
+    /// The kinds an item of this kind can be converted to with [`RegistryItem::convert`].
+    ///
+    /// Empty for a custom kind: the registry has no conversions for those.
+    pub fn convertible_to(&self) -> Vec<RegistryItemKind> {
+        CONVERSIONS
+            .iter()
+            .filter(|(from, _)| from == self)
+            .map(|(_, to)| *to)
+            .collect()
+    }
+
     /// The name this kind is known by, as used in ids, schemas and `x-registry-ref`.
     pub fn name(&self) -> &'static str {
         match self {
@@ -223,10 +264,9 @@ impl RegistryItemKind {
     }
 }
 
-// Hand-written rather than derived because `Custom(&'static str)` has no derivable `Deserialize`,
-// and because the derive would give it the externally tagged `{"Custom": "X"}` form while every
-// other variant is a bare string. Going through `Display`/`FromStr` keeps the wire format a
-// string for all kinds, byte-for-byte what the derive produced for the built-in six.
+// Hand-written because `Custom(&'static str)` has no derivable `Deserialize`, and a derive would
+// give it the externally tagged `{"Custom": "X"}` form. Going through `Display`/`FromStr` keeps
+// every kind a bare string on the wire.
 impl Serialize for RegistryItemKind {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(self.name())
@@ -259,7 +299,7 @@ impl std::str::FromStr for RegistryItemKind {
     }
 }
 
-use crate::core::io::{Exportable, Importable};
+use crate::core::io::{controlled, Exportable, Importable, IMPORT_STAGE};
 use crate::core::tabular_source::TabularSource;
 
 impl RegistryItem {
@@ -303,7 +343,7 @@ impl RegistryItem {
             RegistryItem::EventLogActivityProjection(proj) => {
                 serde_json::to_value(proj).map_err(|e| e.to_string())
             }
-            // Serializing a whole database into JSON would be a mistake, not a courtesy.
+            // A summary only: the bytes can be a whole database.
             RegistryItem::TabularSource(src) => Ok(serde_json::json!({
                 "format": src.format(),
                 "bytes": src.bytes().len(),
@@ -316,98 +356,136 @@ impl RegistryItem {
     ///
     /// Takes the same `xes`/`xes.gz` route as [`RegistryItem::load_from_bytes`], on the format
     /// inferred from the path.
-    pub fn load_from_path(item_kind: &RegistryItemKind, path: &str) -> Result<Self, String> {
-        let path = std::path::Path::new(path);
+    pub fn load_from_path(
+        item_kind: &RegistryItemKind,
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<Self, String> {
+        Self::load_from_path_with(item_kind, path, &Control::new()).map_err(String::from)
+    }
 
-        #[cfg(feature = "extraction-blueprint")]
-        if crate::core::io::infer_format_from_path(path)
-            .is_some_and(|format| reads_as_case_centric(item_kind, &format))
-        {
-            let log = EventLog::import_from_path(path).map_err(|e| e.to_string())?;
-            return case_centric_as(item_kind, &log);
-        }
+    /// [`RegistryItem::load_from_path`], importing through
+    /// [`Importable::import_from_path_with`], so it reports progress to `ctl` and returns
+    /// [`CallError::Cancelled`] once `ctl` is cancelled. A custom kind loads without progress.
+    pub fn load_from_path_with(
+        item_kind: &RegistryItemKind,
+        path: impl AsRef<std::path::Path>,
+        ctl: &Control<'_>,
+    ) -> Result<Self, CallError> {
+        let path = path.as_ref();
+        controlled(ctl, || {
+            #[cfg(feature = "extraction-blueprint")]
+            if crate::core::io::infer_format_from_path(path)
+                .is_some_and(|format| reads_as_case_centric(item_kind, &format))
+            {
+                let log = EventLog::import_from_path_with(path, Default::default(), ctl)
+                    .map_err(|e| e.to_string())?;
+                return Ok(case_centric_as(item_kind, &log)?);
+            }
 
-        match item_kind {
-            RegistryItemKind::EventLog => Ok(RegistryItem::EventLog(
-                EventLog::import_from_path(path).map_err(|e| e.to_string())?,
-            )),
-            RegistryItemKind::OCEL => Ok(RegistryItem::OCEL(
-                OCEL::import_from_path(path).map_err(|e| e.to_string())?,
-            )),
-            RegistryItemKind::SlimLinkedOCEL => Ok(RegistryItem::SlimLinkedOCEL({
-                SlimLinkedOCEL::import_from_path(path).map_err(|e| e.to_string())?
-            })),
-            RegistryItemKind::IndexLinkedOCEL => Ok(RegistryItem::IndexLinkedOCEL(
-                IndexLinkedOCEL::import_from_path(path).map_err(|e| e.to_string())?,
-            )),
-            RegistryItemKind::EventLogActivityProjection => {
-                Ok(RegistryItem::EventLogActivityProjection(
-                    EventLogActivityProjection::import_from_path(path)
+            Ok(match item_kind {
+                RegistryItemKind::EventLog => RegistryItem::EventLog(
+                    EventLog::import_from_path_with(path, Default::default(), ctl)
                         .map_err(|e| e.to_string())?,
-                ))
-            }
-            RegistryItemKind::TabularSource => Ok(RegistryItem::TabularSource(
-                TabularSource::import_from_path(path).map_err(|e| e.to_string())?,
-            )),
-            RegistryItemKind::Custom(name) => {
-                let info = custom_kind(name).ok_or_else(|| unregistered_kind_msg(name))?;
-                (info.from_path)(path)
-            }
-        }
+                ),
+                RegistryItemKind::OCEL => RegistryItem::OCEL(
+                    OCEL::import_from_path_with(path, Default::default(), ctl)
+                        .map_err(|e| e.to_string())?,
+                ),
+                RegistryItemKind::SlimLinkedOCEL => RegistryItem::SlimLinkedOCEL(
+                    SlimLinkedOCEL::import_from_path_with(path, Default::default(), ctl)
+                        .map_err(|e| e.to_string())?,
+                ),
+                RegistryItemKind::IndexLinkedOCEL => RegistryItem::IndexLinkedOCEL(
+                    IndexLinkedOCEL::import_from_path_with(path, Default::default(), ctl)
+                        .map_err(|e| e.to_string())?,
+                ),
+                RegistryItemKind::EventLogActivityProjection => {
+                    RegistryItem::EventLogActivityProjection(
+                        EventLogActivityProjection::import_from_path_with(path, (), ctl)
+                            .map_err(|e| e.to_string())?,
+                    )
+                }
+                RegistryItemKind::TabularSource => RegistryItem::TabularSource(
+                    TabularSource::import_from_path_with(path, (), ctl)
+                        .map_err(|e| e.to_string())?,
+                ),
+                RegistryItemKind::Custom(name) => {
+                    let info = custom_kind(name).ok_or_else(|| unregistered_kind_msg(name))?;
+                    (info.from_path)(path)?
+                }
+            })
+        })
     }
 
     /// Try to load a registry item from bytes based on the expected type name and format
     ///
     /// The object-centric kinds also accept `xes`/`xes.gz`, which no OCEL reader handles: the
     /// bytes are parsed as a case-centric [`EventLog`] and converted with
-    /// [`write_event_log_to_sink`](crate::core::event_data::object_centric::extraction::write_event_log_to_sink),
-    /// one object per case. Only with `extraction-blueprint`, which is what brings the sink the
-    /// conversion is written against.
+    /// `extraction::write_event_log_to_sink`, one object per case. That conversion needs the
+    /// `extraction-blueprint` feature.
     pub fn load_from_bytes(
         item_kind: &RegistryItemKind,
         data: &[u8],
         format: &str,
     ) -> Result<Self, String> {
-        #[cfg(feature = "extraction-blueprint")]
-        if reads_as_case_centric(item_kind, format) {
-            let log = EventLog::import_from_bytes(data, format).map_err(|e| e.to_string())?;
-            return case_centric_as(item_kind, &log);
-        }
-        match item_kind {
-            RegistryItemKind::EventLog => Ok(RegistryItem::EventLog(
-                EventLog::import_from_bytes(data, format).map_err(|e| e.to_string())?,
-            )),
-            RegistryItemKind::OCEL => Ok(RegistryItem::OCEL(
-                OCEL::import_from_bytes(data, format).map_err(|e| e.to_string())?,
-            )),
-            RegistryItemKind::IndexLinkedOCEL => Ok(RegistryItem::IndexLinkedOCEL(
-                IndexLinkedOCEL::import_from_bytes(data, format).map_err(|e| e.to_string())?,
-            )),
-            RegistryItemKind::SlimLinkedOCEL => Ok(RegistryItem::SlimLinkedOCEL({
-                OCEL::import_from_bytes(data, format)
-                    .map(SlimLinkedOCEL::from_ocel)
-                    .map_err(|e| e.to_string())?
-            })),
-            RegistryItemKind::EventLogActivityProjection => {
-                Ok(RegistryItem::EventLogActivityProjection(
-                    EventLogActivityProjection::import_from_bytes(data, format)
+        Self::load_from_bytes_with(item_kind, data, format, &Control::new()).map_err(String::from)
+    }
+
+    /// [`RegistryItem::load_from_bytes`], importing through
+    /// [`Importable::import_from_bytes_with`], so it reports progress to `ctl` and returns
+    /// [`CallError::Cancelled`] once `ctl` is cancelled. A custom kind loads without progress.
+    pub fn load_from_bytes_with(
+        item_kind: &RegistryItemKind,
+        data: &[u8],
+        format: &str,
+        ctl: &Control<'_>,
+    ) -> Result<Self, CallError> {
+        controlled(ctl, || {
+            #[cfg(feature = "extraction-blueprint")]
+            if reads_as_case_centric(item_kind, format) {
+                let log = EventLog::import_from_bytes_with(data, format, Default::default(), ctl)
+                    .map_err(|e| e.to_string())?;
+                return Ok(case_centric_as(item_kind, &log)?);
+            }
+            Ok(match item_kind {
+                RegistryItemKind::EventLog => RegistryItem::EventLog(
+                    EventLog::import_from_bytes_with(data, format, Default::default(), ctl)
                         .map_err(|e| e.to_string())?,
-                ))
-            }
-            RegistryItemKind::TabularSource => Ok(RegistryItem::TabularSource(
-                TabularSource::import_from_bytes(data, format).map_err(|e| e.to_string())?,
-            )),
-            RegistryItemKind::Custom(name) => {
-                let info = custom_kind(name).ok_or_else(|| unregistered_kind_msg(name))?;
-                (info.from_bytes)(data, format)
-            }
-        }
+                ),
+                RegistryItemKind::OCEL => RegistryItem::OCEL(
+                    OCEL::import_from_bytes_with(data, format, Default::default(), ctl)
+                        .map_err(|e| e.to_string())?,
+                ),
+                RegistryItemKind::IndexLinkedOCEL => RegistryItem::IndexLinkedOCEL(
+                    IndexLinkedOCEL::import_from_bytes_with(data, format, Default::default(), ctl)
+                        .map_err(|e| e.to_string())?,
+                ),
+                RegistryItemKind::SlimLinkedOCEL => RegistryItem::SlimLinkedOCEL(
+                    SlimLinkedOCEL::import_from_bytes_with(data, format, Default::default(), ctl)
+                        .map_err(|e| e.to_string())?,
+                ),
+                RegistryItemKind::EventLogActivityProjection => {
+                    RegistryItem::EventLogActivityProjection(
+                        EventLogActivityProjection::import_from_bytes_with(data, format, (), ctl)
+                            .map_err(|e| e.to_string())?,
+                    )
+                }
+                RegistryItemKind::TabularSource => RegistryItem::TabularSource(
+                    TabularSource::import_from_bytes_with(data, format, (), ctl)
+                        .map_err(|e| e.to_string())?,
+                ),
+                RegistryItemKind::Custom(name) => {
+                    let info = custom_kind(name).ok_or_else(|| unregistered_kind_msg(name))?;
+                    (info.from_bytes)(data, format)?
+                }
+            })
+        })
     }
 
     /// Try to build a registry item from the JSON form of the given kind.
     ///
-    /// The inverse of [`RegistryItem::to_value`] rather than a second JSON dialect: what that
-    /// method writes for a kind is what this method reads back for it.
+    /// The inverse of [`RegistryItem::to_value`]: what that method writes for a kind, this one
+    /// reads back.
     ///
     /// # Errors
     /// Returns the deserializer's message, or an explanation for a kind that has no JSON form.
@@ -500,13 +578,13 @@ impl RegistryItem {
                 .export_to_path_as(path, format, ())
                 .map_err(|e| e.to_string()),
             RegistryItem::OCEL(x) => x
-                .export_to_path_as(path, format, ())
+                .export_to_path_as(path, format, Default::default())
                 .map_err(|e| e.to_string()),
             RegistryItem::IndexLinkedOCEL(x) => x
-                .export_to_path_as(path, format, ())
+                .export_to_path_as(path, format, Default::default())
                 .map_err(|e| e.to_string()),
             RegistryItem::SlimLinkedOCEL(x) => x
-                .export_to_path_as(path, format, ())
+                .export_to_path_as(path, format, Default::default())
                 .map_err(|e| e.to_string()),
             RegistryItem::EventLogActivityProjection(x) => x
                 .export_to_path_as(path, format, ())
@@ -529,7 +607,6 @@ impl RegistryItem {
                 .export_to_writer(&mut bytes, format)
                 .map_err(|e| e.to_string())?,
             RegistryItem::SlimLinkedOCEL(x) => x
-                .construct_ocel()
                 .export_to_writer(&mut bytes, format)
                 .map_err(|e| e.to_string())?,
             RegistryItem::IndexLinkedOCEL(x) => x
@@ -546,7 +623,11 @@ impl RegistryItem {
         Ok(bytes)
     }
 
-    /// Convert the registry item to another kind
+    /// Convert the registry item to another kind, leaving `self` as it is
+    ///
+    /// [`RegistryItemKind::convertible_to`] lists the kinds this succeeds for. Use
+    /// [`RegistryItem::convert_into`] when the item is not needed afterwards: it moves rather
+    /// than copies where it can.
     pub fn convert(&self, target_kind: RegistryItemKind) -> Result<Self, String> {
         match (self, target_kind) {
             (RegistryItem::EventLog(log), RegistryItemKind::EventLogActivityProjection) => {
@@ -558,15 +639,60 @@ impl RegistryItem {
             (RegistryItem::IndexLinkedOCEL(locel), RegistryItemKind::OCEL) => {
                 Ok(RegistryItem::OCEL(locel.get_ocel_ref().clone()))
             }
+            (RegistryItem::IndexLinkedOCEL(locel), RegistryItemKind::SlimLinkedOCEL) => {
+                Ok(RegistryItem::SlimLinkedOCEL(locel.into()))
+            }
             (RegistryItem::SlimLinkedOCEL(locel), RegistryItemKind::OCEL) => {
                 Ok(RegistryItem::OCEL(locel.construct_ocel()))
+            }
+            (RegistryItem::SlimLinkedOCEL(locel), RegistryItemKind::IndexLinkedOCEL) => {
+                Ok(RegistryItem::IndexLinkedOCEL(locel.into()))
             }
             (RegistryItem::OCEL(ocel), RegistryItemKind::SlimLinkedOCEL) => Ok(
                 RegistryItem::SlimLinkedOCEL(SlimLinkedOCEL::from_ocel(ocel.clone())),
             ),
-            _ => Err(format!("Cannot convert {} to {}", self.kind(), target_kind)),
+            _ => Err(conversion_error(self.kind(), target_kind)),
         }
     }
+
+    /// Convert the registry item to another kind, consuming it
+    ///
+    /// Same conversions as [`RegistryItem::convert`], but an [`OCEL`] or [`IndexLinkedOCEL`] is
+    /// moved into the result instead of copied. On error, the item is returned alongside the
+    /// message, so it is not lost.
+    pub fn convert_into(self, target_kind: RegistryItemKind) -> Result<Self, (Box<Self>, String)> {
+        match (self, target_kind) {
+            (RegistryItem::EventLog(log), RegistryItemKind::EventLogActivityProjection) => {
+                Ok(RegistryItem::EventLogActivityProjection((&log).into()))
+            }
+            (RegistryItem::OCEL(ocel), RegistryItemKind::IndexLinkedOCEL) => Ok(
+                RegistryItem::IndexLinkedOCEL(IndexLinkedOCEL::from_ocel(ocel)),
+            ),
+            (RegistryItem::IndexLinkedOCEL(locel), RegistryItemKind::OCEL) => {
+                Ok(RegistryItem::OCEL(locel.into_inner()))
+            }
+            (RegistryItem::IndexLinkedOCEL(locel), RegistryItemKind::SlimLinkedOCEL) => {
+                Ok(RegistryItem::SlimLinkedOCEL(locel.into()))
+            }
+            (RegistryItem::SlimLinkedOCEL(locel), RegistryItemKind::OCEL) => {
+                Ok(RegistryItem::OCEL(locel.construct_ocel()))
+            }
+            (RegistryItem::SlimLinkedOCEL(locel), RegistryItemKind::IndexLinkedOCEL) => {
+                Ok(RegistryItem::IndexLinkedOCEL((&locel).into()))
+            }
+            (RegistryItem::OCEL(ocel), RegistryItemKind::SlimLinkedOCEL) => Ok(
+                RegistryItem::SlimLinkedOCEL(SlimLinkedOCEL::from_ocel(ocel)),
+            ),
+            (item, _) => {
+                let msg = conversion_error(item.kind(), target_kind);
+                Err((Box::new(item), msg))
+            }
+        }
+    }
+}
+
+fn conversion_error(from: RegistryItemKind, to: RegistryItemKind) -> String {
+    format!("Cannot convert {} to {}", from, to)
 }
 
 /// The name of a custom value's kind, reachable through `dyn CustomRegistryValue`.
@@ -805,10 +931,10 @@ impl<'a> StateRef<'a> {
 
 /// Writable access to the whole registry, requested with `#[bind(state_mut)]`.
 ///
-/// For a binding that manages the registry itself rather than one resolved item, e.g. evicting
-/// items to free memory. A `#[bind(handle)]` or `&mut` big-type
-/// argument is still the right tool for "mutate the one item named by this parameter"; reach for
-/// `state_mut` only when the set of items to touch is not known until the body runs.
+/// For a binding that manages the registry itself instead of one resolved item, e.g., evicting
+/// items to free memory. To change the one item a parameter names, take it by `&mut` (or
+/// `#[bind(handle)] &mut`). Use `state_mut` only when the items to touch are not known until the
+/// body runs.
 ///
 /// Not `&mut AppState`, for the same reason [`StateRef`] is not `&AppState`: the caller already
 /// holds the write guard, and `std::sync::RwLock` is not reentrant.
@@ -883,8 +1009,9 @@ pub struct AppState {
 impl AppState {
     /// The registry for reading, recovering from a poisoned lock.
     ///
-    /// A binding body that panics leaves the lock poisoned, but the registry is a plain map no
-    /// half-finished insert can leave inconsistent, so refusing every later call would be worse.
+    /// A binding body that panics while holding the write lock poisons it. The map itself is
+    /// still consistent, and [`call`] drops every item the panicking body held by `&mut`, so
+    /// refusing every later call would be worse.
     pub fn read(&self) -> std::sync::RwLockReadGuard<'_, InnerAppState> {
         self.items
             .read()
@@ -912,16 +1039,60 @@ impl AppState {
     }
 }
 
+/// Why a binding call failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallError {
+    /// The call's [`Control`] was cancelled. The call stored nothing.
+    Cancelled,
+    /// Any other failure, with its message.
+    Failed(String),
+}
+
+impl std::fmt::Display for CallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CallError::Cancelled => f.write_str("cancelled"),
+            CallError::Failed(msg) => f.write_str(msg),
+        }
+    }
+}
+
+impl std::error::Error for CallError {}
+
+impl From<String> for CallError {
+    fn from(msg: String) -> Self {
+        CallError::Failed(msg)
+    }
+}
+
+impl From<&str> for CallError {
+    fn from(msg: &str) -> Self {
+        CallError::Failed(msg.to_string())
+    }
+}
+
+impl From<Cancelled> for CallError {
+    fn from(_: Cancelled) -> Self {
+        CallError::Cancelled
+    }
+}
+
+impl From<CallError> for String {
+    fn from(e: CallError) -> Self {
+        e.to_string()
+    }
+}
+
 /// Function Binding
 #[derive(Debug)]
 pub struct Binding {
-    /// Unique ID of the function
+    /// `<crate>::<name>`, so it stays when the function moves
     pub id: &'static str,
     /// Name of the function
     pub name: &'static str,
     /// Function handler (executing the function with (de-)serializing inputs/outputs).
     /// Returns the result pre-serialized as UTF-8 JSON bytes.
-    pub handler: fn(&Value, &AppState) -> Result<Vec<u8>, String>,
+    pub handler: fn(&Value, &AppState, &Control<'_>) -> Result<Vec<u8>, CallError>,
     /// Documentation of function
     pub docs: fn() -> Vec<String>,
     /// Module path of declared function
@@ -1106,45 +1277,49 @@ fn decode_base64(s: &str) -> Result<Vec<u8>, String> {
 
 /// Resolve a string that names a stored item, returning `None` if the registry does not know it.
 ///
-/// Converts on a kind mismatch, storing the result under `{id}_as_{arg_ref}`.
-fn resolve_stored_id(id: &str, arg_ref: &str, state: &AppState) -> Result<Option<Value>, String> {
-    // An id of the right kind inserts nothing, and taking the write lock for it would serialize
-    // every argument of every call against all other writers.
-    {
+/// Converts on a kind mismatch, storing the result under a fresh id pushed onto `minted`. A
+/// `mutable` argument is never converted: the binding would mutate the copy, not `id`.
+fn resolve_stored_id(
+    id: &str,
+    arg_ref: &str,
+    mutable: bool,
+    state: &AppState,
+    minted: &mut Vec<String>,
+) -> Result<Option<Value>, String> {
+    // A conversion can be slow, and under the write lock it would block every other call.
+    let converted = {
         let items = state.read();
-        match items.get(id) {
-            None => return Ok(None),
-            Some(item) if item.kind().to_string() == arg_ref => {
-                return Ok(Some(Value::String(id.to_string())))
-            }
-            Some(_) => {}
+        let Some(item) = items.get(id) else {
+            return Ok(None);
+        };
+        if item.kind().to_string() == arg_ref {
+            return Ok(Some(Value::String(id.to_string())));
         }
-    }
-
-    let mut items = state.write();
-    let Some(item) = items.get(id) else {
-        return Ok(None);
+        if mutable {
+            return Err(format!(
+                "Type mismatch for ID '{}': expected {}, found {}. This argument is modified in \
+                 place, so it is not converted implicitly. Convert the item explicitly and pass \
+                 the converted ID.",
+                id,
+                arg_ref,
+                item.kind()
+            ));
+        }
+        let target_kind = RegistryItemKind::from_str(arg_ref)?;
+        item.convert(target_kind).map_err(|e| {
+            format!(
+                "Type mismatch for ID '{}': expected {}, found {}. Conversion failed: {}",
+                id,
+                arg_ref,
+                item.kind(),
+                e
+            )
+        })?
     };
-    if item.kind().to_string() == arg_ref {
-        return Ok(Some(Value::String(id.to_string())));
-    }
-
-    // Try conversion
-    let target_kind = RegistryItemKind::from_str(arg_ref)?;
-    match item.convert(target_kind) {
-        Ok(converted) => {
-            let new_id = format!("{}_as_{}", id, arg_ref);
-            items.insert(new_id.clone(), converted);
-            Ok(Some(Value::String(new_id)))
-        }
-        Err(e) => Err(format!(
-            "Type mismatch for ID '{}': expected {}, found {}. Conversion failed: {}",
-            id,
-            arg_ref,
-            item.kind(),
-            e
-        )),
-    }
+    let new_id = format!("{}_as_{}_{}", id, arg_ref, uuid::Uuid::new_v4());
+    state.add(new_id.clone(), converted);
+    minted.push(new_id.clone());
+    Ok(Some(Value::String(new_id)))
 }
 
 /// Resolve an argument value based on its schema and the current state.
@@ -1168,57 +1343,91 @@ fn resolve_stored_id(id: &str, arg_ref: &str, state: &AppState) -> Result<Option
 /// | any other object or array | the JSON form, unwrapped |
 ///
 /// The two id forms look up an item that already exists, so a mismatched kind is converted where
-/// a conversion exists. The other forms have no kind to mismatch: the path, the bytes and the JSON
-/// are read as the referenced kind directly.
+/// a conversion exists, except for an argument the binding takes by `&mut`. The other forms have
+/// no kind to mismatch: the path, the bytes and the JSON are read as the referenced kind directly.
+///
+/// An argument the binding takes by `&mut` accepts only the two id forms naming a stored item:
+/// the binding would otherwise change a copy that is dropped after the call.
 pub fn resolve_argument(
     arg_name: &str,
     value: Value,
     schema: &Value,
     state: &AppState,
 ) -> Result<Value, String> {
-    resolve_argument_tracked(arg_name, value, schema, state, &mut Vec::new())
+    resolve_argument_tracked(
+        arg_name,
+        value,
+        schema,
+        state,
+        &mut Vec::new(),
+        &Control::new(),
+    )
 }
 
 /// [`resolve_argument`], pushing every id it stores an item under onto `minted`.
 ///
 /// Those ids never reach the caller, so only the requester of the resolution can drop them again.
+///
+/// An item read from a path or bytes reports its import to `ctl` as stage `"Importing <arg_name>"`
+/// and stops once `ctl` is cancelled.
 fn resolve_argument_tracked(
     arg_name: &str,
     value: Value,
     schema: &Value,
     state: &AppState,
     minted: &mut Vec<String>,
+    ctl: &Control<'_>,
 ) -> Result<Value, String> {
     let schema_obj = schema.as_object().ok_or("Invalid schema")?;
 
     // Case 1: Registry Reference
     if let Some(arg_ref) = schema_obj.get("x-registry-ref").and_then(|r| r.as_str()) {
         if let Some(handle_arg) = classify_handle_arg(&value) {
+            let import_ctl = import_control(ctl, arg_name);
+            let mutable = is_mut_registry_arg(schema);
             let invalid = |e: String| format!("Invalid Argument: {}\n{}", arg_name, e);
             // A kind that no downstream crate registered still resolves by id, so this is looked
             // up only where a loader is actually needed.
             let target_kind = || RegistryItemKind::from_str(arg_ref).map_err(invalid);
+            let needs_stored_id = || {
+                invalid(format!(
+                    "A binding that changes its argument needs the ID of a stored {}.",
+                    arg_ref
+                ))
+            };
             let item = match handle_arg {
                 HandleArg::Bare(id) => {
-                    if let Some(resolved) = resolve_stored_id(id, arg_ref, state)? {
+                    if let Some(resolved) = resolve_stored_id(id, arg_ref, mutable, state, minted)?
+                    {
                         return Ok(resolved);
                     }
-                    // Otherwise, try to load it from file
-                    RegistryItem::load_from_path(&RegistryItemKind::from_str(arg_ref)?, id)?
+                    if mutable {
+                        return Err(invalid(format!(
+                            "No {} is stored under the ID '{}'. A binding that changes its \
+                             argument needs the ID of a stored {}.",
+                            arg_ref, id, arg_ref
+                        )));
+                    }
+                    RegistryItem::load_from_path_with(&target_kind()?, id, &import_ctl)
+                        .map_err(|e| invalid(e.into()))?
+                }
+                HandleArg::Path(_) | HandleArg::Bytes { .. } | HandleArg::Inline(_) if mutable => {
+                    return Err(needs_stored_id());
                 }
                 HandleArg::Id(id) => {
-                    return resolve_stored_id(id, arg_ref, state)?.ok_or_else(|| {
-                        invalid(format!("No {} is stored under the ID '{}'", arg_ref, id))
-                    })
+                    return resolve_stored_id(id, arg_ref, mutable, state, minted)?.ok_or_else(
+                        || invalid(format!("No {} is stored under the ID '{}'", arg_ref, id)),
+                    )
                 }
                 HandleArg::Path(path) => {
-                    RegistryItem::load_from_path(&target_kind()?, path).map_err(invalid)?
+                    RegistryItem::load_from_path_with(&target_kind()?, path, &import_ctl)
+                        .map_err(|e| invalid(e.into()))?
                 }
                 HandleArg::Bytes { b64, format } => {
                     let bytes = decode_base64(b64)
                         .map_err(|e| invalid(format!("'bytes' is not valid base64: {}", e)))?;
-                    RegistryItem::load_from_bytes(&target_kind()?, &bytes, format)
-                        .map_err(invalid)?
+                    RegistryItem::load_from_bytes_with(&target_kind()?, &bytes, format, &import_ctl)
+                        .map_err(|e| invalid(e.into()))?
                 }
                 HandleArg::Inline(inner) => {
                     RegistryItem::from_json_value(&target_kind()?, inner).map_err(invalid)?
@@ -1259,23 +1468,102 @@ fn resolve_argument_tracked(
     Ok(value)
 }
 
+/// A control for importing argument `arg_name` that reports to `ctl` with the stage `"Importing"`
+/// renamed to `"Importing <arg_name>"` (`"Importing events"` to `"Importing <arg_name> (events)"`), and
+/// passes on warnings and the cancel flag.
+fn import_control<'c>(ctl: &'c Control<'_>, arg_name: &str) -> Control<'c> {
+    let mut import_ctl = Control::new().on_warning(|w| ctl.warn(w));
+    if ctl.wants_progress() {
+        let label = format!("{IMPORT_STAGE} {arg_name}");
+        import_ctl = import_ctl.on_progress(move |p| {
+            let stage = match p.stage.strip_prefix(IMPORT_STAGE) {
+                Some("") => label.clone(),
+                Some(rest) => format!("{label} ({})", rest.trim_start()),
+                None => format!("{label}: {}", p.stage),
+            };
+            ctl.progress(stage, p.done, p.total);
+        });
+    }
+    if let Some(flag) = ctl.cancel_flag_ref() {
+        import_ctl = import_ctl.cancel_flag(flag);
+    }
+    import_ctl
+}
+
 /// Call the specified function with the passed arguments.
 /// Returns the result pre-serialized as UTF-8 JSON bytes.
 ///
 /// A panic in the binding body is caught and reported as an error, because hosts reach this
 /// across an FFI or wasm boundary, where an unwind is undefined behavior.
+///
+/// A panic can leave an item the body held by `&mut` half-updated, so every such item is removed
+/// from `state` before the error is returned.
+///
+/// Runs without progress reports or cancellation; see [`call_with_outcome`].
 pub fn call(binding: &Binding, args: &Value, state: &AppState) -> Result<Vec<u8>, String> {
+    call_controlled(binding, args, state, &Control::new()).map_err(String::from)
+}
+
+fn call_controlled(
+    binding: &Binding,
+    args: &Value,
+    state: &AppState,
+    ctl: &Control<'_>,
+) -> Result<Vec<u8>, CallError> {
+    ctl.check()?;
     let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        (binding.handler)(args, state)
+        (binding.handler)(args, state, ctl)
     }));
-    called.unwrap_or_else(|payload| {
-        let what = payload
-            .downcast_ref::<&str>()
-            .map(|s| (*s).to_string())
-            .or_else(|| payload.downcast_ref::<String>().cloned())
-            .unwrap_or_else(|| "panicked".to_string());
-        Err(format!("{} panicked: {}", binding.name, what))
-    })
+    match called {
+        Ok(Err(CallError::Failed(_))) if ctl.is_cancelled() => Err(CallError::Cancelled),
+        Ok(result) => result,
+        Err(payload) => {
+            let what = payload
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "panicked".to_string());
+            let dropped = drop_mut_args(&(binding.args)(), args, state);
+            let dropped_note = if dropped.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " (removed possibly inconsistent item(s): {})",
+                    dropped.join(", ")
+                )
+            };
+            Err(CallError::Failed(format!(
+                "{} panicked: {}{}",
+                binding.name, what, dropped_note
+            )))
+        }
+    }
+}
+
+/// Whether `schema` describes a registry argument the binding takes by `&mut`.
+fn is_mut_registry_arg(schema: &Value) -> bool {
+    schema.get("x-registry-mut").and_then(Value::as_bool) == Some(true)
+}
+
+/// The ids passed in `args` for the arguments that `schemas` mark as taken by `&mut`.
+fn mut_arg_ids(schemas: &[(String, Value)], args: &Value) -> Vec<String> {
+    let Some(passed) = args.as_object() else {
+        return Vec::new();
+    };
+    schemas
+        .iter()
+        .filter(|(_, schema)| is_mut_registry_arg(schema))
+        .filter_map(|(name, _)| passed.get(name)?.as_str().map(str::to_string))
+        .collect()
+}
+
+/// Remove the items taken by `&mut` from `state`, returning their ids.
+fn drop_mut_args(schemas: &[(String, Value)], args: &Value, state: &AppState) -> Vec<String> {
+    let ids = mut_arg_ids(schemas, args);
+    let mut items = state.write();
+    ids.into_iter()
+        .filter(|id| items.remove(id).is_some())
+        .collect()
 }
 
 /// [`call`], with every argument first put through [`resolve_argument`].
@@ -1288,20 +1576,41 @@ pub fn call(binding: &Binding, args: &Value, state: &AppState) -> Result<Vec<u8>
 /// string argument, so a host exposing bindings to something it does not trust keeps the
 /// choice.
 pub fn call_resolved(binding: &Binding, args: &Value, state: &AppState) -> Result<Vec<u8>, String> {
+    resolve_and_call(binding, &(binding.args)(), args, state, &Control::new())
+        .map(|(result, _, _)| result)
+        .map_err(String::from)
+}
+
+/// [`call_resolved`], returning the result together with the arguments as the binding received
+/// them and the ids stored for the duration of the call (already dropped again).
+///
+/// `schemas` are the binding's argument schemas, as `(binding.args)()` builds them.
+fn resolve_and_call(
+    binding: &Binding,
+    schemas: &[(String, Value)],
+    args: &Value,
+    state: &AppState,
+    ctl: &Control<'_>,
+) -> Result<(Vec<u8>, Value, Vec<String>), CallError> {
     let Some(passed) = args.as_object() else {
-        return call(binding, args, state);
+        return call_controlled(binding, args, state, ctl)
+            .map(|result| (result, args.clone(), Vec::new()));
     };
-    let schemas = (binding.args)();
     let mut resolved = serde_json::Map::with_capacity(passed.len());
     let mut minted: Vec<String> = Vec::new();
     for (name, value) in passed {
         let value = match schemas.iter().find(|(n, _)| n == name) {
             Some((_, schema)) => {
-                match resolve_argument_tracked(name, value.clone(), schema, state, &mut minted) {
+                match resolve_argument_tracked(name, value.clone(), schema, state, &mut minted, ctl)
+                {
                     Ok(value) => value,
                     Err(e) => {
                         drop_minted(state, &minted);
-                        return Err(e);
+                        return Err(if ctl.is_cancelled() {
+                            CallError::Cancelled
+                        } else {
+                            e.into()
+                        });
                     }
                 }
             }
@@ -1309,9 +1618,97 @@ pub fn call_resolved(binding: &Binding, args: &Value, state: &AppState) -> Resul
         };
         resolved.insert(name.clone(), value);
     }
-    let result = call(binding, &Value::Object(resolved), state);
+    let resolved = Value::Object(resolved);
+    let result = call_controlled(binding, &resolved, state, ctl);
     drop_minted(state, &minted);
-    result
+    result.map(|result| (result, resolved, minted))
+}
+
+/// What a successful call did to the registry, next to its result. See [`call_with_outcome`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CallOutcome {
+    /// The result, pre-serialized as UTF-8 JSON bytes, exactly as [`call`] returns it.
+    pub result: Vec<u8>,
+    /// The id the binding stored its result under, for a binding that returns a registry handle
+    /// or stores an item under a required `output_id` next to its result.
+    ///
+    /// An `output_id` naming an existing item replaces that item, and is reported here too.
+    /// Items [`call_resolved_with_outcome`] stored only for the duration of the call are gone
+    /// again and not listed.
+    pub minted: Vec<String>,
+    /// The ids of the items the binding took by `&mut`, so possibly changed in place.
+    ///
+    /// A binding taking `#[bind(state_mut)]` can change any item, which is not tracked here.
+    pub mutated: Vec<String>,
+}
+
+/// [`call`], reporting progress and partial results through `ctl`, stopping once it is
+/// cancelled, and reporting which registry ids the call stored or changed.
+///
+/// Bindings that take `#[bind(ctx)]` report and check `ctl` themselves. Once cancelled, a call
+/// that fails or would store its result returns [`CallError::Cancelled`] and stores nothing,
+/// whether or not the binding noticed the cancel. A result that is not stored is returned as
+/// usual, and a panic is reported as the panic, cancelled or not.
+///
+/// The ids are read off the binding's schema and result rather than by comparing the registry
+/// before and after, so a concurrent call on the same [`AppState`] does not show up in it.
+pub fn call_with_outcome(
+    binding: &Binding,
+    args: &Value,
+    state: &AppState,
+    ctl: &Control<'_>,
+) -> Result<CallOutcome, CallError> {
+    let result = call_controlled(binding, args, state, ctl)?;
+    Ok(call_outcome(binding, &(binding.args)(), args, result, &[]))
+}
+
+/// [`call_resolved`] with a [`Control`] and the registry ids the call stored or changed, as in
+/// [`call_with_outcome`]. Also reports progress while it imports event data arguments.
+pub fn call_resolved_with_outcome(
+    binding: &Binding,
+    args: &Value,
+    state: &AppState,
+    ctl: &Control<'_>,
+) -> Result<CallOutcome, CallError> {
+    let schemas = (binding.args)();
+    let (result, resolved, dropped) = resolve_and_call(binding, &schemas, args, state, ctl)?;
+    Ok(call_outcome(binding, &schemas, &resolved, result, &dropped))
+}
+
+/// `args` are the arguments as the handler got them, so registry ids, not paths or inline JSON.
+fn call_outcome(
+    binding: &Binding,
+    schemas: &[(String, Value)],
+    args: &Value,
+    result: Vec<u8>,
+    dropped: &[String],
+) -> CallOutcome {
+    let stores_beside_result = schemas
+        .iter()
+        .any(|(name, schema)| name == "output_id" && schema.get("x-registry-out").is_some());
+    let minted = if stores_beside_result {
+        args.get("output_id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .into_iter()
+            .collect()
+    } else if result.first() == Some(&b'"')
+        && (binding.return_type)().get("x-registry-ref").is_some()
+    {
+        serde_json::from_slice::<String>(&result)
+            .ok()
+            .into_iter()
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let mut mutated = mut_arg_ids(schemas, args);
+    mutated.retain(|id| !dropped.contains(id));
+    CallOutcome {
+        result,
+        minted,
+        mutated,
+    }
 }
 
 /// Drop the registry entries [`call_resolved`] stored for the duration of one call.
@@ -1337,7 +1734,7 @@ pub fn list_functions_meta() -> Vec<BindingMeta> {
         .collect()
 }
 
-/// Get the binding information of an function by its name
+/// Get the binding with this id, e.g., `process_mining::discover_dfg`
 pub fn get_fn_binding(id: &str) -> Option<&'static Binding> {
     inventory::iter::<Binding>.into_iter().find(|b| b.id == id)
 }
@@ -1346,7 +1743,13 @@ pub fn get_fn_binding(id: &str) -> Option<&'static Binding> {
 mod extraction_bindings;
 #[cfg(feature = "extraction-dbcon")]
 mod extraction_dbcon_bindings;
+mod model_kinds;
+pub use model_kinds::OCDeclareModel;
 mod path_schema_bindings;
+mod reflow_bindings;
+pub use reflow_bindings::{ReflowCellRef, ReflowSummary};
+mod shared_meta;
+pub use shared_meta::{list_functions_meta_shared, BindingsMetaShared};
 mod slim_ocel_bindings;
 
 /// Get the number of objects in an [`OCEL`]
@@ -1384,18 +1787,7 @@ pub fn ocel_type_stats<'a>(ocel: &'a impl LinkedOCELAccess<'a>) -> OCELTypeStats
     }
 }
 
-/// Convert an [`OCEL`] to an [`IndexLinkedOCEL`]
-#[register_binding]
-pub fn index_link_ocel(ocel: &OCEL) -> IndexLinkedOCEL {
-    IndexLinkedOCEL::from_ocel(ocel.clone())
-}
-
-/// Convert an [`OCEL`] to an [`SlimLinkedOCEL`]
-#[register_binding]
-pub fn slim_link_ocel(ocel: &OCEL) -> SlimLinkedOCEL {
-    SlimLinkedOCEL::from_ocel(ocel.clone())
-}
-
+#[cfg(test)]
 #[register_binding]
 /// This is a test function.
 ///
@@ -1509,6 +1901,16 @@ mod tests {
 
     crate::register_custom_registry_kind!(DummyHandle);
 
+    #[register_binding]
+    fn dummy_index_link(ocel: &OCEL) -> IndexLinkedOCEL {
+        IndexLinkedOCEL::from_ocel(ocel.clone())
+    }
+
+    #[register_binding]
+    fn dummy_slim_link(ocel: &OCEL) -> SlimLinkedOCEL {
+        SlimLinkedOCEL::from_ocel(ocel.clone())
+    }
+
     /// The label of a stored handle, taken by shared reference.
     #[register_binding]
     fn dummy_label(#[bind(handle)] h: &DummyHandle) -> String {
@@ -1528,6 +1930,25 @@ mod tests {
         DummyHandle { label, hits: 0 }
     }
 
+    /// Count to `n`, reporting each step and streaming each number, and stop once cancelled.
+    #[register_binding(stringify_error)]
+    fn dummy_count(n: u64, #[bind(ctx)] ctl: &Control<'_>) -> Result<u64, Cancelled> {
+        let counter = ctl.counter("count", Some(n));
+        for i in 0..n {
+            ctl.check()?;
+            ctl.partial(&i);
+            counter.tick();
+        }
+        Ok(n)
+    }
+
+    /// A handle built under a context, to check that a cancelled call stores nothing.
+    #[register_binding(returns_handle)]
+    fn dummy_new_ctx(label: String, #[bind(ctx)] ctl: &Control<'_>) -> DummyHandle {
+        ctl.progress("new", 1, Some(1));
+        DummyHandle { label, hits: 0 }
+    }
+
     /// Bump a stored handle and hand back a copy of it: a handle result stored through the write
     /// guard, which is a different insert site than [`dummy_new`]'s.
     #[register_binding(returns_handle)]
@@ -1541,6 +1962,24 @@ mod tests {
     fn dummy_log_of(#[bind(handle)] h: &mut DummyHandle) -> EventLog {
         h.hits += 1;
         EventLog::default()
+    }
+
+    /// A stored handle next to a returned value, under a context so a cancel can land during
+    /// the body.
+    #[register_binding(returns_handle)]
+    fn dummy_new_with_len(label: String, #[bind(ctx)] ctl: &Control<'_>) -> (DummyHandle, usize) {
+        ctl.progress("new", 1, Some(1));
+        let len = label.len();
+        (DummyHandle { label, hits: 0 }, len)
+    }
+
+    /// A big type next to a returned value, stored through the write guard.
+    #[register_binding(stringify_error)]
+    fn dummy_log_and_hits(
+        #[bind(handle)] h: &mut DummyHandle,
+    ) -> Result<(EventLog, usize), String> {
+        h.hits += 1;
+        Ok((EventLog::default(), h.hits))
     }
 
     /// Drop every item in the registry: the `#[bind(state_mut)]` escape hatch, for a binding
@@ -1573,7 +2012,7 @@ mod tests {
             serde_json::from_value::<RegistryItemKind>(serde_json::json!("DummyHandle")).unwrap(),
             custom
         );
-        // The built-in six keep the exact wire form the derive gave them.
+        // A built-in kind is its bare name.
         assert_eq!(
             serde_json::to_value(RegistryItemKind::OCEL).unwrap(),
             serde_json::json!("OCEL")
@@ -1745,7 +2184,7 @@ mod tests {
             }),
         );
 
-        // A bare id that is stored comes back untouched, exactly as before.
+        // A bare id that is stored comes back untouched.
         assert_eq!(
             resolve_argument("h", serde_json::json!("d1"), &schema, &state).unwrap(),
             serde_json::json!("d1")
@@ -1884,18 +2323,25 @@ mod tests {
         let ocel: OCEL = serde_json::from_value(tiny_ocel_json()).unwrap();
         state.add("o1", ocel);
 
-        // A stored id of the wrong kind is converted and stored under the derived name.
+        // A stored id of the wrong kind is converted and stored under a derived name.
         let resolved = resolve_argument("ocel", serde_json::json!("o1"), &schema, &state).unwrap();
-        assert_eq!(resolved, serde_json::json!("o1_as_SlimLinkedOCEL"));
+        let resolved = resolved.as_str().unwrap();
+        assert!(
+            resolved.starts_with("o1_as_SlimLinkedOCEL_"),
+            "{}",
+            resolved
+        );
         assert_eq!(
-            state.items.read().unwrap()["o1_as_SlimLinkedOCEL"].kind(),
+            state.items.read().unwrap()[resolved].kind(),
             RegistryItemKind::SlimLinkedOCEL
         );
         // The id wrapper converts the same way.
-        assert_eq!(
-            resolve_argument("ocel", serde_json::json!({ "id": "o1" }), &schema, &state).unwrap(),
-            serde_json::json!("o1_as_SlimLinkedOCEL")
-        );
+        let resolved =
+            resolve_argument("ocel", serde_json::json!({ "id": "o1" }), &schema, &state).unwrap();
+        assert!(resolved
+            .as_str()
+            .unwrap()
+            .starts_with("o1_as_SlimLinkedOCEL_"));
 
         // Inline JSON, and the bytes of the same JSON, both land as a `SlimLinkedOCEL`.
         for value in [
@@ -1927,7 +2373,179 @@ mod tests {
     }
 
     #[test]
-    fn call_resolved_accepts_the_new_forms() {
+    fn call_resolved_drops_the_converted_copy() {
+        let state = AppState::default();
+        let ocel: OCEL = serde_json::from_value(tiny_ocel_json()).unwrap();
+        state.add("o1", ocel);
+        let out = call_resolved(
+            binding_named("num_objects"),
+            &serde_json::json!({ "ocel": "o1" }),
+            &state,
+        )
+        .unwrap();
+        assert_eq!(out, b"2");
+        let items = state.read();
+        assert_eq!(items.keys().collect::<Vec<_>>(), vec!["o1"]);
+    }
+
+    #[test]
+    fn mut_argument_is_not_converted_implicitly() {
+        let schema = arg_schema("locel_add_event_type", "ocel");
+        assert_eq!(schema["x-registry-mut"], serde_json::json!(true));
+        assert!(arg_schema("num_objects", "ocel")
+            .get("x-registry-mut")
+            .is_none());
+
+        let state = AppState::default();
+        let ocel: OCEL = serde_json::from_value(tiny_ocel_json()).unwrap();
+        state.add("o1", ocel);
+        let err = call_resolved(
+            binding_named("locel_add_event_type"),
+            &serde_json::json!({ "ocel": "o1", "event_type": "new" }),
+            &state,
+        )
+        .unwrap_err();
+        assert!(err.contains("not converted implicitly"), "{}", err);
+        let items = state.read();
+        assert_eq!(items.keys().collect::<Vec<_>>(), vec!["o1"]);
+        assert_eq!(items["o1"].kind(), RegistryItemKind::OCEL);
+    }
+
+    /// Mutate a stored handle, then panic halfway through.
+    #[register_binding]
+    fn dummy_bump_then_panic(#[bind(handle)] h: &mut DummyHandle) -> usize {
+        h.hits += 1;
+        panic!("half done");
+    }
+
+    #[test]
+    fn panic_in_mut_binding_drops_the_item() {
+        let state = AppState::default();
+        state.add(
+            "h1",
+            RegistryItem::custom(DummyHandle {
+                label: "x".to_string(),
+                hits: 0,
+            }),
+        );
+        let err = call(
+            binding_named("dummy_bump_then_panic"),
+            &serde_json::json!({ "h": "h1" }),
+            &state,
+        )
+        .unwrap_err();
+        assert!(err.contains("half done"), "{}", err);
+        assert!(!state.contains_key("h1"));
+        // The registry stays usable after the poisoned write lock.
+        state.add(
+            "h2",
+            RegistryItem::custom(DummyHandle {
+                label: "y".to_string(),
+                hits: 0,
+            }),
+        );
+        assert_eq!(
+            call(
+                binding_named("dummy_bump"),
+                &serde_json::json!({ "h": "h2" }),
+                &state
+            )
+            .unwrap(),
+            b"1"
+        );
+    }
+
+    /// Mutate a stored handle, report progress, then panic.
+    #[register_binding]
+    fn dummy_bump_report_then_panic(
+        #[bind(handle)] h: &mut DummyHandle,
+        #[bind(ctx)] ctl: &Control<'_>,
+    ) -> usize {
+        h.hits += 1;
+        ctl.progress("bump", 1, Some(1));
+        panic!("half done");
+    }
+
+    #[test]
+    fn panic_after_cancel_is_reported_as_the_panic() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let state = AppState::default();
+        state.add(
+            "h1",
+            RegistryItem::custom(DummyHandle {
+                label: "x".to_string(),
+                hits: 0,
+            }),
+        );
+        let flag = AtomicBool::new(false);
+        let ctl = Control::new()
+            .on_progress(|_| flag.store(true, Ordering::Relaxed))
+            .cancel_flag(&flag);
+        let out = call_with_outcome(
+            binding_named("dummy_bump_report_then_panic"),
+            &serde_json::json!({ "h": "h1" }),
+            &state,
+            &ctl,
+        );
+        match out {
+            Err(CallError::Failed(msg)) => {
+                assert!(msg.contains("half done"), "{}", msg);
+                assert!(
+                    msg.contains("removed possibly inconsistent item(s): h1"),
+                    "{}",
+                    msg
+                );
+            }
+            other => panic!("expected the panic, got {:?}", other),
+        }
+        assert!(!state.contains_key("h1"));
+    }
+
+    #[test]
+    fn add_event_with_unknown_object_errors_and_leaves_ocel_usable() {
+        let state = AppState::default();
+        state.add("l", SlimLinkedOCEL::new());
+        let run = |name: &str, args: Value| call(binding_named(name), &args, &state);
+        run(
+            "locel_add_event_type",
+            serde_json::json!({ "ocel": "l", "event_type": "a" }),
+        )
+        .unwrap();
+        let t = "2024-01-01T00:00:00Z";
+        let err = run(
+            "locel_add_event",
+            serde_json::json!({
+                "ocel": "l", "event_type": "a", "time": t, "id": "e1",
+                "relationships": [["q", 3]]
+            }),
+        )
+        .unwrap_err();
+        assert!(err.contains("object index 3"), "{}", err);
+        let out = run(
+            "locel_add_event",
+            serde_json::json!({ "ocel": "l", "event_type": "a", "time": t, "id": "e1" }),
+        )
+        .unwrap();
+        assert_eq!(out, b"0");
+        assert_eq!(
+            run("num_events", serde_json::json!({ "ocel": "l" })).unwrap(),
+            b"1"
+        );
+    }
+
+    #[test]
+    fn binding_names_are_unique() {
+        let mut seen = HashSet::new();
+        let dupes: Vec<&str> = list_functions()
+            .into_iter()
+            .map(|b| b.name)
+            .filter(|n| !seen.insert(*n))
+            .collect();
+        assert!(dupes.is_empty(), "registered more than once: {:?}", dupes);
+    }
+
+    #[test]
+    fn call_resolved_accepts_every_reference_form() {
         let state = AppState::default();
         let out = call_resolved(
             binding_named("dummy_label"),
@@ -2033,7 +2651,7 @@ mod tests {
 
         // Big type, read-lock path.
         let id = called_id(
-            "index_link_ocel",
+            "dummy_index_link",
             serde_json::json!({ "ocel": "o1", "output_id": "linked" }),
             &state,
         );
@@ -2084,11 +2702,91 @@ mod tests {
             assert_eq!(stored_handle_at(&state, &id).label, "two");
         }
 
-        // Every insert site keeps the old behavior, not just the read-lock one.
+        // The insert sites under the write lock mint `res_` ids too.
         let id = called_id("dummy_fork", serde_json::json!({ "h": "d1" }), &state);
         assert!(id.starts_with("res_"), "got {}", id);
         let id = called_id("dummy_log_of", serde_json::json!({ "h": "d1" }), &state);
         assert!(id.starts_with("res_"), "got {}", id);
+    }
+
+    #[test]
+    fn a_binding_without_registry_arguments_holds_no_lock_during_its_body() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let state = AppState::default();
+        let writable = AtomicBool::new(false);
+        let ctl = Control::new().on_progress(|_| {
+            writable.store(state.items.try_write().is_ok(), Ordering::Relaxed);
+        });
+        call_with_outcome(
+            binding_named("dummy_new_with_len"),
+            &serde_json::json!({ "label": "x", "output_id": "p" }),
+            &state,
+            &ctl,
+        )
+        .unwrap();
+        assert!(writable.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn a_pair_stores_its_first_element_under_output_id_and_returns_the_second() {
+        let state = AppState::default();
+        state.add(
+            "d1",
+            RegistryItem::custom(DummyHandle {
+                label: "src".to_string(),
+                hits: 0,
+            }),
+        );
+
+        // Custom handle, read-lock path.
+        let out = call(
+            binding_named("dummy_new_with_len"),
+            &serde_json::json!({ "label": "three", "output_id": "p" }),
+            &state,
+        )
+        .unwrap();
+        assert_eq!(out, b"5");
+        assert_eq!(stored_handle_at(&state, "p").label, "three");
+
+        // An existing id is replaced.
+        let before = state.read().len();
+        call(
+            binding_named("dummy_new_with_len"),
+            &serde_json::json!({ "label": "again", "output_id": "p" }),
+            &state,
+        )
+        .unwrap();
+        assert_eq!(stored_handle_at(&state, "p").label, "again");
+        assert_eq!(state.read().len(), before);
+
+        // Big type, write-guard path.
+        let out = call(
+            binding_named("dummy_log_and_hits"),
+            &serde_json::json!({ "h": "d1", "output_id": "log" }),
+            &state,
+        )
+        .unwrap();
+        assert_eq!(out, b"1");
+        assert_eq!(state.read()["log"].kind(), RegistryItemKind::EventLog);
+
+        // Without an id the body does not run and nothing is stored.
+        let before = state.read().len();
+        for args in [
+            serde_json::json!({ "h": "d1" }),
+            serde_json::json!({ "h": "d1", "output_id": null }),
+        ] {
+            let err = call(binding_named("dummy_log_and_hits"), &args, &state).unwrap_err();
+            assert!(err.contains("output_id"), "{}", err);
+        }
+        let err = call(
+            binding_named("dummy_new_with_len"),
+            &serde_json::json!({ "label": "x" }),
+            &state,
+        )
+        .unwrap_err();
+        assert_eq!(err, "Missing required argument output_id");
+        assert_eq!(state.read().len(), before);
+        assert_eq!(stored_handle_at(&state, "d1").hits, 1);
     }
 
     #[test]
@@ -2097,8 +2795,8 @@ mod tests {
             "dummy_new",
             "dummy_fork",
             "dummy_log_of",
-            "index_link_ocel",
-            "slim_link_ocel",
+            "dummy_index_link",
+            "dummy_slim_link",
         ] {
             let binding = binding_named(name);
             let schema = arg_schema(name, "output_id");
@@ -2125,6 +2823,31 @@ mod tests {
             (binding_named("dummy_new").required_args)(),
             vec!["label".to_string()]
         );
+        assert!(arg_schema("dummy_new", "output_id")
+            .get("x-registry-out")
+            .is_none());
+
+        // A pair's result is its value, so the caller must name the id itself.
+        for (name, kind) in [
+            ("dummy_new_with_len", "DummyHandle"),
+            ("dummy_log_and_hits", "EventLog"),
+        ] {
+            let binding = binding_named(name);
+            let schema = arg_schema(name, "output_id");
+            assert_eq!(schema["type"], serde_json::json!("string"));
+            assert_eq!(schema["title"], serde_json::json!("output_id"));
+            assert!(schema["description"].is_string(), "{}", name);
+            assert_eq!(schema["x-registry-out"], serde_json::json!(kind));
+            assert_eq!(
+                (binding.required_args)().last().map(String::as_str),
+                Some("output_id")
+            );
+            let names: Vec<String> = (binding.args)().into_iter().map(|(n, _)| n).collect();
+            assert_eq!(names.last().unwrap(), "output_id");
+            let ret = (binding.return_type)();
+            assert!(ret.get("x-registry-ref").is_none(), "{}", name);
+            assert_eq!(ret["type"], serde_json::json!("integer"), "{}", name);
+        }
 
         // A value-returning binding is untouched, including the ones that take a handle.
         for name in [
@@ -2181,5 +2904,463 @@ mod tests {
             );
         }
         assert_eq!(items.len(), 65);
+    }
+
+    fn sample_item(kind: RegistryItemKind) -> RegistryItem {
+        let ocel: OCEL = serde_json::from_value(tiny_ocel_json()).unwrap();
+        match kind {
+            RegistryItemKind::EventLog => EventLog::default().into(),
+            RegistryItemKind::EventLogActivityProjection => {
+                EventLogActivityProjection::from(&EventLog::default()).into()
+            }
+            RegistryItemKind::OCEL => ocel.into(),
+            RegistryItemKind::IndexLinkedOCEL => IndexLinkedOCEL::from_ocel(ocel).into(),
+            RegistryItemKind::SlimLinkedOCEL => SlimLinkedOCEL::from_ocel(ocel).into(),
+            RegistryItemKind::TabularSource => {
+                RegistryItem::TabularSource(TabularSource::new(Vec::new(), "csv"))
+            }
+            RegistryItemKind::Custom(_) => RegistryItem::custom(DummyHandle {
+                label: "x".to_string(),
+                hits: 0,
+            }),
+        }
+    }
+
+    #[test]
+    fn conversion_table_matches_convert() {
+        let mut kinds = RegistryItemKind::all_kinds().to_vec();
+        kinds.push(RegistryItemKind::Custom("DummyHandle"));
+        for from in &kinds {
+            for to in &kinds {
+                let listed = from.convertible_to().contains(to);
+                match sample_item(*from).convert(*to) {
+                    Ok(item) => assert!(listed && item.kind() == *to, "{} -> {}", from, to),
+                    Err(_) => assert!(!listed, "{} -> {} is listed but fails", from, to),
+                }
+                match sample_item(*from).convert_into(*to) {
+                    Ok(item) => assert!(listed && item.kind() == *to, "{} -> {}", from, to),
+                    Err((item, _)) => {
+                        assert!(!listed, "{} -> {} is listed but fails", from, to);
+                        assert_eq!(item.kind(), *from, "the item comes back on error");
+                    }
+                }
+            }
+        }
+        assert!(RegistryItemKind::SlimLinkedOCEL
+            .convertible_to()
+            .contains(&RegistryItemKind::IndexLinkedOCEL));
+    }
+
+    #[test]
+    fn slim_and_index_linked_convert_into_each_other() {
+        let RegistryItem::IndexLinkedOCEL(index) = sample_item(RegistryItemKind::SlimLinkedOCEL)
+            .convert(RegistryItemKind::IndexLinkedOCEL)
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(index.get_num_obs(), 2);
+        let RegistryItem::SlimLinkedOCEL(slim) = RegistryItem::IndexLinkedOCEL(index)
+            .convert_into(RegistryItemKind::SlimLinkedOCEL)
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(slim.get_num_obs(), 2);
+    }
+
+    #[test]
+    fn call_with_outcome_reports_minted_and_mutated_ids() {
+        let state = AppState::default();
+        state.add(
+            "d1",
+            RegistryItem::custom(DummyHandle {
+                label: "one".to_string(),
+                hits: 0,
+            }),
+        );
+
+        let out = call_with_outcome(
+            binding_named("dummy_fork"),
+            &serde_json::json!({ "h": "d1", "output_id": "forked" }),
+            &state,
+            &Control::new(),
+        )
+        .unwrap();
+        assert_eq!(out.result, b"\"forked\"");
+        assert_eq!(out.minted, vec!["forked"]);
+        assert_eq!(out.mutated, vec!["d1"]);
+
+        let out = call_with_outcome(
+            binding_named("dummy_new"),
+            &serde_json::json!({ "label": "two" }),
+            &state,
+            &Control::new(),
+        )
+        .unwrap();
+        assert_eq!(out.minted.len(), 1);
+        assert!(state.contains_key(&out.minted[0]));
+        assert!(out.mutated.is_empty());
+
+        // A pair reports the id it stored under, not its value.
+        let out = call_with_outcome(
+            binding_named("dummy_log_and_hits"),
+            &serde_json::json!({ "h": "d1", "output_id": "pair_log" }),
+            &state,
+            &Control::new(),
+        )
+        .unwrap();
+        assert_eq!(out.result, b"2");
+        assert_eq!(out.minted, vec!["pair_log"]);
+        assert_eq!(out.mutated, vec!["d1"]);
+        let out = call_resolved_with_outcome(
+            binding_named("dummy_new_with_len"),
+            &serde_json::json!({ "label": "ab", "output_id": "pair_handle" }),
+            &state,
+            &Control::new(),
+        )
+        .unwrap();
+        assert_eq!(out.result, b"2");
+        assert_eq!(out.minted, vec!["pair_handle"]);
+        assert!(state.contains_key("pair_handle"));
+
+        // A string result is not mistaken for an id when the binding returns no handle.
+        let out = call_with_outcome(
+            binding_named("dummy_label"),
+            &serde_json::json!({ "h": "d1" }),
+            &state,
+            &Control::new(),
+        )
+        .unwrap();
+        assert_eq!(out.result, b"\"one\"");
+        assert!(out.minted.is_empty() && out.mutated.is_empty());
+
+        // Resolution reports what the binding got: the stored id it mutated, and the result
+        // stored from an inline argument, but not the temporary copy of that argument.
+        state.add("l", SlimLinkedOCEL::new());
+        let out = call_resolved_with_outcome(
+            binding_named("locel_add_event_type"),
+            &serde_json::json!({ "ocel": { "id": "l" }, "event_type": "a" }),
+            &state,
+            &Control::new(),
+        )
+        .unwrap();
+        assert_eq!(out.mutated, vec!["l"]);
+        for ocel in [
+            tiny_ocel_json(),
+            serde_json::json!({ "path": "missing.jsonocel" }),
+            serde_json::json!("not-stored"),
+        ] {
+            let err = call_resolved_with_outcome(
+                binding_named("locel_add_event_type"),
+                &serde_json::json!({ "ocel": ocel, "event_type": "a" }),
+                &state,
+                &Control::new(),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(err.starts_with("Invalid Argument: ocel\n"), "{err}");
+            assert!(err.contains("needs the ID of a stored"), "{err}");
+        }
+        assert!(state.read().keys().all(|k| !k.starts_with("Aocel_")));
+        let out = call_resolved_with_outcome(
+            binding_named("dummy_index_link"),
+            &serde_json::json!({ "ocel": tiny_ocel_json() }),
+            &state,
+            &Control::new(),
+        )
+        .unwrap();
+        assert_eq!(out.minted.len(), 1);
+        assert_eq!(
+            state.read()[&out.minted[0]].kind(),
+            RegistryItemKind::IndexLinkedOCEL
+        );
+        assert!(state.read().keys().all(|k| !k.starts_with("Aocel_")));
+    }
+
+    #[test]
+    fn context_reports_progress_and_partials() {
+        use std::sync::Mutex;
+        let state = AppState::default();
+        let steps = Mutex::new(Vec::new());
+        let partials = Mutex::new(Vec::new());
+        let ctl = Control::new()
+            .on_progress(|p| steps.lock().unwrap().push(p.done))
+            .on_partial(|v| partials.lock().unwrap().push(v));
+        let binding = binding_named("dummy_count");
+        let out = call_with_outcome(binding, &serde_json::json!({ "n": 3 }), &state, &ctl);
+        assert_eq!(out.unwrap().result, b"3");
+        drop(ctl);
+        assert_eq!(steps.into_inner().unwrap(), vec![0, 1, 2, 3]);
+        assert_eq!(
+            partials.into_inner().unwrap(),
+            vec![
+                serde_json::json!(0),
+                serde_json::json!(1),
+                serde_json::json!(2)
+            ]
+        );
+        assert!(!(binding.args)().iter().any(|(name, _)| name == "ctl"));
+        assert!(!(binding.required_args)().contains(&"ctl".to_string()));
+    }
+
+    #[test]
+    fn resolving_a_path_reports_the_import_and_honors_cancel() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Mutex;
+        let path = get_test_data_path()
+            .join("ocel")
+            .join("order-management.json");
+        let len = std::fs::metadata(&path).unwrap().len();
+        let args = serde_json::json!({ "ocel": { "path": path.to_str().unwrap() } });
+        let state = AppState::default();
+        let seen = Mutex::new(Vec::new());
+        let ctl = Control::new().on_progress(|p| seen.lock().unwrap().push(p));
+        call_resolved_with_outcome(binding_named("num_events"), &args, &state, &ctl).unwrap();
+        drop(ctl);
+        let import: Vec<_> = seen
+            .into_inner()
+            .unwrap()
+            .into_iter()
+            .filter(|p| p.stage == "Importing ocel")
+            .collect();
+        assert!(import.len() > 2);
+        assert!(import.iter().all(|p| p.total == Some(len)));
+        assert_eq!(import.last().unwrap().done, len);
+
+        let flag = AtomicBool::new(false);
+        let ctl = Control::new()
+            .on_progress(|_| flag.store(true, Ordering::Relaxed))
+            .cancel_flag(&flag);
+        let out = call_resolved_with_outcome(binding_named("num_events"), &args, &state, &ctl);
+        assert_eq!(out, Err(CallError::Cancelled));
+        assert!(state.read().is_empty());
+    }
+
+    #[test]
+    fn control_loads_registry_items_with_progress_and_cancel() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Mutex;
+        let path = get_test_data_path()
+            .join("ocel")
+            .join("order-management.json");
+        let bytes = std::fs::read(&path).unwrap();
+        let seen = Mutex::new(Vec::new());
+        let ctl = Control::new().on_progress(|p| seen.lock().unwrap().push(p));
+        let item = RegistryItem::load_from_path_with(
+            &RegistryItemKind::SlimLinkedOCEL,
+            path.to_str().unwrap(),
+            &ctl,
+        )
+        .unwrap();
+        assert_eq!(item.kind(), RegistryItemKind::SlimLinkedOCEL);
+        let item =
+            RegistryItem::load_from_bytes_with(&RegistryItemKind::OCEL, &bytes, "json", &ctl)
+                .unwrap();
+        assert_eq!(item.kind(), RegistryItemKind::OCEL);
+        drop(ctl);
+        let seen = seen.into_inner().unwrap();
+        let len = bytes.len() as u64;
+        assert_eq!(
+            seen.iter()
+                .filter(|p| p.stage == "Importing" && p.done == len && p.total == Some(len))
+                .count(),
+            2,
+            "{seen:?}"
+        );
+
+        let flag = AtomicBool::new(false);
+        let ctl = Control::new()
+            .on_progress(|_| flag.store(true, Ordering::Relaxed))
+            .cancel_flag(&flag);
+        assert_eq!(
+            RegistryItem::load_from_bytes_with(&RegistryItemKind::OCEL, &bytes, "json", &ctl)
+                .map(|_| ()),
+            Err(CallError::Cancelled)
+        );
+        assert!(matches!(
+            SlimLinkedOCEL::import_from_path_with(&path, Default::default(), &ctl),
+            Err(crate::core::event_data::object_centric::io::OCELIOError::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn control_loads_xes_registry_items_with_progress_and_cancel() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Mutex;
+        let path = get_test_data_path()
+            .join("xes")
+            .join("Sepsis Cases - Event Log.xes.gz");
+        let path_str = path.to_str().unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let mut kinds = vec![
+            RegistryItemKind::EventLog,
+            RegistryItemKind::EventLogActivityProjection,
+        ];
+        if cfg!(feature = "extraction-blueprint") {
+            kinds.extend([RegistryItemKind::OCEL, RegistryItemKind::SlimLinkedOCEL]);
+        }
+        let seen = Mutex::new(Vec::new());
+        let ctl = Control::new().on_progress(|p| seen.lock().unwrap().push(p));
+        for kind in &kinds {
+            let item = RegistryItem::load_from_path_with(kind, path_str, &ctl).unwrap();
+            assert_eq!(&item.kind(), kind);
+            let item = RegistryItem::load_from_bytes_with(kind, &bytes, "xes.gz", &ctl).unwrap();
+            assert_eq!(&item.kind(), kind);
+        }
+        drop(ctl);
+        let seen = seen.into_inner().unwrap();
+        let len = bytes.len() as u64;
+        assert_eq!(
+            seen.iter()
+                .filter(|p| p.stage == "Importing" && p.done == len && p.total == Some(len))
+                .count(),
+            2 * kinds.len(),
+            "{seen:?}"
+        );
+
+        let flag = AtomicBool::new(false);
+        let ctl = Control::new()
+            .on_progress(|_| flag.store(true, Ordering::Relaxed))
+            .cancel_flag(&flag);
+        for kind in &kinds {
+            flag.store(false, Ordering::Relaxed);
+            assert_eq!(
+                RegistryItem::load_from_path_with(kind, path_str, &ctl).map(|_| ()),
+                Err(CallError::Cancelled)
+            );
+            flag.store(false, Ordering::Relaxed);
+            assert_eq!(
+                RegistryItem::load_from_bytes_with(kind, &bytes, "xes.gz", &ctl).map(|_| ()),
+                Err(CallError::Cancelled)
+            );
+        }
+    }
+
+    #[test]
+    fn cancelled_call_returns_cancelled_and_stores_nothing() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let state = AppState::default();
+        let flag = AtomicBool::new(false);
+        let ctl = Control::new()
+            .on_progress(|p| {
+                if p.done == 2 {
+                    flag.store(true, Ordering::Relaxed);
+                }
+            })
+            .cancel_flag(&flag);
+        let out = call_with_outcome(
+            binding_named("dummy_count"),
+            &serde_json::json!({ "n": 10 }),
+            &state,
+            &ctl,
+        );
+        assert_eq!(out, Err(CallError::Cancelled));
+
+        // Set during the body, after which the binding finishes anyway: still nothing is stored.
+        let flag = AtomicBool::new(false);
+        let ctl = Control::new()
+            .on_progress(|_| flag.store(true, Ordering::Relaxed))
+            .cancel_flag(&flag);
+        let out = call_with_outcome(
+            binding_named("dummy_new_ctx"),
+            &serde_json::json!({ "label": "x", "output_id": "kept" }),
+            &state,
+            &ctl,
+        );
+        assert_eq!(out, Err(CallError::Cancelled));
+        assert!(state.read().is_empty());
+
+        let flag = AtomicBool::new(false);
+        let ctl = Control::new()
+            .on_progress(|_| flag.store(true, Ordering::Relaxed))
+            .cancel_flag(&flag);
+        let out = call_with_outcome(
+            binding_named("dummy_new_with_len"),
+            &serde_json::json!({ "label": "x", "output_id": "kept" }),
+            &state,
+            &ctl,
+        );
+        assert_eq!(out, Err(CallError::Cancelled));
+        assert!(state.read().is_empty());
+
+        // Already cancelled: the binding does not run.
+        let out = call_with_outcome(
+            binding_named("dummy_new"),
+            &serde_json::json!({ "label": "x" }),
+            &state,
+            &ctl,
+        );
+        assert_eq!(out, Err(CallError::Cancelled));
+        assert!(state.read().is_empty());
+        assert_eq!(CallError::Cancelled.to_string(), "cancelled");
+    }
+
+    #[test]
+    fn locel_getters_reject_out_of_range_indices() {
+        let state = AppState::default();
+        let ocel: OCEL = serde_json::from_value(tiny_ocel_json()).unwrap();
+        state.add("l", SlimLinkedOCEL::from_ocel(ocel));
+        let run = |name: &str, args: Value| call(binding_named(name), &args, &state);
+
+        for name in [
+            "locel_get_ev_id",
+            "locel_get_ev_type_of",
+            "locel_get_ev_time",
+            "locel_get_e2o",
+            "locel_get_full_ev",
+        ] {
+            let err = run(name, serde_json::json!({ "ocel": "l", "ev": 0 })).unwrap_err();
+            assert!(
+                err.contains("event index 0 is out of range"),
+                "{}: {}",
+                name,
+                err
+            );
+        }
+        let err = run(
+            "locel_get_ev_attr_val",
+            serde_json::json!({ "ocel": "l", "ev": 3, "attr_name": "x" }),
+        )
+        .unwrap_err();
+        assert!(err.contains("out of range"), "{}", err);
+
+        for name in [
+            "locel_get_ob_id",
+            "locel_get_ob_type_of",
+            "locel_get_e2o_rev",
+            "locel_get_o2o",
+            "locel_get_o2o_rev",
+            "locel_get_full_ob",
+            "locel_get_ob_activity_trace",
+        ] {
+            let err = run(name, serde_json::json!({ "ocel": "l", "ob": 2 })).unwrap_err();
+            assert!(
+                err.contains("object index 2 is out of range: the OCEL has 2 object(s)"),
+                "{}: {}",
+                name,
+                err
+            );
+        }
+        let err = run(
+            "locel_get_ob_attr_vals",
+            serde_json::json!({ "ocel": "l", "ob": 9, "attr_name": "x" }),
+        )
+        .unwrap_err();
+        assert!(err.contains("out of range"), "{}", err);
+
+        assert_eq!(
+            run(
+                "locel_get_ob_id",
+                serde_json::json!({ "ocel": "l", "ob": 1 })
+            )
+            .unwrap(),
+            b"\"i2\""
+        );
+        // The schema's return type is the plain value, without the error.
+        assert_eq!(
+            (binding_named("locel_get_ob_id").return_type)()["type"],
+            serde_json::json!("string")
+        );
     }
 }

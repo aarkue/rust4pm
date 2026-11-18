@@ -11,8 +11,8 @@ use polars::{
     frame::DataFrame,
     io::SerWriter,
     prelude::{
-        AnyValue, CsvWriter, IntoColumn, SortMultipleOptions, StringChunkedBuilder, TimeUnit,
-        TimeZone,
+        AnyValue, Column, CsvWriter, IntoColumn, SortMultipleOptions, StringChunkedBuilder,
+        TimeUnit, TimeZone,
     },
     series::Series,
 };
@@ -196,13 +196,13 @@ impl OCELDataFrames {
     /// ];
     /// let mut ocel_dfs = ocel_to_dataframes(&ocel);
     /// ocel_dfs
-    ///     .export_object_changes_csv(
+    ///     .export_o2o_csv(
     ///         get_test_data_path()
     ///             .join("export")
-    ///             .join("ocel-object-changes.csv"),
+    ///             .join("ocel-o2o.csv"),
     ///         &[],
     ///     )
-    ///     .expect("Object Changes CSV Export Failed");
+    ///     .expect("O2O CSV Export Failed");
     /// ```
     pub fn export_o2o_csv<P: AsRef<Path>>(
         &mut self,
@@ -315,11 +315,8 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
         .iter()
         .flat_map(|o| o.attributes.iter().map(|oa| oa.name.clone()))
         .collect();
-    // println!("Object attributes: {:?}; Actual object attributes: {:?}", object_attributes.len(), actual_object_attributes.len());
     if !object_attributes.is_superset(&actual_object_attributes) {
-        eprintln!(
-            "Warning: Global object attributes is not a superset of actual object attributes"
-        );
+        log::warn!("Global object attributes is not a superset of actual object attributes");
     }
     let object_attributes_initial: HashSet<String> = object_attributes
         .clone()
@@ -332,7 +329,7 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
             })
         })
         .collect();
-    let objects_df = DataFrame::from_iter(
+    let objects_df = DataFrame::new_infer_height(
         object_attributes_initial
             .into_iter()
             .map(|name| {
@@ -378,8 +375,11 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
                     false,
                 )
                 .unwrap(),
-            ]),
-    );
+            ])
+            .map(Column::from)
+            .collect(),
+    )
+    .unwrap();
 
     let all_evs_with_rels: Vec<_> = ocel
         .events
@@ -393,7 +393,7 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
         .map(|o| (&o.id, &o.object_type))
         .collect();
 
-    let mut e2o_df = DataFrame::from_iter(vec![
+    let mut e2o_df = DataFrame::new_infer_height(vec![
         Series::from_any_values(
             OCEL_EVENT_ID_KEY.into(),
             &all_evs_with_rels
@@ -402,7 +402,8 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
                 .collect::<Vec<_>>(),
             false,
         )
-        .unwrap(),
+        .unwrap()
+        .into_column(),
         Series::from_any_values(
             OCEL_EVENT_TYPE_KEY.into(),
             &all_evs_with_rels
@@ -411,7 +412,8 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
                 .collect::<Vec<_>>(),
             false,
         )
-        .unwrap(),
+        .unwrap()
+        .into_column(),
         Series::from_any_values(
             OCEL_EVENT_TIMESTAMP_KEY.into(),
             &all_evs_with_rels
@@ -422,7 +424,8 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
                 .collect::<Vec<_>>(),
             false,
         )
-        .unwrap(),
+        .unwrap()
+        .into_column(),
         Series::from_any_values(
             OCEL_OBJECT_ID_KEY.into(),
             &all_evs_with_rels
@@ -431,7 +434,8 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
                 .collect::<Vec<_>>(),
             false,
         )
-        .unwrap(),
+        .unwrap()
+        .into_column(),
         Series::from_any_values(
             OCEL_OBJECT_TYPE_KEY.into(),
             &all_evs_with_rels
@@ -440,17 +444,14 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
                     if let Some(obj_type) = obj_id_to_type_map.get(&r.object_id) {
                         AnyValue::StringOwned((*obj_type).into())
                     } else {
-                        // eprintln!(
-                        //     "Invalid object id in E2O reference: Event: {}, Object: {}",
-                        //     _e.id, r.object_id
-                        // );
                         AnyValue::Null
                     }
                 })
                 .collect::<Vec<_>>(),
             false,
         )
-        .unwrap(),
+        .unwrap()
+        .into_column(),
         Series::from_any_values(
             OCEL_QUALIFIER_KEY.into(),
             &all_evs_with_rels
@@ -459,8 +460,10 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
                 .collect::<Vec<_>>(),
             false,
         )
-        .unwrap(),
-    ]);
+        .unwrap()
+        .into_column(),
+    ])
+    .unwrap();
 
     let all_obj_with_rels: Vec<_> = ocel
         .objects
@@ -468,7 +471,7 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
         .flat_map(|o| o.relationships.iter().map(move |r| (o, r)))
         .collect();
 
-    let o2o_df = DataFrame::from_iter(vec![
+    let o2o_df = DataFrame::new_infer_height(vec![
         Series::from_any_values(
             OCEL_OBJECT_ID_KEY.into(),
             &all_obj_with_rels
@@ -477,7 +480,8 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
                 .collect::<Vec<_>>(),
             false,
         )
-        .unwrap(),
+        .unwrap()
+        .into_column(),
         Series::from_any_values(
             OCEL_OBJECT_ID_2_KEY.into(),
             &all_obj_with_rels
@@ -486,7 +490,8 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
                 .collect::<Vec<_>>(),
             false,
         )
-        .unwrap(),
+        .unwrap()
+        .into_column(),
         Series::from_any_values(
             OCEL_QUALIFIER_KEY.into(),
             &all_obj_with_rels
@@ -495,10 +500,12 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
                 .collect::<Vec<_>>(),
             false,
         )
-        .unwrap(),
-    ]);
+        .unwrap()
+        .into_column(),
+    ])
+    .unwrap();
 
-    let mut object_changes_df = DataFrame::from_iter(
+    let mut object_changes_df = DataFrame::new_infer_height(
         object_attributes
             .into_iter()
             .map(|name| {
@@ -584,15 +591,18 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
                     false,
                 )
                 .unwrap(),
-            ]),
-    );
+            ])
+            .map(Column::from)
+            .collect(),
+    )
+    .unwrap();
     let event_attributes: HashSet<String> = ocel
         .event_types
         .iter()
         .flat_map(|et| &et.attributes)
         .map(|at| at.name.clone())
         .collect();
-    let mut events_df = DataFrame::from_iter(
+    let mut events_df = DataFrame::new_infer_height(
         event_attributes
             .into_iter()
             .map(|name| {
@@ -651,8 +661,11 @@ pub fn ocel_to_dataframes(ocel: &OCEL) -> OCELDataFrames {
                     false,
                 )
                 .unwrap(),
-            ]),
-    );
+            ])
+            .map(Column::from)
+            .collect(),
+    )
+    .unwrap();
     events_df
         .sort_in_place(
             vec![OCEL_EVENT_TIMESTAMP_KEY],
@@ -694,11 +707,8 @@ pub fn event_type_to_df<'a, I: LinkedOCELAccess<'a>>(
     let id_series = Series::from_iter(evs.iter().map(|ev| ev.id.as_str()))
         .into_column()
         .with_name("id".into());
-    // The cast below reinterprets the i64 value rather than scaling it,
-    // so the integer must already be in the column's declared TimeUnit
-    // (microseconds). Using `timestamp_millis()` here previously yielded
-    // values 1000× too small — every event landed in 1970 because Polars
-    // read 1.45e12 ms as 1.45e12 µs.
+    // The cast reinterprets the i64 without scaling it, so it must already be in the column's
+    // TimeUnit (microseconds).
     let timestamp_series =
         Series::from_iter(evs.iter().map(|ev| ev.time.to_utc().timestamp_micros()))
             .cast(&polars::prelude::DataType::Datetime(
@@ -732,7 +742,7 @@ pub fn event_type_to_df<'a, I: LinkedOCELAccess<'a>>(
             })
             .collect::<Result<Vec<_>, PolarsError>>()?,
     );
-    let df = DataFrame::new(columns)?;
+    let df = DataFrame::new_infer_height(columns)?;
 
     Ok(df)
 }
@@ -750,7 +760,7 @@ pub fn object_type_to_df<'a, I: LinkedOCELAccess<'a>>(
         .into_column()
         .with_name("id".into());
     let columns = vec![id_series];
-    let df = DataFrame::new(columns)?;
+    let df = DataFrame::new_infer_height(columns)?;
 
     Ok(df)
 }
@@ -772,7 +782,7 @@ pub fn e2o_to_df<'a, I: LinkedOCELAccess<'a>>(locel: &'a I) -> Result<DataFrame,
         o_ids.finish().into_column(),
         qualifiers.finish().into_column(),
     ];
-    let df = DataFrame::new(columns)?;
+    let df = DataFrame::new_infer_height(columns)?;
     Ok(df)
 }
 /// Export all O2O relationships as a [`DataFrame`]
@@ -792,7 +802,7 @@ pub fn o2o_to_df<'a, I: LinkedOCELAccess<'a>>(locel: &'a I) -> Result<DataFrame,
         o2_ids.finish().into_column(),
         qualifiers.finish().into_column(),
     ];
-    let df = DataFrame::new(columns)?;
+    let df = DataFrame::new_infer_height(columns)?;
 
     Ok(df)
 }
@@ -822,7 +832,7 @@ pub fn e2o_to_df_for_types<'a, I: LinkedOCELAccess<'a>>(
         o_ids.finish().into_column(),
         qualifiers.finish().into_column(),
     ];
-    let df = DataFrame::new(columns)?;
+    let df = DataFrame::new_infer_height(columns)?;
     Ok(df)
 }
 /// Export the O2O relationships between instances of the specified event and object types as a [`DataFrame`]
@@ -850,7 +860,7 @@ pub fn o2o_to_df_for_types<'a, I: LinkedOCELAccess<'a>>(
         o2_ids.finish().into_column(),
         qualifiers.finish().into_column(),
     ];
-    let df = DataFrame::new(columns)?;
+    let df = DataFrame::new_infer_height(columns)?;
 
     Ok(df)
 }
@@ -890,7 +900,6 @@ pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
                     .map(|oa| (&oa.name, &OCELAttributeValue::Null))
                     .collect();
                 #[allow(clippy::type_complexity)]
-                // for now allow this complex type, as it's only used internally
                 let mut ret: Vec<(
                     String,
                     String,
@@ -955,8 +964,7 @@ pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
             ATTRIBUTE_CHANGE_DF_FROM_TIME.into(),
             &changes
                 .iter()
-                // µs to match the declared Datetime(Microseconds) column;
-                // see comment in `event_type_to_df` for context.
+                // In the column's TimeUnit, as Polars does not rescale a raw i64
                 .map(|c| c.2.map(|t| t.timestamp_micros()).into())
                 .collect::<Vec<_>>(),
             &polars::prelude::DataType::Datetime(TimeUnit::Microseconds, Some(TimeZone::UTC)),
@@ -991,10 +999,9 @@ pub fn object_attribute_changes_to_df<'a, I: LinkedOCELAccess<'a>>(
                 .into_column(),
             )
         }
-        let df = DataFrame::new(columns)?;
+        let df = DataFrame::new_infer_height(columns)?;
         Ok(df)
     } else {
-        // Maybe introduce an error type here?
         Ok(DataFrame::default())
     }
 }

@@ -4,9 +4,9 @@ use crate::{
     core::event_data::object_centric::{
         dataframe::ocel_to_dataframes,
         linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess},
-        ocel_xml::xml_ocel_import::import_ocel_xml_path,
     },
     test_utils::get_test_data_path,
+    Importable, OCEL,
 };
 
 use super::object_attribute_changes_to_df;
@@ -17,7 +17,7 @@ fn test_ocel2_container_df() {
     let path = get_test_data_path()
         .join("ocel")
         .join("ContainerLogistics.xml");
-    let ocel = import_ocel_xml_path(path).unwrap();
+    let ocel = OCEL::import_from_path(path).unwrap();
     let ocel_dfs = ocel_to_dataframes(&ocel);
     println!(
             "Got OCEL DF with {:?} objects in {:?}; Object change shape: {:?}; O2O shape: {:?}; E2O shape: {:?}",
@@ -37,7 +37,7 @@ fn test_ocel2_df() {
     let path = get_test_data_path()
         .join("ocel")
         .join("order-management.xml");
-    let ocel = import_ocel_xml_path(path).unwrap();
+    let ocel = OCEL::import_from_path(path).unwrap();
     let ocel_dfs = ocel_to_dataframes(&ocel);
     println!(
             "Got OCEL DF with {:?} objects in {:?}; Object change shape: {:?}; O2O shape: {:?}; E2O shape: {:?}",
@@ -77,7 +77,7 @@ fn ocel_object_attribute_changes() {
     let ocel_path = get_test_data_path()
         .join("ocel")
         .join("order-management.xml");
-    let ocel = import_ocel_xml_path(ocel_path).unwrap();
+    let ocel = OCEL::import_from_path(ocel_path).unwrap();
     let locel: IndexLinkedOCEL = ocel.into();
     let product = locel.get_obs_of_type("products").next().unwrap();
     let product = locel.get_full_ob(product);

@@ -17,6 +17,7 @@ use crate::core::event_data::object_centric::extraction::catalog::{
 use crate::core::event_data::object_centric::extraction::expr::{
     AttributeMapping, TimestampSource, ValueExpression,
 };
+use crate::core::event_data::object_centric::OCELAttributeType;
 
 fn col(name: &str) -> ValueExpression {
     ValueExpression::Column {
@@ -805,7 +806,7 @@ fn a_negated_guard_is_forced_false_rather_than_left_null() {
 }
 
 #[test]
-fn the_consolidated_shape_emits_its_six_fixed_relations_even_for_an_empty_blueprint() {
+fn the_consolidated_shape_emits_its_fixed_relations_even_for_an_empty_blueprint() {
     let bp = blueprint(vec![], vec![]);
     let c = compile(
         &bp,
@@ -822,6 +823,7 @@ fn the_consolidated_shape_emits_its_six_fixed_relations_even_for_an_empty_bluepr
             "event_attr_meta",
             "events",
             "o2o",
+            "object_attr_meta",
             "object_attribute_changes",
             "objects",
         ]
@@ -1230,6 +1232,52 @@ fn postgres_uses_its_own_type_names() {
         !sql.contains("AS DOUBLE)"),
         "PostgreSQL output must not carry DuckDB's DOUBLE spelling:\n{sql}"
     );
+}
+
+/// An integer column read into a float attribute is widened with a cast, both where the column
+/// is read and where two event types' declarations are reconciled into one wide column.
+/// `PostgreSQL` has no `DOUBLE` type, so either cast spelled that way fails there.
+#[test]
+fn integer_to_float_casts_use_the_dialects_float_type() {
+    let placed = |label: &str, value_type| {
+        MappingEntry::Single(Mapping {
+            node: "orders".into(),
+            label: Some(label.into()),
+            when: None,
+            target: Target::Event {
+                event_type: constant(label),
+                id: Some(col("id")),
+                timestamp: TimestampSource::column("at"),
+                attributes: vec![AttributeMapping {
+                    source_column: "id".into(),
+                    name: "n".into(),
+                    value_type,
+                }],
+                objects: vec![],
+            },
+        })
+    };
+    let bp = blueprint(
+        vec![source("orders", "orders")],
+        vec![
+            placed("AsFloat", Some(OCELAttributeType::Float)),
+            placed("AsInteger", None),
+        ],
+    );
+    for (dialect, float_type) in [
+        (SqlDialect::DuckDb, "DOUBLE"),
+        (SqlDialect::Postgres, "DOUBLE PRECISION"),
+    ] {
+        let sql = compile(&bp, &orders_catalog(), dialect, EmissionShape::Consolidated).ddl();
+        assert_eq!(
+            sql.matches(&format!(" AS {float_type})")).count(),
+            2,
+            "{dialect:?} must cast both the read and the widening to {float_type}:\n{sql}"
+        );
+        if dialect == SqlDialect::Postgres {
+            assert!(!sql.contains("AS DOUBLE)"), "{sql}");
+        }
+    }
 }
 
 /// The three function names with no shared spelling.

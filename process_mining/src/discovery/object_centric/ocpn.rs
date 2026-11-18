@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use macros_process_mining::register_binding;
+use macros_process_mining::{controlled, register_binding};
 use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -17,9 +17,8 @@ use crate::core::event_data::object_centric::linked_ocel::{LinkedOCELAccess, Sli
 use crate::core::event_data::object_centric::utils::flatten::flatten_ocel_on;
 use crate::core::process_models::object_centric::ocpn::json::ObjectCentricPetriNetJson;
 use crate::core::process_models::object_centric::ocpn::ObjectCentricPetriNet;
-use crate::discovery::case_centric::inductive_miner::{
-    discover_inductive_tree_from_log, InductiveMiner,
-};
+use crate::discovery::case_centric::inductive_miner::InductiveMiner;
+use crate::utils::control::{Cancelled, Control};
 
 /// Settings for object-centric Petri net discovery.
 ///
@@ -105,10 +104,15 @@ impl OcpnDiscoveryOptions {
 /// Flattens the log on every selected object type (one case per object), mines a Petri net from
 /// each in parallel with the Inductive Miner, and determines the
 /// [variable arcs](discover_variable_arcs).
+///
+/// Reports progress to a [`Control`] with stage `"Discovering nets per object type"`, one unit per
+/// object type whose net is discovered.
+#[controlled]
 pub fn discover_ocpn_from<'a, O>(
     ocel: &'a O,
     options: OcpnDiscoveryOptions,
-) -> ObjectCentricPetriNet
+    ctl: &Control<'_>,
+) -> Result<ObjectCentricPetriNet, Cancelled>
 where
     O: LinkedOCELAccess<'a> + Sync,
     O::ObjectRepr: Eq + std::hash::Hash,
@@ -119,10 +123,20 @@ where
         .map(str::to_string)
         .collect();
 
+    // The miners run in parallel, so their own progress would interleave
+    let miner_ctl = match ctl.cancel_flag_ref() {
+        Some(flag) => Control::new().cancel_flag(flag),
+        None => Control::new(),
+    };
+    let counter = ctl.counter(
+        "Discovering nets per object type",
+        Some(object_types.len() as u64),
+    );
     let classifier = EventLogClassifier::default();
     let nets = object_types
         .par_iter()
         .map(|object_type| {
+            ctl.check()?;
             let mut flattened = flatten_ocel_on(ocel, object_type);
             if options.activities_to_use.is_some() {
                 for trace in &mut flattened.traces {
@@ -131,14 +145,21 @@ where
                         .retain(|e| options.uses_activity(&classifier.get_class_identity(e)));
                 }
             }
-            // Objects without events would add empty traces, which make the whole net optional.
+            // Objects without events would add empty traces, which make the whole net
+            // optional.
             flattened.traces.retain(|trace| !trace.events.is_empty());
 
-            let tree = discover_inductive_tree_from_log(&flattened, &classifier, options.miner);
-            (object_type.clone(), tree.to_petri_net())
+            let tree = miner_ctl.discover_inductive_tree_from_log(
+                &flattened,
+                &classifier,
+                options.miner,
+            )?;
+            counter.tick();
+            Ok((object_type.clone(), tree.to_petri_net()))
         })
-        .collect();
+        .collect::<Result<_, Cancelled>>()?;
 
+    ctl.check()?;
     let mut variable_arcs = discover_variable_arcs(ocel, options.variable_arc_tolerance);
     variable_arcs.retain(|object_type, _| options.uses_object_type(object_type));
     for activities in variable_arcs.values_mut() {
@@ -146,26 +167,31 @@ where
     }
     variable_arcs.retain(|_, activities| !activities.is_empty());
 
-    ObjectCentricPetriNet {
+    Ok(ObjectCentricPetriNet {
         nets,
         variable_arcs,
-    }
+    })
 }
 
 /// [`discover_ocpn_from`] on a [`SlimLinkedOCEL`], returning the flat JSON form.
+///
+/// Reports progress with stage `"Discovering nets per object type"`, as [`discover_ocpn_from`].
+#[controlled]
 #[register_binding]
 pub fn discover_ocpn(
-    locel: &SlimLinkedOCEL,
+    ocel: &SlimLinkedOCEL,
     #[bind(default)] options: OcpnDiscoveryOptions,
-) -> ObjectCentricPetriNetJson {
-    discover_ocpn_from(locel, options).to_json_form()
+    ctl: &Control<'_>,
+) -> Result<ObjectCentricPetriNetJson, Cancelled> {
+    Ok(ctl.discover_ocpn_from(ocel, options)?.to_json_form())
 }
 
 /// Determines, per object type, which activities have variable arcs.
 ///
 /// A normal arc moves exactly one token, so an arc is variable as soon as one execution of the
 /// activity involves several objects of the type, or none. Flattening hides both cases, so this
-/// reads the object-centric log. `tolerance` allows a fraction of the executions to deviate.
+/// reads the object-centric log. `tolerance` allows a fraction of the executions to deviate, and
+/// is clamped to `[0, 1]`.
 ///
 /// Types without a variable arc are absent from the result, as are activities never relating to
 /// the type.
@@ -206,6 +232,7 @@ where
         }
     }
 
+    let tolerance = tolerance.clamp(0.0, 1.0);
     let mut variable: HashMap<String, HashSet<String>> = HashMap::new();
     for ((activity, object_type), exactly_one) in with_exactly_one {
         let occurrences = activity_occurrences[activity];
@@ -319,6 +346,10 @@ mod test_discover_ocpn {
 
         assert!(discover_variable_arcs(&locel, 0.0)["item"].contains("pick"));
         assert!(!discover_variable_arcs(&locel, 0.6)["item"].contains("pick"));
+        assert_eq!(
+            discover_variable_arcs(&locel, -1.0),
+            discover_variable_arcs(&locel, 0.0)
+        );
     }
 
     /// Leaving a type out has to give the same nets for the rest, since nothing about one type's
@@ -406,5 +437,56 @@ mod test_discover_ocpn {
             .net
             .transitions()
             .any(|(_, t)| t.label.as_deref() == Some("pick")));
+    }
+
+    #[test]
+    fn control_reports_object_types_and_cancels() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Mutex;
+
+        let locel = IndexLinkedOCEL::from(example_ocel());
+        let progress = Mutex::new(Vec::new());
+        let ctl = Control::new().on_progress(|p| progress.lock().unwrap().push(p));
+        let ocpn = ctl
+            .discover_ocpn_from(&locel, OcpnDiscoveryOptions::default())
+            .unwrap();
+        drop(ctl);
+        assert_eq!(
+            serde_json::to_value(ocpn).unwrap(),
+            serde_json::to_value(discover_ocpn_from(&locel, OcpnDiscoveryOptions::default()))
+                .unwrap()
+        );
+        let mut progress: Vec<_> = progress
+            .into_inner()
+            .unwrap()
+            .into_iter()
+            .map(|p| (p.stage.into_owned(), p.done, p.total))
+            .collect();
+        progress.sort();
+        // Parallel workers may skip an intermediate count, never the first or the last
+        let stage = |done| {
+            (
+                "Discovering nets per object type".to_string(),
+                done,
+                Some(2),
+            )
+        };
+        assert_eq!(progress.first(), Some(&stage(0)));
+        assert_eq!(progress.last(), Some(&stage(2)));
+        assert!(progress
+            .iter()
+            .all(|p| p.0 == "Discovering nets per object type" && p.2 == Some(2)));
+
+        let flag = AtomicBool::new(true);
+        let ctl = Control::new().cancel_flag(&flag);
+        assert_eq!(
+            ctl.discover_ocpn_from(&locel, OcpnDiscoveryOptions::default())
+                .unwrap_err(),
+            Cancelled
+        );
+        flag.store(false, Ordering::Relaxed);
+        assert!(ctl
+            .discover_ocpn_from(&locel, OcpnDiscoveryOptions::default())
+            .is_ok());
     }
 }

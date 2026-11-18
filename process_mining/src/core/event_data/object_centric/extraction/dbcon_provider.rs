@@ -520,9 +520,7 @@ mod tests {
 
     #[test]
     fn a_binary_column_is_unknown_not_text_and_so_gets_no_coercion() {
-        // dbcon used to guess `Text` here (its old `ends_with("char")|ends_with("text")`
-        // heuristic), which made a BLOB column look safe to compare as a string. It is `Unknown`
-        // now, and must stay uncoerced.
+        // A BLOB column is not safe to compare as a string.
         let blob = NormalizedType::from_sqlite_declared("BLOB");
         assert_eq!(blob, NormalizedType::Unknown("blob".to_string()));
         assert_eq!(declared_kind_of(&col_type_of(&blob)), None);

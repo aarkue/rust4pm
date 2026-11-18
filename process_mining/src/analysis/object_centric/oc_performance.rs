@@ -57,7 +57,7 @@ fn df_predecessor(
 /// `top_k`: if `Some(k)`, return only the `k` rows with the largest `sync_us`, ties broken by
 /// ascending event id, sorted descending. `None` returns every qualifying event.
 #[register_binding]
-pub fn locel_oc_perf_sync_per_event(
+pub fn oc_perf_sync_per_event(
     ocel: &SlimLinkedOCEL,
     #[bind(default)] top_k: Option<usize>,
 ) -> Vec<(String, i64, String)> {
@@ -118,7 +118,7 @@ pub fn locel_oc_perf_sync_per_event(
 /// `top_k`: if `Some(k)`, return only the `k` rows with the largest `sojourn_us`, ties broken by
 /// ascending event id, sorted descending. `None` returns every qualifying event.
 #[register_binding]
-pub fn locel_oc_perf_sojourn_per_event(
+pub fn oc_perf_sojourn_per_event(
     ocel: &SlimLinkedOCEL,
     #[bind(default)] top_k: Option<usize>,
 ) -> Vec<(String, i64)> {

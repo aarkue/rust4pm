@@ -96,15 +96,24 @@ impl PlaceKeys {
     }
 
     fn marking(&self, tokens: HashMap<String, u64>) -> Result<Marking, String> {
-        tokens
-            .into_iter()
-            .map(|(key, count)| {
-                let count = u32::try_from(count)
-                    .map_err(|_| format!("place {key} holds {count} tokens, more than u32::MAX"))?;
-                Ok((self.resolve(&key)?, count))
-            })
-            .collect()
+        let mut marking = Marking::new();
+        for (key, count) in tokens {
+            let too_many = || format!("place {key} holds more than u32::MAX tokens");
+            let count = u32::try_from(count).map_err(|_| too_many())?;
+            // Different keys can name the same place (e.g., "1" and "01")
+            marking
+                .checked_add(self.resolve(&key)?, count)
+                .ok_or_else(too_many)?;
+        }
+        Ok(marking)
     }
+}
+
+/// [`PetriNet::checked_add_arc`], for arcs listed more than once
+fn add_arc(net: &mut PetriNet, from_to: ArcType, weight: u32) -> Result<(), String> {
+    net.checked_add_arc(from_to, Some(weight))
+        .map(|_| ())
+        .ok_or_else(|| format!("the weights of the arcs {from_to:?} sum up to more than u32::MAX"))
 }
 
 impl StructureJson {
@@ -136,10 +145,12 @@ impl StructureJson {
                         }
                     };
                     for (input, weight) in t.inputs {
-                        net.add_arc(ArcType::PlaceTransition(place(input)?, id), Some(weight));
+                        let from_to = ArcType::PlaceTransition(place(input)?, id);
+                        add_arc(&mut net, from_to, weight)?;
                     }
                     for (output, weight) in t.outputs {
-                        net.add_arc(ArcType::TransitionPlace(id, place(output)?), Some(weight));
+                        let from_to = ArcType::TransitionPlace(id, place(output)?);
+                        add_arc(&mut net, from_to, weight)?;
                     }
                 }
                 PlaceKeys::Index(net.num_places())
@@ -175,7 +186,7 @@ impl StructureJson {
                             ArcType::TransitionPlace(transition(t)?, place(p)?)
                         }
                     };
-                    net.add_arc(from_to, Some(arc.weight));
+                    add_arc(&mut net, from_to, arc.weight)?;
                 }
                 PlaceKeys::Uuid(place_ids)
             }
@@ -379,9 +390,11 @@ mod tests {
                 "final_marking": {"1": 2}
             })
         );
-        let back: AcceptingPetriNet = serde_json::from_str(&accepting.to_json()).unwrap();
+        let back: AcceptingPetriNet =
+            serde_json::from_str(&serde_json::to_string(&accepting).unwrap()).unwrap();
         assert_eq!(back, accepting);
-        let net_back: PetriNet = serde_json::from_str(&accepting.net.to_json()).unwrap();
+        let net_back: PetriNet =
+            serde_json::from_str(&serde_json::to_string(&accepting.net).unwrap()).unwrap();
         assert_eq!(net_back, accepting.net);
     }
 
@@ -395,6 +408,16 @@ mod tests {
             err.to_string().contains("place 5, which is not in the net"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn overflowing_sums_are_rejected() {
+        let json = r#"{"places": [{}], "transitions": [{"label": null, "inputs": [[0, 4294967295], [0, 1]], "outputs": []}]}"#;
+        let err = serde_json::from_str::<PetriNet>(json).unwrap_err();
+        assert!(err.to_string().contains("more than u32::MAX"), "{err}");
+        let json = r#"{"places": [{}], "transitions": [], "initial_marking": {"0": 4294967295, "00": 1}, "final_marking": {}}"#;
+        let err = serde_json::from_str::<AcceptingPetriNet>(json).unwrap_err();
+        assert!(err.to_string().contains("more than u32::MAX"), "{err}");
     }
 
     #[test]
@@ -486,5 +509,15 @@ mod tests {
             assert!(properties.get(key).is_some(), "{key} missing in {schema}");
         }
         assert_eq!(properties["places"]["type"], "array");
+        let transition = &schema["$defs"]["Transition"];
+        assert_eq!(
+            transition["required"],
+            json!(["label", "inputs", "outputs"]),
+            "{transition}"
+        );
+        assert_eq!(
+            transition["properties"]["label"]["type"],
+            json!(["string", "null"])
+        );
     }
 }

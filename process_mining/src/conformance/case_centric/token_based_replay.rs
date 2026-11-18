@@ -45,6 +45,8 @@ impl std::fmt::Display for TokenBasedReplayError {
     }
 }
 
+impl std::error::Error for TokenBasedReplayError {}
+
 ///
 /// Result from the token-based replay computation
 ///
@@ -67,9 +69,19 @@ impl TokenBasedReplayResult {
     }
 
     /// Computes the fitness from the produced, consumed, missing, and remaining tokens
+    ///
+    /// Without consumed (resp. produced) tokens, nothing can be missing (resp. remaining), so
+    /// that half counts as fitting. In particular, an empty log has fitness `1.0`.
     pub fn compute_fitness(&self) -> f64 {
-        0.5 * (1.0 - (self.missing as f64 / self.consumed as f64))
-            + 0.5 * (1.0 - (self.remaining as f64 / self.produced as f64))
+        let ratio = |part: u64, total: u64| {
+            if total == 0 {
+                0.0
+            } else {
+                part as f64 / total as f64
+            }
+        };
+        0.5 * (1.0 - ratio(self.missing, self.consumed))
+            + 0.5 * (1.0 - ratio(self.remaining, self.produced))
     }
 }
 
@@ -77,45 +89,46 @@ impl TokenBasedReplayResult {
 /// Computes token-based replay for a Petri net that has unique labels and no silent transitions
 ///
 #[cfg(feature = "token-based-replay")]
-#[register_binding]
+#[register_binding(stringify_error)]
 pub fn apply_token_based_replay(
-    petri_net: &AcceptingPetriNet,
+    #[bind(handle)] net: &AcceptingPetriNet,
     event_log: &EventLogActivityProjection,
 ) -> Result<TokenBasedReplayResult, TokenBasedReplayError> {
-    let net = &petri_net.net;
-    if net.contains_duplicate_or_silent_transitions() {
+    let petri_net = &net.net;
+    if petri_net.contains_duplicate_or_silent_transitions() {
         return Err(TokenBasedReplayError::DuplicateLabelOrSilentTransitionError);
     }
-    if let Some(place) = [&petri_net.initial_marking, &petri_net.final_marking]
+    if let Some(place) = [&net.initial_marking, &net.final_marking]
         .into_iter()
-        .find_map(|marking| net.place_outside(marking))
+        .find_map(|marking| petri_net.place_outside(marking))
     {
         return Err(TokenBasedReplayError::InvalidPlaceInMarking(place));
     }
 
     let mut result = TokenBasedReplayResult::new();
 
-    let pre_matrix = net.create_pre_incidence_matrix();
-    let post_matrix = net.create_post_incidence_matrix();
+    let pre_matrix = petri_net.create_pre_incidence_matrix();
+    let post_matrix = petri_net.create_post_incidence_matrix();
 
     let pos_array: Vec<Option<usize>> = event_log
         .activities
         .iter()
         .map(|activity| {
-            net.transitions()
+            petri_net
+                .transitions()
                 .find(|(_, t)| t.label.as_ref() == Some(activity))
                 .map(|(id, _)| id.index())
         })
         .collect();
 
-    let m_init = marking_to_vector(&petri_net.initial_marking, net.num_places());
-    let m_final = marking_to_vector(&petri_net.final_marking, net.num_places());
+    let m_init = marking_to_vector(&net.initial_marking, petri_net.num_places());
+    let m_final = marking_to_vector(&net.final_marking, petri_net.num_places());
 
     event_log.traces.iter().for_each(|(trace, freq)| {
         result.produced += m_init.sum() as u64 * *freq;
         result.consumed += m_final.sum() as u64 * *freq;
 
-        let mut marking: DVector<i64> = DVector::zeros(net.num_places());
+        let mut marking: DVector<i64> = DVector::zeros(petri_net.num_places());
         marking += &m_init;
 
         trace.iter().for_each(|event| {
@@ -195,6 +208,37 @@ mod tests {
             apply_token_based_replay(&net, &log),
             Err(TokenBasedReplayError::InvalidPlaceInMarking(place)) if place == foreign
         ));
+    }
+
+    #[test]
+    fn silent_transitions_are_an_error() {
+        let mut net = PetriNet::new();
+        let p1 = net.add_place(None);
+        let p2 = net.add_place(None);
+        let p3 = net.add_place(None);
+        let a = net.add_transition(Some("a".into()), None);
+        let tau = net.add_transition(None, None);
+        net.add_arc(ArcType::place_to_transition(p1, a), None);
+        net.add_arc(ArcType::transition_to_place(a, p2), None);
+        net.add_arc(ArcType::place_to_transition(p2, tau), None);
+        net.add_arc(ArcType::transition_to_place(tau, p3), None);
+        assert!(net.contains_duplicate_or_silent_transitions());
+        let net = AcceptingPetriNet::new(net, Marking::from([(p1, 1)]), Marking::from([(p3, 1)]));
+        let log = EventLogActivityProjection::from(&EventLog::new());
+        assert!(matches!(
+            apply_token_based_replay(&net, &log),
+            Err(TokenBasedReplayError::DuplicateLabelOrSilentTransitionError)
+        ));
+    }
+
+    #[test]
+    fn fitness_of_empty_log_is_one() {
+        let mut net = PetriNet::new();
+        let p = net.add_place(None);
+        let net = AcceptingPetriNet::new(net, Marking::new(), Marking::from([(p, 1)]));
+        let log = EventLogActivityProjection::from(&EventLog::new());
+        let result = apply_token_based_replay(&net, &log).unwrap();
+        assert_eq!(result.compute_fitness(), 1.0);
     }
 
     #[test]

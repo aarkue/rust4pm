@@ -19,20 +19,20 @@
 //! - A. Adriansyah, J. Munoz-Gama, J. Carmona, B.F. van Dongen, W.M.P. van der Aalst:
 //!   Measuring Precision of Modeled Behavior. Information Systems and
 //!   e-Business Management 13(1), 2015.
-use macros_process_mining::register_binding;
+use macros_process_mining::{controlled, register_binding};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     conformance::alignments::{
-        align_log, align_variants_with_retry, petri_net::AlignmentError,
-        sync_prod_net::SyncProdNetConstructionError, AlignmentMove, AlignmentOptions,
-        VariantAlignmentResult,
+        petri_net::AlignmentError, sync_prod_net::SyncProdNetConstructionError, AlignmentMove,
+        AlignmentOptions, VariantAlignmentResult,
     },
     core::{
         event_data::case_centric::utils::activity_projection::EventLogActivityProjection,
         process_models::petri_net::TransitionID,
     },
+    utils::control::{Cancelled, Control},
     AcceptingPetriNet,
 };
 
@@ -51,15 +51,11 @@ mod tests;
 pub enum LogPaths {
     /// One optimal alignment per variant, without its log moves. A trace that does not fit is
     /// measured along its closest model run. A variant whose alignment fails is left out, see
-    /// [`EscapingEdgesPrecision::unaligned_traces`].
+    /// [`EscapingEdgesPrecision::unaligned_traces`]. If all of them fail, the result is
+    /// [`PrecisionError::NoTraceAligned`].
     Aligned {
         /// How to align the variants
         options: AlignmentOptions,
-        /// Whether to align the variants that ran out of their memory share again, one at a time
-        /// with the whole budget (as [`align_variants_with_retry`] does). This can take long, and
-        /// they may still run out.
-        #[serde(default)]
-        retry_out_of_memory: bool,
     },
     /// The traces as recorded, each up to its first event the model cannot replay, as in the
     /// original escaping-edges precision
@@ -70,7 +66,6 @@ impl Default for LogPaths {
     fn default() -> Self {
         Self::Aligned {
             options: AlignmentOptions::default(),
-            retry_out_of_memory: false,
         }
     }
 }
@@ -140,6 +135,37 @@ impl EscapingEdgesOptions {
             ..Self::default()
         }
     }
+
+    /// The options of a preset
+    pub fn preset(preset: EscapingEdgesPreset) -> Self {
+        match preset {
+            EscapingEdgesPreset::Default => Self::default(),
+            EscapingEdgesPreset::Prom => Self::prom(),
+            EscapingEdgesPreset::Pm4py => Self::pm4py(),
+        }
+    }
+}
+
+/// Whose escaping-edges precision a run follows
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EscapingEdgesPreset {
+    /// [`EscapingEdgesOptions::default`]
+    #[default]
+    Default,
+    /// [`EscapingEdgesOptions::prom`]
+    Prom,
+    /// [`EscapingEdgesOptions::pm4py`]
+    Pm4py,
+}
+
+/// The [`EscapingEdgesOptions`] of a preset, e.g., for a host to adjust before calling
+/// [`escaping_edges_precision`]
+#[register_binding]
+pub fn escaping_edges_options(
+    #[bind(default)] preset: EscapingEdgesPreset,
+) -> EscapingEdgesOptions {
+    EscapingEdgesOptions::preset(preset)
 }
 
 /// An activity (or transition) the model allows in a state, but no trace takes there
@@ -182,32 +208,47 @@ pub struct EscapingEdgesPrecision {
 ///
 /// See the [module documentation](self) for the measure and [`EscapingEdgesOptions`] for the
 /// variants.
+///
+/// With [`LogPaths::Aligned`], first reports the progress of
+/// [`align_variants`](crate::conformance::case_centric::alignments::align_variants) (stage
+/// `"Aligning variants"`, then `"Retrying variants with more memory"` if retrying) to a
+/// [`Control`]. Then reports progress with stage `"Measuring escaping edges"`, one unit per
+/// variant. Emits no partial results.
+#[controlled]
 #[register_binding(stringify_error)]
 pub fn escaping_edges_precision(
-    net: &AcceptingPetriNet,
+    #[bind(handle)] net: &AcceptingPetriNet,
     log: &EventLogActivityProjection,
     #[bind(default)] options: &EscapingEdgesOptions,
+    ctl: &Control<'_>,
 ) -> Result<EscapingEdgesPrecision, PrecisionError> {
     match &options.log_paths {
         LogPaths::Aligned {
             options: alignment_options,
-            retry_out_of_memory,
         } => {
-            let alignments = if *retry_out_of_memory {
-                align_variants_with_retry(net, log, alignment_options)
-            } else {
-                align_log(net, log, alignment_options)
+            // Forward the alignment's progress only: its partial results are alignments, not
+            // precision results.
+            let progress_only =
+                Control::new().on_progress(|p| ctl.progress(p.stage, p.done, p.total));
+            let align_ctl = match ctl.cancel_flag_ref() {
+                Some(flag) => progress_only.cancel_flag(flag),
+                None => progress_only,
             };
-            escaping_edges_precision_from_alignments(net, &alignments, options)
+            let alignments = align_ctl.align_variants(net, log, alignment_options)?;
+            from_alignments(net, &alignments, options, ctl)
         }
-        LogPaths::ReplayUntilDeviation => replay_precision(net, log, options),
+        LogPaths::ReplayUntilDeviation => replay_precision(net, log, options, ctl),
     }
 }
+
+/// Progress stage of the measure: one unit per variant added to the prefix tree
+const MEASURE_STAGE: &str = "Measuring escaping edges";
 
 fn replay_precision(
     net: &AcceptingPetriNet,
     log: &EventLogActivityProjection,
     options: &EscapingEdgesOptions,
+    ctl: &Control<'_>,
 ) -> Result<EscapingEdgesPrecision, PrecisionError> {
     if options.silent_transitions == SilentTransitions::AsActivities {
         return Err(PrecisionError::IncompatibleOptions(
@@ -220,9 +261,13 @@ fn replay_precision(
         .iter()
         .map(|activity| measure.replayer.activity_symbol(activity))
         .collect();
+    let counter = ctl.counter(MEASURE_STAGE, Some(log.traces.len() as u64));
     for (trace, frequency) in &log.traces {
+        ctl.check()?;
         measure.add(trace.iter().map(|&activity| symbols[activity]), *frequency);
+        counter.tick();
     }
+    ctl.check()?;
     Ok(measure.finish())
 }
 
@@ -230,11 +275,28 @@ fn replay_precision(
 ///
 /// Reuses alignments computed for `net` (e.g., for fitness). Requires [`LogPaths::Aligned`],
 /// whose fields are then not used.
+///
+/// Fails with [`PrecisionError::NoTraceAligned`] if there are traces, but none of them was
+/// aligned (e.g., because the final marking is unreachable).
+///
+/// Reports progress to a [`Control`] with stage `"Measuring escaping edges"`, one unit per
+/// variant. Emits no partial results.
+#[controlled]
 #[register_binding(stringify_error)]
 pub fn escaping_edges_precision_from_alignments(
-    net: &AcceptingPetriNet,
+    #[bind(handle)] net: &AcceptingPetriNet,
     alignments: &[VariantAlignmentResult],
     #[bind(default)] options: &EscapingEdgesOptions,
+    ctl: &Control<'_>,
+) -> Result<EscapingEdgesPrecision, PrecisionError> {
+    from_alignments(net, alignments, options, ctl)
+}
+
+fn from_alignments(
+    net: &AcceptingPetriNet,
+    alignments: &[VariantAlignmentResult],
+    options: &EscapingEdgesOptions,
+    ctl: &Control<'_>,
 ) -> Result<EscapingEdgesPrecision, PrecisionError> {
     if matches!(options.log_paths, LogPaths::ReplayUntilDeviation) {
         return Err(PrecisionError::IncompatibleOptions(
@@ -242,7 +304,11 @@ pub fn escaping_edges_precision_from_alignments(
         ));
     }
     let mut measure = Measure::new(net, options)?;
+    let mut aligned_traces = 0;
+    let mut first_error = None;
+    let counter = ctl.counter(MEASURE_STAGE, Some(alignments.len() as u64));
     for variant in alignments {
+        ctl.check()?;
         match &variant.result {
             Ok(alignment) => {
                 let mut path = alignment
@@ -260,16 +326,27 @@ pub fn escaping_edges_precision_from_alignments(
                     measure.replayer.delay_silent_transitions(&mut path);
                 }
                 measure.add(path.into_iter().map(Some), variant.frequency);
+                aligned_traces += variant.frequency;
             }
             Err(
-                AlignmentError::SearchError(_)
+                error @ (AlignmentError::SearchError(_)
                 | AlignmentError::SyncProdNetConstructionFailed(
                     SyncProdNetConstructionError::TraceTooLong(_),
-                ),
-            ) => measure.unaligned_traces += variant.frequency,
+                )),
+            ) => {
+                measure.unaligned_traces += variant.frequency;
+                first_error.get_or_insert(error);
+            }
             Err(AlignmentError::SyncProdNetConstructionFailed(error)) => {
                 return Err(error.clone().into())
             }
+        }
+        counter.tick();
+    }
+    ctl.check()?;
+    if aligned_traces == 0 && measure.unaligned_traces > 0 {
+        if let Some(error) = first_error {
+            return Err(PrecisionError::NoTraceAligned(error.clone()));
         }
     }
     Ok(measure.finish())
@@ -380,6 +457,10 @@ pub enum PrecisionError {
     /// An alignment fires a transition that is not in the net, e.g., because it was computed for
     /// another net
     UnknownTransition(TransitionID),
+    /// No trace could be aligned, so there is nothing to measure. Holds the error of one of them.
+    NoTraceAligned(AlignmentError),
+    /// The computation was cancelled through its [`Control`]
+    Cancelled,
 }
 
 impl std::fmt::Display for PrecisionError {
@@ -390,6 +471,8 @@ impl std::fmt::Display for PrecisionError {
             Self::UnknownTransition(id) => {
                 write!(f, "transition {} is not in the net", id.index())
             }
+            Self::NoTraceAligned(error) => write!(f, "no trace could be aligned: {error}"),
+            Self::Cancelled => write!(f, "{Cancelled}"),
         }
     }
 }
@@ -399,5 +482,11 @@ impl std::error::Error for PrecisionError {}
 impl From<SyncProdNetConstructionError> for PrecisionError {
     fn from(error: SyncProdNetConstructionError) -> Self {
         Self::InvalidNet(error)
+    }
+}
+
+impl From<Cancelled> for PrecisionError {
+    fn from(_: Cancelled) -> Self {
+        Self::Cancelled
     }
 }

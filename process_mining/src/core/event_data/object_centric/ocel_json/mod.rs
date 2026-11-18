@@ -1,10 +1,4 @@
 //! OCEL 2.0 JSON Format Import/Export
-use std::{
-    fs::File,
-    io::{BufReader, BufWriter},
-    path::Path,
-};
-
 use serde::{
     de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor},
     Deserializer, Serialize, Serializer,
@@ -13,89 +7,13 @@ use serde::{
 use crate::core::event_data::object_centric::{
     appendable::AppendableOCEL,
     io::OCELIOError,
-    ocel_struct::{OCELEvent, OCELObject, OCELType, OCEL},
+    ocel_struct::{DeclaredAttributeTypes, JsonOCELEvent, JsonOCELObject, OCELType},
     readable::ReadableOCEL,
 };
 
-///
-/// Serialize an OCEL backend (e.g., [`OCEL`] or
-/// [`super::linked_ocel::SlimLinkedOCEL`]) as a JSON [`String`].
-///
-pub fn ocel_to_json<R: ReadableOCEL + ?Sized>(ocel: &R) -> String {
-    let bytes = export_ocel_json_to_vec(ocel).expect("writing JSON to a Vec cannot fail");
-    String::from_utf8(bytes).expect("serde_json always emits valid UTF-8")
-}
-
-///
-/// Import [`OCEL`] from a JSON [`String`], returning a [`Result`].
-///
-/// [`serde_json`] can also be used to import [`OCEL`] from other targets (e.g., `serde_json::from_reader`)
-///
-pub fn try_json_to_ocel(ocel_json: &str) -> Result<OCEL, serde_json::Error> {
-    serde_json::from_str(ocel_json)
-}
-
-///
-/// Import [`OCEL`] from a JSON [`String`].
-///
-/// Panics on malformed JSON; prefer [`try_json_to_ocel`] for fallible callers.
-///
-pub fn json_to_ocel(ocel_json: &str) -> OCEL {
-    try_json_to_ocel(ocel_json).expect("malformed OCEL JSON")
-}
-
-///
-/// Import [`OCEL`] from a JSON file given by a filepath
-///
-/// See also [`import_ocel_json_slice`].
-///
-pub fn import_ocel_json_path<P: AsRef<std::path::Path>>(path: P) -> Result<OCEL, std::io::Error> {
-    let reader: BufReader<File> = BufReader::new(File::open(path)?);
-    Ok(serde_json::from_reader(reader)?)
-}
-
-///
-/// Import [`OCEL`] from a JSON byte slice
-///
-/// See also [`import_ocel_json_path`].
-///
-pub fn import_ocel_json_slice(slice: &[u8]) -> Result<OCEL, std::io::Error> {
-    Ok(serde_json::from_slice(slice)?)
-}
-
-/// Export an OCEL backend to a JSON file at the specified path.
-pub fn export_ocel_json_to_path<R, P>(ocel: &R, path: P) -> Result<(), std::io::Error>
-where
-    R: ReadableOCEL + ?Sized,
-    P: AsRef<Path>,
-{
-    let writer: BufWriter<File> = BufWriter::new(File::create(path)?);
-    Ok(write_ocel_json(ocel, writer)?)
-}
-
-/// Export an OCEL backend to JSON in a byte array ([`Vec<u8>`]).
-pub fn export_ocel_json_to_vec<R: ReadableOCEL + ?Sized>(
-    ocel: &R,
-) -> Result<Vec<u8>, std::io::Error> {
-    let mut buf = Vec::new();
-    write_ocel_json(ocel, &mut buf)?;
-    Ok(buf)
-}
-
-///
-/// Stream an OCEL backend as JSON into the given writer.
-///
-pub fn export_ocel_json_to_writer<R, W>(ocel: &R, writer: W) -> Result<(), std::io::Error>
-where
-    R: ReadableOCEL + ?Sized,
-    W: std::io::Write,
-{
-    Ok(write_ocel_json(ocel, writer)?)
-}
-
 /// Stream an OCEL to `writer` as JSON. Field order matches `OCEL`'s `Serialize` derive
 /// so `&OCEL` output is byte-identical.
-fn write_ocel_json<R, W>(ocel: &R, writer: W) -> Result<(), serde_json::Error>
+pub(crate) fn export_ocel_json_to_writer<R, W>(ocel: &R, writer: W) -> Result<(), serde_json::Error>
 where
     R: ReadableOCEL + ?Sized,
     W: std::io::Write,
@@ -140,15 +58,13 @@ impl<'a, R: ReadableOCEL + ?Sized> Serialize for ObjectsStream<'a, R> {
     }
 }
 
-///
 /// Stream a JSON-serialized OCEL into an [`AppendableOCEL`].
 ///
 /// The caller is responsible for invoking [`AppendableOCEL::finalize`] afterwards if
 /// the implementation requires it. Type declarations and instances may be intermixed;
 /// relationships referencing not-yet-seen object IDs are buffered by implementations
 /// that support it.
-///
-pub fn import_ocel_json_into<R, A>(reader: R, ocel: &mut A) -> Result<(), OCELIOError>
+pub(crate) fn import_ocel_json_into<R, A>(reader: R, ocel: &mut A) -> Result<(), OCELIOError>
 where
     R: std::io::Read,
     A: AppendableOCEL,
@@ -182,10 +98,15 @@ impl<'a, 'de, A: AppendableOCEL> Visitor<'de> for OcelTopVisitor<'a, A> {
     }
 
     fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<(), M::Error> {
+        // Attribute values are read against the types declared before them; types declared
+        // only after an event or object leave its string values to be inferred
+        let mut event_attribute_types = DeclaredAttributeTypes::default();
+        let mut object_attribute_types = DeclaredAttributeTypes::default();
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
                 "eventTypes" => {
                     for t in map.next_value::<Vec<OCELType>>()? {
+                        event_attribute_types.declare(&t);
                         if let Err(e) = self.ocel.declare_event_type(t) {
                             return tunnel_append_err::<_, _, M::Error>(self.append_err, e);
                         }
@@ -193,17 +114,19 @@ impl<'a, 'de, A: AppendableOCEL> Visitor<'de> for OcelTopVisitor<'a, A> {
                 }
                 "objectTypes" => {
                     for t in map.next_value::<Vec<OCELType>>()? {
+                        object_attribute_types.declare(&t);
                         if let Err(e) = self.ocel.declare_object_type(t) {
                             return tunnel_append_err::<_, _, M::Error>(self.append_err, e);
                         }
                     }
                 }
                 "events" => {
-                    map.next_value_seed(OcelSeqSeed::<A, OCELEvent, _> {
+                    map.next_value_seed(OcelSeqSeed::<A, JsonOCELEvent, _> {
                         ocel: self.ocel,
                         append_err: self.append_err,
                         expecting: "an array of OCEL events",
-                        append: |a: &mut A, e: OCELEvent| {
+                        append: |a: &mut A, e: JsonOCELEvent| {
+                            let e = e.resolve(&event_attribute_types);
                             a.append_event(
                                 e.id,
                                 &e.event_type,
@@ -216,11 +139,12 @@ impl<'a, 'de, A: AppendableOCEL> Visitor<'de> for OcelTopVisitor<'a, A> {
                     })?;
                 }
                 "objects" => {
-                    map.next_value_seed(OcelSeqSeed::<A, OCELObject, _> {
+                    map.next_value_seed(OcelSeqSeed::<A, JsonOCELObject, _> {
                         ocel: self.ocel,
                         append_err: self.append_err,
                         expecting: "an array of OCEL objects",
-                        append: |a: &mut A, o: OCELObject| {
+                        append: |a: &mut A, o: JsonOCELObject| {
+                            let o = o.resolve(&object_attribute_types);
                             a.append_object(o.id, &o.object_type, o.attributes, o.relationships)
                         },
                         _t: std::marker::PhantomData,
@@ -289,9 +213,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::event_data::object_centric::linked_ocel::{LinkedOCELAccess, SlimLinkedOCEL};
-    use crate::core::event_data::object_centric::ocel_struct::OCELAttributeValue;
+    use crate::core::event_data::object_centric::linked_ocel::{
+        slim_linked_ocel::SlimAppendError, LinkedOCELAccess, SlimLinkedOCEL,
+    };
+    use crate::core::event_data::object_centric::ocel_struct::{OCELAttributeValue, OCEL};
     use crate::test_utils::{get_test_data_path, sort_ocel_for_equality_compare};
+    use crate::{Exportable, Importable};
     use std::collections::HashMap;
     use std::fs;
 
@@ -304,13 +231,12 @@ mod tests {
         .unwrap()
     }
 
-    /// Regression: `&OCEL` JSON output must remain byte-identical to a derived
-    /// `serde_json::to_vec(&ocel)` reference.
+    /// `&OCEL` JSON output is byte-identical to the derived `serde_json::to_vec(&ocel)`.
     #[test]
     fn export_byte_identical_for_ocel() {
         let bytes = fixture_bytes();
-        let ocel = import_ocel_json_slice(&bytes).unwrap();
-        let exported = export_ocel_json_to_vec(&ocel).unwrap();
+        let ocel = OCEL::import_from_bytes(&bytes, "json").unwrap();
+        let exported = ocel.export_to_bytes("json").unwrap();
         let reference = serde_json::to_vec(&ocel).unwrap();
         assert_eq!(exported, reference);
     }
@@ -319,10 +245,10 @@ mod tests {
     #[test]
     fn export_slim_roundtrip() {
         let bytes = fixture_bytes();
-        let mut ocel = import_ocel_json_slice(&bytes).unwrap();
+        let mut ocel = OCEL::import_from_bytes(&bytes, "json").unwrap();
         let slim = SlimLinkedOCEL::from_ocel(ocel.clone());
-        let bytes_slim = export_ocel_json_to_vec(&slim).unwrap();
-        let mut back = import_ocel_json_slice(&bytes_slim).unwrap();
+        let bytes_slim = slim.export_to_bytes("json").unwrap();
+        let mut back = OCEL::import_from_bytes(&bytes_slim, "json").unwrap();
         sort_ocel_for_equality_compare(&mut ocel);
         sort_ocel_for_equality_compare(&mut back);
         assert_eq!(back.event_types, ocel.event_types);
@@ -354,7 +280,7 @@ mod tests {
         let mut slim = SlimLinkedOCEL::new();
         import_ocel_json_into(bytes_misordered.as_slice(), &mut slim).unwrap();
         slim.finalize().unwrap();
-        let via_ocel = SlimLinkedOCEL::from_ocel(import_ocel_json_slice(&bytes).unwrap());
+        let via_ocel = SlimLinkedOCEL::from_ocel(OCEL::import_from_bytes(&bytes, "json").unwrap());
 
         let mut a = slim.construct_ocel();
         let mut b = via_ocel.construct_ocel();
@@ -384,10 +310,7 @@ mod tests {
         let mut slim = SlimLinkedOCEL::new();
         let err = import_ocel_json_into(json.as_slice(), &mut slim).unwrap_err();
         match err {
-            OCELIOError::Other(s) => assert!(
-                s.contains("Duplicate event id: dup"),
-                "expected DuplicateEventId, got {s:?}"
-            ),
+            OCELIOError::Append(SlimAppendError::DuplicateEventId(id)) => assert_eq!(id, "dup"),
             other => panic!("expected typed sink error, got {other:?}"),
         }
     }
@@ -408,7 +331,7 @@ mod tests {
     }
 
     fn attr_value_of(bytes: &[u8]) -> OCELAttributeValue {
-        let ocel = import_ocel_json_slice(bytes).unwrap();
+        let ocel = OCEL::import_from_bytes(bytes, "json").unwrap();
         ocel.events[0].attributes[0].value.clone()
     }
 
@@ -438,11 +361,70 @@ mod tests {
                 "raw value {raw:?}"
             );
         }
-        // RFC3339 strings are recognized as timestamps (pre-existing untagged behavior).
+        // RFC3339 strings are recognized as timestamps unless declared with another type.
+        let rfc3339 = r#""2024-01-01T00:00:00Z""#;
+        for (declared, expect_time) in [("string", false), ("integer", false), ("time", true)] {
+            let bytes = json_with_event_attr(declared, rfc3339);
+            assert_eq!(
+                matches!(attr_value_of(&bytes), OCELAttributeValue::Time(_)),
+                expect_time,
+                "declared {declared}"
+            );
+            let mut streamed = OCEL {
+                event_types: vec![],
+                object_types: vec![],
+                events: vec![],
+                objects: vec![],
+            };
+            import_ocel_json_into(bytes.as_slice(), &mut streamed).unwrap();
+            assert_eq!(
+                streamed.events[0].attributes[0].value,
+                attr_value_of(&bytes),
+                "declared {declared}"
+            );
+        }
+        let undeclared = String::from_utf8(json_with_event_attr("string", rfc3339))
+            .unwrap()
+            .replace(r#""name": "a", "type""#, r#""name": "other", "type""#);
         assert!(matches!(
-            attr_value_of(&json_with_event_attr("string", r#""2024-01-01T00:00:00Z""#)),
+            attr_value_of(undeclared.as_bytes()),
             OCELAttributeValue::Time(_)
         ));
+        assert_eq!(
+            attr_value_of(&json_with_event_attr("string", r#"" A""#)),
+            OCELAttributeValue::String(" A".to_string())
+        );
+    }
+
+    /// Values are read as their declared type: the JSON schema types every value as a string,
+    /// official logs write whole floats as integers, and pm4py declares timestamps as `date`.
+    #[test]
+    fn import_reads_values_as_declared_type() {
+        let time = |s| OCELAttributeValue::Time(chrono::DateTime::parse_from_rfc3339(s).unwrap());
+        for (declared, raw, expected) in [
+            ("float", "5", OCELAttributeValue::Float(5.0)),
+            ("float", r#""2.5""#, OCELAttributeValue::Float(2.5)),
+            ("integer", r#""7""#, OCELAttributeValue::Integer(7)),
+            ("boolean", r#""true""#, OCELAttributeValue::Boolean(true)),
+            (
+                "time",
+                r#""2023-10-06 09:30:21""#,
+                time("2023-10-06T09:30:21Z"),
+            ),
+            (
+                "date",
+                r#""2024-01-01T10:00:00""#,
+                time("2024-01-01T10:00:00Z"),
+            ),
+            (
+                "integer",
+                r#""n/a""#,
+                OCELAttributeValue::String("n/a".to_string()),
+            ),
+        ] {
+            let bytes = json_with_event_attr(declared, raw);
+            assert_eq!(attr_value_of(&bytes), expected, "{declared} {raw}");
+        }
     }
 
     /// Integers exceeding `i64` degrade to `Float` rather than failing the import.
@@ -471,7 +453,7 @@ mod tests {
                      "objects": []}}"#
             );
             assert!(
-                import_ocel_json_slice(json.as_bytes()).is_ok(),
+                OCEL::import_from_bytes(json.as_bytes(), "json").is_ok(),
                 "event time {time:?} should parse"
             );
         }
@@ -482,7 +464,7 @@ mod tests {
     #[test]
     fn declared_time_attribute_coerced_from_loose_format() {
         let bytes = json_with_event_attr("time", r#""2023-10-06 09:30:21.890421""#);
-        let ocel = import_ocel_json_slice(&bytes).unwrap();
+        let ocel = OCEL::import_from_bytes(&bytes, "json").unwrap();
         let slim = SlimLinkedOCEL::from_ocel(ocel);
         let back = slim.construct_ocel();
         assert!(matches!(
@@ -498,7 +480,7 @@ mod tests {
         let mut slim = SlimLinkedOCEL::new();
         import_ocel_json_into(bytes.as_slice(), &mut slim).unwrap();
         slim.finalize().unwrap();
-        let via_ocel = SlimLinkedOCEL::from_ocel(import_ocel_json_slice(&bytes).unwrap());
+        let via_ocel = SlimLinkedOCEL::from_ocel(OCEL::import_from_bytes(&bytes, "json").unwrap());
 
         let mut a = slim.construct_ocel();
         let mut b = via_ocel.construct_ocel();

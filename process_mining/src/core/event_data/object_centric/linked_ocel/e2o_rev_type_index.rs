@@ -1,6 +1,6 @@
 //! Reverse-E2O lookups grouped by event type, as a standalone index
 //!
-//! Kept out of [`SlimLinkedOCEL`], so it's build only when needed.
+//! Kept out of [`SlimLinkedOCEL`], so it's built only when needed.
 
 use std::collections::HashMap;
 
@@ -13,7 +13,7 @@ use super::{
 
 /// Efficiently allows to retrieve "which events of type `T` reference object `o`" using binary search
 #[derive(Debug, Clone, Default)]
-pub(crate) struct E2ORevByTypeIndex {
+pub struct E2ORevByTypeIndex {
     /// Per event type, its `(object, event)` pairs sorted ascending
     per_type: Vec<Vec<(ObjectIndex, EventIndex)>>,
     /// Event type name -> position in `per_type`.
@@ -21,7 +21,8 @@ pub(crate) struct E2ORevByTypeIndex {
 }
 
 impl E2ORevByTypeIndex {
-    pub(crate) fn build(locel: &SlimLinkedOCEL) -> Self {
+    /// Index the reverse E2O relations of `locel`, once per event type
+    pub fn build(locel: &SlimLinkedOCEL) -> Self {
         let type_pos: HashMap<String, usize> = locel
             .get_ev_types()
             .enumerate()
@@ -48,7 +49,7 @@ impl E2ORevByTypeIndex {
     /// Resolve one event type for repeated lookups
     ///
     /// `None` for unknown types, including the synthetic `<init>` / `<exit>` ones.
-    pub(crate) fn for_ev_type(&self, ev_type: &str) -> Option<E2ORevTypeView<'_>> {
+    pub fn for_ev_type(&self, ev_type: &str) -> Option<E2ORevTypeView<'_>> {
         self.type_pos.get(ev_type).map(|pos| E2ORevTypeView {
             runs: &self.per_type[*pos],
         })
@@ -57,13 +58,13 @@ impl E2ORevByTypeIndex {
 
 /// One event type of an [`E2ORevByTypeIndex`], cheap to copy
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct E2ORevTypeView<'a> {
+pub struct E2ORevTypeView<'a> {
     runs: &'a [(ObjectIndex, EventIndex)],
 }
 
 impl<'a> E2ORevTypeView<'a> {
     /// Events of this type referencing `ob`, ascending
-    pub(crate) fn events_of(&self, ob: ObjectIndex) -> impl Iterator<Item = EventIndex> + use<'a> {
+    pub fn events_of(&self, ob: ObjectIndex) -> impl Iterator<Item = EventIndex> + use<'a> {
         let lo = self.runs.partition_point(|(o, _)| *o < ob);
         let hi = self.runs.partition_point(|(o, _)| *o <= ob);
         self.runs[lo..hi].iter().map(|(_, ev)| *ev)

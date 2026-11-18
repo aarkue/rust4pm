@@ -6,13 +6,7 @@ use nalgebra::DMatrix;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{
-    io::PetriNetIOError,
-    marking::Marking,
-    pnml::{
-        export_petri_net_to_pnml_path, import_pnml_from_path, read::accepting_net, PNMLParseError,
-    },
-};
+use super::marking::Marking;
 use crate::core::process_models::process_tree::ProcessTree;
 
 /// Id of a place, handed out by its [`PetriNet`] in creation order
@@ -67,7 +61,7 @@ impl From<TransitionID> for NodeID {
 /// Place in a [`PetriNet`]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Place {
-    /// External identifier (e.g., the PNML id), not used for identity
+    /// External name (e.g., the PNML `<name>`), not used for identity
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Transitions taking tokens from this place, in id order
@@ -82,6 +76,7 @@ pub struct Place {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Transition {
     /// Activity label (`None` if this transition is silent)
+    #[schemars(schema_with = "nullable_label")]
     pub label: Option<String>,
     /// External identifier (e.g., the PNML id), not used for identity
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -90,6 +85,12 @@ pub struct Transition {
     inputs: Vec<(PlaceID, u32)>,
     /// The places this transition puts tokens into, with the number of tokens
     outputs: Vec<(PlaceID, u32)>,
+}
+
+/// `label` is always written, also as `null`, so the schema requires it. Deriving it from
+/// `Option<String>` would make it optional.
+fn nullable_label(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    generator.subschema_for::<Option<String>>()
 }
 
 impl Transition {
@@ -155,26 +156,6 @@ impl PetriNet {
         Self::default()
     }
 
-    /// Serialize to a JSON string
-    pub fn to_json(&self) -> String {
-        serde_json::to_string(self).expect("a Petri net serializes to JSON")
-    }
-
-    /// Import the structure of a net from a PNML file, ignoring its markings
-    ///
-    /// See [`import_pnml`](super::pnml::import_pnml) for what is read, and
-    /// [`AcceptingPetriNet::import_pnml`] to keep the markings.
-    pub fn import_pnml<P: AsRef<std::path::Path>>(path: P) -> Result<PetriNet, PNMLParseError> {
-        Ok(import_pnml_from_path(path)?.0)
-    }
-
-    /// Export the net to a PNML file, without markings
-    ///
-    /// The file can be imported again with [`PetriNet::import_pnml`].
-    pub fn export_pnml<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), PetriNetIOError> {
-        export_petri_net_to_pnml_path(self, None, None, path)
-    }
-
     #[cfg(feature = "visualization")]
     /// Export a drawing of the net as an SVG file, laid out with `graphlay`
     ///
@@ -214,8 +195,19 @@ impl PetriNet {
     /// An arc between the same place and transition in the same direction adds its weight to the
     /// existing one, and an arc of weight 0 adds nothing.
     ///
-    /// Panics if a node id does not belong to this net.
+    /// Panics if a node id does not belong to this net, or if the summed weight overflows `u32`
+    /// (see [`PetriNet::checked_add_arc`]).
     pub fn add_arc(&mut self, from_to: ArcType, weight: Option<u32>) {
+        self.checked_add_arc(from_to, weight)
+            .expect("arc weight overflows u32");
+    }
+
+    /// Like [`PetriNet::add_arc`], but returns `None` and leaves the net unchanged if the summed
+    /// weight would overflow `u32`. Otherwise returns the arc's summed weight, which is `0` when a
+    /// weight-0 arc is added where no arc exists (the net then stays unchanged).
+    ///
+    /// Panics if a node id does not belong to this net.
+    pub fn checked_add_arc(&mut self, from_to: ArcType, weight: Option<u32>) -> Option<u32> {
         let (place, transition, is_input) = match from_to {
             ArcType::PlaceTransition(place, transition) => (place, transition, true),
             ArcType::TransitionPlace(transition, place) => (place, transition, false),
@@ -225,9 +217,6 @@ impl PetriNet {
             "{from_to:?} refers to a node that is not in this net"
         );
         let weight = weight.unwrap_or(1);
-        if weight == 0 {
-            return;
-        }
         let t = &mut self.transitions[transition.index()];
         let arcs = if is_input {
             &mut t.inputs
@@ -235,8 +224,11 @@ impl PetriNet {
             &mut t.outputs
         };
         if let Some((_, total)) = arcs.iter_mut().find(|(p, _)| *p == place) {
-            *total = total.checked_add(weight).expect("arc weight overflows u32");
-            return;
+            *total = total.checked_add(weight)?;
+            return Some(*total);
+        }
+        if weight == 0 {
+            return Some(0);
         }
         arcs.push((place, weight));
         let p = &mut self.places[place.index()];
@@ -247,6 +239,7 @@ impl PetriNet {
         };
         let position = neighbors.partition_point(|t| *t < transition);
         neighbors.insert(position, transition);
+        Some(weight)
     }
 
     /// Number of places
@@ -482,10 +475,11 @@ impl PetriNet {
     /// Checks if the Petri net contains duplicate or silent transitions
     pub fn contains_duplicate_or_silent_transitions(&self) -> bool {
         let mut activities = HashSet::new();
-        self.transitions
-            .iter()
-            .filter_map(|t| t.label.as_ref())
-            .any(|label| !activities.insert(label))
+        self.transitions.iter().any(|t| {
+            t.label
+                .as_ref()
+                .is_none_or(|label| !activities.insert(label))
+        })
     }
 
     #[cfg(feature = "token-based-replay")]
@@ -542,11 +536,6 @@ impl AcceptingPetriNet {
         }
     }
 
-    /// Serialize to a JSON string
-    pub fn to_json(&self) -> String {
-        serde_json::to_string(self).expect("a Petri net serializes to JSON")
-    }
-
     /// Whether `place` holds a token in the initial marking
     pub fn is_in_initial_marking(&self, place: PlaceID) -> bool {
         self.initial_marking.tokens(place) > 0
@@ -579,27 +568,6 @@ impl AcceptingPetriNet {
                 .filter_map(|(place, tokens)| Some((new_ids[place.index()]?, tokens)))
                 .collect();
         }
-    }
-
-    /// Import a net with its initial and final marking from a PNML file
-    ///
-    /// Fails with [`PNMLParseError::MissingInitialMarking`] if no place is marked and with
-    /// [`PNMLParseError::MissingFinalMarking`] if the file has no final marking (`ProM`'s
-    /// `<finalmarkings>`). See [`import_pnml`](super::pnml::import_pnml) for what is read.
-    pub fn import_pnml<P: AsRef<std::path::Path>>(path: P) -> Result<Self, PNMLParseError> {
-        accepting_net(import_pnml_from_path(path)?)
-    }
-
-    /// Export the net with both markings to a PNML file
-    ///
-    /// The file can be imported again with [`AcceptingPetriNet::import_pnml`].
-    pub fn export_pnml<P: AsRef<std::path::Path>>(&self, path: P) -> Result<(), PetriNetIOError> {
-        export_petri_net_to_pnml_path(
-            &self.net,
-            Some(&self.initial_marking),
-            Some(&self.final_marking),
-            path,
-        )
     }
 
     #[cfg(feature = "visualization")]

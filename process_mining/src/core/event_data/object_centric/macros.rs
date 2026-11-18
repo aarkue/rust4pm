@@ -108,17 +108,19 @@ macro_rules! ocel {
 
         // Adds o2o relations
         $(
-            let object_type = $to_ob.to_string().split(":").next().unwrap().to_string();
-            let o2o_relation = OCELRelationship::new($to_ob.to_string(), object_type.to_string());
+            let qualifier = $to_ob.to_string().split(":").next().unwrap().to_string();
+            let o2o_relation = OCELRelationship::new($to_ob.to_string(), qualifier);
+            let from_id = $from_ob.to_string();
 
-            if object_id_to_object.contains_key(&$from_ob.to_string()) {
-                object_id_to_object.get_mut(&$from_ob.to_string()).unwrap().relationships.push(o2o_relation);
+            if let Some(from) = object_id_to_object.get_mut(&from_id) {
+                from.relationships.push(o2o_relation);
             } else {
+                let object_type = from_id.split(":").next().unwrap().to_string();
                 object_types_set.insert(object_type.clone());
-                object_id_to_object.insert($from_ob.to_string(),
+                object_id_to_object.insert(from_id.clone(),
                     OCELObject{
-                        id: $from_ob.to_string(),
-                        object_type: object_type,
+                        id: from_id,
+                        object_type,
                         attributes: Vec::new(),
                         relationships: vec![o2o_relation]
                     }
@@ -140,4 +142,24 @@ macro_rules! ocel {
             objects: object_id_to_object.iter().map(|(_, object)| object.to_owned()).collect(),
         }
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn o2o_source_gets_its_own_type() {
+        let ocel = ocel![
+            events:
+            ("place", ["o:1"]),
+            o2o:
+            ("c:1", "o:1")
+        ];
+        let customer = ocel.objects.iter().find(|o| o.id == "c:1").unwrap();
+        assert_eq!(customer.object_type, "c");
+        assert_eq!(customer.relationships[0].object_id, "o:1");
+        assert_eq!(customer.relationships[0].qualifier, "o");
+        let mut types: Vec<_> = ocel.object_types.iter().map(|t| t.name.as_str()).collect();
+        types.sort();
+        assert_eq!(types, ["c", "o"]);
+    }
 }

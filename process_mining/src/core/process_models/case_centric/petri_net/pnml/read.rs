@@ -1,30 +1,28 @@
 //! Reading Petri nets from PNML
-use std::{collections::HashMap, io::BufRead};
+use std::{
+    collections::{HashMap, HashSet},
+    io::BufRead,
+};
 
 use quick_xml::{events::BytesStart, Error as QuickXMLError, Reader};
 
 use crate::core::{
-    io::read_xml_text_unescaped,
+    io::{push_xml_general_ref, read_xml_text_unescaped},
     process_models::case_centric::petri_net::{
+        io::PetriNetIOError,
         marking::Marking,
         net::{AcceptingPetriNet, ArcType, PetriNet, PlaceID, TransitionID},
     },
 };
 
-///
-/// Error encountered while parsing PNML
-///
-#[derive(Debug, Clone)]
+/// Error in the content of PNML data. IO and XML errors are other [`PetriNetIOError`] variants.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PNMLParseError {
-    /// IO error
-    IOError(std::sync::Arc<std::io::Error>),
-    /// XML error (e.g., incorrect XML format )
-    XMLParsingError(QuickXMLError),
     /// Missing key on XML element (with expected key included)
     MissingKey(&'static str),
     /// Encountered no PNML tag (i.e., the parsed data was not a PNML file)
     NoPNMLTag,
-    /// No place is marked initially, but an initial marking was required
+    /// No place has an initial marking, but one was required
     MissingInitialMarking,
     /// The file has no final marking, but one was required
     MissingFinalMarking,
@@ -32,6 +30,9 @@ pub enum PNMLParseError {
     MultipleFinalMarkings(usize),
     /// A token count or arc weight is not a number in `0..=u32::MAX` (with the text)
     InvalidTokenCount(String),
+    /// Token counts of a place, or weights of arcs between the same nodes, sum up to more than
+    /// `u32::MAX` (with the PNML id of the place, or of the arc's source)
+    TokenCountOverflow(String),
     /// An arc or a final marking refers to a node that is not in the net (with its id)
     UnknownNode(String),
     /// Two nodes share an id (with the id)
@@ -43,6 +44,16 @@ pub enum PNMLParseError {
         /// Id of the arc's target
         target: String,
     },
+    /// The file has more than one `<net>`
+    MultipleNets,
+    /// An arc has an `<arctype>` other than `normal`, e.g., `inhibitor` or `reset` (with the type)
+    UnsupportedArcType(String),
+    /// A `<referencePlace>` or `<referenceTransition>` refers to a node of the other kind or is
+    /// part of a reference cycle (with its id)
+    InvalidReference(String),
+    /// The net is not a place/transition net, e.g., a symmetric or high-level net (with its
+    /// `type`, or the high-level element found, e.g., `hlinscription`)
+    UnsupportedNetType(String),
 }
 
 impl std::fmt::Display for PNMLParseError {
@@ -51,29 +62,10 @@ impl std::fmt::Display for PNMLParseError {
     }
 }
 
-impl std::error::Error for PNMLParseError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            PNMLParseError::IOError(e) => Some(e.as_ref()),
-            PNMLParseError::XMLParsingError(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-impl From<std::io::Error> for PNMLParseError {
-    fn from(e: std::io::Error) -> Self {
-        PNMLParseError::IOError(std::sync::Arc::new(e))
-    }
-}
-
-impl From<QuickXMLError> for PNMLParseError {
-    fn from(e: QuickXMLError) -> Self {
-        Self::XMLParsingError(e)
-    }
-}
+impl std::error::Error for PNMLParseError {}
 
 const IN_TRANSITION: &str = "a transition is read in this mode";
+const IN_PLACE: &str = "a place is read in this mode";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -86,17 +78,31 @@ enum Mode {
     TransitionName,
     Arc,
     ArcInscription,
+    ArcType,
     FinalMarkings,
     FinalMarking,
     FinalMarkingPlace,
+}
+
+/// A place as read, added to the net once its name is known
+struct PlaceInfo {
+    pnml_id: String,
+    name_text: Option<String>,
+    /// The tokens of its `<initialMarking>`, if it has one
+    tokens: Option<u32>,
 }
 
 /// A transition as read, added to the net once its label is known
 struct TransitionInfo {
     pnml_id: String,
     name_text: Option<String>,
+    /// The event name in `ProM` 5.2's `<logevent>`, whose `<name>` text also has the event type
+    logevent_name: Option<String>,
     silent: bool,
 }
+
+/// Path of `ProM` 5.2's event name inside a transition's `<toolspecific>`
+const LOGEVENT_NAME: [&str; 2] = ["logevent", "name"];
 
 #[derive(Clone, Copy)]
 enum Node {
@@ -104,13 +110,26 @@ enum Node {
     Transition(TransitionID),
 }
 
-fn attribute(element: &BytesStart<'_>, key: &'static str) -> Result<String, PNMLParseError> {
+fn attribute(element: &BytesStart<'_>, key: &'static str) -> Result<String, PetriNetIOError> {
     let value = element
         .try_get_attribute(key)
         .map_err(QuickXMLError::from)?
         .ok_or(PNMLParseError::MissingKey(key))?
         .value;
-    Ok(read_xml_text_unescaped(&mut value.as_ref()))
+    Ok(read_xml_text_unescaped(&value))
+}
+
+/// Whether `net_type` is the PNML type of place/transition nets, or one of the variants `ProM`,
+/// pm4py and other tools write for them
+fn is_pt_net_type(net_type: &str) -> bool {
+    let net_type = net_type.trim().trim_end_matches('/');
+    let name = net_type.rsplit('/').next().unwrap_or(net_type);
+    let name = name.split_once('.').map_or(name, |(name, _)| name);
+    net_type.is_empty()
+        || net_type == "P/T net"
+        || ["ptnet", "pnmlcoremodel", "basicPNML", "ptNetb"]
+            .iter()
+            .any(|known| name.eq_ignore_ascii_case(known))
 }
 
 fn token_count(text: String) -> Result<u32, PNMLParseError> {
@@ -118,26 +137,32 @@ fn token_count(text: String) -> Result<u32, PNMLParseError> {
         .map_err(|_| PNMLParseError::InvalidTokenCount(text))
 }
 
+/// Import a Petri net from PNML
 ///
-/// Import a PNML file from the given XML reader ([`quick_xml::Reader`])
+/// Returns the net, its initial marking (`None` if no place has an `<initialMarking>`, which may
+/// also hold 0 tokens) and its final marking (`None` without `ProM`'s `<finalmarkings>`
+/// extension). Importing an [`AcceptingPetriNet`] through [`Importable`](crate::Importable)
+/// requires both markings, and importing a [`PetriNet`] keeps the structure alone.
 ///
-/// Returns the net, its initial marking (`None` if no place is marked) and its final marking
-/// (`None` without `ProM`'s `<finalmarkings>` extension). Use [`AcceptingPetriNet::import_pnml`]
-/// to require both markings, or [`PetriNet::import_pnml`] for the structure alone.
+/// Places and transitions get ids in file order. A place's name is the text of its `<name>`, or
+/// its PNML id if it has none, and a transition's name is its PNML id. Arcs, markings and
+/// references name nodes by PNML id. A transition is silent if `ProM`'s `toolspecific` tag marks
+/// it invisible; otherwise its label is the event name in `ProM` 5.2's `<logevent>`, the text of
+/// its `<name>`, or its PNML id if it has neither. Arcs between the same nodes merge. Pages are flattened, reference nodes stand for the
+/// node they refer to, and other `<toolspecific>` content is ignored.
 ///
-/// Places and transitions get ids in file order, and each node's PNML id becomes its name. A
-/// transition is silent if `ProM`'s `toolspecific` tag marks it invisible; otherwise its label is
-/// the text of its `<name>`, or its PNML id if it has no name. Arcs between the same nodes merge.
-///
-/// Inhibitor, reset and other special arcs are not supported, and neither are several final
-/// markings.
-///
-/// [`AcceptingPetriNet::import_pnml`]: crate::core::process_models::case_centric::petri_net::AcceptingPetriNet::import_pnml
-/// [`PetriNet::import_pnml`]: crate::core::process_models::case_centric::petri_net::PetriNet::import_pnml
-pub fn import_pnml<T: BufRead>(
-    reader: &mut Reader<T>,
-) -> Result<(PetriNet, Option<Marking>, Option<Marking>), PNMLParseError> {
-    reader.config_mut().trim_text(true);
+/// Nets other than place/transition nets (by the `type` of `<net>`, or by high-level elements such
+/// as `<hlinscription>`), several nets in one file, inhibitor, reset and other special arcs
+/// (`<arctype>`), and several final markings are not supported and are an error.
+pub fn import_pnml(
+    reader: impl BufRead,
+) -> Result<(PetriNet, Option<Marking>, Option<Marking>), PetriNetIOError> {
+    let mut reader = Reader::from_reader(reader);
+    // Text is trimmed below instead, as references split it into several events, each of which
+    // the reader would trim
+    reader.config_mut().trim_text(false);
+    // A lone `&` in text is kept as is, like an unknown entity
+    reader.config_mut().allow_dangling_amp = true;
     reader.config_mut().expand_empty_elements = true;
     let mut buf = Vec::new();
 
@@ -148,79 +173,85 @@ pub fn import_pnml<T: BufRead>(
     let mut place_ids: HashMap<String, PlaceID> = HashMap::new();
     let mut arcs: Vec<(String, String, u32)> = Vec::new();
     let mut initial_marking = Marking::new();
+    let mut has_initial_marking = false;
     let mut final_markings: Vec<Vec<(String, u32)>> = Vec::new();
-    let mut current_place: Option<PlaceID> = None;
+    let mut current_place: Option<PlaceInfo> = None;
     let mut current_ref: Option<String> = None;
+    let mut text_run = String::new();
+    let mut seen_net = false;
+    // Reference nodes as (id, referenced id, whether it is a `referencePlace`)
+    let mut references: Vec<(String, String, bool)> = Vec::new();
+    // Depth inside a `<toolspecific>`, whose content is skipped except for `LOGEVENT_NAME`
+    let mut tool_depth = 0usize;
+    // Whether that `<toolspecific>` is ProM's on a transition
+    let mut prom_transition_tool = false;
+    // How many elements of `LOGEVENT_NAME` the reader is in
+    let mut logevent_depth = 0usize;
 
     loop {
-        match reader.read_event_into(&mut buf)? {
-            quick_xml::events::Event::Start(b) => match (b.name().as_ref(), mode) {
-                (b"pnml", _) => encountered_pnml_tag = true,
-                (b"net" | b"page", _) => mode = Mode::Net,
-                (b"place", Mode::FinalMarking) => {
-                    current_ref = Some(attribute(&b, "idref")?);
-                    mode = Mode::FinalMarkingPlace;
-                }
-                (b"place", _) => {
-                    let pnml_id = attribute(&b, "id")?;
-                    let id = net.add_place(Some(pnml_id.clone()));
-                    if place_ids.insert(pnml_id.clone(), id).is_some() {
-                        return Err(PNMLParseError::DuplicateNode(pnml_id));
-                    }
-                    current_place = Some(id);
-                    mode = Mode::Place;
-                }
-                (b"transition", _) => {
-                    transitions.push(TransitionInfo {
-                        pnml_id: attribute(&b, "id")?,
-                        name_text: None,
-                        silent: false,
-                    });
-                    mode = Mode::Transition;
-                }
-                (b"arc", _) => {
-                    arcs.push((attribute(&b, "source")?, attribute(&b, "target")?, 1));
-                    mode = Mode::Arc;
-                }
-                (b"inscription", Mode::Arc) => mode = Mode::ArcInscription,
-                (b"toolspecific", Mode::Transition) => {
-                    let attr = b
-                        .try_get_attribute("activity")
-                        .map_err(QuickXMLError::from)?;
-                    if attr.is_some_and(|attr| attr.value.as_ref() == b"$invisible$") {
-                        transitions.last_mut().expect(IN_TRANSITION).silent = true;
+        let event = reader.read_event_into(&mut buf)?;
+        if tool_depth > 0 {
+            let in_logevent_name = logevent_depth == LOGEVENT_NAME.len() && tool_depth == 3;
+            match event {
+                quick_xml::events::Event::Start(b) => {
+                    tool_depth += 1;
+                    if prom_transition_tool
+                        && logevent_depth + 2 == tool_depth
+                        && LOGEVENT_NAME.get(logevent_depth) == Some(&b.local_name().as_ref())
+                    {
+                        logevent_depth += 1;
                     }
                 }
-                (b"initialMarking", Mode::Place) => mode = Mode::InitialMarking,
-                (b"finalmarkings", _) => mode = Mode::FinalMarkings,
-                (b"marking", Mode::FinalMarkings) => {
-                    final_markings.push(Vec::new());
-                    mode = Mode::FinalMarking;
+                quick_xml::events::Event::End(_) => {
+                    if logevent_depth > 0 && logevent_depth + 1 == tool_depth {
+                        if in_logevent_name {
+                            let text = text_run.trim_matches([' ', '\t', '\r', '\n']);
+                            let transition = transitions.last_mut().expect(IN_TRANSITION);
+                            if !text.is_empty() && transition.logevent_name.is_none() {
+                                transition.logevent_name = Some(text.to_string());
+                            }
+                            text_run.clear();
+                        }
+                        logevent_depth -= 1;
+                    }
+                    tool_depth -= 1;
                 }
-                (b"name", Mode::Place) => mode = Mode::PlaceName,
-                (b"name", Mode::Transition) => mode = Mode::TransitionName,
+                quick_xml::events::Event::Text(t) if in_logevent_name => text_run.push_str(&t),
+                quick_xml::events::Event::CData(t) if in_logevent_name => text_run.push_str(&t),
+                quick_xml::events::Event::GeneralRef(r) if in_logevent_name => {
+                    push_xml_general_ref(&mut text_run, &r);
+                }
+                quick_xml::events::Event::Eof => break,
                 _ => {}
-            },
-            quick_xml::events::Event::End(b) => match (b.name().as_ref(), mode) {
-                (b"place", Mode::FinalMarkingPlace) => mode = Mode::FinalMarking,
-                (b"place" | b"transition" | b"arc", _) => mode = Mode::Net,
-                (b"initialMarking", Mode::InitialMarking) => mode = Mode::Place,
-                (b"inscription", Mode::ArcInscription) => mode = Mode::Arc,
-                (b"marking", Mode::FinalMarking) => mode = Mode::FinalMarkings,
-                (b"finalmarkings", _) => mode = Mode::Net,
-                (b"name", Mode::PlaceName) => mode = Mode::Place,
-                (b"name", Mode::TransitionName) => mode = Mode::Transition,
-                _ => {}
-            },
-            quick_xml::events::Event::Text(t) => {
-                let text = read_xml_text_unescaped(&mut t.as_ref());
+            }
+            buf.clear();
+            continue;
+        }
+        if !matches!(
+            event,
+            quick_xml::events::Event::Text(_)
+                | quick_xml::events::Event::GeneralRef(_)
+                | quick_xml::events::Event::CData(_)
+        ) {
+            let text = text_run.trim_matches([' ', '\t', '\r', '\n']).to_string();
+            text_run.clear();
+            if !text.is_empty() {
                 match mode {
                     Mode::TransitionName => {
                         transitions.last_mut().expect(IN_TRANSITION).name_text = Some(text);
                     }
                     Mode::InitialMarking => {
-                        let place = current_place.expect("a place is read in this mode");
-                        initial_marking.add(place, token_count(text)?);
+                        let place = current_place.as_mut().expect(IN_PLACE);
+                        let tokens = place.tokens.unwrap_or(0).checked_add(token_count(text)?);
+                        let Some(tokens) = tokens else {
+                            return Err(
+                                PNMLParseError::TokenCountOverflow(place.pnml_id.clone()).into()
+                            );
+                        };
+                        place.tokens = Some(tokens);
+                    }
+                    Mode::PlaceName => {
+                        current_place.as_mut().expect(IN_PLACE).name_text = Some(text);
                     }
                     Mode::FinalMarkingPlace => {
                         let marking = final_markings.last_mut().expect("a marking is read");
@@ -233,9 +264,123 @@ pub fn import_pnml<T: BufRead>(
                         arcs.last_mut().expect("an arc is read in this mode").2 =
                             token_count(text)?;
                     }
+                    Mode::ArcType if text != "normal" => {
+                        return Err(PNMLParseError::UnsupportedArcType(text).into());
+                    }
                     _ => {}
                 }
             }
+        }
+        match event {
+            quick_xml::events::Event::Start(b) => match (b.local_name().as_ref(), mode) {
+                ("pnml", _) => encountered_pnml_tag = true,
+                ("net", _) if seen_net => return Err(PNMLParseError::MultipleNets.into()),
+                ("net", _) => {
+                    let net_type = b.try_get_attribute("type").map_err(QuickXMLError::from)?;
+                    if let Some(net_type) = net_type.map(|t| read_xml_text_unescaped(&t.value)) {
+                        if !is_pt_net_type(&net_type) {
+                            return Err(PNMLParseError::UnsupportedNetType(net_type).into());
+                        }
+                    }
+                    seen_net = true;
+                    mode = Mode::Net;
+                }
+                (element @ ("hlinitialMarking" | "hlinscription"), _) => {
+                    return Err(PNMLParseError::UnsupportedNetType(element.to_string()).into());
+                }
+                ("page", _) => mode = Mode::Net,
+                (kind @ ("referencePlace" | "referenceTransition"), _) => references.push((
+                    attribute(&b, "id")?,
+                    attribute(&b, "ref")?,
+                    kind == "referencePlace",
+                )),
+                ("place", Mode::FinalMarking) => {
+                    current_ref = Some(attribute(&b, "idref")?);
+                    mode = Mode::FinalMarkingPlace;
+                }
+                ("place", _) => {
+                    current_place = Some(PlaceInfo {
+                        pnml_id: attribute(&b, "id")?,
+                        name_text: None,
+                        tokens: None,
+                    });
+                    mode = Mode::Place;
+                }
+                ("transition", _) => {
+                    transitions.push(TransitionInfo {
+                        pnml_id: attribute(&b, "id")?,
+                        name_text: None,
+                        logevent_name: None,
+                        silent: false,
+                    });
+                    mode = Mode::Transition;
+                }
+                ("arc", _) => {
+                    arcs.push((attribute(&b, "source")?, attribute(&b, "target")?, 1));
+                    mode = Mode::Arc;
+                }
+                ("inscription", Mode::Arc) => mode = Mode::ArcInscription,
+                ("arctype", Mode::Arc) => mode = Mode::ArcType,
+                ("toolspecific", _) => {
+                    tool_depth = 1;
+                    let attr = b
+                        .try_get_attribute("activity")
+                        .map_err(QuickXMLError::from)?;
+                    if mode == Mode::Transition
+                        && attr.is_some_and(|attr| attr.value.as_ref() == "$invisible$")
+                    {
+                        transitions.last_mut().expect(IN_TRANSITION).silent = true;
+                    }
+                    let tool = b.try_get_attribute("tool").map_err(QuickXMLError::from)?;
+                    prom_transition_tool = mode == Mode::Transition
+                        && tool.is_some_and(|tool| tool.value.as_ref() == "ProM");
+                }
+                ("initialMarking", Mode::Place) => {
+                    has_initial_marking = true;
+                    current_place
+                        .as_mut()
+                        .expect(IN_PLACE)
+                        .tokens
+                        .get_or_insert(0);
+                    mode = Mode::InitialMarking;
+                }
+                ("finalmarkings", _) => mode = Mode::FinalMarkings,
+                ("marking", Mode::FinalMarkings) => {
+                    final_markings.push(Vec::new());
+                    mode = Mode::FinalMarking;
+                }
+                ("name", Mode::Place) => mode = Mode::PlaceName,
+                ("name", Mode::Transition) => mode = Mode::TransitionName,
+                _ => {}
+            },
+            quick_xml::events::Event::End(b) => match (b.local_name().as_ref(), mode) {
+                ("place", Mode::FinalMarkingPlace) => mode = Mode::FinalMarking,
+                ("place", _) => {
+                    if let Some(place) = current_place.take() {
+                        let name = place.name_text.unwrap_or_else(|| place.pnml_id.clone());
+                        let id = net.add_place(Some(name));
+                        if place_ids.insert(place.pnml_id.clone(), id).is_some() {
+                            return Err(PNMLParseError::DuplicateNode(place.pnml_id).into());
+                        }
+                        if let Some(tokens) = place.tokens {
+                            initial_marking.set(id, tokens);
+                        }
+                    }
+                    mode = Mode::Net;
+                }
+                ("transition" | "arc", _) => mode = Mode::Net,
+                ("initialMarking", Mode::InitialMarking) => mode = Mode::Place,
+                ("inscription", Mode::ArcInscription) => mode = Mode::Arc,
+                ("arctype", Mode::ArcType) => mode = Mode::Arc,
+                ("marking", Mode::FinalMarking) => mode = Mode::FinalMarkings,
+                ("finalmarkings", _) => mode = Mode::Net,
+                ("name", Mode::PlaceName) => mode = Mode::Place,
+                ("name", Mode::TransitionName) => mode = Mode::Transition,
+                _ => {}
+            },
+            quick_xml::events::Event::Text(t) => text_run.push_str(&t),
+            quick_xml::events::Event::CData(t) => text_run.push_str(&t),
+            quick_xml::events::Event::GeneralRef(r) => push_xml_general_ref(&mut text_run, &r),
             quick_xml::events::Event::Eof => break,
             _ => {}
         }
@@ -243,7 +388,7 @@ pub fn import_pnml<T: BufRead>(
     }
 
     if !encountered_pnml_tag {
-        return Err(PNMLParseError::NoPNMLTag);
+        return Err(PNMLParseError::NoPNMLTag.into());
     }
 
     let mut nodes: HashMap<String, Node> = place_ids
@@ -251,13 +396,50 @@ pub fn import_pnml<T: BufRead>(
         .map(|(pnml_id, place)| (pnml_id.clone(), Node::Place(*place)))
         .collect();
     for t in transitions {
-        let label = (!t.silent).then(|| t.name_text.unwrap_or_else(|| t.pnml_id.clone()));
+        let label = (!t.silent).then(|| {
+            t.logevent_name
+                .or(t.name_text)
+                .unwrap_or_else(|| t.pnml_id.clone())
+        });
         let id = net.add_transition(label, Some(t.pnml_id.clone()));
         if nodes
             .insert(t.pnml_id.clone(), Node::Transition(id))
             .is_some()
         {
-            return Err(PNMLParseError::DuplicateNode(t.pnml_id));
+            return Err(PNMLParseError::DuplicateNode(t.pnml_id).into());
+        }
+    }
+    let targets: HashMap<&str, &str> = references
+        .iter()
+        .map(|(id, target, _)| (id.as_str(), target.as_str()))
+        .collect();
+    // Nodes of the references passed through by earlier chains, so each chain link is walked once
+    let mut via: HashMap<&str, Node> = HashMap::new();
+    let mut chain: HashSet<&str> = HashSet::new();
+    let mut resolved = Vec::with_capacity(references.len());
+    for (id, target, is_place) in &references {
+        let mut target = target.as_str();
+        let node = loop {
+            if let Some(node) = nodes.get(target).or_else(|| via.get(target)) {
+                break *node;
+            }
+            let Some(next) = targets.get(target) else {
+                return Err(PNMLParseError::UnknownNode(target.to_string()).into());
+            };
+            if !chain.insert(target) {
+                return Err(PNMLParseError::InvalidReference(id.clone()).into());
+            }
+            target = next;
+        };
+        via.extend(chain.drain().map(|t| (t, node)));
+        if matches!(node, Node::Place(_)) != *is_place {
+            return Err(PNMLParseError::InvalidReference(id.clone()).into());
+        }
+        resolved.push((id.clone(), node));
+    }
+    for (id, node) in resolved {
+        if nodes.insert(id.clone(), node).is_some() {
+            return Err(PNMLParseError::DuplicateNode(id).into());
         }
     }
     let node = |id: &String| {
@@ -270,34 +452,42 @@ pub fn import_pnml<T: BufRead>(
         let from_to = match (node(&source)?, node(&target)?) {
             (Node::Place(p), Node::Transition(t)) => ArcType::PlaceTransition(p, t),
             (Node::Transition(t), Node::Place(p)) => ArcType::TransitionPlace(t, p),
-            _ => return Err(PNMLParseError::InvalidArc { source, target }),
+            _ => return Err(PNMLParseError::InvalidArc { source, target }.into()),
         };
-        net.add_arc(from_to, Some(weight));
+        if net.checked_add_arc(from_to, Some(weight)).is_none() {
+            return Err(PNMLParseError::TokenCountOverflow(source).into());
+        }
     }
 
-    let initial_marking = (!initial_marking.is_empty()).then_some(initial_marking);
+    let initial_marking = has_initial_marking.then_some(initial_marking);
     if final_markings.len() > 1 {
-        return Err(PNMLParseError::MultipleFinalMarkings(final_markings.len()));
+        return Err(PNMLParseError::MultipleFinalMarkings(final_markings.len()).into());
     }
     let final_marking = final_markings
         .pop()
         .map(|marking| {
-            marking
-                .into_iter()
-                .map(|(pnml_id, tokens)| match place_ids.get(&pnml_id) {
-                    Some(place) => Ok((*place, tokens)),
-                    None => Err(PNMLParseError::UnknownNode(pnml_id)),
-                })
-                .collect::<Result<Marking, _>>()
+            let mut final_marking = Marking::new();
+            for (pnml_id, tokens) in marking {
+                let Some(Node::Place(place)) = nodes.get(&pnml_id) else {
+                    return Err(PNMLParseError::UnknownNode(pnml_id));
+                };
+                if final_marking.checked_add(*place, tokens).is_none() {
+                    return Err(PNMLParseError::TokenCountOverflow(pnml_id));
+                }
+            }
+            Ok(final_marking)
         })
         .transpose()?;
     Ok((net, initial_marking, final_marking))
 }
 
 /// The accepting net of what [`import_pnml`] read, if both markings are present
+///
+/// A net without places has nowhere to write an initial marking, so it gets the empty one.
 pub(crate) fn accepting_net(
     (net, initial_marking, final_marking): (PetriNet, Option<Marking>, Option<Marking>),
 ) -> Result<AcceptingPetriNet, PNMLParseError> {
+    let initial_marking = initial_marking.or_else(|| (net.num_places() == 0).then(Marking::new));
     Ok(AcceptingPetriNet::new(
         net,
         initial_marking.ok_or(PNMLParseError::MissingInitialMarking)?,
@@ -305,32 +495,14 @@ pub(crate) fn accepting_net(
     ))
 }
 
-///
-/// Import a PNML file from the given standard buffered reader (implementing [`std::io::BufRead`])
-///
-/// See [`import_pnml`] for what is read.
-pub fn import_pnml_reader<T: BufRead>(
-    std_reader: &mut T,
-) -> Result<(PetriNet, Option<Marking>, Option<Marking>), PNMLParseError> {
-    import_pnml(&mut Reader::from_reader(std_reader))
-}
-
-/// Import a PNML file from the given filepath
-///
-/// See [`import_pnml`] for what is read.
-pub fn import_pnml_from_path<P: AsRef<std::path::Path>>(
-    path: P,
-) -> Result<(PetriNet, Option<Marking>, Option<Marking>), PNMLParseError> {
-    import_pnml(&mut Reader::from_file(path)?)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{import_pnml_from_path, import_pnml_reader, PNMLParseError};
+    use super::{import_pnml, PNMLParseError};
     use crate::{
         core::process_models::case_centric::petri_net::{
+            io::PetriNetIOError,
             marking::Marking,
-            net::{PlaceID, TransitionID},
+            net::{PetriNet, PlaceID, TransitionID},
         },
         test_utils::get_test_data_path,
     };
@@ -351,9 +523,15 @@ mod tests {
         get_test_data_path().join("petri-net").join(name)
     }
 
+    fn import_file(
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<(PetriNet, Option<Marking>, Option<Marking>), PetriNetIOError> {
+        import_pnml(std::io::BufReader::new(std::fs::File::open(path)?))
+    }
+
     #[test]
     fn reads_labels_silent_flags_and_file_order() {
-        let (net, initial, final_marking) = import_pnml_reader(&mut SMALL.as_bytes()).unwrap();
+        let (net, initial, final_marking) = import_pnml(SMALL.as_bytes()).unwrap();
         let labels: Vec<_> = net.transitions().map(|(_, t)| t.label.clone()).collect();
         assert_eq!(
             labels,
@@ -374,8 +552,10 @@ mod tests {
             "</marking><marking/></finalmarkings>",
         );
         assert!(matches!(
-            import_pnml_reader(&mut pnml.as_bytes()),
-            Err(PNMLParseError::MultipleFinalMarkings(2))
+            import_pnml(pnml.as_bytes()),
+            Err(PetriNetIOError::Pnml(
+                PNMLParseError::MultipleFinalMarkings(2)
+            ))
         ));
     }
 
@@ -383,13 +563,13 @@ mod tests {
     fn references_to_unknown_nodes_are_an_error() {
         let arc = SMALL.replace(r#"target="sink"/>"#, r#"target="nowhere"/>"#);
         assert!(matches!(
-            import_pnml_reader(&mut arc.as_bytes()),
-            Err(PNMLParseError::UnknownNode(id)) if id == "nowhere"
+            import_pnml(arc.as_bytes()),
+            Err(PetriNetIOError::Pnml(PNMLParseError::UnknownNode(id))) if id == "nowhere"
         ));
         let marking = SMALL.replace(r#"<place idref="sink">"#, r#"<place idref="nowhere">"#);
         assert!(matches!(
-            import_pnml_reader(&mut marking.as_bytes()),
-            Err(PNMLParseError::UnknownNode(id)) if id == "nowhere"
+            import_pnml(marking.as_bytes()),
+            Err(PetriNetIOError::Pnml(PNMLParseError::UnknownNode(id))) if id == "nowhere"
         ));
     }
 
@@ -397,16 +577,16 @@ mod tests {
     fn duplicate_ids_are_an_error() {
         let places = SMALL.replace(r#"<place id="sink"/>"#, r#"<place id="src"/>"#);
         assert!(matches!(
-            import_pnml_reader(&mut places.as_bytes()),
-            Err(PNMLParseError::DuplicateNode(id)) if id == "src"
+            import_pnml(places.as_bytes()),
+            Err(PetriNetIOError::Pnml(PNMLParseError::DuplicateNode(id))) if id == "src"
         ));
         let mixed = SMALL.replace(
             r#"<transition id="t_noname"/>"#,
             r#"<transition id="sink"/>"#,
         );
         assert!(matches!(
-            import_pnml_reader(&mut mixed.as_bytes()),
-            Err(PNMLParseError::DuplicateNode(id)) if id == "sink"
+            import_pnml(mixed.as_bytes()),
+            Err(PetriNetIOError::Pnml(PNMLParseError::DuplicateNode(id))) if id == "sink"
         ));
     }
 
@@ -417,8 +597,37 @@ mod tests {
             r#"source="src" target="sink""#,
         );
         assert!(matches!(
-            import_pnml_reader(&mut pnml.as_bytes()),
-            Err(PNMLParseError::InvalidArc { .. })
+            import_pnml(pnml.as_bytes()),
+            Err(PetriNetIOError::Pnml(PNMLParseError::InvalidArc { .. }))
+        ));
+    }
+
+    #[test]
+    fn overflowing_sums_are_an_error() {
+        let max = u32::MAX;
+        let arcs = SMALL.replace(
+            "<inscription><text>2</text>",
+            &format!("<inscription><text>{max}</text>"),
+        );
+        assert!(matches!(
+            import_pnml(arcs.as_bytes()),
+            Err(PetriNetIOError::Pnml(PNMLParseError::TokenCountOverflow(id))) if id == "src"
+        ));
+        let initial = SMALL.replace(
+            "<initialMarking><text>1</text>",
+            &format!("<initialMarking><text>{max}</text><text>1</text>"),
+        );
+        assert!(matches!(
+            import_pnml(initial.as_bytes()),
+            Err(PetriNetIOError::Pnml(PNMLParseError::TokenCountOverflow(id))) if id == "src"
+        ));
+        let final_marking = SMALL.replace(
+            r#"<place idref="src"><text>0</text></place>"#,
+            &format!(r#"<place idref="sink"><text>{max}</text></place>"#),
+        );
+        assert!(matches!(
+            import_pnml(final_marking.as_bytes()),
+            Err(PetriNetIOError::Pnml(PNMLParseError::TokenCountOverflow(id))) if id == "sink"
         ));
     }
 
@@ -429,15 +638,231 @@ mod tests {
             "<initialMarking><text>abc</text>",
         );
         assert!(matches!(
-            import_pnml_reader(&mut pnml.as_bytes()),
-            Err(PNMLParseError::InvalidTokenCount(_))
+            import_pnml(pnml.as_bytes()),
+            Err(PetriNetIOError::Pnml(PNMLParseError::InvalidTokenCount(_)))
         ));
     }
 
     #[test]
+    fn toolspecific_content_is_ignored() {
+        let pnml = SMALL
+            .replace(
+                r#"<name><text>b</text></name>"#,
+                r#"<name><text>b+start</text></name><toolspecific tool="x" version="5.2"><logevent><name>b</name><type>start</type></logevent></toolspecific>"#,
+            )
+            .replace(
+                "<text>1</text></initialMarking>",
+                r#"<text>1</text><toolspecific tool="x" version="1"><text>5</text></toolspecific></initialMarking>"#,
+            )
+            .replace(
+                "</page>",
+                r#"</page><toolspecific tool="x" version="1"><place id="src"/><transition id="extra"/><net id="n2"/></toolspecific>"#,
+            );
+        let (net, initial, _) = import_pnml(pnml.as_bytes()).unwrap();
+        assert_eq!(
+            net.transition(TransitionID(0)).label.as_deref(),
+            Some("b+start")
+        );
+        assert_eq!(net.num_transitions(), 4);
+        assert_eq!(initial, Some(Marking::from([(PlaceID(0), 1)])));
+    }
+
+    #[test]
+    fn prom_5_2_event_names_are_labels() {
+        let label = |transition: &str| {
+            let pnml = SMALL.replace(
+                r#"<transition id="t_b"><name><text>b</text></name></transition>"#,
+                transition,
+            );
+            let (net, _, _) = import_pnml(pnml.as_bytes()).unwrap();
+            net.transition(TransitionID(0)).label.clone()
+        };
+        let logevent = |name: &str| {
+            format!(
+                r#"<toolspecific tool="ProM" version="5.2"><graphics><name>g</name></graphics><logevent><name>{name}</name><type>complete</type></logevent></toolspecific>"#
+            )
+        };
+        assert_eq!(
+            label(&format!(
+                r#"<transition id="t_b"><name><text>b\ncomplete</text></name>{}</transition>"#,
+                logevent(" b &amp; c\n")
+            )),
+            Some("b & c".into())
+        );
+        assert_eq!(
+            label(&format!(
+                r#"<transition id="t_b">{}<name><text>b+complete</text></name></transition>"#,
+                logevent("<![CDATA[b]]>")
+            )),
+            Some("b".into())
+        );
+        assert_eq!(
+            label(&format!(
+                r#"<transition id="t_b"><name><text>b</text></name>{}</transition>"#,
+                logevent("")
+            )),
+            Some("b".into())
+        );
+    }
+
+    #[test]
+    fn non_pt_nets_are_an_error() {
+        let with_type = |net_type: &str| {
+            SMALL.replace(
+                r#"type="http://www.pnml.org/version-2009/grammar/pnmlcoremodel""#,
+                net_type,
+            )
+        };
+        for net_type in [
+            r#"type="http://www.pnml.org/version-2009/grammar/ptnet""#,
+            r#"type="http://www.pnml.org/version-2009/grammar/ptnet/""#,
+            r#"type="http://www.pnml.org/grammar/ptnet""#,
+            r#"type="http://www.pnml.org/version-2009/grammar/pnmlcoremodel/""#,
+            r#"type="http://www.informatik.hu-berlin.de/top/pnml/basicPNML.rng""#,
+            r#"type="http://www.informatik.hu-berlin.de/top/pntd/ptNetb""#,
+            r#"type="P/T net""#,
+            "",
+        ] {
+            assert!(
+                import_pnml(with_type(net_type).as_bytes()).is_ok(),
+                "{net_type}"
+            );
+        }
+        for net_type in ["symmetricnet", "highlevelnet", "pt-hlpng"] {
+            let pnml = with_type(&format!(
+                r#"type="http://www.pnml.org/version-2009/grammar/{net_type}""#
+            ));
+            assert!(matches!(
+                import_pnml(pnml.as_bytes()),
+                Err(PetriNetIOError::Pnml(PNMLParseError::UnsupportedNetType(t))) if t.ends_with(net_type)
+            ));
+        }
+        let hl_marking = SMALL.replace(
+            "<initialMarking><text>1</text></initialMarking>",
+            "<hlinitialMarking><text>1'dot</text></hlinitialMarking>",
+        );
+        let hl_arc = SMALL.replace(
+            r#"target="sink"/>"#,
+            r#"target="sink"><hlinscription><text>x</text></hlinscription></arc>"#,
+        );
+        for (pnml, element) in [(hl_marking, "hlinitialMarking"), (hl_arc, "hlinscription")] {
+            assert!(matches!(
+                import_pnml(pnml.as_bytes()),
+                Err(PetriNetIOError::Pnml(PNMLParseError::UnsupportedNetType(e))) if e == element
+            ));
+        }
+    }
+
+    #[test]
+    fn cdata_and_prefixed_elements_are_read() {
+        let pnml = SMALL
+            .replace("<text>b</text>", "<text><![CDATA[b<1>]]></text>")
+            .replace(
+                "<pnml>",
+                r#"<p:pnml xmlns:p="http://www.pnml.org/version-2009/grammar/pnml">"#,
+            )
+            .replace("</pnml>", "</p:pnml>")
+            .replace("<place ", "<p:place ")
+            .replace("</place>", "</p:place>");
+        let (net, initial, final_marking) = import_pnml(pnml.as_bytes()).unwrap();
+        assert_eq!(
+            net.transition(TransitionID(0)).label.as_deref(),
+            Some("b<1>")
+        );
+        assert_eq!(initial, Some(Marking::from([(PlaceID(0), 1)])));
+        assert_eq!(final_marking, Some(Marking::from([(PlaceID(1), 1)])));
+    }
+
+    #[test]
+    fn special_arcs_are_an_error() {
+        let arc = |kind: &str| {
+            SMALL.replace(
+                r#"target="sink"/>"#,
+                &format!(r#"target="sink"><arctype><text>{kind}</text></arctype></arc>"#),
+            )
+        };
+        assert!(import_pnml(arc("normal").as_bytes()).is_ok());
+        assert!(matches!(
+            import_pnml(arc("inhibitor").as_bytes()),
+            Err(PetriNetIOError::Pnml(PNMLParseError::UnsupportedArcType(kind))) if kind == "inhibitor"
+        ));
+    }
+
+    #[test]
+    fn several_nets_are_an_error() {
+        let net = &SMALL[SMALL.find("<net ").unwrap()..SMALL.find("</pnml>").unwrap()];
+        let pnml = SMALL.replace(
+            "</pnml>",
+            &format!("{}</pnml>", net.replace("net1", "net2")),
+        );
+        assert!(matches!(
+            import_pnml(pnml.as_bytes()),
+            Err(PetriNetIOError::Pnml(PNMLParseError::MultipleNets))
+        ));
+    }
+
+    #[test]
+    fn reference_nodes_stand_for_their_nodes() {
+        let with = |nodes: &str| {
+            SMALL.replace(
+                "</page>",
+                &format!(r#"<page id="page2"><page id="page3">{nodes}<arc id="a4" source="rt" target="rp"/></page></page></page>"#),
+            )
+        };
+        let pnml = with(
+            r#"<referencePlace id="rp0" ref="sink"/><referencePlace id="rp" ref="rp0"/><referenceTransition id="rt" ref="t_b"/>"#,
+        );
+        let (net, _, _) = import_pnml(pnml.as_bytes()).unwrap();
+        assert_eq!(net.num_places(), 2);
+        assert_eq!(
+            net.transition(TransitionID(0)).outputs(),
+            &[(PlaceID(1), 2)]
+        );
+
+        let wrong_kind =
+            with(r#"<referencePlace id="rp" ref="sink"/><referenceTransition id="rt" ref="src"/>"#);
+        let cycle = with(
+            r#"<referencePlace id="rp" ref="rp2"/><referencePlace id="rp2" ref="rp"/><referenceTransition id="rt" ref="t_b"/>"#,
+        );
+        for pnml in [wrong_kind, cycle] {
+            assert!(matches!(
+                import_pnml(pnml.as_bytes()),
+                Err(PetriNetIOError::Pnml(PNMLParseError::InvalidReference(_)))
+            ));
+        }
+    }
+
+    #[test]
+    fn long_reference_chains_resolve() {
+        let n = 20_000;
+        let refs = |order: &mut dyn Iterator<Item = usize>| {
+            let refs: String = order
+                .map(|i| match i {
+                    0 => r#"<referencePlace id="r0" ref="sink"/>"#.to_string(),
+                    i => format!(r#"<referencePlace id="r{i}" ref="r{}"/>"#, i - 1),
+                })
+                .collect();
+            SMALL.replace(
+                "</page>",
+                &format!(
+                    r#"{refs}<arc id="a4" source="t_b" target="r{}"/></page>"#,
+                    n - 1
+                ),
+            )
+        };
+        for pnml in [refs(&mut (0..n).rev()), refs(&mut (0..n))] {
+            let (net, _, _) = import_pnml(pnml.as_bytes()).unwrap();
+            assert_eq!(net.num_places(), 2);
+            assert_eq!(
+                net.transition(TransitionID(0)).outputs(),
+                &[(PlaceID(1), 2)]
+            );
+        }
+    }
+
+    #[test]
     fn pnml_import() {
-        let (net, initial, final_marking) =
-            import_pnml_from_path(petri_net_file("pn.pnml")).unwrap();
+        let (net, initial, final_marking) = import_file(petri_net_file("pn.pnml")).unwrap();
         assert_eq!(net.num_transitions(), 46);
         assert_eq!(net.num_places(), 9);
         assert_eq!(net.arcs().count(), 24);
@@ -449,22 +874,26 @@ mod tests {
     #[test]
     fn nets_without_markings_import() {
         let (net, initial, final_marking) =
-            import_pnml_from_path(petri_net_file("bpic12-tsinghua.pnml")).unwrap();
+            import_file(petri_net_file("bpic12-tsinghua.pnml")).unwrap();
         assert_eq!(net.num_transitions(), 10);
         assert_eq!((initial, final_marking), (None, None));
+        // ProM 5.2 appends a literal `\n` and the event type to `<name>`
+        let labels: Vec<_> = net
+            .transitions()
+            .map(|(_, t)| t.label.clone().unwrap())
+            .collect();
+        assert!(labels.contains(&"W_Beoordelen fraude".to_string()));
+        assert!(labels.iter().all(|label| !label.contains('\\')));
     }
 
     #[test]
     fn import_is_deterministic() {
         let path = petri_net_file("sepsis-DISCovered.apnml");
-        assert_eq!(
-            import_pnml_from_path(&path).unwrap(),
-            import_pnml_from_path(&path).unwrap()
-        );
+        assert_eq!(import_file(&path).unwrap(), import_file(&path).unwrap());
     }
 
     #[test]
     fn not_a_pnml_file_is_an_error() {
-        assert!(import_pnml_from_path(petri_net_file("not-a-petri-net.slang")).is_err());
+        assert!(import_file(petri_net_file("not-a-petri-net.slang")).is_err());
     }
 }

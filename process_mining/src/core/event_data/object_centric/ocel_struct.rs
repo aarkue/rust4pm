@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 
 use chrono::{DateTime, FixedOffset};
@@ -17,7 +17,9 @@ use crate::core::event_data::{
 ///
 /// Consists of multiple [`OCELEvent`]s and [`OCELObject`]s with corresponding event and object [`OCELType`]s
 ///
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, RegistryEntity)]
+/// Deserializing reads a string attribute value as a timestamp (if it is one) only when its event
+/// or object type does not declare the attribute with another type.
+#[derive(Serialize, Debug, Clone, Default, PartialEq, JsonSchema, RegistryEntity)]
 pub struct OCEL {
     /// Event Types in OCEL
     #[serde(rename = "eventTypes")]
@@ -61,6 +63,226 @@ impl OCEL {
             .collect::<Vec<_>>();
 
         underlying_ocel
+    }
+}
+
+impl<'de> Deserialize<'de> for OCEL {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct JsonOCEL {
+            #[serde(rename = "eventTypes")]
+            event_types: Vec<OCELType>,
+            #[serde(rename = "objectTypes")]
+            object_types: Vec<OCELType>,
+            #[serde(default)]
+            events: Vec<JsonOCELEvent>,
+            #[serde(default)]
+            objects: Vec<JsonOCELObject>,
+        }
+        let json = JsonOCEL::deserialize(deserializer)?;
+        let event_attribute_types = DeclaredAttributeTypes::from_types(&json.event_types);
+        let object_attribute_types = DeclaredAttributeTypes::from_types(&json.object_types);
+        Ok(OCEL {
+            events: json
+                .events
+                .into_iter()
+                .map(|e| e.resolve(&event_attribute_types))
+                .collect(),
+            objects: json
+                .objects
+                .into_iter()
+                .map(|o| o.resolve(&object_attribute_types))
+                .collect(),
+            event_types: json.event_types,
+            object_types: json.object_types,
+        })
+    }
+}
+
+/// Attribute types declared per event or object type, to read attribute values with
+#[derive(Debug, Default)]
+pub(crate) struct DeclaredAttributeTypes(HashMap<String, HashMap<String, OCELAttributeType>>);
+
+impl DeclaredAttributeTypes {
+    fn from_types(types: &[OCELType]) -> Self {
+        let mut ret = Self::default();
+        types.iter().for_each(|t| ret.declare(t));
+        ret
+    }
+
+    /// Declare (or re-declare) the attributes of `t`
+    pub(crate) fn declare(&mut self, t: &OCELType) {
+        self.0.insert(
+            t.name.clone(),
+            t.attributes
+                .iter()
+                .map(|a| {
+                    (
+                        a.name.clone(),
+                        OCELAttributeType::from_type_str(&a.value_type),
+                    )
+                })
+                .collect(),
+        );
+    }
+
+    /// Declare (or re-declare) one attribute of type `type_name`
+    pub(crate) fn declare_attribute(
+        &mut self,
+        type_name: &str,
+        attribute: &str,
+        attribute_type: OCELAttributeType,
+    ) {
+        if let Some(attributes) = self.0.get_mut(type_name) {
+            attributes.insert(attribute.to_string(), attribute_type);
+        } else {
+            self.0.insert(
+                type_name.to_string(),
+                HashMap::from([(attribute.to_string(), attribute_type)]),
+            );
+        }
+    }
+
+    pub(crate) fn get(&self, type_name: &str, attribute: &str) -> Option<OCELAttributeType> {
+        self.0.get(type_name)?.get(attribute).copied()
+    }
+}
+
+/// An [`OCELAttributeValue`] as read from OCEL JSON, where a timestamp is a string
+///
+/// Read separately because untagged [`OCELAttributeValue`] would turn every string that parses as
+/// a timestamp into [`OCELAttributeValue::Time`], even for an attribute declared as a string.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum JsonAttributeValue {
+    Integer(i64),
+    Float(f64),
+    Boolean(bool),
+    String(String),
+    Null,
+}
+
+impl JsonAttributeValue {
+    /// A string is read as the declared type if it parses as one (the OCEL 2.0 JSON schema types
+    /// every value as a string), and a whole number declared `float` (e.g., `5` written by
+    /// JavaScript for `5.0`) as a float.
+    fn resolve(self, declared: impl FnOnce() -> Option<OCELAttributeType>) -> OCELAttributeValue {
+        match self {
+            Self::Integer(i) => match declared() {
+                Some(OCELAttributeType::Float) => OCELAttributeValue::Float(i as f64),
+                _ => OCELAttributeValue::Integer(i),
+            },
+            Self::Float(f) => OCELAttributeValue::Float(f),
+            Self::Boolean(b) => OCELAttributeValue::Boolean(b),
+            Self::Null => OCELAttributeValue::Null,
+            Self::String(s) => match declared() {
+                Some(OCELAttributeType::Null) | None => {
+                    // Same parsing as the `Deserialize` of `DateTime` in untagged `OCELAttributeValue`
+                    match s.parse::<DateTime<FixedOffset>>() {
+                        Ok(dt) => OCELAttributeValue::Time(dt),
+                        Err(_) => OCELAttributeValue::String(s),
+                    }
+                }
+                Some(OCELAttributeType::String) => OCELAttributeValue::String(s),
+                Some(t) => {
+                    let s = OCELAttributeValue::String(s);
+                    s.try_coerce_to(t).unwrap_or(s)
+                }
+            },
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct JsonOCELEventAttribute {
+    name: String,
+    value: JsonAttributeValue,
+}
+
+/// An [`OCELEvent`] as read from OCEL JSON, before attribute values are resolved against the
+/// declared types (see [`JsonAttributeValue`])
+#[derive(Deserialize)]
+pub(crate) struct JsonOCELEvent {
+    id: String,
+    #[serde(rename = "type")]
+    event_type: String,
+    #[serde(deserialize_with = "robust_timestamp_parsing")]
+    time: DateTime<FixedOffset>,
+    #[serde(default)]
+    attributes: Vec<JsonOCELEventAttribute>,
+    #[serde(default)]
+    relationships: Vec<OCELRelationship>,
+}
+
+impl JsonOCELEvent {
+    pub(crate) fn resolve(self, types: &DeclaredAttributeTypes) -> OCELEvent {
+        let JsonOCELEvent {
+            id,
+            event_type,
+            time,
+            attributes,
+            relationships,
+        } = self;
+        let attributes = attributes
+            .into_iter()
+            .map(|a| OCELEventAttribute {
+                value: a.value.resolve(|| types.get(&event_type, &a.name)),
+                name: a.name,
+            })
+            .collect();
+        OCELEvent {
+            id,
+            event_type,
+            time,
+            attributes,
+            relationships,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct JsonOCELObjectAttribute {
+    name: String,
+    value: JsonAttributeValue,
+    #[serde(deserialize_with = "robust_timestamp_parsing")]
+    time: DateTime<FixedOffset>,
+}
+
+/// An [`OCELObject`] as read from OCEL JSON, before attribute values are resolved against the
+/// declared types (see [`JsonAttributeValue`])
+#[derive(Deserialize)]
+pub(crate) struct JsonOCELObject {
+    id: String,
+    #[serde(rename = "type")]
+    object_type: String,
+    #[serde(default)]
+    attributes: Vec<JsonOCELObjectAttribute>,
+    #[serde(default)]
+    relationships: Vec<OCELRelationship>,
+}
+
+impl JsonOCELObject {
+    pub(crate) fn resolve(self, types: &DeclaredAttributeTypes) -> OCELObject {
+        let JsonOCELObject {
+            id,
+            object_type,
+            attributes,
+            relationships,
+        } = self;
+        let attributes = attributes
+            .into_iter()
+            .map(|a| OCELObjectAttribute {
+                value: a.value.resolve(|| types.get(&object_type, &a.name)),
+                name: a.name,
+                time: a.time,
+            })
+            .collect();
+        OCELObject {
+            id,
+            object_type,
+            attributes,
+            relationships,
+        }
     }
 }
 
@@ -198,7 +420,7 @@ where
     D: serde::Deserializer<'de>,
 {
     let time: String = Deserialize::deserialize(deserializer)?;
-    parse_timestamp(&time, None, false).map_err(serde::de::Error::custom)
+    parse_timestamp(&time, None).map_err(serde::de::Error::custom)
 }
 
 impl OCELObjectAttribute {
@@ -281,13 +503,12 @@ impl OCELAttributeValue {
                 Some(String(v.to_string()))
             }
             (T::Float, Integer(i)) => Some(Float(*i as f64)),
-            (T::Integer, Float(f)) => {
-                let i = *f as i64;
-                if (i as f64) == *f {
-                    Some(Integer(i))
-                } else {
-                    None
-                }
+            // `as` saturates, and `i64::MAX as f64` rounds up to 2^63, so a round-trip check
+            // alone would accept 2^63 as `i64::MAX`
+            (T::Integer, Float(f))
+                if f.fract() == 0.0 && (-(2f64.powi(63))..2f64.powi(63)).contains(f) =>
+            {
+                Some(Integer(*f as i64))
             }
             (T::Integer, String(s)) => s.parse::<i64>().ok().map(Integer),
             (T::Float, String(s)) => s.parse::<f64>().ok().map(Float),
@@ -296,8 +517,56 @@ impl OCELAttributeValue {
                 "false" => Some(Boolean(false)),
                 _ => None,
             },
-            (T::Time, String(s)) => parse_timestamp(s, None, false).ok().map(Time),
+            (T::Time, String(s)) => parse_timestamp(s, None).ok().map(Time),
             _ => None,
+        }
+    }
+
+    /// Convert this value to `target`, as the SQL exporters store it in a column of that type.
+    /// `Null` stays `Null`, and an unknown `target` (`Null`) is treated as `String`. Returns
+    /// `None` if the value has no reading as `target`.
+    ///
+    /// Extends [`Self::try_coerce_to`] with lossy conversions, and trims text before parsing:
+    ///   Float          -> Integer  (rounded half away from zero, if within `i64` range)
+    ///   Integer, Float -> Boolean  (nonzero is `true`)
+    ///   String         -> Boolean  (also `"1"`/`"0"`)
+    ///   String         -> Integer  (also a whole float such as `"3.0"`)
+    pub fn normalize_to(&self, target: OCELAttributeType) -> Option<OCELAttributeValue> {
+        use OCELAttributeType as T;
+        use OCELAttributeValue::*;
+        let target = if target == T::Null { T::String } else { target };
+        if matches!(self, Null) || self.get_type() == target {
+            return Some(self.clone());
+        }
+        // Same range check as in `try_coerce_to`.
+        let to_integer = |f: f64| {
+            (-(2f64.powi(63))..2f64.powi(63))
+                .contains(&f)
+                .then_some(Integer(f as i64))
+        };
+        match (target, self) {
+            (T::Integer, Float(f)) => to_integer(f.round()),
+            (T::Boolean, Integer(i)) => Some(Boolean(*i != 0)),
+            (T::Boolean, Float(f)) if !f.is_nan() => Some(Boolean(*f != 0.0)),
+            (T::Integer, Boolean(b)) => Some(Integer(i64::from(*b))),
+            (T::Float, Boolean(b)) => Some(Float(f64::from(u8::from(*b)))),
+            (T::Integer, String(s)) => {
+                let s = s.trim();
+                s.parse::<i64>().ok().map(Integer).or_else(|| {
+                    s.parse::<f64>()
+                        .ok()
+                        .filter(|f| f.fract() == 0.0)
+                        .and_then(to_integer)
+                })
+            }
+            (T::Float, String(s)) => s.trim().parse::<f64>().ok().map(Float),
+            (T::Boolean, String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+                "true" | "1" => Some(Boolean(true)),
+                "false" | "0" => Some(Boolean(false)),
+                _ => None,
+            },
+            (T::Time, String(s)) => parse_timestamp(s, None).ok().map(Time),
+            _ => self.try_coerce_to(target),
         }
     }
 }
@@ -445,7 +714,8 @@ impl OCELAttributeType {
             "float" => OCELAttributeType::Float,
             "boolean" => OCELAttributeType::Boolean,
             "integer" => OCELAttributeType::Integer,
-            "time" => OCELAttributeType::Time,
+            // pm4py writes `date` for timestamp attributes
+            "time" | "date" => OCELAttributeType::Time,
             _ => OCELAttributeType::Null,
         }
     }
@@ -466,5 +736,68 @@ impl OCELAttributeType {
             (Integer, Float) | (Float, Integer) => Float,
             _ => String,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn float_to_integer_coercion_rejects_out_of_range() {
+        let two_pow_63 = 2f64.powi(63);
+        assert_eq!(
+            OCELAttributeValue::Float(two_pow_63).try_coerce_to(OCELAttributeType::Integer),
+            None
+        );
+        assert_eq!(
+            OCELAttributeValue::Float(-two_pow_63).try_coerce_to(OCELAttributeType::Integer),
+            Some(OCELAttributeValue::Integer(i64::MIN))
+        );
+        assert_eq!(
+            OCELAttributeValue::Float(3.0).try_coerce_to(OCELAttributeType::Integer),
+            Some(OCELAttributeValue::Integer(3))
+        );
+        for f in [0.5, f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                OCELAttributeValue::Float(f).try_coerce_to(OCELAttributeType::Integer),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_to_converts_to_the_declared_type() {
+        use OCELAttributeType as T;
+        use OCELAttributeValue as V;
+        let s = |s: &str| V::String(s.to_string());
+        for (v, target, want) in [
+            (V::Integer(2), T::Float, Some(V::Float(2.0))),
+            (V::Float(2.5), T::Integer, Some(V::Integer(3))),
+            (V::Float(-2.5), T::Integer, Some(V::Integer(-3))),
+            (V::Float(f64::NAN), T::Integer, None),
+            (V::Float(1e19), T::Integer, None),
+            (V::Integer(0), T::Boolean, Some(V::Boolean(false))),
+            (V::Float(0.1), T::Boolean, Some(V::Boolean(true))),
+            (s(" TRUE "), T::Boolean, Some(V::Boolean(true))),
+            (s("0"), T::Boolean, Some(V::Boolean(false))),
+            (s("yes"), T::Boolean, None),
+            (s(" 3.0"), T::Integer, Some(V::Integer(3))),
+            (s("3.5"), T::Integer, None),
+            (s("n/a"), T::Integer, None),
+            (s(" 2.5 "), T::Float, Some(V::Float(2.5))),
+            (V::Boolean(true), T::String, Some(s("true"))),
+            (V::Boolean(true), T::Integer, Some(V::Integer(1))),
+            (V::Boolean(false), T::Float, Some(V::Float(0.0))),
+            (V::Integer(1), T::Null, Some(s("1"))),
+            (V::Null, T::Integer, Some(V::Null)),
+            (V::Boolean(true), T::Time, None),
+        ] {
+            assert_eq!(v.normalize_to(target), want, "{v:?} as {target:?}");
+        }
+        assert!(matches!(
+            s("2024-01-01T10:00:00+00:00").normalize_to(T::Time),
+            Some(V::Time(_))
+        ));
     }
 }

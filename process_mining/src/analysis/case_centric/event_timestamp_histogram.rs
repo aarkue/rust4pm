@@ -30,7 +30,7 @@ pub struct AggregatedEventTimestamps {
     pub bin_width_ms: i64,
 }
 
-/// Options for [`get_event_timestamps`].
+/// Options for [`event_timestamp_histogram`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EventTimestampOptions {
     /// Number of time bins to aggregate events into.
@@ -54,9 +54,9 @@ impl Default for EventTimestampOptions {
 /// Aggregate event timestamps into a fixed number of bins, grouped by activity.
 ///
 /// Events without a valid timestamp are skipped; events without a recognized
-/// activity are counted under `"UNKNOWN"`.
+/// activity are counted under `"UNKNOWN"`. With `num_bins` set to `0`, there are no bins.
 #[register_binding]
-pub fn get_event_timestamps(
+pub fn event_timestamp_histogram(
     log: &EventLog,
     #[bind(default)] options: EventTimestampOptions,
 ) -> AggregatedEventTimestamps {
@@ -89,6 +89,7 @@ pub fn get_event_timestamps(
         .map(|(t, _)| t)
         .minmax()
         .into_option()
+        .filter(|_| num_bins > 0)
     else {
         return AggregatedEventTimestamps {
             events_per_timestamp: HashMap::default(),
@@ -99,14 +100,13 @@ pub fn get_event_timestamps(
     // Bin centers are whole milliseconds, so rounding the width up keeps it equal to the center
     // spacing even when the span is shorter than the number of bins.
     let bin_width_ms = (((max - min) as f64 / num_bins as f64).ceil() as i64).max(1);
-    let date_bins: Vec<_> = (0..num_bins)
-        .map(|bin_index| min + bin_index as i64 * bin_width_ms + bin_width_ms / 2)
-        .collect();
     let mut ev_counts: HashMap<i64, HashMap<String, usize>> = HashMap::new();
     for (timestamp, act) in &timestamps_with_act {
-        let bin_index = (((timestamp - min) / bin_width_ms) as usize).min(num_bins - 1);
+        // Clamped in `i64`, as `num_bins` comes from the caller and need not fit
+        let bin_index =
+            ((timestamp - min) / bin_width_ms).min(i64::try_from(num_bins - 1).unwrap_or(i64::MAX));
         *ev_counts
-            .entry(date_bins[bin_index])
+            .entry(min + bin_index * bin_width_ms + bin_width_ms / 2)
             .or_default()
             .entry(act.clone())
             .or_default() += 1;
@@ -115,5 +115,33 @@ pub fn get_event_timestamps(
         events_per_timestamp: ev_counts,
         activities: activities.into_iter().cloned().collect(),
         bin_width_ms,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_bins_give_no_bins() {
+        let log = crate::event_log!(["a", "b"], ["a", "c"]);
+        let options = EventTimestampOptions {
+            num_bins: 0,
+            ..Default::default()
+        };
+        let result = event_timestamp_histogram(&log, options);
+        assert!(result.events_per_timestamp.is_empty());
+        assert_eq!(result.bin_width_ms, 0);
+    }
+
+    #[test]
+    fn huge_num_bins_allocate_no_bins_up_front() {
+        let log = crate::event_log!(["a", "b"], ["a", "c"]);
+        let options = EventTimestampOptions {
+            num_bins: usize::MAX,
+            ..Default::default()
+        };
+        let result = event_timestamp_histogram(&log, options);
+        assert_eq!(result.bin_width_ms, 1);
     }
 }

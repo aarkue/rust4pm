@@ -34,13 +34,17 @@ use std::path::Path;
 use chrono::{DateTime, FixedOffset};
 use duckdb::{types::Value as DuckValue, Connection, ToSql};
 
+use crate::core::event_data::object_centric::ocel_sql::duckdb::schema::stream::{
+    apply_compression, open_fresh, optimize_and_index, remove_database,
+};
 use crate::core::event_data::object_centric::ocel_sql::duckdb::schema::tables::{
-    build_events_table, create_indexes, create_schema, event_attr_sql_type, quote_ident, T_E2O,
+    add_events_column, create_events_table, create_schema, ColumnNames, EVENT_BASE_COLS, T_E2O,
     T_EVENTS, T_EVENT_ATTR_META, T_O2O, T_OBJECTS, T_OBJECT_ATTR_CHANGES, T_OBJECT_ATTR_META,
 };
 use crate::core::event_data::object_centric::ocel_sql::duckdb::schema::value::{
     datetime_to_duck_timestamp, ocel_value_to_duck, to_sql_value,
 };
+use crate::core::event_data::object_centric::ocel_sql::{DuckDbWriteOptions, ValueNormalizer};
 use crate::core::event_data::object_centric::ocel_struct::OCELAttributeType;
 use crate::core::event_data::object_centric::{OCELAttributeValue, OCELTypeAttribute};
 
@@ -94,7 +98,8 @@ const T_ENDPOINT_GATE: &str = "_extraction_deferred_endpoint_gate";
 /// An index rather than a check: reading the table back per row scans a table that grows with the
 /// run, and deleting the duplicates at finalize would write a row per repeat to disk first.
 /// `DuckDB` rejects the insert against its ART index in log time instead. Left in the finished
-/// database, since one value per `(id, attribute, time)` is a property of a well-formed OCEL.
+/// database, since one value per `(id, attribute, time)` is a property of a well-formed OCEL,
+/// unless [`DuckDbWriteOptions::optimize_filesize`] rewrites the table, which drops it.
 const I_OBJECT_ATTR_ONCE: &str = "_extraction_object_attribute_once";
 
 /// Streaming [`ExtractionSink`] that writes directly to a `DuckDB` file in the consolidated
@@ -105,11 +110,12 @@ const I_OBJECT_ATTR_ONCE: &str = "_extraction_object_attribute_once";
 ///
 /// Construct with [`DuckDbSink::new`], run an [`extract`](super::extract::extract) against it,
 /// then call [`DuckDbSink::finalize`] before reading the file back (with
-/// [`read_ocel_from_duckdb`](crate::core::event_data::object_centric::ocel_sql::read_ocel_from_duckdb),
+/// [`import_ocel_duckdb`](crate::core::event_data::object_centric::ocel_sql::import_ocel_duckdb),
 /// for instance).
 #[derive(Debug)]
 pub struct DuckDbSink {
     con: Connection,
+    options: DuckDbWriteOptions,
     declared_event_types: std::collections::HashSet<String>,
     declared_object_types: std::collections::HashSet<String>,
     /// What [`ExtractionSink::finalize`] applies to the endpoints this sink deferred.
@@ -124,6 +130,8 @@ pub struct DuckDbSink {
     ev_columns: Vec<(String, OCELAttributeType)>,
     /// name -> index into `ev_columns`.
     ev_col_index: HashMap<String, usize>,
+    /// The `events` column names taken so far.
+    ev_column_names: ColumnNames,
     events_created: bool,
     /// Next `seq` for [`T_DEFERRED`]: one counter, not one entry per id.
     deferred_seq: i64,
@@ -135,6 +143,7 @@ pub struct DuckDbSink {
     e2o_buffer: Vec<(String, String, String)>,
     /// `o2o` rows not yet appended. See [`RELATION_BUFFER`].
     o2o_buffer: Vec<(String, String, String)>,
+    normalizer: ValueNormalizer,
 }
 
 /// How many relation rows are held before an appender is opened for them.
@@ -160,14 +169,6 @@ fn append_one(
     ap.flush()
 }
 
-/// The write-ahead log `DuckDB` keeps beside a database file: the database's own path with
-/// `.wal` appended, not with its extension replaced.
-fn wal_sidecar(path: &Path) -> std::path::PathBuf {
-    let mut wal = path.as_os_str().to_owned();
-    wal.push(".wal");
-    std::path::PathBuf::from(wal)
-}
-
 /// Whether a `DuckDB` error is a primary-key violation. Matched on the message: the driver
 /// exposes no error code for it.
 fn is_duplicate_key(e: &duckdb::Error) -> bool {
@@ -176,46 +177,29 @@ fn is_duplicate_key(e: &duckdb::Error) -> bool {
 }
 
 impl DuckDbSink {
-    /// Open a fresh `DuckDB` database at `path` (an existing file at that path is replaced) and
-    /// create the consolidated schema's static tables.
+    /// Open a new `DuckDB` database at `path` and create the consolidated schema's static tables.
+    ///
+    /// `options` apply as in
+    /// [`write_ocel_to_duckdb`](crate::core::event_data::object_centric::ocel_sql::write_ocel_to_duckdb):
+    /// an existing file is replaced only with `overwrite`, and `optimize_filesize` is applied by
+    /// [`finalize`](ExtractionSink::finalize).
     ///
     /// # Errors
-    /// Returns [`SinkError::Backend`] if the existing file cannot be removed, the database cannot
-    /// be opened, or schema creation fails.
-    pub fn new(path: impl AsRef<Path>) -> Result<Self, SinkError> {
+    /// Returns [`SinkError::Backend`] if `path` exists without `overwrite`, the existing file
+    /// cannot be removed, the database cannot be opened, or schema creation fails. A database this
+    /// created is removed again on failure.
+    pub fn new(path: impl AsRef<Path>, options: &DuckDbWriteOptions) -> Result<Self, SinkError> {
         let path = path.as_ref();
-        if path.exists() {
-            std::fs::remove_file(path).map_err(|e| SinkError::Backend(e.to_string()))?;
+        let con =
+            open_fresh(path, options.overwrite).map_err(|e| SinkError::Backend(e.to_string()))?;
+        if let Err(e) = Self::create_tables(&con, options) {
+            drop(con);
+            remove_database(path);
+            return Err(backend(e));
         }
-        // A crashed earlier run leaves a write-ahead log beside the file it belonged to, which
-        // `DuckDB` would replay into this fresh database.
-        let wal = wal_sidecar(path);
-        if wal.exists() {
-            std::fs::remove_file(&wal).map_err(|e| SinkError::Backend(e.to_string()))?;
-        }
-        let con = Connection::open(path).map_err(backend)?;
-        create_schema(&con).map_err(backend)?;
-        con.execute_batch(&format!(
-            "CREATE TABLE {T_DEFERRED} (id TEXT, ocel_type TEXT, seq BIGINT)"
-        ))
-        .map_err(backend)?;
-        con.execute_batch(&format!(
-            "CREATE TABLE {T_ENDPOINT_GATE} (seq BIGINT, gate_id TEXT, gate_kind TEXT)"
-        ))
-        .map_err(backend)?;
-        con.execute_batch(&format!(
-            "CREATE UNIQUE INDEX {I_OBJECT_ATTR_ONCE} \
-             ON {T_OBJECT_ATTR_CHANGES} (id, name, \"time\")"
-        ))
-        .map_err(backend)?;
-        // Deliberately not wrapped in a transaction, however much a failed run would benefit from
-        // one: `DuckDB` aborts a transaction on a constraint violation ("Current transaction is
-        // aborted"), and this sink swallows two of those by design: the duplicate key that
-        // reports a repeated id, and the [`I_OBJECT_ATTR_ONCE`] rejection enforcing first-wins on
-        // `(id, name, time)`. Under one transaction the first static object attribute written
-        // twice would fail every statement after it.
         Ok(Self {
             con,
+            options: options.clone(),
             declared_event_types: std::collections::HashSet::new(),
             declared_object_types: std::collections::HashSet::new(),
             on_missing_endpoint: MissingEndpointPolicy::default(),
@@ -223,12 +207,36 @@ impl DuckDbSink {
             ev_attr_types: HashMap::new(),
             ev_columns: Vec::new(),
             ev_col_index: HashMap::new(),
+            ev_column_names: ColumnNames::new(&EVENT_BASE_COLS),
             events_created: false,
             deferred_seq: 0,
             last_object_ask_seq: None,
             e2o_buffer: Vec::new(),
             o2o_buffer: Vec::new(),
+            normalizer: ValueNormalizer::default(),
         })
+    }
+
+    fn create_tables(con: &Connection, options: &DuckDbWriteOptions) -> Result<(), duckdb::Error> {
+        apply_compression(con, options)?;
+        create_schema(con)?;
+        con.execute_batch(&format!(
+            "CREATE TABLE {T_DEFERRED} (id TEXT, ocel_type TEXT, seq BIGINT)"
+        ))?;
+        con.execute_batch(&format!(
+            "CREATE TABLE {T_ENDPOINT_GATE} (seq BIGINT, gate_id TEXT, gate_kind TEXT)"
+        ))?;
+        con.execute_batch(&format!(
+            "CREATE UNIQUE INDEX {I_OBJECT_ATTR_ONCE} \
+             ON {T_OBJECT_ATTR_CHANGES} (id, name, \"time\")"
+        ))?;
+        // Deliberately not wrapped in a transaction, however much a failed run would benefit from
+        // one: `DuckDB` aborts a transaction on a constraint violation ("Current transaction is
+        // aborted"), and this sink swallows two of those by design: the duplicate key that
+        // reports a repeated id, and the [`I_OBJECT_ATTR_ONCE`] rejection enforcing first-wins on
+        // `(id, name, time)`. Under one transaction the first static object attribute written
+        // twice would fail every statement after it.
+        Ok(())
     }
 
     /// Whether this run needs [`T_DEFERRED`] and [`T_ENDPOINT_GATE`] at all.
@@ -373,23 +381,8 @@ impl DuckDbSink {
         if self.events_created {
             return Ok(());
         }
-        let mut names: Vec<String> = self.ev_attr_types.keys().cloned().collect();
-        names.sort();
-        self.ev_columns = names
-            .into_iter()
-            .map(|n| {
-                let ty = self.ev_attr_types[&n];
-                (n, ty)
-            })
-            .collect();
-        self.ev_col_index = self
-            .ev_columns
-            .iter()
-            .enumerate()
-            .map(|(i, (n, _))| (n.clone(), i))
-            .collect();
-        self.con
-            .execute_batch(&build_events_table(&self.ev_columns))?;
+        (self.ev_columns, self.ev_col_index) =
+            create_events_table(&self.con, &self.ev_attr_types, &mut self.ev_column_names)?;
         self.events_created = true;
         Ok(())
     }
@@ -406,11 +399,7 @@ impl DuckDbSink {
             .get(name)
             .copied()
             .unwrap_or(OCELAttributeType::String);
-        self.con.execute_batch(&format!(
-            "ALTER TABLE {T_EVENTS} ADD COLUMN {} {}",
-            quote_ident(name),
-            event_attr_sql_type(ty)
-        ))?;
+        add_events_column(&self.con, name, ty, &mut self.ev_column_names)?;
         self.ev_col_index
             .insert(name.to_string(), self.ev_columns.len());
         self.ev_columns.push((name.to_string(), ty));
@@ -447,22 +436,6 @@ impl DuckDbSink {
         }
     }
 
-    /// The `(value, value_type)` pair one object attribute is stored as.
-    ///
-    /// [`to_sql_value`] alone is not enough: it renders [`OCELAttributeValue::Null`] as
-    /// `("", "string")`, which `from_sql_value` reads back as `String("")`, where
-    /// [`SlimOcelSink`](super::slim_sink::SlimOcelSink) still holds `Null`. That is an accepted
-    /// caveat of `write_ocel_to_duckdb`'s own round trip, but a divergence between the two
-    /// extraction sinks, which must agree. `"null"` is
-    /// [`OCELAttributeType::Null`]'s own type string, and `from_sql_value` maps it straight back
-    /// to `OCELAttributeValue::Null` regardless of the stored text.
-    fn object_attr_sql_value(v: &OCELAttributeValue) -> (std::borrow::Cow<'_, str>, &'static str) {
-        match v {
-            OCELAttributeValue::Null => (std::borrow::Cow::Borrowed(""), "null"),
-            other => to_sql_value(other),
-        }
-    }
-
     /// Write one `object_attribute_changes` row, keeping whatever was already recorded at this
     /// `(id, name, time)`. A rejection from [`I_OBJECT_ATTR_ONCE`] means a value is there already,
     /// which is the rule rather than a failure, see
@@ -475,7 +448,7 @@ impl DuckDbSink {
         time: DateTime<FixedOffset>,
         value: &OCELAttributeValue,
     ) -> Result<(), SinkError> {
-        let (value_str, value_type) = Self::object_attr_sql_value(value);
+        let (value_str, value_type) = to_sql_value(value);
         let t = datetime_to_duck_timestamp(time);
         match append_one(&self.con, T_OBJECT_ATTR_CHANGES, |ap| {
             ap.append_row((id, name, &t, value_str.as_ref(), value_type))
@@ -648,7 +621,9 @@ impl ExtractionSink for DuckDbSink {
         row.extend(std::iter::repeat_n(DuckValue::Null, self.ev_columns.len()));
         for (name, value) in attributes {
             let idx = self.ev_col_index[name];
-            row[3 + idx] = ocel_value_to_duck(value, self.ev_columns[idx].1);
+            let ty = self.ev_columns[idx].1;
+            row[3 + idx] =
+                ocel_value_to_duck(self.normalizer.normalize(value, ty, event_type, name));
         }
         let params: Vec<&dyn ToSql> = row.iter().map(|v| v as &dyn ToSql).collect();
         // `events.id` is a PRIMARY KEY, so a repeat is rejected here rather than by a set this
@@ -745,8 +720,10 @@ impl ExtractionSink for DuckDbSink {
         self.drain_all_relations()?;
         self.ensure_events_created().map_err(backend)?;
         let report = self.resolve_deferred().map_err(backend)?;
-        create_indexes(&self.con).map_err(backend)?;
-        self.con.execute_batch("CHECKPOINT").map_err(backend)?;
+        optimize_and_index(&self.con, &self.options).map_err(backend)?;
+        self.con
+            .execute_batch("CHECKPOINT; VACUUM;")
+            .map_err(backend)?;
         self.finalized = true;
         Ok(report)
     }
@@ -800,7 +777,7 @@ mod tests {
     fn open_sink() -> (tempfile::TempDir, DuckDbSink) {
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join("sink.duckdb");
-        let sink = DuckDbSink::new(&path).expect("open sink");
+        let sink = DuckDbSink::new(&path, &Default::default()).expect("open sink");
         (dir, sink)
     }
 
@@ -982,6 +959,49 @@ mod tests {
         );
     }
 
+    /// A column added after the freeze gets the same collision handling as one in the initial
+    /// `CREATE TABLE`: a late `time` must not reuse the base `time` column, and `DuckDB`
+    /// compares identifiers case-insensitively, so `Time` and `Amount` (next to `amount`)
+    /// collide too.
+    #[test]
+    fn late_columns_avoid_base_and_case_insensitive_collisions() {
+        let (dir, mut sink) = open_sink();
+        let t = chrono::Utc::now().fixed_offset();
+        let declare = |sink: &mut DuckDbSink, ty: &str, names: &[&str]| {
+            let attrs: Vec<_> = names
+                .iter()
+                .map(|n| OCELTypeAttribute {
+                    name: (*n).into(),
+                    value_type: "integer".into(),
+                })
+                .collect();
+            sink.declare_event_type(ty, &attrs).unwrap();
+        };
+        declare(&mut sink, "A", &["amount", "Time"]);
+        sink.add_event("A", t, "e1", &[]).unwrap();
+        declare(&mut sink, "B", &["time", "Amount", "ID"]);
+        let values: Vec<(String, OCELAttributeValue)> = ["amount", "Time", "time", "Amount", "ID"]
+            .iter()
+            .zip(1..)
+            .map(|(n, i)| (n.to_string(), OCELAttributeValue::Integer(i)))
+            .collect();
+        sink.add_event("B", t, "e2", &values).unwrap();
+
+        ExtractionSink::finalize(&mut sink).unwrap();
+        let con = duckdb::Connection::open(dir.path().join("sink.duckdb")).unwrap();
+        let ocel = read_ocel_from_duckdb(&con).unwrap();
+        let e2 = ocel.events.iter().find(|e| e.id == "e2").unwrap();
+        let mut got: Vec<_> = e2
+            .attributes
+            .iter()
+            .map(|a| (a.name.clone(), a.value.clone()))
+            .collect();
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut want = values;
+        want.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(got, want);
+    }
+
     /// `SlimOcelSink` keeps the last declaration for a `(type, attribute)`, since
     /// `locel.add_event_type` overwrites, while the `DuckDB` reader's `collect_types` keeps the
     /// first row per `(type, name)`, from a `SELECT` with no `ORDER BY`. Appending a row per
@@ -1030,9 +1050,8 @@ mod tests {
         );
     }
 
-    /// `to_sql_value` renders `OCELAttributeValue::Null` as `("", "string")`, so the reader
-    /// hands back `String("")` where `SlimOcelSink` holds `Null`. The `value_type` column is the
-    /// sink's to choose, and `"null"` round-trips through `from_sql_value` exactly.
+    /// A `Null` object attribute is stored under the `"null"` value type, so the reader hands
+    /// back `Null`, as `SlimOcelSink` holds, and not `String("")`.
     #[test]
     fn a_null_object_attribute_round_trips_as_null_not_an_empty_string() {
         let (dir, mut sink) = open_sink();

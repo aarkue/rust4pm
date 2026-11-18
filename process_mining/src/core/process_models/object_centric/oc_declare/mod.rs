@@ -85,7 +85,9 @@ impl OCDeclareArc {
 
     /// Get fraction of source events violating this constraint arc
     ///
-    /// Returns a value from 0 (all source events satisfy this constraint) to 1 (all source events violate this constraint)
+    /// Returns a value from 0 (all source events satisfy this constraint) to 1 (all source events
+    /// violate this constraint). Without any source events, the constraint is vacuously satisfied
+    /// and this returns 0.
     pub fn violation_fraction(&self, linked_ocel: &SlimLinkedOCEL) -> f64 {
         violation_fraction(
             self.from.as_str(),
@@ -497,9 +499,45 @@ impl Default for ObjectInvolvementCounts {
     }
 }
 
+/// The fewest and most objects of each type related to an instance (an event or an object),
+/// over all `instances`. An instance without an object of a type counts as 0. Only types some
+/// instance relates to are listed.
+fn involvement_counts<'a, R: Iterator<Item = &'a str>>(
+    instances: impl Iterator<Item = R>,
+) -> HashMap<String, ObjectInvolvementCounts> {
+    // Per type, the counts over the instances relating to it, and how many those are.
+    let mut counts: HashMap<&str, (ObjectInvolvementCounts, usize)> = HashMap::new();
+    let mut num_instances = 0;
+    let mut here: HashMap<&str, usize> = HashMap::new();
+    for related in instances {
+        num_instances += 1;
+        here.clear();
+        for ot in related {
+            *here.entry(ot).or_default() += 1;
+        }
+        for (&ot, &n) in &here {
+            let (c, instances_with_type) = counts.entry(ot).or_default();
+            c.min = c.min.min(n);
+            c.max = c.max.max(n);
+            *instances_with_type += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .map(|(ot, (mut c, instances_with_type))| {
+            if instances_with_type < num_instances {
+                c.min = 0;
+            }
+            (ot.to_string(), c)
+        })
+        .collect()
+}
+
 /// Get the object type involvements for an activity
 ///
-/// Produces the min and max counts for objects per object type and activity
+/// Produces the min and max counts for objects per object type and activity, over all events of
+/// the activity: an event without an object of the type counts as 0. Only object types the
+/// activity involves at least once are listed.
 ///
 /// The result is a mapping: Activity -> (Object Type -> Counts)
 pub fn get_activity_object_involvements(
@@ -508,34 +546,10 @@ pub fn get_activity_object_involvements(
     locel
         .get_ev_types()
         .map(|et| {
-            let mut nums_of_objects_per_type: HashMap<String, ObjectInvolvementCounts> = locel
-                .get_ob_types()
-                .map(|ot| (ot.to_string(), ObjectInvolvementCounts::default()))
-                .collect();
-            for ev in locel.get_evs_of_type(et) {
-                let mut num_of_objects_for_ev: HashMap<&str, usize> = HashMap::new();
-                for oi in ev.get_e2o(locel) {
-                    let ot = oi.get_ob_type(locel);
-                    *num_of_objects_for_ev.entry(ot).or_default() += 1;
-                }
-                for (ot, count) in num_of_objects_for_ev {
-                    let num_ob_per_type = nums_of_objects_per_type.get_mut(ot).unwrap();
-
-                    if count < num_ob_per_type.min {
-                        num_ob_per_type.min = count
-                    }
-                    if count > num_ob_per_type.max {
-                        num_ob_per_type.max = count;
-                    }
-                }
-            }
-            (
-                et.to_string(),
-                nums_of_objects_per_type
-                    .into_iter()
-                    .filter(|(_x, y)| y.max > 0)
-                    .collect(),
-            )
+            let events = locel
+                .get_evs_of_type(et)
+                .map(|ev| ev.get_e2o(locel).map(|oi| oi.get_ob_type(locel).as_str()));
+            (et.to_string(), involvement_counts(events))
         })
         .collect()
 }
@@ -544,41 +558,19 @@ pub fn get_activity_object_involvements(
 ///
 /// Returns a mapping Object Type -> (Object Type -> Count)
 ///
-/// where Count specifies how many objects of the second object type are referenced by each objects of the first object type
+/// where Count specifies how many objects of the second object type are referenced by each object
+/// of the first object type (0 for an object referencing none). Only object types referenced at
+/// least once are listed.
 pub fn get_object_to_object_involvements(
     locel: &SlimLinkedOCEL,
 ) -> HashMap<String, HashMap<String, ObjectInvolvementCounts>> {
     locel
         .get_ob_types()
         .map(|ot| {
-            let mut nums_of_objects_per_type: HashMap<String, ObjectInvolvementCounts> = locel
-                .get_ob_types()
-                .map(|ot| (ot.to_string(), ObjectInvolvementCounts::default()))
-                .collect();
-            for ob in locel.get_obs_of_type(ot) {
-                let mut num_of_objects_for_ob: HashMap<&str, usize> = HashMap::new();
-                for oi in ob.get_o2o(locel) {
-                    let ot = oi.get_ob_type(locel);
-                    *num_of_objects_for_ob.entry(ot).or_default() += 1;
-                }
-                for (ot, count) in num_of_objects_for_ob {
-                    let num_ob_per_type = nums_of_objects_per_type.get_mut(ot).unwrap();
-
-                    if count < num_ob_per_type.min {
-                        num_ob_per_type.min = count
-                    }
-                    if count > num_ob_per_type.max {
-                        num_ob_per_type.max = count;
-                    }
-                }
-            }
-            (
-                ot.to_string(),
-                nums_of_objects_per_type
-                    .into_iter()
-                    .filter(|(_x, y)| y.max > 0)
-                    .collect(),
-            )
+            let objects = locel
+                .get_obs_of_type(ot)
+                .map(|ob| ob.get_o2o(locel).map(|oi| oi.get_ob_type(locel).as_str()));
+            (ot.to_string(), involvement_counts(objects))
         })
         .collect()
 }
@@ -587,41 +579,20 @@ pub fn get_object_to_object_involvements(
 ///
 /// Returns a mapping Object Type -> (Object Type -> Count)
 ///
-/// where Count specifies how many objects of the second object type reference each object of the first object type
+/// where Count specifies how many objects of the second object type reference each object of the
+/// first object type (0 for an object no object of that type references). Only object types
+/// referencing at least once are listed.
 pub fn get_rev_object_to_object_involvements(
     locel: &SlimLinkedOCEL,
 ) -> HashMap<String, HashMap<String, ObjectInvolvementCounts>> {
     locel
         .get_ob_types()
         .map(|ot| {
-            let mut nums_of_objects_per_type: HashMap<String, ObjectInvolvementCounts> = locel
-                .get_ob_types()
-                .map(|ot| (ot.to_string(), ObjectInvolvementCounts::default()))
-                .collect();
-            for ob in locel.get_obs_of_type(ot) {
-                let mut num_of_objects_for_ob: HashMap<&str, usize> = HashMap::new();
-                for oi in ob.get_o2o_rev(locel) {
-                    let ot = oi.get_ob_type(locel);
-                    *num_of_objects_for_ob.entry(ot).or_default() += 1;
-                }
-                for (ot, count) in num_of_objects_for_ob {
-                    let num_ob_per_type = nums_of_objects_per_type.get_mut(ot).unwrap();
-
-                    if count < num_ob_per_type.min {
-                        num_ob_per_type.min = count
-                    }
-                    if count > num_ob_per_type.max {
-                        num_ob_per_type.max = count;
-                    }
-                }
-            }
-            (
-                ot.to_string(),
-                nums_of_objects_per_type
-                    .into_iter()
-                    .filter(|(_x, y)| y.max > 0)
-                    .collect(),
-            )
+            let objects = locel.get_obs_of_type(ot).map(|ob| {
+                ob.get_o2o_rev(locel)
+                    .map(|oi| oi.get_ob_type(locel).as_str())
+            });
+            (ot.to_string(), involvement_counts(objects))
         })
         .collect()
 }
@@ -707,14 +678,12 @@ impl EventOrSynthetic {
     }
     /// Get all events (regular or synthetic) of a specific event type
     pub fn get_all_syn_evs(locel: &SlimLinkedOCEL, ev_type: &str) -> Vec<Self> {
-        if ev_type.starts_with(INIT_EVENT_PREFIX) {
-            let ob_type = &ev_type[INIT_EVENT_PREFIX.len() + 1..ev_type.len()];
+        if let Some(ob_type) = synthetic_object_type(ev_type, INIT_EVENT_PREFIX) {
             locel
                 .get_obs_of_type(ob_type)
                 .map(|ob| EventOrSynthetic::Init(*ob))
                 .collect()
-        } else if ev_type.starts_with(EXIT_EVENT_PREFIX) {
-            let ob_type = &ev_type[EXIT_EVENT_PREFIX.len() + 1..ev_type.len()];
+        } else if let Some(ob_type) = synthetic_object_type(ev_type, EXIT_EVENT_PREFIX) {
             locel
                 .get_obs_of_type(ob_type)
                 .map(|ob| EventOrSynthetic::Exit(*ob))
@@ -733,15 +702,13 @@ impl EventOrSynthetic {
         ev_type: &'a str,
         ob: ObjectIndex,
     ) -> Box<dyn Iterator<Item = Self> + 'a> {
-        if ev_type.starts_with(INIT_EVENT_PREFIX) {
-            let ob_type = &ev_type[INIT_EVENT_PREFIX.len() + 1..ev_type.len()];
+        if let Some(ob_type) = synthetic_object_type(ev_type, INIT_EVENT_PREFIX) {
             if ob.get_ob_type(locel) == ob_type {
                 Box::new(vec![Self::Init(ob)].into_iter())
             } else {
                 Box::new(Vec::default().into_iter())
             }
-        } else if ev_type.starts_with(EXIT_EVENT_PREFIX) {
-            let ob_type = &ev_type[EXIT_EVENT_PREFIX.len() + 1..ev_type.len()];
+        } else if let Some(ob_type) = synthetic_object_type(ev_type, EXIT_EVENT_PREFIX) {
             if ob.get_ob_type(locel) == ob_type {
                 Box::new(vec![Self::Exit(ob)].into_iter())
             } else {
@@ -761,5 +728,79 @@ impl EventOrSynthetic {
             .map(|e| Self::Event(*e))
             .chain(vec![Self::Init(ob), Self::Exit(ob)])
             .collect()
+    }
+}
+
+/// The object type of a synthetic event type `"{prefix} {object type}"`, or `None` if `ev_type`
+/// is not of that form
+fn synthetic_object_type<'a>(ev_type: &'a str, prefix: &str) -> Option<&'a str> {
+    ev_type.strip_prefix(prefix)?.strip_prefix(' ')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::event_data::object_centric::{appendable::AppendableOCEL, OCELType};
+
+    #[test]
+    fn malformed_synthetic_event_types_do_not_panic() {
+        let mut locel = SlimLinkedOCEL::new();
+        locel
+            .declare_object_type(OCELType {
+                name: "order".into(),
+                attributes: Vec::new(),
+            })
+            .unwrap();
+        locel
+            .append_object("o1".into(), "order", Vec::new(), Vec::new())
+            .unwrap();
+        locel.finalize().unwrap();
+        let ob = *locel.get_obs_of_type("order").next().unwrap();
+
+        assert_eq!(
+            EventOrSynthetic::get_all_syn_evs(&locel, "<init> order"),
+            vec![EventOrSynthetic::Init(ob)]
+        );
+        assert_eq!(
+            EventOrSynthetic::get_all_of_et_for_ob(&locel, "<exit> order", ob).collect_vec(),
+            vec![EventOrSynthetic::Exit(ob)]
+        );
+        for ev_type in ["<init>", "<exit>", "<init>\u{e9}order", "<exit>\u{e9}"] {
+            assert!(EventOrSynthetic::get_all_syn_evs(&locel, ev_type).is_empty());
+            assert_eq!(
+                EventOrSynthetic::get_all_of_et_for_ob(&locel, ev_type, ob).count(),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn involvement_counts_treat_missing_types_as_zero() {
+        let counts = |min, max| ObjectInvolvementCounts { min, max };
+        let got = involvement_counts(
+            [
+                vec!["order", "order", "item"],
+                vec!["order"],
+                vec![],
+                vec!["order", "item", "item", "item"],
+            ]
+            .into_iter()
+            .map(|types| types.into_iter()),
+        );
+        assert_eq!(
+            got,
+            HashMap::from([
+                ("order".to_string(), counts(0, 2)),
+                ("item".to_string(), counts(0, 3)),
+            ])
+        );
+        let got = involvement_counts(
+            [vec!["order", "order"], vec!["order"]]
+                .into_iter()
+                .map(|types| types.into_iter()),
+        );
+        assert_eq!(got, HashMap::from([("order".to_string(), counts(1, 2))]));
+        let none: [std::vec::IntoIter<&str>; 0] = [];
+        assert!(involvement_counts(none.into_iter()).is_empty());
     }
 }

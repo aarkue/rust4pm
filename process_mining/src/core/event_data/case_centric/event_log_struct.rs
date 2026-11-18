@@ -271,19 +271,6 @@ pub struct Attribute {
     pub own_attributes: Option<Attributes>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-/// Version of [`Attribute`] which represents underlying nested attributes as a [`HashMap`]
-///
-/// Only used for easier JSON-interop with `ProM`
-pub struct HashMapAttribute {
-    /// Attribute key
-    pub key: String,
-    /// Attribute value
-    pub value: AttributeValue,
-    /// Child attributes (nested)
-    pub own_attributes: Option<HashMap<String, HashMapAttribute>>,
-}
-
 impl Attribute {
     ///
     /// Helper to create a new attribute
@@ -294,25 +281,6 @@ impl Attribute {
             value: attribute_val,
             own_attributes: None,
         }
-    }
-    ///
-    /// Helper to create a new attribute, while returning the key String additionally
-    ///
-    /// This is useful for directly inserting the attribute in a [`HashMap`] afterwards
-    ///
-    #[deprecated(
-        since = "0.2.0",
-        note = "This function will be removed soon as Attributes are now backed by Vec instead of HashMap"
-    )]
-    pub fn new_with_key(key: String, attribute_val: AttributeValue) -> (String, Self) {
-        (
-            key.clone(),
-            Self {
-                key,
-                value: attribute_val,
-                own_attributes: None,
-            },
-        )
     }
 }
 
@@ -373,18 +341,6 @@ pub trait XESEditableAttribute {
     ///
     /// _Complexity_: Does linear lookup (i.e., in O(n)). If you need faster lookup, consider manually sorting the attributes by key and utilizing binary search.
     fn remove_with_key(&mut self, key: &str) -> bool;
-
-    ///
-    /// Convert Attributes to [`HashMap`]-backed version
-    ///
-    /// Used for creating attribute structures that are more easily compatible with other JSON representations of [`Attributes`].
-    ///
-    /// __Usage is generally discouraged__
-    ///
-    /// _Warning_: Currently, nested attributes are stripped.
-    ///
-    ///
-    fn as_hash_map(&self) -> HashMap<String, HashMapAttribute>;
 }
 impl XESEditableAttribute for Attributes {
     fn add_to_attributes(&mut self, key: String, value: AttributeValue) {
@@ -428,18 +384,6 @@ impl XESEditableAttribute for Attributes {
             return true;
         }
         false
-    }
-    fn as_hash_map(&self) -> HashMap<String, HashMapAttribute> {
-        self.iter()
-            .map(|a| {
-                let a_clone = HashMapAttribute {
-                    key: a.key.clone(),
-                    value: a.value.clone(),
-                    own_attributes: None,
-                };
-                (a.key.clone(), a_clone)
-            })
-            .collect()
     }
 }
 
@@ -582,7 +526,7 @@ impl EventLog {
     pub fn get_event_attribute<'a>(&'a self, event: &'a Event, key: &str) -> Option<&'a Attribute> {
         event
             .attributes
-            .get_by_key_or_global(key, &self.global_trace_attrs)
+            .get_by_key_or_global(key, &self.global_event_attrs)
     }
 
     #[cfg(feature = "dataframes")]

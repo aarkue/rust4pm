@@ -23,11 +23,13 @@ mod paths;
 /// Type-level schema enumeration.
 mod schema;
 
+use macros_process_mining::{controlled, register_binding};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use crate::core::event_data::object_centric::linked_ocel::slim_linked_ocel::SlimLinkedOCEL;
+use crate::utils::control::{Cancelled, Control};
 
 pub use equivalence::{group_by_hash, ConnectionEquivalenceClass};
 pub use graph::{
@@ -35,12 +37,16 @@ pub use graph::{
     TypeGraph, TypeName, TypeRef,
 };
 pub use metrics::{compute_metrics, compute_throughput_times, throughput_durations, SchemaMetrics};
+#[cfg(feature = "bindings")]
+pub(crate) use paths::connections_from;
 pub use paths::{
-    find_connections, find_connections_with_sources, get_entities_of_type, summarize_connections,
-    Connection, ConnectionResult, ConnectionSummary, EventSelection, PathConnectionParams,
-    TemporalConstraint,
+    find_connections, get_entities_of_type, summarize_connections, Connection, ConnectionResult,
+    ConnectionSummary, EventSelection, PathConnectionParams, TemporalConstraint,
 };
-pub use schema::{enumerate_schemas, PathSchema, ResolvedPathSchema, ResolvedStep, SchemaStep};
+pub use schema::{
+    enumerate_schemas, PathSchema, ResolvedPathSchema, ResolvedStep, SchemaEnumeration, SchemaStep,
+    DEFAULT_MAX_SCHEMAS, MAX_EXPLORED_PATHS, MAX_SCHEMA_LENGTH,
+};
 
 /// Throughput time statistics (seconds) over event-to-event connections.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -90,8 +96,15 @@ pub struct PathSchemaQuery {
     /// source (the start) and the target (when one is given) are always permitted, so only the
     /// steps in between are constrained.
     pub allowed_types: Option<Vec<TypeRef>>,
+    /// Maximum number of schemas to enumerate (see [`enumerate_schemas`]).
+    #[serde(default = "default_max_schemas")]
+    pub max_schemas: usize,
     /// Connection-finding parameters.
     pub params: PathConnectionParams,
+}
+
+fn default_max_schemas() -> usize {
+    DEFAULT_MAX_SCHEMAS
 }
 
 /// One enumerated schema with its computed stats and equivalence class.
@@ -130,6 +143,8 @@ pub struct PathSchemaDiscovery {
     pub schemas: Vec<DiscoveredSchema>,
     /// Connection-equivalence classes over the enumerated schemas.
     pub equivalence_classes: Vec<ConnectionEquivalenceClass>,
+    /// Whether schema enumeration hit a limit, so `schemas` may be incomplete.
+    pub schema_limit_reached: bool,
 }
 
 /// Compute metrics + throughput for one schema's connections.
@@ -162,30 +177,51 @@ fn stats_from_summary(
     }
 }
 
-/// Run the full discovery pipeline: enumerate schemas, summarize each schema's connections,
-/// score them, and group connection-equivalent schemas.
+/// Discover path schemas between the query types: enumerate schemas, summarize each schema's
+/// connections, score it by support, coverage, selectivity, reach, exclusivity and throughput,
+/// and group connection-equivalent schemas.
 ///
 /// The source entities (shared by every enumerated schema) are collected once. Each schema
 /// is summarized in a single streaming pass (see [`summarize_connections`]) that never
 /// materializes the connection list, and connection equivalence is decided by a 64-bit
 /// hash of each schema's (source, target) set rather than by retaining the sets.
+///
+/// Reports progress to a [`Control`] in two stages: `"Enumerating path schemas"` (see
+/// [`Control::enumerate_schemas`]), then `"Summarizing path schemas"`, where `done` counts
+/// the source entities scanned over all schemas, out of the number of schemas times the number
+/// of source entities.
+///
+/// Streams each schema as soon as it is summarized: one partial value is one
+/// [`DiscoveredSchema`], in `index` order, as in [`PathSchemaDiscovery::schemas`]. Only its
+/// `equivalence_class` is provisional: the `index` of the first schema with the same
+/// connection set so far (its own `index` if none), which the result replaces with an index
+/// into [`PathSchemaDiscovery::equivalence_classes`].
+#[controlled]
+#[register_binding]
 pub fn discover_path_schemas(
     ocel: &SlimLinkedOCEL,
     query: &PathSchemaQuery,
-) -> PathSchemaDiscovery {
+    ctl: &Control<'_>,
+) -> Result<PathSchemaDiscovery, Cancelled> {
     let type_graph = TypeGraph::from_linked_ocel(ocel);
     let allowed: Option<HashSet<TypeRef>> = query
         .allowed_types
         .as_ref()
         .map(|types| types.iter().cloned().collect());
-    let schemas = enumerate_schemas(
+    let SchemaEnumeration {
+        schemas,
+        limit_reached: schema_limit_reached,
+    } = schema::enumerate_bounded(
         &type_graph,
         &query.source,
         query.target.as_ref(),
         query.max_length,
         query.allow_cycles,
         allowed.as_ref(),
-    );
+        query.max_schemas,
+        ctl,
+        false,
+    )?;
 
     let source_entities = get_entities_of_type(ocel, &query.source);
     let total_sources = source_entities.len();
@@ -198,53 +234,56 @@ pub fn discover_path_schemas(
             .or_insert_with(|| get_entities_of_type(ocel, &sch.target).len());
     }
 
-    let resolved: Vec<ResolvedPathSchema> =
-        schemas.iter().map(|s| s.resolve(&type_graph)).collect();
-    let displays: Vec<String> = resolved.iter().map(ResolvedPathSchema::display).collect();
-    let summaries: Vec<ConnectionSummary> = resolved
-        .iter()
-        .map(|r| summarize_connections(ocel, r, &source_entities, &query.params))
-        .collect();
+    let progress = ctl.counter(
+        DISCOVER_STAGE,
+        Some((schemas.len() as u64) * (total_sources as u64)),
+    );
+    let mut rows: Vec<DiscoveredSchema> = Vec::with_capacity(schemas.len());
+    let mut keys: Vec<(String, usize, u64)> = Vec::with_capacity(schemas.len());
+    let mut first_with_key: HashMap<(usize, u64), usize> = HashMap::new();
+    for (i, sch) in schemas.iter().enumerate() {
+        let r = sch.resolve(&type_graph);
+        let summary =
+            paths::summarize_scan(ocel, &r, &source_entities, &query.params, ctl, &progress)?;
+        let display = r.display();
+        keys.push((display.clone(), summary.support, summary.hash));
+        let provisional_class = *first_with_key
+            .entry((summary.support, summary.hash))
+            .or_insert(i);
+        let total_targets = target_totals[&r.target];
+        let row = DiscoveredSchema {
+            index: i,
+            schema: display,
+            length: r.steps.len(),
+            source: r.source,
+            target: r.target,
+            is_dead: summary.support == 0,
+            selectivity_pruned: summary.selectivity_pruned,
+            limit_reached: summary.limit_reached,
+            stats: stats_from_summary(summary, total_sources, total_targets),
+            equivalence_class: provisional_class,
+        };
+        ctl.partial(&row);
+        rows.push(row);
+    }
 
-    let hashes: Vec<(String, usize, u64)> = displays
-        .iter()
-        .zip(&summaries)
-        .map(|(display, d)| (display.clone(), d.support, d.hash))
-        .collect();
-    let (equivalence_classes, class_of) = group_by_hash(&hashes);
+    let (equivalence_classes, class_of) = group_by_hash(&keys);
+    for (row, class) in rows.iter_mut().zip(class_of) {
+        row.equivalence_class = class;
+    }
 
-    let schemas_out: Vec<DiscoveredSchema> = resolved
-        .into_iter()
-        .zip(displays)
-        .zip(summaries)
-        .enumerate()
-        .map(|(i, ((r, display), summary))| {
-            let total_targets = target_totals[&r.target];
-            let is_dead = summary.support == 0;
-            let limit_reached = summary.limit_reached;
-            let selectivity_pruned = summary.selectivity_pruned;
-            DiscoveredSchema {
-                index: i,
-                schema: display,
-                source: r.source,
-                target: r.target,
-                length: r.steps.len(),
-                stats: stats_from_summary(summary, total_sources, total_targets),
-                is_dead,
-                selectivity_pruned,
-                limit_reached,
-                equivalence_class: class_of[i],
-            }
-        })
-        .collect();
-
-    PathSchemaDiscovery {
+    Ok(PathSchemaDiscovery {
         source_type: query.source.name().to_string(),
         total_sources,
-        schemas: schemas_out,
+        schemas: rows,
         equivalence_classes,
-    }
+        schema_limit_reached,
+    })
 }
+
+/// Progress stage of [`Control::discover_path_schemas`] after enumeration, counting source
+/// entities over all schemas.
+const DISCOVER_STAGE: &str = "Summarizing path schemas";
 
 #[cfg(test)]
 mod tests {
@@ -268,7 +307,8 @@ mod tests {
         let ocel = load_ocel();
         let graph = TypeGraph::from_linked_ocel(&ocel);
         let src = first_event_type(&graph);
-        let schemas = enumerate_schemas(&graph, &src, None, 2, false, None);
+        let schemas =
+            enumerate_schemas(&graph, &src, None, 2, false, None, DEFAULT_MAX_SCHEMAS).schemas;
         assert!(!schemas.is_empty());
         for sch in &schemas {
             assert!(sch.len() <= 2);
@@ -287,7 +327,8 @@ mod tests {
         let graph = TypeGraph::from_linked_ocel(&ocel);
         let src = first_event_type(&graph);
         // An event-to-event schema (length 2) so timestamps actually constrain the path.
-        let schema = enumerate_schemas(&graph, &src, None, 2, false, None)
+        let schema = enumerate_schemas(&graph, &src, None, 2, false, None, DEFAULT_MAX_SCHEMAS)
+            .schemas
             .into_iter()
             .map(|s| s.resolve(&graph))
             .find(|s| s.len() == 2 && s.target.is_event())
@@ -322,7 +363,8 @@ mod tests {
         let ocel = load_ocel();
         let graph = TypeGraph::from_linked_ocel(&ocel);
         let src = first_event_type(&graph);
-        let schema = enumerate_schemas(&graph, &src, None, 2, false, None)
+        let schema = enumerate_schemas(&graph, &src, None, 2, false, None, DEFAULT_MAX_SCHEMAS)
+            .schemas
             .into_iter()
             .map(|s| s.resolve(&graph))
             .find(|s| s.target.is_event())
@@ -351,7 +393,8 @@ mod tests {
         // Discovery indices are stable because the type-graph edges (and thus enumeration
         // order) are deterministic; verifying that here is cheap and sufficient.
         let displays = |g: &TypeGraph| {
-            enumerate_schemas(g, &src, None, 3, false, None)
+            enumerate_schemas(g, &src, None, 3, false, None, DEFAULT_MAX_SCHEMAS)
+                .schemas
                 .iter()
                 .map(|s| s.display(g))
                 .collect::<Vec<_>>()
@@ -370,6 +413,7 @@ mod tests {
             max_length: 1,
             allow_cycles: false,
             allowed_types: None,
+            max_schemas: DEFAULT_MAX_SCHEMAS,
             params: PathConnectionParams::default(),
         };
         let discovery = discover_path_schemas(&ocel, &query);
@@ -404,10 +448,20 @@ mod tests {
             max_length: 2,
             allow_cycles: false,
             allowed_types: None,
+            max_schemas: DEFAULT_MAX_SCHEMAS,
             params: PathConnectionParams::default(),
         };
         let discovery = discover_path_schemas(&ocel, &query);
-        let enumerated = enumerate_schemas(&graph, &src, Some(&target), 2, false, None);
+        let enumerated = enumerate_schemas(
+            &graph,
+            &src,
+            Some(&target),
+            2,
+            false,
+            None,
+            DEFAULT_MAX_SCHEMAS,
+        )
+        .schemas;
 
         // Exact (source, target) set per discovered schema, via the materializing path.
         let exact: Vec<HashSet<(EntityRef, EntityRef)>> = discovery
@@ -439,7 +493,8 @@ mod tests {
         let ocel = load_ocel();
         let graph = TypeGraph::from_linked_ocel(&ocel);
         let src = first_event_type(&graph);
-        let schema = enumerate_schemas(&graph, &src, None, 2, false, None)
+        let schema = enumerate_schemas(&graph, &src, None, 2, false, None, DEFAULT_MAX_SCHEMAS)
+            .schemas
             .into_iter()
             .map(|s| s.resolve(&graph))
             .find(|s| s.len() == 2 && s.target.is_event())
@@ -535,8 +590,26 @@ mod tests {
         assert_eq!(get_entities_of_type(&slim, &object_order).len(), 1);
 
         // Each reaches "item", but via a kind-distinct first edge (E2O vs O2O).
-        let from_event = enumerate_schemas(&graph, &event_order, Some(&item), 1, false, None);
-        let from_object = enumerate_schemas(&graph, &object_order, Some(&item), 1, false, None);
+        let from_event = enumerate_schemas(
+            &graph,
+            &event_order,
+            Some(&item),
+            1,
+            false,
+            None,
+            DEFAULT_MAX_SCHEMAS,
+        )
+        .schemas;
+        let from_object = enumerate_schemas(
+            &graph,
+            &object_order,
+            Some(&item),
+            1,
+            false,
+            None,
+            DEFAULT_MAX_SCHEMAS,
+        )
+        .schemas;
         assert!(!from_event.is_empty());
         assert!(!from_object.is_empty());
         assert!(from_event[0].resolve(&graph).steps[0]
@@ -547,5 +620,369 @@ mod tests {
             .edge
             .source
             .is_event());
+    }
+
+    #[test]
+    fn a_connection_cap_keeps_the_same_sources_on_every_run() {
+        use std::collections::BTreeSet;
+        let ocel = load_ocel();
+        let graph = TypeGraph::from_linked_ocel(&ocel);
+        let src = first_event_type(&graph);
+        let schema = enumerate_schemas(&graph, &src, None, 2, false, None, DEFAULT_MAX_SCHEMAS)
+            .schemas
+            .into_iter()
+            .map(|s| s.resolve(&graph))
+            .find(|s| s.len() == 2 && s.target.is_event())
+            .expect("an event-to-event schema");
+        let sources = get_entities_of_type(&ocel, &schema.source);
+        let full = find_connections(&ocel, &schema, &PathConnectionParams::default());
+        let max = full.connections.len() / 3;
+        assert!(max > 0);
+
+        for dedup_targets in [true, false] {
+            let params = PathConnectionParams {
+                max_connections: Some(max),
+                dedup_targets,
+                ..Default::default()
+            };
+            let pairs = || {
+                let result = find_connections(&ocel, &schema, &params);
+                assert!(result.limit_reached);
+                let mut pairs: Vec<_> = result
+                    .connections
+                    .iter()
+                    .map(|c| (c.source, c.target))
+                    .collect();
+                pairs.sort();
+                pairs
+            };
+            let summary = || {
+                let s = summarize_connections(&ocel, &schema, &sources, &params);
+                (s.support, s.sources_with_paths, s.distinct_targets, s.hash)
+            };
+            let first_pairs = pairs();
+            let first_summary = summary();
+            for _ in 0..10 {
+                assert_eq!(pairs(), first_pairs);
+                assert_eq!(summary(), first_summary);
+            }
+
+            // The kept sources are the first ones in source order that have connections.
+            let kept: BTreeSet<EntityRef> = first_pairs.iter().map(|(s, _)| *s).collect();
+            let with_paths: BTreeSet<EntityRef> =
+                full.connections.iter().map(|c| c.source).collect();
+            let expected: BTreeSet<EntityRef> = sources
+                .iter()
+                .filter(|s| with_paths.contains(s))
+                .take(kept.len())
+                .copied()
+                .collect();
+            assert_eq!(kept, expected);
+        }
+    }
+
+    #[test]
+    fn a_dfs_connection_cap_keeps_the_in_order_prefix() {
+        let ocel = load_ocel();
+        let graph = TypeGraph::from_linked_ocel(&ocel);
+        let src = first_event_type(&graph);
+        let schema = enumerate_schemas(&graph, &src, None, 2, false, None, DEFAULT_MAX_SCHEMAS)
+            .schemas
+            .into_iter()
+            .map(|s| s.resolve(&graph))
+            .find(|s| s.len() == 2 && s.target.is_event())
+            .expect("an event-to-event schema");
+        let pairs = |r: &ConnectionResult| -> Vec<_> {
+            r.connections.iter().map(|c| (c.source, c.target)).collect()
+        };
+        for dedup_targets in [true, false] {
+            let params = PathConnectionParams {
+                dedup_targets,
+                ..Default::default()
+            };
+            let full = pairs(&find_connections(&ocel, &schema, &params));
+            assert!(full.len() > 7);
+            for max in [1, full.len() / 7, full.len() / 3, full.len() - 1] {
+                let capped = find_connections(
+                    &ocel,
+                    &schema,
+                    &PathConnectionParams {
+                        max_connections: Some(max),
+                        ..params.clone()
+                    },
+                );
+                // Deduplicated targets over distinct types take the set-based scan, which may
+                // overshoot the cap.
+                if !dedup_targets || schema.source == schema.target {
+                    assert_eq!(pairs(&capped), full[..max], "max {}", max);
+                }
+                assert!(capped.limit_reached);
+            }
+        }
+    }
+
+    #[test]
+    fn a_zero_connection_cap_keeps_nothing() {
+        let ocel = load_ocel();
+        let graph = TypeGraph::from_linked_ocel(&ocel);
+        let src = first_event_type(&graph);
+        // Distinct types with deduplicated targets take the set-based scan, without
+        // deduplication the path-enumerating one.
+        let schema = enumerate_schemas(&graph, &src, None, 2, false, None, DEFAULT_MAX_SCHEMAS)
+            .schemas
+            .into_iter()
+            .map(|s| s.resolve(&graph))
+            .find(|s| s.len() == 2 && s.target.is_event() && s.source != s.target)
+            .expect("an event-to-event schema over distinct types");
+        let sources = get_entities_of_type(&ocel, &schema.source);
+        for dedup_targets in [true, false] {
+            let params = PathConnectionParams {
+                max_connections: Some(0),
+                dedup_targets,
+                ..Default::default()
+            };
+            let result = find_connections(&ocel, &schema, &params);
+            assert!(result.connections.is_empty());
+            assert!(result.limit_reached);
+            let summary = summarize_connections(&ocel, &schema, &sources, &params);
+            assert_eq!(summary.support, 0);
+            assert!(summary.limit_reached);
+        }
+    }
+
+    #[test]
+    fn controlled_connection_scan_stops_once_cancelled() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let ocel = load_ocel();
+        let graph = TypeGraph::from_linked_ocel(&ocel);
+        let src = first_event_type(&graph);
+        let schema = enumerate_schemas(&graph, &src, None, 2, false, None, DEFAULT_MAX_SCHEMAS)
+            .schemas
+            .into_iter()
+            .map(|s| s.resolve(&graph))
+            .find(|s| s.len() == 2)
+            .expect("a schema of length 2");
+        let flag = AtomicBool::new(false);
+        let ctl = Control::new()
+            .on_progress(|_| flag.store(true, Ordering::Relaxed))
+            .cancel_flag(&flag);
+        for dedup_targets in [true, false] {
+            let params = PathConnectionParams {
+                dedup_targets,
+                ..Default::default()
+            };
+            flag.store(false, Ordering::Relaxed);
+            assert_eq!(
+                ctl.find_connections(&ocel, &schema, &params).unwrap_err(),
+                Cancelled
+            );
+        }
+    }
+
+    /// One event of type `a` related to one object of type `o` once per qualifier, so the
+    /// type graph has one `a`-`o` edge per qualifier and cyclic paths of any length.
+    fn cyclic_ocel(qualifiers: &[&str]) -> SlimLinkedOCEL {
+        use crate::core::event_data::object_centric::ocel_struct::{
+            OCELEvent, OCELObject, OCELRelationship, OCELType, OCEL,
+        };
+        use chrono::DateTime;
+
+        let ty = |name: &str| OCELType {
+            name: name.to_string(),
+            attributes: vec![],
+        };
+        SlimLinkedOCEL::from_ocel(OCEL {
+            event_types: vec![ty("a")],
+            object_types: vec![ty("o"), ty("unrelated")],
+            events: vec![OCELEvent {
+                id: "e1".to_string(),
+                event_type: "a".to_string(),
+                time: DateTime::parse_from_rfc3339("2020-01-01T00:00:00+00:00").unwrap(),
+                attributes: vec![],
+                relationships: qualifiers
+                    .iter()
+                    .map(|q| OCELRelationship {
+                        object_id: "o1".to_string(),
+                        qualifier: q.to_string(),
+                    })
+                    .collect(),
+            }],
+            objects: vec![OCELObject {
+                id: "o1".to_string(),
+                object_type: "o".to_string(),
+                attributes: vec![],
+                relationships: vec![],
+            }],
+        })
+    }
+
+    #[test]
+    fn cyclic_enumeration_stops_at_the_schema_cap() {
+        let ocel = cyclic_ocel(&["q1", "q2"]);
+        let graph = TypeGraph::from_linked_ocel(&ocel);
+        let src = TypeRef::Event("a".to_string());
+
+        // 2 + 4 + 8 schemas, below every limit.
+        let full = enumerate_schemas(&graph, &src, None, 3, true, None, 14);
+        assert_eq!(full.schemas.len(), 14);
+        assert!(!full.limit_reached);
+        assert_eq!(
+            full.schemas,
+            enumerate_schemas(&graph, &src, None, 3, true, None, DEFAULT_MAX_SCHEMAS).schemas
+        );
+
+        let capped = enumerate_schemas(&graph, &src, None, 3, true, None, 5);
+        assert!(capped.limit_reached);
+        assert_eq!(capped.schemas, full.schemas[..5]);
+
+        // 2^40 paths without a cap.
+        assert_eq!(
+            enumerate_schemas(&graph, &src, None, 40, true, None, DEFAULT_MAX_SCHEMAS)
+                .schemas
+                .len(),
+            DEFAULT_MAX_SCHEMAS
+        );
+        let discovery = discover_path_schemas(
+            &ocel,
+            &PathSchemaQuery {
+                source: src,
+                target: None,
+                max_length: 40,
+                allow_cycles: true,
+                allowed_types: None,
+                max_schemas: 50,
+                params: PathConnectionParams::default(),
+            },
+        );
+        assert_eq!(discovery.schemas.len(), 50);
+        assert!(discovery.schema_limit_reached);
+    }
+
+    #[test]
+    fn cyclic_enumeration_stops_at_the_exploration_cap() {
+        let ocel = cyclic_ocel(&["q1", "q2"]);
+        let graph = TypeGraph::from_linked_ocel(&ocel);
+        let src = TypeRef::Event("a".to_string());
+        let unreachable = TypeRef::Object("unrelated".to_string());
+        let result =
+            enumerate_schemas(&graph, &src, Some(&unreachable), 40, true, None, usize::MAX);
+        assert!(result.schemas.is_empty());
+        assert!(result.limit_reached);
+    }
+
+    #[test]
+    fn max_length_is_clamped() {
+        let ocel = cyclic_ocel(&["q"]);
+        let graph = TypeGraph::from_linked_ocel(&ocel);
+        let src = TypeRef::Event("a".to_string());
+        let at_cap = enumerate_schemas(&graph, &src, None, MAX_SCHEMA_LENGTH, true, None, 1000);
+        assert_eq!(at_cap.schemas.len(), MAX_SCHEMA_LENGTH);
+        assert!(!at_cap.limit_reached);
+        let above = enumerate_schemas(&graph, &src, None, usize::MAX, true, None, 1000);
+        assert_eq!(above.schemas, at_cap.schemas);
+        assert!(above.limit_reached);
+        // Without cycles, nothing is cut off at the clamped length.
+        let acyclic = enumerate_schemas(&graph, &src, None, usize::MAX, false, None, 1000);
+        assert_eq!(acyclic.schemas.len(), 1);
+        assert!(!acyclic.limit_reached);
+    }
+
+    fn discovery_query(graph: &TypeGraph) -> PathSchemaQuery {
+        PathSchemaQuery {
+            source: first_event_type(graph),
+            target: None,
+            max_length: 2,
+            allow_cycles: false,
+            allowed_types: None,
+            max_schemas: DEFAULT_MAX_SCHEMAS,
+            params: PathConnectionParams::default(),
+        }
+    }
+
+    #[test]
+    fn controlled_discovery_streams_each_schema_and_reports_sources() {
+        use std::sync::Mutex;
+        let ocel = load_ocel();
+        let graph = TypeGraph::from_linked_ocel(&ocel);
+        let query = discovery_query(&graph);
+        let progress = Mutex::new(Vec::new());
+        let partials = Mutex::new(Vec::new());
+        let ctl = Control::new()
+            .on_progress(|p| progress.lock().unwrap().push(p))
+            .on_partial(|v| partials.lock().unwrap().push(v));
+        let discovery = ctl.discover_path_schemas(&ocel, &query).unwrap();
+        drop(ctl);
+
+        let plain = discover_path_schemas(&ocel, &query);
+        assert_eq!(
+            serde_json::to_value(&discovery).unwrap(),
+            serde_json::to_value(&plain).unwrap()
+        );
+
+        let partials = partials.into_inner().unwrap();
+        assert_eq!(partials.len(), discovery.schemas.len());
+        for (partial, row) in partials.iter().zip(&discovery.schemas) {
+            let partial: DiscoveredSchema = serde_json::from_value(partial.clone()).unwrap();
+            let first_same = discovery
+                .schemas
+                .iter()
+                .position(|r| r.equivalence_class == row.equivalence_class)
+                .unwrap();
+            assert_eq!(partial.equivalence_class, first_same);
+            let mut expected = serde_json::to_value(row).unwrap();
+            expected["equivalence_class"] = serde_json::json!(first_same);
+            assert_eq!(serde_json::to_value(&partial).unwrap(), expected);
+        }
+
+        let progress = progress.into_inner().unwrap();
+        let summarize: Vec<_> = progress
+            .iter()
+            .filter(|p| p.stage == DISCOVER_STAGE)
+            .collect();
+        let total = (discovery.schemas.len() * discovery.total_sources) as u64;
+        assert!(summarize.iter().all(|p| p.total == Some(total)));
+        assert!(summarize.windows(2).all(|w| w[0].done <= w[1].done));
+        assert_eq!(summarize.last().unwrap().done, total);
+        assert!(progress.iter().any(|p| p.stage == schema::ENUMERATE_STAGE));
+    }
+
+    #[test]
+    fn controlled_discovery_stops_once_cancelled() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let ocel = load_ocel();
+        let graph = TypeGraph::from_linked_ocel(&ocel);
+        let flag = AtomicBool::new(false);
+        let ctl = Control::new()
+            .on_progress(|p| {
+                if p.stage == DISCOVER_STAGE && p.done > 0 {
+                    flag.store(true, Ordering::Relaxed);
+                }
+            })
+            .cancel_flag(&flag);
+        assert_eq!(
+            ctl.discover_path_schemas(&ocel, &discovery_query(&graph))
+                .unwrap_err(),
+            Cancelled
+        );
+    }
+
+    #[test]
+    fn controlled_enumeration_streams_resolved_schemas() {
+        use std::sync::Mutex;
+        let ocel = cyclic_ocel(&["q1", "q2"]);
+        let graph = TypeGraph::from_linked_ocel(&ocel);
+        let src = TypeRef::Event("a".to_string());
+        let partials = Mutex::new(Vec::new());
+        let ctl = Control::new().on_partial(|v| partials.lock().unwrap().push(v));
+        let result = ctl
+            .enumerate_schemas(&graph, &src, None, 3, true, None, 14)
+            .unwrap();
+        drop(ctl);
+        let expected: Vec<_> = result
+            .schemas
+            .iter()
+            .map(|s| serde_json::to_value(s.resolve(&graph)).unwrap())
+            .collect();
+        assert_eq!(partials.into_inner().unwrap(), expected);
     }
 }

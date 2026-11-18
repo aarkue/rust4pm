@@ -6,77 +6,43 @@ use duckdb::Connection;
 
 use crate::core::event_data::object_centric::appendable::AppendableOCEL;
 use crate::core::event_data::object_centric::io::OCELIOError;
-use crate::core::event_data::object_centric::linked_ocel::SlimLinkedOCEL;
 use crate::core::event_data::object_centric::ocel_struct::{
     OCELEventAttribute, OCELObjectAttribute, OCELRelationship, OCELType, OCELTypeAttribute, OCEL,
 };
-use crate::core::event_data::timestamp_utils::parse_timestamp;
-use macros_process_mining::register_binding;
 
-use super::value::{duck_timestamp_to_datetime, duck_value_to_ocel, from_sql_value};
+use super::value::{duck_value_to_datetime, duck_value_to_ocel, from_sql_value};
 
 /// Read an [`OCEL`] from a `DuckDB` database written by
 /// [`stream_ocel_file_to_duckdb`](super::stream::stream_ocel_file_to_duckdb). Eager: the
 /// whole log is materialized in memory.
 ///
-/// Reads the consolidated schema, not the per-type table layout that
-/// [`import_ocel_duckdb_from_con`](crate::core::event_data::object_centric::ocel_sql::import_ocel_duckdb_from_con)
-/// expects.
-pub fn read_ocel_from_duckdb(con: &Connection) -> Result<OCEL, OCELIOError> {
-    let mut ocel = OCEL {
-        event_types: Vec::new(),
-        object_types: Vec::new(),
-        events: Vec::new(),
-        objects: Vec::new(),
-    };
+/// Reads the consolidated schema, not the OCEL 2.0 per-type table layout.
+pub(crate) fn read_ocel_from_duckdb(con: &Connection) -> Result<OCEL, OCELIOError> {
+    let mut ocel = OCEL::default();
     ocel.read_from_duckdb(con)?;
     Ok(ocel)
 }
 
-/// Read an [`OCEL`] from a `DuckDB` database file in the consolidated schema, i.e. one written by
-/// [`stream_ocel_file_to_duckdb`](super::stream::stream_ocel_file_to_duckdb).
-///
-/// Databases in the per-type table layout of the OCEL 2.0 standard are read by
-/// [`import_ocel_duckdb_from_path`](crate::core::event_data::object_centric::ocel_sql::import_ocel_duckdb_from_path)
-/// instead.
-#[register_binding(name = "read_consolidated_ocel_from_duckdb", stringify_error)]
-pub fn read_consolidated_ocel_from_duckdb_path(
-    db_path: impl AsRef<std::path::Path>,
-) -> Result<OCEL, OCELIOError> {
-    let con = Connection::open(db_path)?;
-    read_ocel_from_duckdb(&con)
-}
-
-/// Read a [`SlimLinkedOCEL`] from a `DuckDB` database file in the consolidated schema, i.e. one
-/// written by [`stream_ocel_file_to_duckdb`](super::stream::stream_ocel_file_to_duckdb).
-///
-/// Rows are read into the linked structure directly, without building an [`OCEL`] first.
-#[register_binding(name = "read_consolidated_slim_ocel_from_duckdb", stringify_error)]
-pub fn read_consolidated_slim_ocel_from_duckdb_path(
-    db_path: impl AsRef<std::path::Path>,
-) -> Result<SlimLinkedOCEL, OCELIOError> {
-    let con = Connection::open(db_path)?;
-    SlimLinkedOCEL::from_duckdb(&con)
-}
-
 /// Whether `con` holds the consolidated schema instead of the OCEL 2.0 per-type layout.
 ///
-/// Both are written to a `.duckdb`, so only the tables tell them apart. These five are fixed by
-/// [`create_schema`](super::tables::create_schema), and the per-type layout has none of them.
+/// Both are written to a `.duckdb`, so only the relations tell them apart. These five are fixed
+/// by [`create_schema`](super::tables::create_schema), and the per-type layout has none of them.
+/// A compiled extraction can define them as views, so views count too.
 pub(crate) fn is_consolidated_schema(con: &Connection) -> Result<bool, duckdb::Error> {
     let found: i64 = con.query_row(
-        "SELECT count(*) FROM duckdb_tables() WHERE table_name IN \
-         ('events', 'objects', 'e2o', 'o2o', 'event_attr_meta')",
+        "SELECT count(DISTINCT name) FROM ( \
+           SELECT table_name AS name FROM duckdb_tables() \
+           UNION ALL SELECT view_name FROM duckdb_views() WHERE NOT internal \
+         ) WHERE name IN ('events', 'objects', 'e2o', 'o2o', 'event_attr_meta')",
         [],
         |r| r.get(0),
     )?;
     Ok(found == 5)
 }
 
-/// Read a `DuckDB` schema database into any [`AppendableOCEL`] sink.
+/// Read a `DuckDB` schema database into any [`AppendableOCEL`] sink. The caller finalizes it.
 ///
-/// Currently buffers `e2o`/`o2o` relationships and object attributes into maps.
-/// TODO: Implement real row-streaming with SQL joins etc.
+/// Buffers `e2o`/`o2o` relationships and object attributes into maps.
 pub(crate) trait DuckDbReadInto: AppendableOCEL {
     fn read_from_duckdb(&mut self, con: &Connection) -> Result<(), OCELIOError>
     where
@@ -91,13 +57,15 @@ pub(crate) trait DuckDbReadInto: AppendableOCEL {
             self.declare_event_type(t).map_err(Into::into)?;
         }
         // Object-type attributes come from `object_attr_meta`, unioned with the types observed in
-        // the change rows: a declaration no row ever wrote exists only in the meta table.
+        // the change rows: a declaration no row ever wrote exists only in the meta table. A `Null`
+        // value has no type of its own (see `NULL_VALUE_TYPE`).
         for t in collect_types(
             con,
             r#"SELECT object_type, attr_name, attr_type FROM object_attr_meta
                UNION
                SELECT DISTINCT o.ocel_type, oa.name, oa.value_type
-               FROM objects o JOIN object_attribute_changes oa ON oa.id = o.id"#,
+               FROM objects o JOIN object_attribute_changes oa ON oa.id = o.id
+               WHERE oa.value_type <> 'null'"#,
             r#"SELECT DISTINCT ocel_type FROM objects
                UNION
                SELECT DISTINCT object_type FROM object_attr_meta"#,
@@ -190,6 +158,23 @@ pub(crate) trait DuckDbReadInto: AppendableOCEL {
                 stmt.query_map([], |r| r.get::<_, String>(0))?
                     .collect::<Result<_, _>>()?
             };
+            // Read by position below, and the file is untrusted.
+            let base = super::tables::EVENT_BASE_COLS;
+            if !col_names.iter().map(String::as_str).take(3).eq(base) {
+                return Err(OCELIOError::Invalid(format!(
+                    "the events table must start with the columns {base:?}, but has {col_names:?}"
+                )));
+            }
+            let renames = super::tables::event_column_renames(con)?;
+            let attr_names: Vec<String> = col_names
+                .iter()
+                .map(|c| {
+                    renames
+                        .get(c)
+                        .cloned()
+                        .unwrap_or_else(|| super::tables::event_attr_name(c).into_owned())
+                })
+                .collect();
             let n = col_names.len();
             let mut stmt = con.prepare("SELECT * FROM events")?;
             let rows = stmt.query_map([], |r| {
@@ -207,7 +192,7 @@ pub(crate) trait DuckDbReadInto: AppendableOCEL {
                 let attributes = (3..n)
                     .filter(|&i| !matches!(vals[i], duckdb::types::Value::Null))
                     .map(|i| OCELEventAttribute {
-                        name: super::tables::event_attr_name(&col_names[i]).into_owned(),
+                        name: attr_names[i].clone(),
                         value: duck_value_to_ocel(vals[i].clone()),
                     })
                     .collect();
@@ -216,8 +201,6 @@ pub(crate) trait DuckDbReadInto: AppendableOCEL {
                     .map_err(Into::into)?;
             }
         }
-
-        self.finalize().map_err(Into::into)?;
         Ok(())
     }
 }
@@ -226,28 +209,18 @@ impl<A: AppendableOCEL> DuckDbReadInto for A {}
 
 /// Read a `TEXT` cell, erroring (naming `column`) instead of silently collapsing distinct
 /// non-text values to `""`, which would be fatal for an `id`/`ocel_type` cell.
-fn as_text(v: &duckdb::types::Value, column: &str) -> Result<String, duckdb::Error> {
+fn as_text(v: &duckdb::types::Value, column: &str) -> Result<String, OCELIOError> {
     match v {
         duckdb::types::Value::Text(s) => Ok(s.clone()),
-        _ => Err(duckdb::Error::InvalidColumnType(
-            0,
-            format!("expected TEXT in column {column:?}, got {v:?}"),
-            duckdb::types::Type::Text,
-        )),
+        _ => Err(OCELIOError::Invalid(format!(
+            "expected TEXT in column {column:?}, got {v:?}"
+        ))),
     }
 }
 
 /// Read a timestamp column. Text is accepted too, for databases written by other tooling.
-fn value_to_datetime(v: &duckdb::types::Value) -> Result<DateTime<FixedOffset>, duckdb::Error> {
-    match v {
-        duckdb::types::Value::Timestamp(tu, t) => {
-            duck_timestamp_to_datetime(*tu, *t).ok_or(duckdb::Error::InvalidQuery)
-        }
-        duckdb::types::Value::Text(s) => {
-            parse_timestamp(s, None, false).map_err(|_| duckdb::Error::InvalidQuery)
-        }
-        _ => Err(duckdb::Error::InvalidQuery),
-    }
+fn value_to_datetime(v: &duckdb::types::Value) -> Result<DateTime<FixedOffset>, OCELIOError> {
+    duck_value_to_datetime(v).ok_or_else(|| OCELIOError::Invalid(format!("invalid time {v:?}")))
 }
 
 /// Build `OCELType`s: every name from `all_types_sql`, `attributes` from `attr_sql`'s
@@ -297,6 +270,7 @@ fn collect_types(
 
 #[cfg(all(test, feature = "ocel-duckdb"))]
 mod tests {
+    use super::super::stream::DuckDbWriteOptions;
     use std::collections::HashSet;
 
     use chrono::{DateTime, FixedOffset};
@@ -305,8 +279,8 @@ mod tests {
     use crate::core::event_data::object_centric::linked_ocel::{
         IndexLinkedOCEL, LinkedOCELAccess, SlimLinkedOCEL,
     };
-    use crate::core::event_data::object_centric::ocel_json::import_ocel_json_path;
     use crate::test_utils::get_test_data_path;
+    use crate::{Importable, OCEL};
 
     fn order_management_path() -> std::path::PathBuf {
         get_test_data_path()
@@ -355,13 +329,22 @@ mod tests {
     #[test]
     fn event_attr_declarations_and_values_roundtrip() {
         let src = get_test_data_path().join("ocel").join("ocel2-p2p.json");
-        let reference = IndexLinkedOCEL::from_ocel(import_ocel_json_path(&src).unwrap());
+        let reference = IndexLinkedOCEL::from_ocel(OCEL::import_from_path(&src).unwrap());
 
         let out = get_test_data_path()
             .join("export")
             .join("p2p-attr-roundtrip.duckdb");
         let _ = std::fs::remove_file(&out);
-        stream_ocel_file_to_duckdb(&src, &out).unwrap();
+        stream_ocel_file_to_duckdb(
+            &src,
+            &out,
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap();
         let con = duckdb::Connection::open(&out).unwrap();
         let loaded = IndexLinkedOCEL::from_ocel(super::read_ocel_from_duckdb(&con).unwrap());
 
@@ -425,13 +408,22 @@ mod tests {
     #[test]
     fn from_duckdb_matches_json() {
         let src = order_management_path();
-        let reference = IndexLinkedOCEL::from_ocel(import_ocel_json_path(&src).unwrap());
+        let reference = IndexLinkedOCEL::from_ocel(OCEL::import_from_path(&src).unwrap());
 
         let out = get_test_data_path()
             .join("export")
             .join("from-duckdb-parity.duckdb");
         let _ = std::fs::remove_file(&out);
-        stream_ocel_file_to_duckdb(&src, &out).unwrap();
+        stream_ocel_file_to_duckdb(
+            &src,
+            &out,
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap();
         let con = duckdb::Connection::open(&out).unwrap();
         let loaded = IndexLinkedOCEL::from_ocel(super::read_ocel_from_duckdb(&con).unwrap());
 
@@ -541,17 +533,39 @@ mod tests {
     }
 
     #[test]
-    fn slim_from_duckdb_matches_from_ocel() {
+    fn an_events_table_without_the_fixed_columns_is_an_error() {
+        let con = duckdb::Connection::open_in_memory().unwrap();
+        super::super::tables::create_schema(&con).unwrap();
+        con.execute_batch(
+            "DROP TABLE IF EXISTS events; CREATE TABLE events (ocel_type TEXT); \
+             INSERT INTO events VALUES ('pay');",
+        )
+        .unwrap();
+        assert!(super::is_consolidated_schema(&con).unwrap());
+        let err = super::read_ocel_from_duckdb(&con).unwrap_err();
+        assert!(err.to_string().contains("ocel_type"), "{err}");
+    }
+
+    #[test]
+    fn slim_import_of_duckdb_matches_from_ocel() {
         let src = order_management_path();
-        let reference = SlimLinkedOCEL::from_ocel(import_ocel_json_path(&src).unwrap());
+        let reference = SlimLinkedOCEL::from_ocel(OCEL::import_from_path(&src).unwrap());
 
         let out = get_test_data_path()
             .join("export")
             .join("slim-from-duckdb.duckdb");
         let _ = std::fs::remove_file(&out);
-        stream_ocel_file_to_duckdb(&src, &out).unwrap();
-        let con = duckdb::Connection::open(&out).unwrap();
-        let loaded = SlimLinkedOCEL::from_duckdb(&con).unwrap();
+        stream_ocel_file_to_duckdb(
+            &src,
+            &out,
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap();
+        let loaded = SlimLinkedOCEL::import_from_path(&out).unwrap();
 
         assert_eq!(loaded.get_num_evs(), reference.get_num_evs());
         assert_eq!(loaded.get_num_obs(), reference.get_num_obs());

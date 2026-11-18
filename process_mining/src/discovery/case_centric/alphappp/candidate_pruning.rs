@@ -61,18 +61,6 @@ fn compute_local_fitness(
         .map(|(var, freq)| -> i128 {
             let mut num_tokens = 0;
             let mut var_copy = var.clone();
-            // if strict {
-            //     // Do not consider START/END as "relevant acts" in strict mode
-            //     if var_copy.contains(&start_act) {
-            //         var_copy.remove(0);
-            //     }
-            //     if var_copy.contains(&end_act) {
-            //         assert!(var_copy.pop().unwrap() == end_act);
-            //     }
-            //     if var_copy.is_empty() {
-            //         // return 0;
-            //     }
-            // }
             var_copy.sort();
             var_copy.dedup();
             for act in &var_copy {
@@ -140,7 +128,6 @@ pub fn prune_candidates(
     act_count: Vec<i128>,
     log: &EventLogActivityProjection,
 ) -> Vec<(Vec<usize>, Vec<usize>)> {
-    // let end_act = log.act_to_index.get(END_EVENT).unwrap();
     let filtered_cnds: Vec<&(Vec<usize>, Vec<usize>)> = cnds
         .par_iter()
         .filter(|(a, b)| {
@@ -148,7 +135,6 @@ pub fn prune_candidates(
             balance <= balance_threshold
         })
         .collect();
-    println!("After balance: {}", filtered_cnds.len());
     let filtered_cnds: Vec<&(Vec<usize>, Vec<usize>)> = filtered_cnds
         .into_par_iter()
         .filter(|(a, b)| {
@@ -156,7 +142,6 @@ pub fn prune_candidates(
             fitness >= fitness_threshold && min_per_act_fitness >= fitness_threshold
         })
         .collect();
-    println!("After fitness: {}", filtered_cnds.len());
 
     let sel: Vec<(Vec<usize>, Vec<usize>)> = filtered_cnds
         .par_iter()
@@ -175,16 +160,9 @@ pub fn prune_candidates(
         })
         .map(|(a, b)| (a.clone(), b.clone()))
         .collect();
-
-    println!("After maximal (sel): {}", sel.len());
     sel.into_iter()
         .filter(|(a, b)| {
             let strict_fit = compute_local_fitness(a, b, log, true);
-            // let mut a = log.acts_to_names(a);
-            // let mut b = log.acts_to_names(b);
-            // a.sort();
-            // b.sort();
-            // println!("{:?} => {:?}: {:?}", a, b, strict_fit);
             strict_fit > (replay_threshold, -1.0)
         })
         .collect()

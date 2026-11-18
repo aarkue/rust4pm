@@ -11,7 +11,8 @@ pub struct SchemaMetrics {
     pub support: usize,
     /// Fraction of source-type instances with at least one connection.
     pub coverage: f64,
-    /// Inverse average fan-out: `1 / (avg distinct targets per connected source)`. High = discriminating.
+    /// Inverse average fan-out: `1 / (avg distinct targets per connected source)`. High =
+    /// discriminating.
     pub selectivity: f64,
     /// Total number of connections.
     pub path_count: usize,
@@ -21,7 +22,8 @@ pub struct SchemaMetrics {
     pub total_sources: usize,
     /// Fraction of target-type instances reached.
     pub reach: f64,
-    /// Inverse average fan-in: `|distinct targets| / support`. High = each target reached by few sources.
+    /// Inverse average fan-in: `|distinct targets| / support`. High = each target reached by few
+    /// sources.
     pub exclusivity: f64,
 }
 
@@ -144,18 +146,5 @@ fn fraction(numerator: usize, denominator: usize) -> f64 {
 }
 
 fn summarize_durations(mut durations: Vec<f64>) -> Option<(f64, f64, f64, f64)> {
-    if durations.is_empty() {
-        return None;
-    }
-    durations.sort_by(|a, b| a.total_cmp(b));
-    let min = durations[0];
-    let max = *durations.last().unwrap();
-    let mean = durations.iter().sum::<f64>() / durations.len() as f64;
-    let mid = durations.len() / 2;
-    let median = if durations.len().is_multiple_of(2) {
-        (durations[mid - 1] + durations[mid]) / 2.0
-    } else {
-        durations[mid]
-    };
-    Some((min, max, mean, median))
+    crate::analysis::durations::summarize(&mut durations).map(|s| (s.min, s.max, s.mean, s.median))
 }

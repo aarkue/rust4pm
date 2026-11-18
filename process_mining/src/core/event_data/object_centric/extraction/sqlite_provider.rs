@@ -6,7 +6,7 @@ use std::path::Path;
 
 use chrono::{DateTime, FixedOffset, NaiveDateTime};
 use rusqlite::types::ValueRef;
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 
 use super::catalog::{ExtractionCatalog, TableSchema};
 use super::provider::{ProviderError, RowProvider};
@@ -28,13 +28,16 @@ impl std::fmt::Debug for SqliteRowProvider {
 }
 
 impl SqliteRowProvider {
-    /// Open a `SQLite` database file.
+    /// Open an existing `SQLite` database file read-only.
     ///
     /// # Errors
-    /// Returns the underlying `rusqlite::Error` if the file cannot be opened.
+    /// Returns the underlying `rusqlite::Error` if the file is missing or cannot be opened.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, rusqlite::Error> {
         Ok(Self {
-            con: Connection::open(path)?,
+            con: Connection::open_with_flags(
+                path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )?,
         })
     }
 
@@ -68,9 +71,11 @@ impl SqliteRowProvider {
     /// Returns the underlying `rusqlite::Error` if the schema cannot be read.
     pub fn discover_catalog(&self, source_id: &str) -> Result<ExtractionCatalog, rusqlite::Error> {
         let mut catalog = ExtractionCatalog::new();
+        // `LIKE 'sqlite_%'` would ignore case and read `_` as any character, hiding a user table
+        // such as `SQLiteData`.
         let mut tables = self.con.prepare(
             "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') \
-             AND name NOT LIKE 'sqlite_%' ORDER BY name",
+             AND substr(name, 1, 7) <> 'sqlite_' ORDER BY name",
         )?;
         let names: Vec<String> = tables
             .query_map([], |r| r.get::<_, String>(0))?
@@ -202,7 +207,6 @@ impl RowProvider for SqliteRowProvider {
         // what the schema already stated.
         let declared: Vec<Option<DeclaredKind>> = stmt
             .columns()
-            .iter()
             .map(|c| c.decl_type().and_then(declared_kind))
             .collect();
         let mut rows = stmt.query([]).map_err(|e| map_err(table, &e))?;
@@ -508,7 +512,8 @@ mod tests {
             con.execute_batch(
                 "CREATE TABLE actor (actor_id numeric NOT NULL, first_name VARCHAR(45));
                  INSERT INTO actor VALUES (1, 'PENELOPE'), (2, 'NICK');
-                 CREATE VIEW recent AS SELECT * FROM actor;",
+                 CREATE VIEW recent AS SELECT * FROM actor;
+                 CREATE TABLE SQLiteData (x TEXT);",
             )
             .expect("seed");
         }
@@ -527,6 +532,7 @@ mod tests {
         assert!(catalog.tables["db"]
             .keys()
             .all(|t| !t.starts_with("sqlite_")));
+        assert!(catalog.table("db", "SQLiteData").is_some());
 
         let mut seen = Vec::new();
         provider

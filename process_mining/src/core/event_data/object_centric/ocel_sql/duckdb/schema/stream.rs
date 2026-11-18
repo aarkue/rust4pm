@@ -1,36 +1,71 @@
 //! Public entry points: own the connection, create schema, import inside one transaction, finalize.
-use std::fs::File;
 use std::path::Path;
 
 use duckdb::Connection;
 
-use crate::core::event_data::object_centric::appendable::{
-    is_streaming_format, AppendableOCEL, StreamImportOCEL,
-};
+use crate::core::event_data::object_centric::appendable::{AppendableOCEL, StreamImportOCEL};
 use crate::core::event_data::object_centric::io::OCELIOError;
-use crate::core::event_data::object_centric::linked_ocel::SlimLinkedOCEL;
-use crate::core::event_data::object_centric::ocel_struct::OCEL;
-use crate::core::event_data::object_centric::ocel_xml::OCELImportOptions;
+use crate::core::event_data::object_centric::io::OCELImportOptions;
 use crate::core::event_data::object_centric::readable::ReadableOCEL;
-use crate::core::io::Importable;
-use macros_process_mining::register_binding;
+use crate::utils::control::Control;
+use macros_process_mining::{controlled, register_binding};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::reader::{is_consolidated_schema, DuckDbReadInto};
 use super::sink::DuckDbOcelSink;
 use super::tables::{create_indexes, create_schema};
 
-fn open_fresh(db_path: &Path) -> Result<Connection, OCELIOError> {
+/// Open a new database at `db_path`, replacing an existing file only if `overwrite` is set.
+pub(crate) fn open_fresh(db_path: &Path, overwrite: bool) -> Result<Connection, OCELIOError> {
     if db_path.exists() {
-        let _ = std::fs::remove_file(db_path);
+        if !overwrite {
+            return Err(OCELIOError::Io(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!(
+                    "{} already exists; set `overwrite` to replace it",
+                    db_path.display()
+                ),
+            )));
+        }
+        std::fs::remove_file(db_path)?;
+    }
+    // A crashed earlier run leaves a write-ahead log beside its file, which `DuckDB` would replay
+    // into the new database.
+    let wal = wal_path(db_path);
+    if wal.exists() {
+        std::fs::remove_file(wal)?;
     }
     Ok(Connection::open(db_path)?)
 }
 
-/// Options controlling how an OCEL is streamed into a `DuckDB` database.
+/// The write-ahead log `DuckDB` keeps beside `db_path`: its path with `.wal` appended.
+fn wal_path(db_path: &Path) -> std::path::PathBuf {
+    let mut wal = db_path.as_os_str().to_owned();
+    wal.push(".wal");
+    wal.into()
+}
+
+/// Remove a database [`open_fresh`] created, with its write-ahead log, after a failed import.
+pub(crate) fn remove_database(db_path: &Path) {
+    let _ = std::fs::remove_file(db_path);
+    let _ = std::fs::remove_file(wal_path(db_path));
+}
+
+/// Applies [`DuckDbWriteOptions::compression`] to `con`, before anything is written.
+pub(crate) fn apply_compression(
+    con: &Connection,
+    options: &DuckDbWriteOptions,
+) -> Result<(), duckdb::Error> {
+    if !options.compression {
+        con.execute_batch("PRAGMA force_compression='uncompressed';")?;
+    }
+    Ok(())
+}
+
+/// Options controlling how an OCEL is written into a `DuckDB` database.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct DuckDbImportOptions {
+#[serde(default)]
+pub struct DuckDbWriteOptions {
     /// Whether `DuckDB` compresses columns. `true` (default) = smaller, faster-to-query
     /// file; `false` = ~20% faster import, larger file.
     pub compression: bool,
@@ -38,37 +73,63 @@ pub struct DuckDbImportOptions {
     /// rows (events by type+time, relations by key) so similar values group, giving better
     /// compression and range scans. Drops then rebuilds indexes/PKs. `false` skips it.
     pub optimize_filesize: bool,
+    /// Whether to replace an existing file at the destination. `false` (default) fails instead.
+    pub overwrite: bool,
 }
 
-impl Default for DuckDbImportOptions {
+impl Default for DuckDbWriteOptions {
     fn default() -> Self {
         Self {
             compression: true,
             optimize_filesize: true,
+            overwrite: false,
         }
     }
 }
 
-/// Run `import` (which appends into the sink) inside one transaction, then finalize.
+/// Run `import`, which appends into the sink and finalizes it, inside one transaction. A failed
+/// import removes the new database again.
 pub(super) fn run_import<F>(
     db_path: &Path,
-    options: &DuckDbImportOptions,
+    options: &DuckDbWriteOptions,
     import: F,
 ) -> Result<(), OCELIOError>
 where
     F: FnOnce(&mut DuckDbOcelSink<'_>) -> Result<(), OCELIOError>,
 {
-    let con = open_fresh(db_path)?;
-    if !options.compression {
-        con.execute_batch("PRAGMA force_compression='uncompressed';")?;
+    let con = open_fresh(db_path, options.overwrite)?;
+    let result = fill(&con, options, import);
+    drop(con);
+    if result.is_err() {
+        remove_database(db_path);
     }
-    create_schema(&con)?;
+    result
+}
+
+fn fill<F>(con: &Connection, options: &DuckDbWriteOptions, import: F) -> Result<(), OCELIOError>
+where
+    F: FnOnce(&mut DuckDbOcelSink<'_>) -> Result<(), OCELIOError>,
+{
+    apply_compression(con, options)?;
+    create_schema(con)?;
     con.execute_batch("BEGIN TRANSACTION")?;
     {
-        let mut sink = DuckDbOcelSink::new(&con)?;
+        let mut sink = DuckDbOcelSink::new(con)?;
         import(&mut sink)?;
-        sink.finalize()?;
     }
+    optimize_and_index(con, options)?;
+    con.execute_batch("COMMIT")?;
+    con.execute_batch("CHECKPOINT")?;
+    con.execute_batch("VACUUM")?;
+    Ok(())
+}
+
+/// Applies [`DuckDbWriteOptions::optimize_filesize`] to the filled tables, then builds the
+/// secondary indexes.
+pub(crate) fn optimize_and_index(
+    con: &Connection,
+    options: &DuckDbWriteOptions,
+) -> Result<(), duckdb::Error> {
     if options.optimize_filesize {
         // Rewrite tables clustered by key for better compression + scan locality. The
         // `CREATE TABLE AS SELECT` rewrite drops indexes and primary keys; both are
@@ -103,20 +164,18 @@ where
         ")?;
     }
     // Build secondary indexes last, so the optimize rewrite above cannot drop them.
-    create_indexes(&con)?;
-    con.execute_batch("COMMIT")?;
-    con.execute_batch("CHECKPOINT")?;
-    con.execute_batch("VACUUM")?;
-    Ok(())
+    create_indexes(con)
 }
 
-/// Write an in-memory OCEL into a fresh `DuckDB` database in the consolidated schema.
+/// Write an in-memory OCEL into a new `DuckDB` database in the consolidated schema.
 ///
-/// For writing the OCEL 2.0 standard per-type layout instead, see [`export_ocel_duckdb_to_path`](crate::core::event_data::object_centric::ocel_sql::export_ocel_duckdb_to_path).
-pub fn write_ocel_to_duckdb_with<O: ReadableOCEL + ?Sized>(
-    ocel: &O,
+/// For writing the OCEL 2.0 standard per-type layout instead, see
+/// [`OCEL::export_to_path`](crate::core::io::Exportable::export_to_path) with a `.duckdb` path.
+#[register_binding(stringify_error)]
+pub fn write_ocel_to_duckdb(
+    ocel: &(impl ReadableOCEL + ?Sized),
     db_path: impl AsRef<Path>,
-    options: &DuckDbImportOptions,
+    #[bind(default)] options: &DuckDbWriteOptions,
 ) -> Result<(), OCELIOError> {
     run_import(db_path.as_ref(), options, |sink| {
         for et in ocel.event_types() {
@@ -133,49 +192,26 @@ pub fn write_ocel_to_duckdb_with<O: ReadableOCEL + ?Sized>(
             let o = o.into_owned();
             sink.append_object(o.id, &o.object_type, o.attributes, o.relationships)?;
         }
-        Ok(())
+        Ok(sink.finalize()?)
     })
 }
 
-/// Write an in-memory OCEL into a fresh `DuckDB` database in the consolidated schema.
+/// Stream an OCEL file into a new `DuckDB` database in the consolidated schema.
 ///
-/// Like [`write_ocel_to_duckdb_with`] with default [`DuckDbImportOptions`].
-pub fn write_ocel_to_duckdb<O: ReadableOCEL + ?Sized>(
-    ocel: &O,
-    db_path: impl AsRef<Path>,
-) -> Result<(), OCELIOError> {
-    write_ocel_to_duckdb_with(ocel, db_path, &DuckDbImportOptions::default())
-}
-
-/// Write an in-memory OCEL into a fresh `DuckDB` database in the consolidated schema.
-#[register_binding(name = "write_ocel_to_consolidated_duckdb", stringify_error)]
-fn write_ocel_to_duckdb_binding(
-    ocel: &OCEL,
-    db_path: impl AsRef<Path>,
-    #[bind(default = Default::default())] options: &DuckDbImportOptions,
-) -> Result<(), OCELIOError> {
-    write_ocel_to_duckdb_with(ocel, db_path, options)
-}
-
-/// Write an in-memory Slim OCEL into a fresh `DuckDB` database in the consolidated schema.
-#[register_binding(name = "write_slim_ocel_to_consolidated_duckdb", stringify_error)]
-fn write_slim_ocel_to_duckdb_binding(
-    ocel: &SlimLinkedOCEL,
-    db_path: impl AsRef<Path>,
-    #[bind(default = Default::default())] options: &DuckDbImportOptions,
-) -> Result<(), OCELIOError> {
-    write_ocel_to_duckdb_with(ocel, db_path, options)
-}
-
-/// Stream an OCEL file into a fresh `DuckDB` database.
+/// Accepts every format [`OCEL`](crate::OCEL) imports from, read as
+/// [`StreamImportOCEL::stream_ocel_from_path`] does: `.json`, `.xml` (and their `.gz` variants),
+/// bundles and a `.duckdb` in this schema stream into the database, the other formats are
+/// materialized into an [`OCEL`](crate::OCEL) first.
 ///
-/// Accepts every format [`OCEL`] imports from. `.json`, `.xml` (and their `.gz` variants),
-/// bundles and a `.duckdb` in this schema stream into the database. `.sqlite`, `.ocel.csv` and a
-/// `.duckdb` in the OCEL 2.0 per-type layout are materialized into an [`OCEL`] first.
+/// `import_options` apply to reading the source. Called on a [`Control`], reading reports
+/// progress and honors cancellation. A failed or cancelled import removes the new database again.
 ///
 /// Read the result back with
-/// [`read_ocel_from_duckdb`](super::reader::read_ocel_from_duckdb) or
-/// [`SlimLinkedOCEL::from_duckdb`](crate::core::event_data::object_centric::linked_ocel::SlimLinkedOCEL::from_duckdb).
+/// [`import_ocel_duckdb`](crate::core::event_data::object_centric::ocel_sql::import_ocel_duckdb) or
+/// by importing the `.duckdb` path, e.g. with [`SlimLinkedOCEL`]'s
+/// [`Importable::import_from_path`](crate::core::io::Importable::import_from_path).
+///
+/// [`SlimLinkedOCEL`]: crate::core::event_data::object_centric::linked_ocel::SlimLinkedOCEL
 ///
 /// # Timestamps
 ///
@@ -187,19 +223,14 @@ fn write_slim_ocel_to_duckdb_binding(
 /// Columns on the wide `events` table come from the event-type declarations, and are typed
 /// accordingly. An attribute that is never declared still gets a column, added on the fly
 /// as `VARCHAR`; no attribute is dropped.
-pub fn stream_ocel_file_to_duckdb<P: AsRef<Path>, Q: AsRef<Path>>(
-    src_path: P,
-    db_path: Q,
-) -> Result<(), OCELIOError> {
-    stream_ocel_file_to_duckdb_with(src_path, db_path, &DuckDbImportOptions::default())
-}
-
-/// Like [`stream_ocel_file_to_duckdb`] with explicit [`DuckDbImportOptions`].
-#[register_binding(stringify_error, name = "stream_ocel_to_duckdb")]
-pub fn stream_ocel_file_to_duckdb_with(
+#[controlled]
+#[register_binding(stringify_error)]
+pub fn stream_ocel_file_to_duckdb(
     src_path: impl AsRef<Path>,
     db_path: impl AsRef<Path>,
-    #[bind(default = Default::default())] options: &DuckDbImportOptions,
+    #[bind(default)] options: &DuckDbWriteOptions,
+    #[bind(default)] import_options: &OCELImportOptions,
+    ctl: &Control<'_>,
 ) -> Result<(), OCELIOError> {
     let src = src_path.as_ref();
     let db_path = db_path.as_ref();
@@ -207,48 +238,26 @@ pub fn stream_ocel_file_to_duckdb_with(
     // out from under the read.
     if let (Ok(from), Ok(to)) = (src.canonicalize(), db_path.canonicalize()) {
         if from == to {
-            return Err(OCELIOError::Other(format!(
-                "the source and the destination are the same file: {}",
-                db_path.display()
+            return Err(OCELIOError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "the source and the destination are the same file: {}",
+                    db_path.display()
+                ),
             )));
         }
     }
-    // A bundle is a directory or an `ocel-meta.json` manifest, which a bare extension lookup
-    // reads as plain OCEL JSON.
-    let format = <OCEL as Importable>::infer_format(src).ok_or_else(|| {
-        OCELIOError::UnsupportedFormat(format!("cannot infer OCEL format from {src:?}"))
-    })?;
-    if is_streaming_format(&format) {
-        return run_import(db_path, options, |sink| {
-            sink.stream_ocel_from_reader(File::open(src)?, &format, OCELImportOptions::default())
-        });
-    }
-    // A bundle reads table by table into the sink, so it holds no log in memory either.
-    #[cfg(feature = "ocel-bundle")]
-    if format.ends_with("zip") {
-        return run_import(db_path, options, |sink| {
-            crate::core::event_data::object_centric::ocel_bundle::Container::open(src)?
-                .read_into(sink)
-        });
-    }
-    // A source already in this schema reads straight into the sink. The per-type layout also
-    // spells itself `.duckdb`, so the tables decide.
-    if format == "duckdb" {
-        let src_con = Connection::open(src)?;
-        if is_consolidated_schema(&src_con)? {
-            return run_import(db_path, options, |sink| sink.read_from_duckdb(&src_con));
-        }
-    }
-    // The rest (`sqlite`, `ocel.csv`, a per-type `.duckdb`) only has importers that return an
-    // `OCEL`, and going through a `SlimLinkedOCEL` here would build two logs instead of none.
-    write_ocel_to_duckdb_with(&OCEL::import_from_path(src)?, db_path, options)
+    run_import(db_path, options, |sink| {
+        sink.stream_ocel_from_path(src, import_options.clone(), ctl)
+    })
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::reader::is_consolidated_schema;
     use super::*;
-    use crate::core::event_data::object_centric::ocel_json::import_ocel_json_path;
     use crate::test_utils::get_test_data_path;
+    use crate::{Importable, OCEL};
 
     /// Event and object counts in `db_path`.
     fn counts(db_path: &Path) -> (usize, usize) {
@@ -265,17 +274,24 @@ mod tests {
     #[test]
     #[cfg(feature = "ocel-sqlite")]
     fn sqlite_stream_roundtrip_counts() {
-        use crate::core::event_data::object_centric::ocel_sql::import_ocel_sqlite_from_path;
-
         let src = get_test_data_path()
             .join("ocel")
             .join("order-management.sqlite");
-        let reference = import_ocel_sqlite_from_path(&src).unwrap();
+        let reference = OCEL::import_from_path(&src).unwrap();
         let out = get_test_data_path()
             .join("export")
             .join("stream-from-sqlite.duckdb");
         let _ = std::fs::remove_file(&out);
-        stream_ocel_file_to_duckdb(&src, &out).unwrap();
+        stream_ocel_file_to_duckdb(
+            &src,
+            &out,
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap();
         assert_eq!(
             counts(&out),
             (reference.events.len(), reference.objects.len())
@@ -288,7 +304,7 @@ mod tests {
         let src = get_test_data_path()
             .join("ocel")
             .join("order-management.json");
-        let reference = import_ocel_json_path(&src).unwrap();
+        let reference = OCEL::import_from_path(&src).unwrap();
         let first = get_test_data_path()
             .join("export")
             .join("consolidated-source.duckdb");
@@ -297,10 +313,28 @@ mod tests {
             .join("consolidated-copy.duckdb");
         let _ = std::fs::remove_file(&first);
         let _ = std::fs::remove_file(&second);
-        stream_ocel_file_to_duckdb(&src, &first).unwrap();
+        stream_ocel_file_to_duckdb(
+            &src,
+            &first,
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap();
 
         assert!(is_consolidated_schema(&Connection::open(&first).unwrap()).unwrap());
-        stream_ocel_file_to_duckdb(&first, &second).unwrap();
+        stream_ocel_file_to_duckdb(
+            &first,
+            &second,
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap();
         assert_eq!(
             counts(&second),
             (reference.events.len(), reference.objects.len())
@@ -308,7 +342,16 @@ mod tests {
 
         // The import recreates the destination, so a source at that path would be gone before
         // the read.
-        let err = stream_ocel_file_to_duckdb(&second, &second).unwrap_err();
+        let err = stream_ocel_file_to_duckdb(
+            &second,
+            &second,
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap_err();
         assert!(
             err.to_string().contains("the same file"),
             "{err}, and {} still exists: {}",
@@ -326,7 +369,7 @@ mod tests {
             export_ocel_bundle, BundleExportOptions, ContainerLayout, StorageFormat, META_FILE_NAME,
         };
 
-        let reference = import_ocel_json_path(
+        let reference = OCEL::import_from_path(
             get_test_data_path()
                 .join("ocel")
                 .join("order-management.json"),
@@ -369,8 +412,16 @@ mod tests {
             for src in [as_dir.clone(), as_dir.join(META_FILE_NAME), as_zip] {
                 let out = work.join("out.duckdb");
                 let _ = std::fs::remove_file(&out);
-                stream_ocel_file_to_duckdb(&src, &out)
-                    .unwrap_or_else(|e| panic!("{storage:?} {}: {e}", src.display()));
+                stream_ocel_file_to_duckdb(
+                    &src,
+                    &out,
+                    &DuckDbWriteOptions {
+                        overwrite: true,
+                        ..Default::default()
+                    },
+                    &Default::default(),
+                )
+                .unwrap_or_else(|e| panic!("{storage:?} {}: {e}", src.display()));
                 assert_eq!(counts(&out), expected, "{storage:?} {}", src.display());
             }
         }
@@ -381,13 +432,22 @@ mod tests {
         let src = get_test_data_path()
             .join("ocel")
             .join("order-management.json");
-        let reference = import_ocel_json_path(&src).unwrap();
+        let reference = OCEL::import_from_path(&src).unwrap();
 
         let out = get_test_data_path()
             .join("export")
             .join("stream-order-mgmt.duckdb");
         let _ = std::fs::remove_file(&out);
-        stream_ocel_file_to_duckdb(&src, &out).unwrap();
+        stream_ocel_file_to_duckdb(
+            &src,
+            &out,
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap();
 
         let con = Connection::open(&out).unwrap();
         let n_ev: i64 = con
@@ -411,18 +471,19 @@ mod tests {
         let src = get_test_data_path()
             .join("ocel")
             .join("order-management.json");
-        let reference = import_ocel_json_path(&src).unwrap();
+        let reference = OCEL::import_from_path(&src).unwrap();
         let out = get_test_data_path()
             .join("export")
             .join("stream-uncompressed.duckdb");
         let _ = std::fs::remove_file(&out);
-        stream_ocel_file_to_duckdb_with(
+        stream_ocel_file_to_duckdb(
             &src,
             &out,
-            &DuckDbImportOptions {
+            &DuckDbWriteOptions {
                 compression: false,
                 ..Default::default()
             },
+            &Default::default(),
         )
         .unwrap();
         let con = Connection::open(&out).unwrap();
@@ -436,11 +497,11 @@ mod tests {
     fn gz_stream_roundtrip_counts() {
         use std::io::Write;
         // Proves the `.gz` path: gzip a JSON fixture, then stream the `.json.gz` in. Format
-        // (incl. the `.gz` layer) is resolved centrally via `StreamImportOCEL`.
+        // (incl. the `.gz` layer) is resolved centrally by `StreamImportOCEL`.
         let src = get_test_data_path()
             .join("ocel")
             .join("order-management.json");
-        let reference = import_ocel_json_path(&src).unwrap();
+        let reference = OCEL::import_from_path(&src).unwrap();
         let raw = std::fs::read(&src).unwrap();
 
         let gz_path = get_test_data_path()
@@ -455,7 +516,16 @@ mod tests {
 
         let out = get_test_data_path().join("export").join("stream-gz.duckdb");
         let _ = std::fs::remove_file(&out);
-        stream_ocel_file_to_duckdb(&gz_path, &out).unwrap();
+        stream_ocel_file_to_duckdb(
+            &gz_path,
+            &out,
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap();
 
         let con = Connection::open(&out).unwrap();
         let n_ev: i64 = con
@@ -479,7 +549,16 @@ mod tests {
             .join("export")
             .join("stream-index-check.duckdb");
         let _ = std::fs::remove_file(&out);
-        stream_ocel_file_to_duckdb(&src, &out).unwrap();
+        stream_ocel_file_to_duckdb(
+            &src,
+            &out,
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap();
         let con = Connection::open(&out).unwrap();
 
         let mut idx: Vec<String> = con
@@ -516,18 +595,25 @@ mod tests {
 
     #[test]
     fn xml_stream_roundtrip_counts() {
-        use crate::core::event_data::object_centric::ocel_xml::xml_ocel_import::import_ocel_xml_path;
-
         let src = get_test_data_path()
             .join("ocel")
             .join("order-management.xml");
-        let reference = import_ocel_xml_path(&src).unwrap();
+        let reference = OCEL::import_from_path(&src).unwrap();
 
         let out = get_test_data_path()
             .join("export")
             .join("stream-order-mgmt-xml.duckdb");
         let _ = std::fs::remove_file(&out);
-        stream_ocel_file_to_duckdb(&src, &out).unwrap();
+        stream_ocel_file_to_duckdb(
+            &src,
+            &out,
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap();
 
         let con = Connection::open(&out).unwrap();
         let n_ev: i64 = con
@@ -542,18 +628,25 @@ mod tests {
 
     #[test]
     fn xml_stream_roundtrip_counts_ck() {
-        use crate::core::event_data::object_centric::ocel_xml::xml_ocel_import::import_ocel_xml_path;
-
         let src = get_test_data_path()
             .join("ocel")
             .join("ContainerLogistics.xml");
-        let reference = import_ocel_xml_path(&src).unwrap();
+        let reference = OCEL::import_from_path(&src).unwrap();
 
         let out = get_test_data_path()
             .join("export")
             .join("stream-container-logistics-xml.duckdb");
         let _ = std::fs::remove_file(&out);
-        stream_ocel_file_to_duckdb(&src, &out).unwrap();
+        stream_ocel_file_to_duckdb(
+            &src,
+            &out,
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap();
 
         let con = Connection::open(&out).unwrap();
         let n_ev: i64 = con
@@ -568,19 +661,28 @@ mod tests {
 
     #[test]
     fn json_stream_attribute_and_relationship_fidelity() {
-        use super::super::tables::quote_ident;
         use super::super::value::duck_value_to_ocel;
+        use crate::core::event_data::object_centric::ocel_sql::quoted_ident;
 
         // order-management.json has zero events with any attributes (verified against
         // the fixture); ocel2-p2p.json has events with both attributes and
         // relationships, so it exercises the round-trip this test targets.
         let src = get_test_data_path().join("ocel").join("ocel2-p2p.json");
-        let reference = import_ocel_json_path(&src).unwrap();
+        let reference = OCEL::import_from_path(&src).unwrap();
         let out = get_test_data_path()
             .join("export")
             .join("stream-fidelity.duckdb");
         let _ = std::fs::remove_file(&out);
-        stream_ocel_file_to_duckdb(&src, &out).unwrap();
+        stream_ocel_file_to_duckdb(
+            &src,
+            &out,
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap();
         let con = Connection::open(&out).unwrap();
 
         // Pick one event that has at least one attribute and one relationship.
@@ -594,7 +696,7 @@ mod tests {
         let a = &ev.attributes[0];
         let value: duckdb::types::Value = con
             .query_row(
-                &format!("SELECT {} FROM events WHERE id = ?", quote_ident(&a.name)),
+                &format!("SELECT {} FROM events WHERE id = ?", quoted_ident(&a.name)),
                 duckdb::params![ev.id],
                 |r| r.get(0),
             )
@@ -610,5 +712,144 @@ mod tests {
             )
             .unwrap();
         assert_eq!(n_rel as usize, ev.relationships.len());
+    }
+
+    /// Reading neither creates a missing database nor writes to an existing one.
+    #[test]
+    fn readers_open_read_only() {
+        use crate::core::event_data::object_centric::linked_ocel::SlimLinkedOCEL;
+        use crate::core::event_data::object_centric::ocel_sql::export_ocel_duckdb_to_path;
+
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.duckdb");
+        assert!(OCEL::import_from_path(&missing).is_err());
+        assert!(SlimLinkedOCEL::import_from_path(&missing).is_err());
+        assert!(stream_ocel_file_to_duckdb(
+            &missing,
+            dir.path().join("out.duckdb"),
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default()
+        )
+        .is_err());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+
+        let ocel = OCEL::import_from_path(
+            get_test_data_path()
+                .join("ocel")
+                .join("order-management.json"),
+        )
+        .unwrap();
+        let consolidated = dir.path().join("consolidated.duckdb");
+        let per_type = dir.path().join("per-type.duckdb");
+        write_ocel_to_duckdb(
+            &ocel,
+            &consolidated,
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        export_ocel_duckdb_to_path(&ocel, &per_type).unwrap();
+        let snapshot = |p: &Path| {
+            let modified = std::fs::metadata(p).unwrap().modified().unwrap();
+            (std::fs::read(p).unwrap(), modified)
+        };
+        let before = [snapshot(&consolidated), snapshot(&per_type)];
+
+        OCEL::import_from_path(&consolidated).unwrap();
+        SlimLinkedOCEL::import_from_path(&consolidated).unwrap();
+        OCEL::import_from_path(&per_type).unwrap();
+        stream_ocel_file_to_duckdb(
+            &consolidated,
+            dir.path().join("copy-1.duckdb"),
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap();
+        stream_ocel_file_to_duckdb(
+            &per_type,
+            dir.path().join("copy-2.duckdb"),
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap();
+
+        assert!(before == [snapshot(&consolidated), snapshot(&per_type)]);
+        assert!(!dir.path().join("consolidated.duckdb.wal").exists());
+        assert!(!dir.path().join("per-type.duckdb.wal").exists());
+    }
+
+    #[test]
+    #[cfg(feature = "bindings")]
+    fn stream_binding_refuses_to_overwrite_by_default() {
+        use crate::bindings::{call, list_functions, AppState};
+
+        let src = get_test_data_path()
+            .join("ocel")
+            .join("order-management.json");
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out.duckdb");
+        std::fs::write(&out, b"keep").unwrap();
+        let binding = list_functions()
+            .into_iter()
+            .find(|b| b.name == "stream_ocel_file_to_duckdb")
+            .expect("stream_ocel_file_to_duckdb registered");
+        let state = AppState::default();
+
+        let args = serde_json::json!({ "src_path": src, "db_path": out });
+        let err = call(binding, &args, &state).unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+        assert_eq!(std::fs::read(&out).unwrap(), b"keep");
+
+        let args = serde_json::json!({ "src_path": src, "db_path": out, "options": { "overwrite": true } });
+        call(binding, &args, &state).unwrap();
+        let reference = OCEL::import_from_path(&src).unwrap();
+        assert_eq!(
+            counts(&out),
+            (reference.events.len(), reference.objects.len())
+        );
+    }
+
+    #[test]
+    fn stream_reports_progress_and_a_cancel_removes_the_database() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Mutex;
+
+        let src = get_test_data_path()
+            .join("ocel")
+            .join("order-management.json");
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out.duckdb");
+
+        let stages = Mutex::new(Vec::new());
+        let ctl = Control::new().on_progress(|p| stages.lock().unwrap().push(p.stage));
+        ctl.stream_ocel_file_to_duckdb(&src, &out, &Default::default(), &Default::default())
+            .unwrap();
+        drop(ctl);
+        assert!(!stages.into_inner().unwrap().is_empty());
+
+        let flag = AtomicBool::new(false);
+        let ctl = Control::new()
+            .on_progress(|_| flag.store(true, Ordering::Relaxed))
+            .cancel_flag(&flag);
+        let options = DuckDbWriteOptions {
+            overwrite: true,
+            ..Default::default()
+        };
+        let err = ctl
+            .stream_ocel_file_to_duckdb(&src, &out, &options, &Default::default())
+            .unwrap_err();
+        assert!(matches!(err, OCELIOError::Cancelled), "{err}");
+        assert!(!out.exists());
     }
 }

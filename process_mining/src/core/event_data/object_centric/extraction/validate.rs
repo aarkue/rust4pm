@@ -835,8 +835,8 @@ fn all_regexes<'a>(blueprint: &'a Blueprint, desugared: &'a [(String, Mapping)])
 
 /// Collect every column a target reads into `out`.
 ///
-/// `pub(crate)`: also used by the executor's demand analysis (`schema::demanded_columns`), so a
-/// `Source` node only ever projects the columns a mapping's target actually reads.
+/// The executor's demand analysis (`schema::demanded_columns`) shares this, so a `Source` node
+/// only projects the columns a mapping's target reads.
 pub(crate) fn collect_target_columns<'a>(target: &'a Target, out: &mut HashSet<&'a str>) {
     let endpoint = |e: &'a ObjectEndpoint, out: &mut HashSet<&'a str>| {
         e.id.referenced_columns(out);
@@ -1204,8 +1204,6 @@ mod tests {
 
     #[test]
     fn a_bad_column_inside_a_filter_condition_is_reported() {
-        // Regression: validate() used to match only Source and Union in its node loop, so a
-        // Filter's condition was never checked against its input's columns.
         let filter = Node {
             id: "recent".into(),
             label: None,
@@ -1233,7 +1231,6 @@ mod tests {
 
     #[test]
     fn a_bad_regex_inside_a_filter_condition_is_the_only_error() {
-        // Regression: bad_regexes was called only on mapping.when, never on a Filter condition.
         let filter = Node {
             id: "orders_filtered".into(),
             label: None,
@@ -1256,8 +1253,6 @@ mod tests {
 
     #[test]
     fn a_bad_regex_inside_an_object_endpoint_split_is_the_only_error() {
-        // Regression: an uncompilable SplitSpec::Regex pattern inside an ObjectEndpoint.split
-        // was never visited by bad_regexes nor by collect_target_columns.
         let m = MappingEntry::Single(Mapping {
             node: "o".into(),
             label: None,
@@ -1292,8 +1287,6 @@ mod tests {
 
     #[test]
     fn an_unknown_node_reference_does_not_suppress_other_errors_on_the_same_mapping() {
-        // D1: a mapping with both a bad node name and a missing endpoint type used to report
-        // only the first, because check_mapping returned early.
         let m = MappingEntry::Single(Mapping {
             node: "nope".into(),
             label: None,
@@ -1332,8 +1325,8 @@ mod tests {
 
     #[test]
     fn a_node_only_downstream_of_a_cycle_is_not_reported_as_being_in_one() {
-        // D2: Kahn's algorithm leaves every node downstream of a cycle unordered too, so the
-        // old code reported c as "taking part in a cycle" despite only reading from it.
+        // Kahn's algorithm leaves every node downstream of a cycle unordered too, but c only
+        // reads from the cycle.
         let a = Node {
             id: "a".into(),
             label: None,
@@ -1372,7 +1365,7 @@ mod tests {
 
     #[test]
     fn a_source_id_typo_reports_unknown_source_not_unknown_table() {
-        // D3: Catalog::table alone cannot tell a source-id typo apart from a known source with
+        // Catalog::table alone cannot tell a source-id typo apart from a known source with
         // an unknown table.
         let b = bp(
             vec![Node {
@@ -1772,10 +1765,8 @@ mod tests {
 
     #[test]
     fn an_empty_template_placeholder_is_reported() {
-        // Regression: an empty placeholder used to also collect "" as a referenced column,
-        // so validation additionally reported a spurious `UnknownColumn { column: "" }`
-        // alongside the `InvalidTemplate` that actually names the defect. Only the latter is
-        // the right diagnostic here, so the full error set is asserted, not just `.any()`.
+        // The full error set is asserted: an `UnknownColumn { column: "" }` next to the
+        // `InvalidTemplate` would be spurious.
         let m = MappingEntry::Single(Mapping {
             node: "o".into(),
             label: None,

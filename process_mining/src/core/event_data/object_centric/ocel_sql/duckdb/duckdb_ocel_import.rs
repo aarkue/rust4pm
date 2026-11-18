@@ -1,342 +1,158 @@
-use std::collections::HashMap;
+use crate::core::event_data::object_centric::io::OCELImportOptions;
+use crate::core::event_data::object_centric::ocel_struct::{OCELAttributeValue, OCEL};
 
-use crate::core::event_data::{
-    object_centric::ocel_struct::{
-        OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute,
-        OCELRelationship, OCELTypeAttribute, OCEL,
-    },
-    timestamp_utils::parse_timestamp,
-};
-
+use super::super::import::{import_ocel, resolve_columns, Col, SqlRow, SqlSource};
 use super::super::*;
-use ::duckdb::{Connection, Params, Row, Rows, Statement};
+use super::schema::value::{duck_value_to_datetime, duck_value_to_ocel};
+use crate::utils::control::Control;
+use ::duckdb::types::Value as DuckValue;
+use ::duckdb::{Connection, Row, Statement};
 use chrono::{DateTime, FixedOffset};
 
-fn try_get_column_date_val(
-    r: &Row<'_>,
-    column_name: &str,
-) -> Result<DateTime<FixedOffset>, ::duckdb::Error> {
-    r.get::<_, String>(column_name).and_then(|dt_str| {
-        parse_timestamp(&dt_str, None, false).map_err(|_e| ::duckdb::Error::InvalidQuery)
-    })
-}
+impl SqlSource for Connection {
+    type Row<'r> = Row<'r>;
 
-fn get_row_attribute_value(
-    a: &OCELTypeAttribute,
-    r: &Row<'_>,
-) -> Result<OCELAttributeValue, ::duckdb::Error> {
-    match OCELAttributeType::from_type_str(&a.value_type) {
-        OCELAttributeType::String => Ok(OCELAttributeValue::String(
-            r.get::<_, String>(a.name.as_str())?,
-        )),
-        OCELAttributeType::Time => {
-            let time_res = try_get_column_date_val(r, &a.name)?;
-            Ok(OCELAttributeValue::Time(time_res))
-        }
-        OCELAttributeType::Integer => Ok(OCELAttributeValue::Integer(
-            r.get::<_, i64>(a.name.as_str())?,
-        )),
-        OCELAttributeType::Float => {
-            Ok(OCELAttributeValue::Float(r.get::<_, f64>(a.name.as_str())?))
-        }
-        OCELAttributeType::Boolean => Ok(OCELAttributeValue::Boolean(
-            r.get::<_, bool>(a.name.as_str())?,
-        )),
-        // Or should Null be an Error result?
-        OCELAttributeType::Null => Ok(OCELAttributeValue::Null),
-    }
-}
-
-/// Import [`OCEL`] log from `DuckDB` connection
-///
-/// If you want to import from a filepath, see [`import_ocel_duckdb_from_path`] instead.
-///
-/// Rejects a file whose object-type table has no `ocel_changed_field` column. Use
-/// [`import_ocel_duckdb_from_con_with_options`] to tolerate that instead.
-///
-/// Note: This function is only available if the `ocel-duckdb` feature is enabled.
-///
-pub fn import_ocel_duckdb_from_con(con: Connection) -> Result<OCEL, ::duckdb::Error> {
-    import_ocel_duckdb_from_con_with_options(con, SqlOcelImportOptions::default())
-}
-
-/// Import [`OCEL`] log from `DuckDB` connection, with explicit [`SqlOcelImportOptions`].
-///
-/// Note: This function is only available if the `ocel-duckdb` feature is enabled.
-pub fn import_ocel_duckdb_from_con_with_options(
-    con: Connection,
-    options: SqlOcelImportOptions,
-) -> Result<OCEL, ::duckdb::Error> {
-    let mut ocel = OCEL {
-        event_types: Vec::default(),
-        object_types: Vec::default(),
-        events: Vec::default(),
-        objects: Vec::default(),
-    };
-
-    // Parse names of object types (and the table name postfixes)
-    let mut s = con.prepare("SELECT * FROM event_map_type")?;
-    let ev_map_type = query_all::<_>(&mut s, [])?;
-    let ev_type_map: HashMap<String, String> = ev_map_type
-        .and_then(|x| {
-            Ok::<_, ::duckdb::Error>((x.get(OCEL_TYPE_MAP_COLUMN)?, x.get(OCEL_TYPE_COLUMN)?))
-        })
-        .flatten()
-        .collect();
-
-    let mut s = con.prepare("SELECT * FROM object_map_type")?;
-    let ob_map_type = query_all::<_>(&mut s, [])?;
-
-    let ob_type_map: HashMap<String, String> = ob_map_type
-        .and_then(|x| {
-            Ok::<_, ::duckdb::Error>((x.get(OCEL_TYPE_MAP_COLUMN)?, x.get(OCEL_TYPE_COLUMN)?))
-        })
-        .flatten()
-        .collect();
-
-    let mut object_map: HashMap<String, OCELObject> = HashMap::new();
-    let mut event_map: HashMap<String, OCELEvent> = HashMap::new();
-
-    for (ob_type, ob_type_ocel) in ob_type_map.iter() {
-        let table_name = format!("object_{ob_type}");
-        let mut s =
-            con.prepare(format!("PRAGMA table_info({})", quoted_str(&table_name)).as_str())?;
-        let ob_attr_query = query_all::<_>(&mut s, [])?;
-        let raw_ob_columns: Vec<(String, String)> = ob_attr_query
-            .and_then(|x| Ok::<(String, String), ::duckdb::Error>((x.get("name")?, x.get("type")?)))
-            .flatten()
-            .collect();
-        let ObjectTablePlan {
-            attributes: ob_type_attrs,
-            initial_query,
-            changed_query,
-        } = plan_object_table(
-            con.path().and_then(|p| p.to_str()),
-            ob_type,
-            &table_name,
-            raw_ob_columns,
-            options,
-        )
-        .map_err(::duckdb::Error::InvalidColumnName)?;
-        let mut s = con.prepare(initial_query.as_str())?;
-        let objs = query_all::<_>(&mut s, [])?;
-        objs.and_then(|x| {
-            Ok::<(String, Vec<_>), ::duckdb::Error>((
-                x.get(OCEL_ID_COLUMN)?,
-                ob_type_attrs
-                    .iter()
-                    .flat_map(|attr| {
-                        Ok::<(&String, OCELAttributeValue), ::duckdb::Error>((
-                            &attr.name,
-                            get_row_attribute_value(attr, x)?,
-                        ))
-                    })
-                    .collect(),
-            ))
-        })
-        .flatten()
-        .for_each(|(ob_id, attrs)| {
-            let mut o = OCELObject {
-                id: ob_id.clone(),
-                object_type: ob_type_ocel.to_string(),
-                attributes: Vec::default(),
-                relationships: Vec::default(),
-            };
-            // Initial attribute values always use UNIX epoch as their time, like the `SQLite`
-            // importer, so a table without an `ocel_time` column needs no special case.
-            let time = DateTime::UNIX_EPOCH.into();
-            o.attributes
-                .extend(
-                    attrs
-                        .into_iter()
-                        .map(|(attr_name, attr_value)| OCELObjectAttribute {
-                            name: attr_name.clone(),
-
-                            value: attr_value,
-                            time,
-                        }),
-                );
-            object_map.insert(ob_id, o);
-        });
-        // Get changed attributes
-        if let Some(changed_query) = &changed_query {
-            let mut s = con.prepare(changed_query.as_str())?;
-            let objs = query_all::<_>(&mut s, [])?;
-            objs.and_then(|x| {
-                let changed_field: String = x.get(OCEL_CHANGED_FIELD)?;
-                let changed_val = ob_type_attrs
-                    .iter()
-                    .find(|at| at.name == changed_field)
-                    .ok_or(::duckdb::Error::InvalidQuery)
-                    .and_then(|attr| get_row_attribute_value(attr, x))?;
-                Ok::<(String, _, String, OCELAttributeValue), ::duckdb::Error>((
-                    x.get(OCEL_ID_COLUMN)?,
-                    try_get_column_date_val(x, OCEL_TIME_COLUMN)?,
-                    changed_field,
-                    changed_val,
-                ))
-            })
-            .flatten()
-            .for_each(|(ob_id, time, changed_field, changed_val)| {
-                object_map
-                    .entry(ob_id.clone())
-                    .or_insert(OCELObject {
-                        id: ob_id,
-                        object_type: ob_type.clone(),
-                        attributes: Vec::default(),
-                        relationships: Vec::default(),
-                    })
-                    .attributes
-                    .push(OCELObjectAttribute {
-                        name: changed_field,
-                        value: changed_val,
-                        time,
-                    });
-            });
-        }
-
-        let t = OCELType {
-            name: ob_type_ocel.clone(),
-            attributes: ob_type_attrs,
-        };
-        // Add object type to ocel
-        ocel.object_types.push(t);
+    fn db_path(&self) -> Option<&str> {
+        self.path().and_then(|p| p.to_str())
     }
 
-    for (ev_type, ev_type_ocel) in ev_type_map.iter() {
-        let mut s = con.prepare(
-            format!(
-                "PRAGMA table_info({})",
-                quoted_str(&format!("event_{ev_type}"))
-            )
-            .as_str(),
+    fn has_table(&self, name: &str) -> Result<bool, OCELIOError> {
+        Ok(self.query_row(
+            "SELECT count(*) > 0 FROM information_schema.tables \
+             WHERE table_catalog = current_database() AND table_schema = current_schema() \
+             AND table_name = ?",
+            [name],
+            |r| r.get(0),
+        )?)
+    }
+
+    /// The name is bound as a value because `PRAGMA table_info` parses its argument as a
+    /// qualified name, which fails for a type `v1.2`.
+    fn table_columns(&self, table: &str) -> Result<Vec<(String, String)>, OCELIOError> {
+        // `lower` on both sides, as `DuckDB` resolves a table name case-insensitively.
+        let mut s = self.prepare(
+            "SELECT column_name, data_type FROM information_schema.columns \
+             WHERE table_catalog = current_database() AND table_schema = current_schema() \
+             AND lower(table_name) = lower(?) ORDER BY ordinal_position",
         )?;
-        let ev_attr_query = query_all::<_>(&mut s, [])?;
-        let ev_type_attrs: Vec<OCELTypeAttribute> = ev_attr_query
-            .and_then(|x| Ok::<(String, String), ::duckdb::Error>((x.get("name")?, x.get("type")?)))
-            .flatten()
-            .filter(|(name, _)| !IGNORED_PRAGMA_COLUMNS.contains(&name.as_str()))
-            .map(|(name, atype)| OCELTypeAttribute {
-                name,
-                value_type: sql_type_to_ocel(&atype).to_type_string(),
-            })
-            .collect();
-        // Next, query events
-        let mut s = con.prepare(
-            format!(
-                "SELECT * FROM {}",
-                quoted_ident(&format!("event_{ev_type}"))
-            )
-            .as_str(),
-        )?;
-        let evs = query_all::<_>(&mut s, [])?;
-        evs.and_then(|x| {
-            Ok::<(String, _, Vec<_>), ::duckdb::Error>((
-                x.get(OCEL_ID_COLUMN)?,
-                try_get_column_date_val(x, OCEL_TIME_COLUMN)?,
-                ev_type_attrs
-                    .iter()
-                    .flat_map(|attr| {
-                        Ok::<(&String, OCELAttributeValue), ::duckdb::Error>((
-                            &attr.name,
-                            get_row_attribute_value(attr, x)?,
-                        ))
-                    })
-                    .collect(),
-            ))
-        })
-        .flatten()
-        .for_each(|(ev_id, time, attrs)| {
-            let mut e = OCELEvent {
-                id: ev_id.clone(),
-                event_type: ev_type_ocel.to_string(),
-                time,
-                attributes: Vec::default(),
-                relationships: Vec::default(),
-            };
-            e.attributes
-                .extend(
-                    attrs
-                        .into_iter()
-                        .map(|(attr_name, attr_value)| OCELEventAttribute {
-                            name: attr_name.clone(),
-                            value: attr_value,
-                        }),
-                );
-            event_map.insert(ev_id, e);
-        });
-        let t = OCELType {
-            name: ev_type_ocel.clone(),
-            attributes: ev_type_attrs,
-        };
-        ocel.event_types.push(t);
+        let columns = s
+            .query_map([table], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?;
+        Ok(columns)
     }
 
-    // E2O Relationships
-    let mut s = con.prepare("SELECT * FROM event_object".to_string().as_str())?;
-    let evs = query_all::<_>(&mut s, [])?;
-    evs.and_then(|x| {
-        Ok::<(String, String, String), ::duckdb::Error>((
-            x.get(OCEL_E2O_EVENT_ID_COLUMN)?,
-            x.get(OCEL_E2O_OBJECT_ID_COLUMN)?,
-            x.get(OCEL_REL_QUALIFIER_COLUMN)?,
-        ))
-    })
-    .flatten()
-    .for_each(|(ev_id, ob_id, qualifier)| {
-        if let Some(ev) = event_map.get_mut(&ev_id) {
-            ev.relationships.push(OCELRelationship {
-                object_id: ob_id,
-                qualifier,
-            });
-        } else {
-            eprintln!(
-                "Warning: E2O relationship not added as event with ID {ev_id} was not found."
-            );
+    /// A column read as a string attribute but not of a text type (a `UUID`, a `LIST`, ...) is
+    /// selected as its `VARCHAR` text, so it is kept as the text `DuckDB` gives it.
+    fn select_list(columns: &[(String, String)]) -> String {
+        columns
+            .iter()
+            .map(|(name, ty)| {
+                let q = quoted_ident(name);
+                if sql_type_to_ocel(ty) == OCELAttributeType::String {
+                    format!("CAST({q} AS VARCHAR) AS {q}")
+                } else {
+                    q
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    fn as_text(column: &str) -> String {
+        format!("CAST({column} AS VARCHAR)")
+    }
+
+    fn for_each_row<'w>(
+        &self,
+        sql: &str,
+        wanted: &[&'w str],
+        mut each: impl FnMut(&Row<'_>, &[Col<'w>]) -> Result<(), OCELIOError>,
+    ) -> Result<(), OCELIOError> {
+        let mut s = self.prepare(sql)?;
+        let mut rows = s.query([])?;
+        // `DuckDB` knows the result's columns only once the statement ran.
+        let names = rows
+            .as_ref()
+            .map(Statement::column_names)
+            .unwrap_or_default();
+        let cols = resolve_columns(&names, wanted);
+        while let Some(r) = rows.next()? {
+            each(r, &cols)?;
         }
-    });
+        Ok(())
+    }
 
-    // O2O Relationships
-    let mut s = con.prepare("SELECT * FROM object_object".to_string().as_str())?;
-    let evs = query_all::<_>(&mut s, [])?;
-    evs.and_then(|x| {
-            Ok::<(String, String, String), ::duckdb::Error>((
-                x.get(OCEL_O2O_SOURCE_ID_COLUMN)?,
-                x.get(OCEL_O2O_TARGET_ID_COLUMN)?,
-                x.get(OCEL_REL_QUALIFIER_COLUMN)?,
-            ))
+    fn query_count(&self, sql: &str) -> Result<i64, OCELIOError> {
+        Ok(self.query_row(sql, [], |r| r.get(0))?)
+    }
+}
+
+impl SqlRow for Row<'_> {
+    fn text(&self, col: Col<'_>) -> Result<String, OCELIOError> {
+        Ok(self.get(col.index()?)?)
+    }
+
+    fn opt_text(&self, col: Col<'_>) -> Result<Option<String>, OCELIOError> {
+        Ok(self.get(col.index()?)?)
+    }
+
+    fn time(&self, col: Col<'_>) -> Result<DateTime<FixedOffset>, OCELIOError> {
+        let value = self.get::<_, DuckValue>(col.index()?)?;
+        duck_value_to_datetime(&value).ok_or_else(|| col.invalid_time(&value))
+    }
+
+    /// `DuckDB` columns are typed, so the cell's value decides, whatever the declared type.
+    fn attribute(
+        &self,
+        col: Col<'_>,
+        _: OCELAttributeType,
+        _: &str,
+    ) -> Result<Option<OCELAttributeValue>, OCELIOError> {
+        Ok(match self.get::<_, DuckValue>(col.index()?)? {
+            DuckValue::Null => None,
+            v => Some(duck_value_to_ocel(v)),
         })
-        .flatten()
-        .for_each(|(source_ob_id, target_ob_id, qualifier)| {
-            if let Some(ev) = object_map.get_mut(&source_ob_id) {
-                ev.relationships.push(OCELRelationship {
-                    object_id: target_ob_id,
-                    qualifier,
-                });
-            }else{
-                eprintln!("Warning: O2O relationship not added as object with ID {source_ob_id} was not found.");
-            }
-        });
-
-    ocel.objects = object_map.into_values().collect();
-    ocel.events = event_map.into_values().collect();
-    Ok(ocel)
+    }
 }
 
-fn query_all<'a, P: Params>(s: &'a mut Statement<'_>, p: P) -> Result<Rows<'a>, ::duckdb::Error> {
-    let q = s.query(p)?;
-    Ok(q)
+/// Import an [`OCEL`] from the `DuckDB` database `con`, in either layout: the OCEL 2.0 per-type
+/// tables, or the consolidated schema [`stream_ocel_file_to_duckdb`] writes. `options` apply to
+/// the per-type tables.
+pub fn import_ocel_duckdb(
+    con: &Connection,
+    options: &OCELImportOptions,
+) -> Result<OCEL, OCELIOError> {
+    import_any_layout(con, options, &Control::new())
 }
 
-///
-/// Import an [`OCEL`] `DuckDB` file from the given path
-///
-/// Note: This function is only available if the `ocel-duckdb` feature is enabled.
-pub fn import_ocel_duckdb_from_path<P: AsRef<std::path::Path>>(
+fn import_any_layout(
+    con: &Connection,
+    options: &OCELImportOptions,
+    ctl: &Control<'_>,
+) -> Result<OCEL, OCELIOError> {
+    if super::schema::reader::is_consolidated_schema(con)? {
+        return super::schema::reader::read_ocel_from_duckdb(con);
+    }
+    import_ocel(con, options, ctl)
+}
+
+/// Read either `DuckDB` layout from `path`: the OCEL 2.0 per-type tables, reporting to `ctl`,
+/// or the consolidated schema.
+pub(crate) fn import_duckdb_path(
+    path: &std::path::Path,
+    options: &OCELImportOptions,
+    ctl: &Control<'_>,
+) -> Result<OCEL, OCELIOError> {
+    import_any_layout(&open_read_only(path)?, options, ctl)
+}
+
+/// Open an existing `DuckDB` file read-only. [`Connection::open`] creates a missing file, and
+/// a writable connection may write to the file (e.g., replay its WAL) while reading.
+pub(crate) fn open_read_only<P: AsRef<std::path::Path>>(
     path: P,
-) -> Result<OCEL, ::duckdb::Error> {
-    let con = Connection::open(path)?;
-    import_ocel_duckdb_from_con(con)
+) -> Result<Connection, ::duckdb::Error> {
+    let config = ::duckdb::Config::default().access_mode(::duckdb::AccessMode::ReadOnly)?;
+    Connection::open_with_flags(path, config)
 }
 
 #[cfg(test)]
@@ -345,10 +161,8 @@ mod missing_changed_field_tests {
     use chrono::DateTime;
 
     use crate::core::event_data::object_centric::{
-        ocel_sql::{
-            import_ocel_duckdb_from_con, import_ocel_duckdb_from_con_with_options,
-            SqlOcelImportOptions,
-        },
+        io::OCELImportOptions,
+        ocel_sql::import_ocel_duckdb,
         ocel_struct::{OCELAttributeValue, OCELObjectAttribute},
     };
 
@@ -388,8 +202,8 @@ mod missing_changed_field_tests {
         build_fixture(&path);
 
         let con = Connection::open(&path).unwrap();
-        let ocel =
-            import_ocel_duckdb_from_con(con).expect("a file without the column must still be read");
+        let ocel = import_ocel_duckdb(&con, &Default::default())
+            .expect("a file without the column must still be read");
         assert_eq!(ocel.objects.len(), 2, "both Truck objects must be present");
     }
 
@@ -401,10 +215,11 @@ mod missing_changed_field_tests {
         build_fixture(&path);
 
         let con = Connection::open(&path).unwrap();
-        let err = import_ocel_duckdb_from_con_with_options(
-            con,
-            SqlOcelImportOptions {
-                allow_missing_changed_field: false,
+        let err = import_ocel_duckdb(
+            &con,
+            &OCELImportOptions {
+                strict: true,
+                ..Default::default()
             },
         )
         .unwrap_err();
@@ -439,10 +254,11 @@ mod missing_changed_field_tests {
         build_fixture(&path);
 
         let con = Connection::open(&path).unwrap();
-        let ocel = import_ocel_duckdb_from_con_with_options(
-            con,
-            SqlOcelImportOptions {
-                allow_missing_changed_field: true,
+        let ocel = import_ocel_duckdb(
+            &con,
+            &OCELImportOptions {
+                strict: false,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -495,5 +311,105 @@ mod missing_changed_field_tests {
             .collect();
         attr_names.sort();
         assert_eq!(attr_names, vec!["driver", "ocel_change_field"]);
+    }
+}
+
+#[cfg(test)]
+mod object_table_tests {
+    use ::duckdb::Connection;
+
+    use crate::core::event_data::object_centric::ocel_sql::{
+        import_ocel_duckdb, object_table_fixture,
+    };
+
+    #[test]
+    fn objects_listed_only_in_the_object_table_are_imported() {
+        let con = Connection::open_in_memory().unwrap();
+        con.execute_batch(object_table_fixture::SQL).unwrap();
+        let ocel = import_ocel_duckdb(&con, &Default::default()).unwrap();
+        object_table_fixture::check(&ocel);
+    }
+}
+
+#[cfg(test)]
+mod column_type_tests {
+    use ::duckdb::Connection;
+
+    use crate::core::event_data::object_centric::{
+        ocel_sql::import_ocel_duckdb, ocel_struct::OCELAttributeValue as V,
+    };
+
+    /// Column types other tools write, which the importer must read rather than fail on.
+    #[test]
+    fn columns_of_any_type_are_read() {
+        let con = Connection::open_in_memory().unwrap();
+        con.execute_batch(
+            "
+            CREATE TABLE event_map_type (ocel_type_map TEXT, ocel_type TEXT);
+            CREATE TABLE object_map_type (ocel_type_map TEXT, ocel_type TEXT);
+            CREATE TABLE event_object (ocel_event_id TEXT, ocel_object_id TEXT, ocel_qualifier TEXT);
+            CREATE TABLE object_object (ocel_source_id TEXT, ocel_target_id TEXT, ocel_qualifier TEXT);
+            CREATE TABLE event_Ev (
+                ocel_id TEXT, ocel_time TIMESTAMPTZ,
+                big BIGINT, huge HUGEINT, dec DECIMAL(10, 2), r REAL,
+                tz TIMESTAMPTZ, d DATE, u UUID, l INTEGER[]
+            );
+            INSERT INTO event_map_type VALUES ('Ev', 'Ev');
+            INSERT INTO event_Ev VALUES (
+                'e1', '2020-01-01 00:00:00+00',
+                3000000000, 170141183460469231731687303715884105727, 12.5, 0.5,
+                '2020-01-02 03:04:05+00', '2020-01-03',
+                '00000000-0000-0000-0000-000000000001', [1, 2]
+            );
+            ",
+        )
+        .unwrap();
+        let ocel = import_ocel_duckdb(&con, &Default::default()).unwrap();
+        let mut types: Vec<_> = ocel.event_types[0]
+            .attributes
+            .iter()
+            .map(|a| (a.name.as_str(), a.value_type.as_str()))
+            .collect();
+        types.sort_unstable();
+        assert_eq!(
+            types,
+            [
+                ("big", "integer"),
+                ("d", "time"),
+                ("dec", "float"),
+                ("huge", "integer"),
+                ("l", "string"),
+                ("r", "float"),
+                ("tz", "time"),
+                ("u", "string"),
+            ]
+        );
+        let value = |name: &str| {
+            ocel.events[0]
+                .attributes
+                .iter()
+                .find(|a| a.name == name)
+                .map(|a| a.value.clone())
+                .unwrap()
+        };
+        let time = |s| V::Time(chrono::DateTime::parse_from_rfc3339(s).unwrap());
+        assert_eq!(value("big"), V::Integer(3_000_000_000));
+        assert_eq!(
+            value("huge"),
+            V::String("170141183460469231731687303715884105727".into())
+        );
+        assert_eq!(value("dec"), V::Float(12.5));
+        assert_eq!(value("r"), V::Float(0.5));
+        assert_eq!(value("tz"), time("2020-01-02T03:04:05+00:00"));
+        assert_eq!(value("d"), time("2020-01-03T00:00:00+00:00"));
+        assert_eq!(
+            value("u"),
+            V::String("00000000-0000-0000-0000-000000000001".into())
+        );
+        assert_eq!(value("l"), V::String("[1, 2]".into()));
+        assert_eq!(
+            V::Time(ocel.events[0].time),
+            time("2020-01-01T00:00:00+00:00")
+        );
     }
 }

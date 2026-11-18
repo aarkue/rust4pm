@@ -1,40 +1,96 @@
-use crate::{
-    core::event_data::case_centric::{
+use crate::core::{
+    event_data::case_centric::{
         event_log_struct::{
             Attribute, AttributeValue, Attributes, EventLog, EventLogClassifier, EventLogExtension,
             Trace,
         },
+        io::{EventLogFormat, EventLogIOError},
         xes::stream_xes::XESOuterLogData,
     },
-    XMLWriterWrapper,
+    io::xml_chars,
 };
 use flate2::{write::GzEncoder, Compression};
 use quick_xml::{events::BytesDecl, Writer};
 use std::{
     borrow::Borrow,
-    fs::File,
     io::{BufWriter, Write},
 };
 const OK: Result<(), std::io::Error> = Ok(());
 
-///
-/// Export XES (from log data and an iterator over traces) to a XML writer
-///
-pub fn export_xes<'a, 'b, W, T: Borrow<Trace>, I>(
-    writer: impl Into<XMLWriterWrapper<'b, W>>,
-    log_extensions: &'a Option<&'a Vec<EventLogExtension>>,
-    log_global_trace_attrs: &'a Option<&'a Attributes>,
-    log_global_event_attrs: &'a Option<&'a Attributes>,
-    log_classifiers: &'a Option<&'a Vec<EventLogClassifier>>,
+/// The log-level part of an XES file, borrowed from an [`EventLog`] or [`XESOuterLogData`]
+pub(crate) struct XesHeader<'a> {
+    extensions: &'a [EventLogExtension],
+    classifiers: &'a [EventLogClassifier],
+    global_trace_attrs: &'a [Attribute],
+    global_event_attrs: &'a [Attribute],
     log_attributes: &'a Attributes,
-    traces: I,
-) -> Result<(), quick_xml::Error>
-where
-    I: Iterator<Item = T>,
-    W: Write + 'b,
-{
-    let mut xml_writer = writer.into();
-    let writer: &mut Writer<_> = xml_writer.to_xml_writer();
+}
+
+impl<'a> XesHeader<'a> {
+    pub(crate) fn of(log: &'a EventLog) -> Self {
+        Self {
+            extensions: log.extensions.as_deref().unwrap_or_default(),
+            classifiers: log.classifiers.as_deref().unwrap_or_default(),
+            global_trace_attrs: log.global_trace_attrs.as_deref().unwrap_or_default(),
+            global_event_attrs: log.global_event_attrs.as_deref().unwrap_or_default(),
+            log_attributes: &log.attributes,
+        }
+    }
+}
+
+impl<'a> From<&'a XESOuterLogData> for XesHeader<'a> {
+    fn from(data: &'a XESOuterLogData) -> Self {
+        Self {
+            extensions: &data.extensions,
+            classifiers: &data.classifiers,
+            global_trace_attrs: &data.global_trace_attrs,
+            global_event_attrs: &data.global_event_attrs,
+            log_attributes: &data.log_attributes,
+        }
+    }
+}
+
+/// Export XES (from log data and traces) to `writer` in `format` (`xes` or `xes.gz`, in any case)
+///
+/// Writes the traces as they come, so they can be streamed, e.g., from
+/// [`stream_xes`](super::stream_xes::stream_xes). Empty global attribute lists are left out.
+/// Flushes `writer` at the end.
+pub fn export_xes<T: Borrow<Trace>>(
+    writer: impl Write,
+    format: &str,
+    log_data: &XESOuterLogData,
+    traces: impl IntoIterator<Item = T>,
+) -> Result<(), EventLogIOError> {
+    let gz = EventLogFormat::parse_xes_gz(format)?;
+    write_xes(writer, gz, log_data.into(), traces)
+}
+
+/// Write XES to `writer`, gzipped if `gz` is set, and flush it
+pub(crate) fn write_xes<T: Borrow<Trace>>(
+    mut writer: impl Write,
+    gz: bool,
+    header: XesHeader<'_>,
+    traces: impl IntoIterator<Item = T>,
+) -> Result<(), EventLogIOError> {
+    if gz {
+        let mut encoder = GzEncoder::new(writer, Compression::fast());
+        write_xes_xml(&mut encoder, header, traces)?;
+        encoder.finish()?.flush()?;
+    } else {
+        write_xes_xml(&mut writer, header, traces)?;
+        writer.flush()?;
+    }
+    Ok(())
+}
+
+fn write_xes_xml<T: Borrow<Trace>>(
+    writer: impl Write,
+    header: XesHeader<'_>,
+    traces: impl IntoIterator<Item = T>,
+) -> Result<(), EventLogIOError> {
+    // Buffered, as the XML writer writes each tag and attribute separately
+    let mut buffered = BufWriter::new(writer);
+    let mut writer = Writer::new(&mut buffered);
     writer.write_event(quick_xml::events::Event::Decl(BytesDecl::new(
         "1.0",
         Some("UTF-8"),
@@ -49,53 +105,40 @@ where
             ("xmlns", "http://www.xes-standard.org/"),
         ])
         .write_inner_content(|w| {
-            // Extensions
-            if let Some(extensions) = log_extensions {
-                for ext in extensions.iter() {
-                    w.create_element("extension")
-                        .with_attributes(vec![
-                            ("name", ext.name.as_str()),
-                            ("prefix", ext.prefix.as_str()),
-                            ("uri", ext.uri.as_str()),
-                        ])
-                        .write_empty()?;
-                }
+            for ext in header.extensions {
+                w.create_element("extension")
+                    .with_attributes(vec![
+                        ("name", xml_chars(&ext.name).as_ref()),
+                        ("prefix", xml_chars(&ext.prefix).as_ref()),
+                        ("uri", xml_chars(&ext.uri).as_ref()),
+                    ])
+                    .write_empty()?;
             }
-            // Global trace attributes
-            if let Some(global_trace_attrs) = log_global_trace_attrs {
+            for (scope, attrs) in [
+                ("trace", header.global_trace_attrs),
+                ("event", header.global_event_attrs),
+            ] {
+                if attrs.is_empty() {
+                    continue;
+                }
                 w.create_element("global")
-                    .with_attribute(("scope", "trace"))
+                    .with_attribute(("scope", scope))
                     .write_inner_content(|w| {
-                        for a in global_trace_attrs.iter() {
+                        for a in attrs {
                             write_xes_attribute(w, a)?;
                         }
                         OK
                     })?;
             }
-            // Global event attributes
-            if let Some(global_event_attrs) = log_global_event_attrs {
-                w.create_element("global")
-                    .with_attribute(("scope", "event"))
-                    .write_inner_content(|w| {
-                        for a in global_event_attrs.iter() {
-                            write_xes_attribute(w, a)?;
-                        }
-                        OK
-                    })?;
+            for cl in header.classifiers {
+                w.create_element("classifier")
+                    .with_attributes(vec![
+                        ("name", xml_chars(&cl.name).as_ref()),
+                        ("keys", xml_chars(&serialize_classifier(&cl.keys)).as_ref()),
+                    ])
+                    .write_empty()?;
             }
-            // Classifiers
-            if let Some(classifiers) = log_classifiers {
-                for cl in classifiers.iter() {
-                    w.create_element("classifier")
-                        .with_attributes(vec![
-                            ("name", cl.name.as_str()),
-                            ("keys", &serialize_classifier(&cl.keys)),
-                        ])
-                        .write_empty()?;
-                }
-            }
-            // Log attributes
-            for a in log_attributes {
+            for a in header.log_attributes {
                 write_xes_attribute(w, a)?;
             }
             for t in traces {
@@ -116,6 +159,8 @@ where
             }
             OK
         })?;
+    // Not flushing the inner writer, which a gz encoder would answer with a sync block
+    buffered.into_inner().map_err(|e| e.into_error())?;
     Ok(())
 }
 
@@ -124,28 +169,41 @@ where
     T: Write,
 {
     let (tag_name, value_opt): (&str, Option<String>) = match &a.value {
-        AttributeValue::String(s) => ("string", Some(s.clone())),
+        AttributeValue::String(s) => ("string", Some(xml_chars(s).into_owned())),
         AttributeValue::Date(d) => ("date", Some(d.to_rfc3339())),
         AttributeValue::Int(i) => ("int", Some(i.to_string())),
-        AttributeValue::Float(f) => ("float", Some(f.to_string())),
+        AttributeValue::Float(f) => ("float", Some(format_xs_double(*f))),
         AttributeValue::Boolean(b) => ("boolean", Some(b.to_string())),
         AttributeValue::ID(id) => ("id", Some(id.to_string())),
         AttributeValue::List(_) => ("list", None),
         AttributeValue::Container(_) => ("container", None),
         AttributeValue::None() => ("string", None),
     };
+    let key = xml_chars(&a.key);
     let e = match value_opt {
         Some(value) => w
             .create_element(tag_name)
-            .with_attributes(vec![("key", a.key.as_str()), ("value", &value)]),
+            .with_attributes(vec![("key", key.as_ref()), ("value", &value)]),
         None => w
             .create_element(tag_name)
-            .with_attribute(("key", a.key.as_str())),
+            .with_attribute(("key", key.as_ref())),
     };
     if let AttributeValue::List(c) = &a.value {
+        // XES standard: meta-attributes first, then the items wrapped in `<values>`
         e.write_inner_content(|inner_w| {
-            for attr in c {
-                write_xes_attribute(inner_w, attr)?;
+            for own_attr in a.own_attributes.iter().flatten() {
+                write_xes_attribute(inner_w, own_attr)?;
+            }
+            let values = inner_w.create_element("values");
+            if c.is_empty() {
+                values.write_empty()?;
+            } else {
+                values.write_inner_content(|values_w| {
+                    for attr in c {
+                        write_xes_attribute(values_w, attr)?;
+                    }
+                    OK
+                })?;
             }
             OK
         })?;
@@ -170,106 +228,13 @@ where
     OK
 }
 
-///
-/// Export an [`EventLog`] to a writer
-///
-/// Both [`quick_xml::Writer`] as well as [`std::io::Write`] are accepted
-//
-pub fn export_xes_event_log<'a, W>(
-    writer: impl Into<XMLWriterWrapper<'a, W>>,
-    log: &'a EventLog,
-) -> Result<(), quick_xml::Error>
-where
-    W: Write + 'a,
-{
-    export_xes(
-        writer,
-        &log.extensions.as_ref(),
-        &log.global_trace_attrs.as_ref(),
-        &log.global_event_attrs.as_ref(),
-        &log.classifiers.as_ref(),
-        &log.attributes,
-        log.traces.iter(),
-    )
-}
-
-/// Export an [`EventLog`] to a [`File`]
-pub fn export_xes_event_log_to_file(
-    log: &EventLog,
-    file: File,
-    compress_gz: bool,
-) -> Result<(), quick_xml::Error> {
-    if compress_gz {
-        let encoder = GzEncoder::new(BufWriter::new(file), Compression::fast());
-        return export_xes_event_log(&mut Writer::new(BufWriter::new(encoder)), log);
+/// `f` as xs:double, which spells infinity `INF` and takes `1e300` instead of 301 digits
+fn format_xs_double(f: f64) -> String {
+    match f {
+        f64::INFINITY => "INF".to_string(),
+        f64::NEG_INFINITY => "-INF".to_string(),
+        _ => format!("{f:?}"),
     }
-    export_xes_event_log(&mut Writer::new(BufWriter::new(file)), log)
-}
-
-/// Export an [`EventLog`] to a filepath
-///
-/// Automatically selects gz-compression if filepath ends with `.gz`
-///
-/// See also [`export_xes_event_log_to_file`], which accepts a [`File`] and boolean flag for gz-compression.
-pub fn export_xes_event_log_to_path<P: AsRef<std::path::Path>>(
-    log: &EventLog,
-    path: P,
-) -> Result<(), quick_xml::Error> {
-    let is_gz = path
-        .as_ref()
-        .as_os_str()
-        .to_str()
-        .is_some_and(|p| p.ends_with(".gz"));
-    let file = File::create(path)?;
-    export_xes_event_log_to_file(log, file, is_gz)
-}
-
-/// Export a trace stream (i.e., [`Iterator`] over [`Trace`]) and [`XESOuterLogData`] to a XML [`Writer`]
-pub fn export_xes_trace_stream<'a, W, T: Borrow<Trace>, I>(
-    writer: impl Into<XMLWriterWrapper<'a, W>>,
-    trace_stream: I,
-    log_data: XESOuterLogData,
-) -> Result<(), quick_xml::Error>
-where
-    W: Write + 'a,
-    I: Iterator<Item = T>,
-{
-    export_xes(
-        writer,
-        &Some(log_data.extensions.as_ref()),
-        &Some(log_data.global_trace_attrs.as_ref()),
-        &Some(log_data.global_event_attrs.as_ref()),
-        &Some(log_data.classifiers.as_ref()),
-        &log_data.log_attributes,
-        trace_stream,
-    )
-}
-
-/// Export a trace stream (i.e., [`Iterator`] over [`Trace`]) and [`XESOuterLogData`] to a [`File`]
-///
-/// If `compress_gz` is `true`, the XES will be compressed to a `.xes.gz` file before writing to file
-pub fn export_xes_trace_stream_to_file<T: Borrow<Trace>, I>(
-    trace_stream: I,
-    log_data: XESOuterLogData,
-    file: File,
-    compress_gz: bool,
-) -> Result<(), quick_xml::Error>
-where
-    I: Iterator<Item = T>,
-{
-    if compress_gz {
-        let encoder = GzEncoder::new(BufWriter::new(file), Compression::fast());
-        return export_xes_trace_stream(
-            &mut Writer::new(BufWriter::new(encoder)),
-            trace_stream,
-            log_data,
-        );
-    }
-    export_xes_trace_stream(
-        &mut Writer::new(BufWriter::new(file)),
-        trace_stream,
-        log_data,
-    )
 }
 
 fn serialize_classifier(classifier_keys: &[String]) -> String {
@@ -287,155 +252,148 @@ fn serialize_classifier(classifier_keys: &[String]) -> String {
 
 #[cfg(test)]
 mod export_xes_tests {
-    use std::{collections::HashSet, fs::File, io::BufWriter, time::Instant};
-
-    use quick_xml::Writer;
+    use std::{collections::HashSet, fs::File, time::Instant};
 
     use crate::{
         core::event_data::case_centric::{
             event_log_struct::EventLogExtension,
             xes::{
-                export_xes::{export_xes_event_log, serialize_classifier},
-                import_xes::{import_xes_path, import_xes_slice, XESImportOptions},
-                stream_xes::{parse_classifier_key, stream_xes_from_path, XESOuterLogData},
+                export_xes::{export_xes, serialize_classifier},
+                import_xes::XESImportOptions,
+                stream_xes::{parse_classifier_key, stream_xes, XESOuterLogData},
             },
         },
         test_utils::get_test_data_path,
+        EventLog, Exportable, Importable,
     };
 
-    use super::export_xes_trace_stream_to_file;
-
     #[test]
-    fn test_xes_export_std_writer() {
+    fn test_xes_export_roundtrip() {
         let path = get_test_data_path()
             .join("xes")
             .join("Sepsis Cases - Event Log.xes.gz");
-        let log = import_xes_path(&path, XESImportOptions::default()).unwrap();
-        let exported_xes_data: Vec<u8> = Vec::new();
-        // let mut writer = Writer::new(exported_xes_data);
-        let mut buf_writer = BufWriter::new(exported_xes_data);
-        export_xes_event_log(&mut buf_writer, &log).unwrap();
-        let data = buf_writer.into_inner().unwrap();
-        let log2 = import_xes_slice(&data, false, XESImportOptions::default()).unwrap();
-        assert_eq!(log.traces.len(), log2.traces.len());
-        assert_eq!(log.attributes.len(), log2.attributes.len());
-        assert_eq!(
-            log.classifiers
-                .as_ref()
-                .map(|c| c.len())
-                .unwrap_or_default(),
-            log2.classifiers
-                .as_ref()
-                .map(|c| c.len())
-                .unwrap_or_default(),
-        );
-        assert_eq!(
-            log.extensions
-                .as_ref()
-                .unwrap()
-                .iter()
-                .collect::<HashSet<&EventLogExtension>>(),
-            log2.extensions
-                .as_ref()
-                .unwrap()
-                .iter()
-                .collect::<HashSet<&EventLogExtension>>()
-        );
+        let log = EventLog::import_from_path(&path).unwrap();
+        for format in ["xes", "xes.gz"] {
+            let data = log.export_to_bytes(format).unwrap();
+            let log2 = EventLog::import_from_bytes(&data, format).unwrap();
+            assert_eq!(log.traces.len(), log2.traces.len());
+            assert_eq!(log.attributes.len(), log2.attributes.len());
+            assert_eq!(
+                log.classifiers
+                    .as_ref()
+                    .map(|c| c.len())
+                    .unwrap_or_default(),
+                log2.classifiers
+                    .as_ref()
+                    .map(|c| c.len())
+                    .unwrap_or_default(),
+            );
+            assert_eq!(
+                log.extensions
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .collect::<HashSet<&EventLogExtension>>(),
+                log2.extensions
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .collect::<HashSet<&EventLogExtension>>()
+            );
 
-        // The below assumes that also all orders of events, traces, log attributes, extensions etc. must be the same
-        // In reality, we would also accept a weaker equality relation (e.g., ignoring the order of attributes)
-        assert!(log2 == log);
+            // The below assumes that also all orders of events, traces, log attributes, extensions etc. must be the same
+            // In reality, we would also accept a weaker equality relation (e.g., ignoring the order of attributes)
+            assert!(log2 == log);
+        }
     }
 
     #[test]
-    fn test_xes_export_xml_writer() {
-        let path = get_test_data_path()
-            .join("xes")
-            .join("Sepsis Cases - Event Log.xes.gz");
-        let log = import_xes_path(&path, XESImportOptions::default()).unwrap();
-        let exported_xes_data: Vec<u8> = Vec::new();
-        let mut writer = Writer::new(exported_xes_data);
-        export_xes_event_log(&mut writer, &log).unwrap();
-        let data = writer.into_inner();
-        let log2 = import_xes_slice(&data, false, XESImportOptions::default()).unwrap();
-        assert_eq!(log.traces.len(), log2.traces.len());
-        assert_eq!(log.attributes.len(), log2.attributes.len());
-        assert_eq!(
-            log.classifiers
-                .as_ref()
-                .map(|c| c.len())
-                .unwrap_or_default(),
-            log2.classifiers
-                .as_ref()
-                .map(|c| c.len())
-                .unwrap_or_default(),
-        );
-        assert_eq!(
-            log.extensions
-                .as_ref()
-                .unwrap()
-                .iter()
-                .collect::<HashSet<&EventLogExtension>>(),
-            log2.extensions
-                .as_ref()
-                .unwrap()
-                .iter()
-                .collect::<HashSet<&EventLogExtension>>()
-        );
-
-        // The below assumes that also all orders of events, traces, log attributes, extensions etc. must be the same
-        // In reality, we would also accept a weaker equality relation (e.g., ignoring the order of attributes)
-        assert!(log2 == log);
+    fn stream_export_matches_log_export() {
+        let log = crate::event_log!(["a", "b"], ["c"]);
+        let bytes = log.export_to_bytes("xes").unwrap();
+        let (mut stream, log_data) =
+            stream_xes(bytes.as_slice(), "xes", XESImportOptions::default()).unwrap();
+        let mut streamed = Vec::new();
+        export_xes(&mut streamed, "xes", &log_data, &mut stream).unwrap();
+        assert!(stream.error.is_none());
+        assert_eq!(streamed, bytes);
+        assert!(!String::from_utf8(streamed).unwrap().contains("<global"));
+        assert!(matches!(
+            export_xes(Vec::new(), "json", &log_data, log.traces.iter()),
+            Err(crate::core::event_data::case_centric::io::EventLogIOError::UnsupportedFormat(_))
+        ));
     }
 
     #[test]
-    fn test_stream_from_gz_to_plain() {
+    fn test_stream_from_gz_to_gz() {
         let now = Instant::now();
         let path = get_test_data_path()
             .join("xes")
             .join("Road_Traffic_Fine_Management_Process.xes.gz");
 
-        let (mut stream, mut log_data) =
-            stream_xes_from_path(&path, XESImportOptions::default()).unwrap();
-        let export_path = get_test_data_path()
-            .join("export")
-            .join("streaming-export.xes.gz");
+        let (mut stream, mut log_data) = stream_xes(
+            File::open(&path).unwrap(),
+            "xes.gz",
+            XESImportOptions::default(),
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let export_path = dir.path().join("streaming-export.xes.gz");
 
         let traces = stream.map(|mut t| {
             for a in t.attributes.iter_mut() {
-                a.key = a.key.to_uppercase().to_string().to_string();
+                a.key = a.key.to_uppercase();
             }
             for e in t.events.iter_mut() {
                 for a in e.attributes.iter_mut() {
-                    a.key = a.key.to_uppercase().to_string().to_string();
+                    a.key = a.key.to_uppercase();
                 }
             }
             t
         });
         for a in log_data.global_trace_attrs.iter_mut() {
-            a.key = a.key.to_uppercase().to_string().to_string();
+            a.key = a.key.to_uppercase();
         }
 
         for a in log_data.global_event_attrs.iter_mut() {
-            a.key = a.key.to_uppercase().to_string().to_string();
+            a.key = a.key.to_uppercase();
         }
         for a in log_data.log_attributes.iter_mut() {
-            a.key = a.key.to_uppercase().to_string().to_string();
+            a.key = a.key.to_uppercase();
         }
         for c in log_data.classifiers.iter_mut() {
             for k in c.keys.iter_mut() {
-                *k = k.to_uppercase().to_string().to_string();
+                *k = k.to_uppercase();
             }
         }
 
-        export_xes_trace_stream_to_file(
-            traces,
-            log_data,
+        export_xes(
             File::create(&export_path).unwrap(),
-            true,
+            "xes.gz",
+            &log_data,
+            traces,
         )
         .unwrap();
         println!("Streamed from .xes.gz to .xes.gz in {:?}", now.elapsed());
+        let back = EventLog::import_from_path(&export_path).unwrap();
+        assert_eq!(back.traces.len(), 150_370);
+    }
+
+    #[test]
+    fn invalid_xml_chars_are_dropped() {
+        let log = crate::event_log!(
+            {"log\u{1}" => "l\u{FFFE}"};
+            ["a\u{1}b\u{FFFE}"; {"k\u{1}" => "v\u{FFFE}"}]
+        );
+        let data = log.export_to_bytes("xes").unwrap();
+        crate::core::io::assert_xml_well_formed(&data);
+        let back = EventLog::import_from_bytes(&data, "xes").unwrap();
+        let expected = crate::event_log!(
+            {"log" => "l"};
+            ["ab"; {"k" => "v"}]
+        );
+        assert_eq!(back.attributes, expected.attributes);
+        assert_eq!(back.traces, expected.traces);
     }
 
     #[test]

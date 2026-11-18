@@ -3,7 +3,7 @@
 //! Allows easy and efficient access to events, objects, and their relations
 use std::{
     borrow::{Borrow, Cow},
-    collections::HashMap,
+    collections::{BTreeSet, HashMap, HashSet},
     hash::BuildHasher,
     io::{Read, Write},
     path::Path,
@@ -19,18 +19,20 @@ use uuid::Uuid;
 use crate::{
     core::{
         event_data::object_centric::{
-            appendable::{is_streaming_format, AppendableOCEL, StreamImportOCEL},
-            io::OCELIOError,
-            linked_ocel::LinkedOCELAccess,
-            ocel_xml::xml_ocel_import::OCELImportOptions,
+            appendable::{append_ocel, AppendableOCEL},
+            io::{
+                export_ocel, stream_ocel, OCELExportOptions, OCELIOError, OCELImportOptions,
+                OcelFormat, OcelSource, OcelTarget,
+            },
+            linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess},
             readable::{OCELLookup, ReadableOCEL},
             OCELAttributeType, OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject,
             OCELObjectAttribute, OCELRelationship, OCELType, OCELTypeAttribute,
         },
-        io::ExtensionWithMime,
+        io::{controlled, infer_format_or_err, ExtensionWithMime},
         OCEL,
     },
-    Exportable, Importable,
+    Control, Exportable, Importable,
 };
 
 /// Interned qualifier identifier. Indexes into [`SlimLinkedOCEL::qualifiers`].
@@ -101,6 +103,18 @@ fn declare_or_merge_type<T>(
     types.push(new_type);
 }
 
+/// Drop the attributes `declared` declares from `untyped`, as their type is now given.
+fn forget_untyped(
+    untyped: &mut HashSet<(usize, String)>,
+    index: &HashMap<String, usize>,
+    declared: &OCELType,
+) {
+    if let Some(&idx) = index.get(&declared.name) {
+        untyped
+            .retain(|(t, name)| *t != idx || !declared.attributes.iter().any(|a| &a.name == name));
+    }
+}
+
 /// Returns the index of `name` in `index`, or registers a fresh empty type if unknown.
 fn ensure_type_idx<T>(
     types: &mut Vec<OCELType>,
@@ -126,13 +140,14 @@ fn ensure_type_idx<T>(
 /// If the value's variant agrees with the declared `value_type` (or the value is `Null`,
 /// the missing sentinel), the value is returned as-is. Otherwise the function tries
 /// [`OCELAttributeValue::try_coerce_to`]; on success the coerced value is returned silently,
-/// on failure the original value is returned and a warning is emitted to stderr.
+/// on failure the original value is returned and a warning goes to `ctl`.
 fn reconcile_known_value(
     value: OCELAttributeValue,
     declared: OCELAttributeType,
     owner_kind: &str,
     owner_id: &str,
     attr_name: &str,
+    ctl: &Control<'_>,
 ) -> OCELAttributeValue {
     if matches!(value, OCELAttributeValue::Null) {
         return value;
@@ -149,16 +164,60 @@ fn reconcile_known_value(
     match value.try_coerce_to(declared) {
         Some(coerced) => coerced,
         None => {
-            eprintln!(
-                "[rust4pm] warning: {} {:?} attribute {:?}: value variant {:?} differs from declared type {:?} and cannot be coerced; storing as-is",
+            ctl.warn(format_args!(
+                "{} {:?} attribute {:?}: value variant {:?} differs from declared type {:?} and cannot be coerced; storing as-is",
                 owner_kind,
                 owner_id,
                 attr_name,
                 observed.as_type_str(),
                 declared.as_type_str(),
-            );
+            ));
             value
         }
+    }
+}
+
+/// Add the attributes of `values` that type `type_idx` does not declare to its `attrs`, each with
+/// the type of its first non-null value, calling `on_new` for each if the type had attributes.
+///
+/// An attribute with only `Null` values is declared `string` and kept in `untyped`, until a later
+/// append brings a non-null value whose type it then takes. Values of it added before are all
+/// `Null`, so none of them has to be converted.
+fn grow_type<'v>(
+    attrs: &mut Vec<OCELTypeAttribute>,
+    untyped: &mut HashSet<(usize, String)>,
+    type_idx: usize,
+    values: impl Iterator<Item = (&'v str, &'v OCELAttributeValue)> + Clone,
+    mut on_new: impl FnMut(&str),
+) {
+    let is_null = |v: &OCELAttributeValue| matches!(v, OCELAttributeValue::Null);
+    for (name, value) in values.clone() {
+        if let Some(declared) = attrs.iter_mut().find(|d| d.name == name) {
+            if !untyped.is_empty()
+                && !is_null(value)
+                && untyped.remove(&(type_idx, name.to_string()))
+            {
+                declared.value_type = value.get_type().as_type_str().to_string();
+            }
+            continue;
+        }
+        if !attrs.is_empty() {
+            on_new(name);
+        }
+        let first = values
+            .clone()
+            .find(|(n, v)| *n == name && !is_null(v))
+            .map(|(_, v)| v.get_type());
+        if first.is_none() {
+            untyped.insert((type_idx, name.to_string()));
+        }
+        attrs.push(OCELTypeAttribute {
+            name: name.to_string(),
+            value_type: first
+                .unwrap_or(OCELAttributeType::String)
+                .as_type_str()
+                .to_string(),
+        });
     }
 }
 
@@ -225,13 +284,13 @@ impl EventIndex {
     }
     /// Get an attribute value of this event, specified by the attribute name
     ///
-    /// Returns [`None`] if there is no such attribute.
+    /// Returns [`None`] if there is no such attribute or no such event.
     pub fn get_attribute_value<'a>(
         &self,
         attr_name: &str,
         locel: &'a SlimLinkedOCEL,
     ) -> Option<&'a OCELAttributeValue> {
-        let ev = self.get_ev(locel);
+        let ev = self.get_ev_opt(locel)?;
         let (index, _attr) = locel.event_types[ev.event_type]
             .attributes
             .iter()
@@ -242,7 +301,7 @@ impl EventIndex {
     }
     /// Get a mutable reference to the attribute value of this event, specified by the attribute name
     ///
-    /// Returns [`None`] if the event's type does not declare `attr_name`.
+    /// Returns [`None`] if the event does not exist or its type does not declare `attr_name`.
     ///
     /// An event's attribute vector is sized when the event is added, so a type that grows a new
     /// attribute afterwards leaves earlier events of that type short of it. This grows the vector
@@ -254,7 +313,7 @@ impl EventIndex {
         attr_name: &str,
         locel: &'a mut SlimLinkedOCEL,
     ) -> Option<&'a mut OCELAttributeValue> {
-        let ev = &mut locel.events[self.ix()];
+        let ev = locel.events.get_mut(self.ix())?;
         let (index, _attr) = locel.event_types[ev.event_type]
             .attributes
             .iter()
@@ -460,9 +519,8 @@ impl ObjectIndex {
     /// Get the activity trace of this object as event-type indices, ordered by event timestamp
     ///
     /// Each yielded `usize` is the internal event-type index of an event connected to this object.
-    /// This is the cheap form of the trace — useful when you intend to group, count, or otherwise compare
-    /// traces without allocating string copies. Use [`ObjectIndex::get_obj_activity_trace`] if you want
-    /// the event-type names directly.
+    /// This form allocates no strings, for grouping, counting or comparing traces. Use
+    /// [`ObjectIndex::get_obj_activity_trace`] for the event-type names.
     pub fn get_obj_activity_trace_evtype_indices<'a>(
         &self,
         locel: &'a SlimLinkedOCEL,
@@ -481,13 +539,13 @@ impl ObjectIndex {
     }
     /// Get attribute values of this object, specified by the attribute name
     ///
-    /// Returns [`None`] if there is no such attribute.
+    /// Returns [`None`] if there is no such attribute or no such object.
     pub fn get_attribute_value<'a>(
         &self,
         attr_name: &str,
         locel: &'a SlimLinkedOCEL,
     ) -> Option<&'a Vec<(DateTime<FixedOffset>, OCELAttributeValue)>> {
-        let ob = self.get_ob(locel);
+        let ob = self.get_ob_opt(locel)?;
         let (index, _attr) = locel.object_types[ob.object_type]
             .attributes
             .iter()
@@ -498,13 +556,13 @@ impl ObjectIndex {
     }
     /// Get a mutable references to the attribute values of this object, specified by the attribute name
     ///
-    /// Returns [`None`] if there is no such attribute.
+    /// Returns [`None`] if the object does not exist or there is no such attribute.
     pub fn get_attribute_value_mut<'a>(
         &self,
         attr_name: &str,
         locel: &'a mut SlimLinkedOCEL,
     ) -> Option<&'a mut Vec<(DateTime<FixedOffset>, OCELAttributeValue)>> {
-        let ob = &mut locel.objects[self.ix()];
+        let ob = locel.objects.get_mut(self.ix())?;
         let (index, _attr) = locel.object_types[ob.object_type]
             .attributes
             .iter()
@@ -609,7 +667,13 @@ pub struct SlimLinkedOCEL {
     pending_e2o: Vec<(EventIndex, OCELRelationship)>,
     /// Forward O2O references whose target object id was unknown at insert time.
     pending_o2o: Vec<(ObjectIndex, OCELRelationship)>,
+    /// `(type index, attribute)` of the auto-declared event attributes without a non-null value
+    /// yet. See [`grow_type`].
+    untyped_event_attrs: HashSet<(usize, String)>,
+    /// As [`Self::untyped_event_attrs`], for object attributes.
+    untyped_object_attrs: HashSet<(usize, String)>,
 }
+
 impl SlimLinkedOCEL {
     /// Create a new empty `SlimLinkedOCEL`
     ///
@@ -618,56 +682,19 @@ impl SlimLinkedOCEL {
         Self::default()
     }
 
-    /// Build a `SlimLinkedOCEL` from a `DuckDB` schema database (as written by
-    /// [`stream_ocel_file_to_duckdb`](crate::core::event_data::object_centric::ocel_sql::stream_ocel_file_to_duckdb)).
-    /// Eager, so the whole log is loaded into memory. For out-of-core access use
-    /// `DuckDbLinkedOCEL`.
-    #[cfg(feature = "ocel-duckdb")]
-    pub fn from_duckdb(con: &duckdb::Connection) -> Result<Self, OCELIOError> {
-        use crate::core::event_data::object_centric::ocel_sql::duckdb::schema::reader::DuckDbReadInto;
-        let mut slim = SlimLinkedOCEL::new();
-        slim.read_from_duckdb(con)?;
-        Ok(slim)
-    }
-
     /// Convert an unlinked [`OCEL`] to a [`SlimLinkedOCEL`].
     ///
     /// Events are sorted by time before insertion so that `events_per_type` lists are
     /// time-ordered. Duplicate event/object ids are skipped with a warning. Unknown
     /// types referenced by an event/object are auto-declared on first use, and
     /// attributes not listed in the declared schema cause the schema to grow.
-    pub fn from_ocel(mut ocel: OCEL) -> Self {
-        ocel.events.sort_by_key(|e| e.time);
+    pub fn from_ocel(ocel: OCEL) -> Self {
         let mut linked = SlimLinkedOCEL::new();
-        for et in ocel.event_types {
-            let _ = linked.declare_event_type(et);
-        }
-        for ot in ocel.object_types {
-            let _ = linked.declare_object_type(ot);
-        }
-        for o in ocel.objects {
-            let OCELObject {
-                id,
-                object_type,
-                attributes,
-                relationships,
-            } = o;
-            if let Err(e) = linked.append_object(id, &object_type, attributes, relationships) {
-                eprintln!("[rust4pm] warning: skipping object: {e}");
-            }
-        }
-        for ev in ocel.events {
-            let OCELEvent {
-                id,
-                event_type,
-                time,
-                attributes,
-                relationships,
-            } = ev;
-            if let Err(e) = linked.append_event(id, &event_type, time, attributes, relationships) {
-                eprintln!("[rust4pm] warning: skipping event: {e}");
-            }
-        }
+        // Declaring a type cannot fail and a rejected entity is skipped, so this is always `Ok`
+        let _ = append_ocel(&mut linked, ocel, |what, e| {
+            log::warn!("skipping {what}: {e}");
+            Ok(())
+        });
         let _ = linked.finalize();
         linked
     }
@@ -743,7 +770,8 @@ impl SlimLinkedOCEL {
     /// element to the `weight`.
     ///
     /// Returns the newly added [`EventIndex`]
-    /// or None if the event type is unknown or the id is already taken
+    /// or None if the event type is unknown, the id is already taken, or a relationship names an
+    /// object index that does not exist. Nothing is modified in that case.
     ///
     ///
     /// Note: This function maintains the relationship index (e.g., also reverse E2O relationships)
@@ -756,7 +784,14 @@ impl SlimLinkedOCEL {
         mut attributes: Vec<OCELAttributeValue>,
         relationships: Vec<(String, ObjectIndex)>,
     ) -> Option<EventIndex> {
-        let etype = self.evtype_to_index.get(event_type)?;
+        let etype = *self.evtype_to_index.get(event_type)?;
+        if etype >= self.events_per_type.len()
+            || relationships
+                .iter()
+                .any(|(_q, o)| o.0 as usize >= self.objects.len())
+        {
+            return None;
+        }
         let id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let h = self.hasher.hash_one(&id);
         if self
@@ -775,7 +810,7 @@ impl SlimLinkedOCEL {
                     hasher.hash_one(&events[j as usize].id)
                 });
         }
-        self.events_per_type.get_mut(*etype)?.push(new_ev_index);
+        self.events_per_type[etype].push(new_ev_index);
         let mut interned: Vec<(QualifierIdx, ObjectIndex)> = {
             let qualifiers = &mut self.qualifiers;
             let qualifier_index = &mut self.qualifier_index;
@@ -787,10 +822,10 @@ impl SlimLinkedOCEL {
         };
         interned.sort_by_key(|(_q, o)| *o);
         // Pad (or truncate) attributes to expected length; warn on mismatch
-        let expected_attr_len = self.event_types[*etype].attributes.len();
+        let expected_attr_len = self.event_types[etype].attributes.len();
         if attributes.len() != expected_attr_len {
-            eprintln!(
-                "[rust4pm] warning: event_type '{}' expects {} attribute value(s), got {}. \
+            log::warn!(
+                "event_type '{}' expects {} attribute value(s), got {}. \
                  Padding with Null / truncating. Ensure attribute order matches `add_event_type`.",
                 event_type,
                 expected_attr_len,
@@ -804,7 +839,7 @@ impl SlimLinkedOCEL {
         }
         self.events.push(SlimOCELEvent {
             id,
-            event_type: *etype,
+            event_type: etype,
             time,
             attributes,
             relationships: interned,
@@ -820,7 +855,8 @@ impl SlimLinkedOCEL {
     /// attribute values (with their timestamps)
     ///
     /// Returns the newly added [`ObjectIndex`]
-    /// or None if the object type is unknown or the id is already taken
+    /// or None if the object type is unknown, the id is already taken, or a relationship names an
+    /// object index that does not exist yet. Nothing is modified in that case.
     ///
     /// Note: This function maintains the relationship index (e.g., also reverse O2O relationships)
     pub fn add_object(
@@ -830,7 +866,14 @@ impl SlimLinkedOCEL {
         mut attributes: Vec<Vec<(DateTime<FixedOffset>, OCELAttributeValue)>>,
         relationships: Vec<(String, ObjectIndex)>,
     ) -> Option<ObjectIndex> {
-        let otype = self.obtype_to_index.get(object_type)?;
+        let otype = *self.obtype_to_index.get(object_type)?;
+        if otype >= self.objects_per_type.len()
+            || relationships
+                .iter()
+                .any(|(_q, o)| o.0 as usize >= self.objects.len())
+        {
+            return None;
+        }
         let id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let h = self.hasher.hash_one(&id);
         if self
@@ -849,7 +892,7 @@ impl SlimLinkedOCEL {
                     hasher.hash_one(&objects[j as usize].id)
                 });
         }
-        self.objects_per_type.get_mut(*otype)?.push(new_ob_index);
+        self.objects_per_type[otype].push(new_ob_index);
         let mut interned: Vec<(QualifierIdx, ObjectIndex)> = {
             let qualifiers = &mut self.qualifiers;
             let qualifier_index = &mut self.qualifier_index;
@@ -861,10 +904,10 @@ impl SlimLinkedOCEL {
         };
         interned.sort_by_key(|(_q, o)| *o);
         // Pad (or truncate) attributes to expected length; warn on mismatch
-        let expected_attr_len = self.object_types[*otype].attributes.len();
+        let expected_attr_len = self.object_types[otype].attributes.len();
         if attributes.len() != expected_attr_len {
-            eprintln!(
-                "[rust4pm] warning: object_type '{}' expects {} attribute list(s), got {}. \
+            log::warn!(
+                "object_type '{}' expects {} attribute list(s), got {}. \
                  Padding with empty / truncating. Ensure attribute order matches `add_object_type`.",
                 object_type,
                 expected_attr_len,
@@ -878,7 +921,7 @@ impl SlimLinkedOCEL {
         }
         self.objects.push(SlimOCELObject {
             id,
-            object_type: *otype,
+            object_type: otype,
             attributes,
             relationships: interned,
             e2o_rev: Vec::new(),
@@ -887,17 +930,46 @@ impl SlimLinkedOCEL {
         Some(new_ob_index)
     }
 
+    /// Add a value to the history of an object attribute, right after the last change at or
+    /// before `time`.
+    ///
+    /// A history sorted by time stays sorted, and the value counts as recorded after any other
+    /// change at the same time (see [`LinkedOCELAccess::get_ob_attr_val_at`]).
+    ///
+    /// Returns `false` if the object does not exist or its type does not declare `attr_name`
+    /// (see [`AppendableOCEL::declare_object_type`] for adding an attribute to a type).
+    pub fn add_object_attribute_value(
+        &mut self,
+        object: ObjectIndex,
+        attr_name: &str,
+        time: DateTime<FixedOffset>,
+        value: OCELAttributeValue,
+    ) -> bool {
+        let Some(history) = object.get_attribute_value_mut(attr_name, self) else {
+            return false;
+        };
+        // A scan, since `add_object` and the importers keep histories in recording order, which
+        // need not be sorted by time
+        let position = history
+            .iter()
+            .rposition(|(t, _)| *t <= time)
+            .map_or(0, |i| i + 1);
+        history.insert(position, (time, value));
+        true
+    }
+
     /// Add an E2O relationship between the passed event and object, with the specified qualifier.
     ///
     /// Multiple relationships between the same `(event, object)` pair are allowed as long as their
     /// qualifiers differ; re-adding an exact `(event, object, qualifier)` triple is a no-op.
     ///
-    /// Returns `true` on success, `false` if either index is out of bounds (with a stderr warning).
+    /// Returns `true` on success, `false` if either index is out of bounds (with a `log` warning).
     pub fn add_e2o(&mut self, event: EventIndex, object: ObjectIndex, qualifier: String) -> bool {
         if (event.0 as usize) >= self.events.len() || (object.0 as usize) >= self.objects.len() {
-            eprintln!(
-                "[rust4pm] warning: add_e2o called with invalid index(es) (event={}, object={}); ignored",
-                event.0, object.0
+            log::warn!(
+                "add_e2o called with invalid index(es) (event={}, object={}); ignored",
+                event.0,
+                object.0
             );
             return false;
         }
@@ -921,7 +993,7 @@ impl SlimLinkedOCEL {
     /// Multiple relationships between the same `(from_obj, to_obj)` pair are allowed as long as
     /// their qualifiers differ; re-adding an exact `(from_obj, to_obj, qualifier)` triple is a no-op.
     ///
-    /// Returns `true` on success, `false` if either index is out of bounds (with a stderr warning).
+    /// Returns `true` on success, `false` if either index is out of bounds (with a `log` warning).
     pub fn add_o2o(
         &mut self,
         from_obj: ObjectIndex,
@@ -930,9 +1002,10 @@ impl SlimLinkedOCEL {
     ) -> bool {
         if (from_obj.0 as usize) >= self.objects.len() || (to_obj.0 as usize) >= self.objects.len()
         {
-            eprintln!(
-                "[rust4pm] warning: add_o2o called with invalid index(es) (from_obj={}, to_obj={}); ignored",
-                from_obj.0, to_obj.0
+            log::warn!(
+                "add_o2o called with invalid index(es) (from_obj={}, to_obj={}); ignored",
+                from_obj.0,
+                to_obj.0
             );
             return false;
         }
@@ -953,12 +1026,13 @@ impl SlimLinkedOCEL {
     }
     /// Remove all E2O relationships between the passed event and object (across every qualifier).
     ///
-    /// Returns `true` on success, `false` if either index is out of bounds (with a stderr warning).
+    /// Returns `true` on success, `false` if either index is out of bounds (with a `log` warning).
     pub fn delete_e2o(&mut self, event: &EventIndex, object: &ObjectIndex) -> bool {
         if (event.0 as usize) >= self.events.len() || (object.0 as usize) >= self.objects.len() {
-            eprintln!(
-                "[rust4pm] warning: delete_e2o called with invalid index(es) (event={}, object={}); ignored",
-                event.0, object.0
+            log::warn!(
+                "delete_e2o called with invalid index(es) (event={}, object={}); ignored",
+                event.0,
+                object.0
             );
             return false;
         }
@@ -972,15 +1046,70 @@ impl SlimLinkedOCEL {
         }
         true
     }
+
+    /// Intern a qualifier string, returning its index.
+    pub(crate) fn intern_qualifier(&mut self, qualifier: &str) -> QualifierIdx {
+        intern_qualifier(
+            &mut self.qualifiers,
+            &mut self.qualifier_index,
+            &self.hasher,
+            qualifier.to_string(),
+        )
+    }
+
+    /// Rewrite the qualifier of every E2O relationship, or remove the relationship.
+    ///
+    /// `rewrite` gets the event, the object and the qualifier, and returns the new qualifier or
+    /// `None` to remove the relationship. Relationships that end up equal are merged.
+    pub(crate) fn rewrite_e2o(
+        &mut self,
+        mut rewrite: impl FnMut(&SlimOCELEvent, ObjectIndex, QualifierIdx) -> Option<QualifierIdx>,
+    ) {
+        let mut removed_any = false;
+        for event in &mut self.events {
+            let old = std::mem::take(&mut event.relationships);
+            let mut new: Vec<(QualifierIdx, ObjectIndex)> = Vec::with_capacity(old.len());
+            for (q, o) in old {
+                match rewrite(event, o, q) {
+                    // Sorted by object, so a duplicate can only sit among the same object's entries.
+                    Some(q) => {
+                        let mut same_object = new.iter().rev().take_while(|(_, x)| *x == o);
+                        if !same_object.any(|(x, _)| *x == q) {
+                            new.push((q, o));
+                        }
+                    }
+                    None => removed_any = true,
+                }
+            }
+            event.relationships = new;
+        }
+        if removed_any {
+            for object in &mut self.objects {
+                object.e2o_rev.clear();
+            }
+            for (i, event) in self.events.iter().enumerate() {
+                let ev = EventIndex(i as u32);
+                for (_, o) in &event.relationships {
+                    // Events are visited in index order, so each list stays sorted.
+                    let rev = &mut self.objects[o.0 as usize].e2o_rev;
+                    if rev.last() != Some(&ev) {
+                        rev.push(ev);
+                    }
+                }
+            }
+        }
+    }
+
     /// Remove all O2O relationships from `from_obj` to `to_obj` (across every qualifier).
     ///
-    /// Returns `true` on success, `false` if either index is out of bounds (with a stderr warning).
+    /// Returns `true` on success, `false` if either index is out of bounds (with a `log` warning).
     pub fn delete_o2o(&mut self, from_obj: &ObjectIndex, to_obj: &ObjectIndex) -> bool {
         if (from_obj.0 as usize) >= self.objects.len() || (to_obj.0 as usize) >= self.objects.len()
         {
-            eprintln!(
-                "[rust4pm] warning: delete_o2o called with invalid index(es) (from_obj={}, to_obj={}); ignored",
-                from_obj.0, to_obj.0
+            log::warn!(
+                "delete_o2o called with invalid index(es) (from_obj={}, to_obj={}); ignored",
+                from_obj.0,
+                to_obj.0
             );
             return false;
         }
@@ -998,6 +1127,20 @@ impl SlimLinkedOCEL {
 impl From<OCEL> for SlimLinkedOCEL {
     fn from(value: OCEL) -> Self {
         Self::from_ocel(value)
+    }
+}
+
+/// Relinks the inner [`OCEL`] without copying it.
+impl From<IndexLinkedOCEL> for SlimLinkedOCEL {
+    fn from(value: IndexLinkedOCEL) -> Self {
+        Self::from_ocel(value.into_inner())
+    }
+}
+
+/// Copies the inner [`OCEL`] once.
+impl From<&IndexLinkedOCEL> for SlimLinkedOCEL {
+    fn from(value: &IndexLinkedOCEL) -> Self {
+        Self::from_ocel(value.get_ocel_ref().clone())
     }
 }
 
@@ -1066,7 +1209,7 @@ impl std::error::Error for SlimAppendError {}
 
 impl From<SlimAppendError> for OCELIOError {
     fn from(e: SlimAppendError) -> Self {
-        OCELIOError::Other(e.to_string())
+        OCELIOError::Append(e)
     }
 }
 
@@ -1074,6 +1217,11 @@ impl AppendableOCEL for SlimLinkedOCEL {
     type Error = SlimAppendError;
 
     fn declare_event_type(&mut self, event_type: OCELType) -> Result<(), Self::Error> {
+        forget_untyped(
+            &mut self.untyped_event_attrs,
+            &self.evtype_to_index,
+            &event_type,
+        );
         declare_or_merge_type(
             &mut self.event_types,
             &mut self.evtype_to_index,
@@ -1084,6 +1232,11 @@ impl AppendableOCEL for SlimLinkedOCEL {
     }
 
     fn declare_object_type(&mut self, object_type: OCELType) -> Result<(), Self::Error> {
+        forget_untyped(
+            &mut self.untyped_object_attrs,
+            &self.obtype_to_index,
+            &object_type,
+        );
         declare_or_merge_type(
             &mut self.object_types,
             &mut self.obtype_to_index,
@@ -1101,6 +1254,41 @@ impl AppendableOCEL for SlimLinkedOCEL {
         attributes: Vec<OCELEventAttribute>,
         relationships: Vec<OCELRelationship>,
     ) -> Result<(), Self::Error> {
+        self.append_event_with(
+            id,
+            event_type,
+            time,
+            attributes,
+            relationships,
+            &Control::new(),
+        )
+    }
+
+    fn append_object(
+        &mut self,
+        id: String,
+        object_type: &str,
+        attributes: Vec<OCELObjectAttribute>,
+        relationships: Vec<OCELRelationship>,
+    ) -> Result<(), Self::Error> {
+        self.append_object_with(id, object_type, attributes, relationships, &Control::new())
+    }
+
+    fn finalize(&mut self) -> Result<(), Self::Error> {
+        self.finalize_with(&Control::new())
+    }
+}
+
+impl SlimLinkedOCEL {
+    fn append_event_with(
+        &mut self,
+        id: String,
+        event_type: &str,
+        time: DateTime<FixedOffset>,
+        attributes: Vec<OCELEventAttribute>,
+        relationships: Vec<OCELRelationship>,
+        ctl: &Control<'_>,
+    ) -> Result<(), SlimAppendError> {
         let h_id = self.hasher.hash_one(&id);
         if self
             .event_ids_to_index
@@ -1116,30 +1304,28 @@ impl AppendableOCEL for SlimLinkedOCEL {
             event_type,
         );
         let new_idx = EventIndex(self.events.len() as u32);
-        // Auto-declare unknown attribute names. Warn only on schema drift (type already
-        // had entries); silent during bootstrap of an empty auto-declared type.
+        // Warn only on schema drift (type already had entries); silent during bootstrap of an
+        // empty auto-declared type.
         let attrs = &mut self.event_types[etype].attributes;
-        for a in &attributes {
-            if !attrs.iter().any(|d| d.name == a.name) {
-                if !attrs.is_empty() {
-                    eprintln!(
-                        "[rust4pm] warning: event {:?} of type {:?} has attribute {:?} not in the existing type schema; auto-growing the type",
-                        id, event_type, a.name
-                    );
-                }
-                attrs.push(OCELTypeAttribute {
-                    name: a.name.clone(),
-                    value_type: a.value.get_type().as_type_str().to_string(),
-                });
-            }
-        }
+        grow_type(
+            attrs,
+            &mut self.untyped_event_attrs,
+            etype,
+            attributes.iter().map(|a| (a.name.as_str(), &a.value)),
+            |name| {
+                ctl.warn(format_args!(
+                    "event {id:?} of type {event_type:?} has attribute {name:?} not in the \
+                     existing type schema; auto-growing the type"
+                ))
+            },
+        );
         let positional: Vec<OCELAttributeValue> = attrs
             .iter()
             .map(|d| {
                 let declared = OCELAttributeType::from_type_str(&d.value_type);
                 match attributes.iter().find(|a| a.name == d.name) {
                     Some(a) => {
-                        reconcile_known_value(a.value.clone(), declared, "event", &id, &a.name)
+                        reconcile_known_value(a.value.clone(), declared, "event", &id, &a.name, ctl)
                     }
                     None => OCELAttributeValue::Null,
                 }
@@ -1189,13 +1375,14 @@ impl AppendableOCEL for SlimLinkedOCEL {
         Ok(())
     }
 
-    fn append_object(
+    fn append_object_with(
         &mut self,
         id: String,
         object_type: &str,
         attributes: Vec<OCELObjectAttribute>,
         relationships: Vec<OCELRelationship>,
-    ) -> Result<(), Self::Error> {
+        ctl: &Control<'_>,
+    ) -> Result<(), SlimAppendError> {
         let h_id = self.hasher.hash_one(&id);
         if self
             .object_ids_to_index
@@ -1212,20 +1399,18 @@ impl AppendableOCEL for SlimLinkedOCEL {
         );
         let new_idx = ObjectIndex(self.objects.len() as u32);
         let attrs = &mut self.object_types[otype].attributes;
-        for a in &attributes {
-            if !attrs.iter().any(|d| d.name == a.name) {
-                if !attrs.is_empty() {
-                    eprintln!(
-                        "[rust4pm] warning: object {:?} of type {:?} has attribute {:?} not in the existing type schema; auto-growing the type",
-                        id, object_type, a.name
-                    );
-                }
-                attrs.push(OCELTypeAttribute {
-                    name: a.name.clone(),
-                    value_type: a.value.get_type().as_type_str().to_string(),
-                });
-            }
-        }
+        grow_type(
+            attrs,
+            &mut self.untyped_object_attrs,
+            otype,
+            attributes.iter().map(|a| (a.name.as_str(), &a.value)),
+            |name| {
+                ctl.warn(format_args!(
+                    "object {id:?} of type {object_type:?} has attribute {name:?} not in the \
+                     existing type schema; auto-growing the type"
+                ))
+            },
+        );
         let positional: Vec<Vec<(DateTime<FixedOffset>, OCELAttributeValue)>> = attrs
             .iter()
             .map(|d| {
@@ -1240,6 +1425,7 @@ impl AppendableOCEL for SlimLinkedOCEL {
                             "object",
                             &id,
                             &a.name,
+                            ctl,
                         );
                         (a.time, v)
                     })
@@ -1291,7 +1477,7 @@ impl AppendableOCEL for SlimLinkedOCEL {
         Ok(())
     }
 
-    fn finalize(&mut self) -> Result<(), Self::Error> {
+    fn finalize_with(&mut self, ctl: &Control<'_>) -> Result<(), SlimAppendError> {
         // Resolve pending E2O / O2O forward refs and re-sort touched relationship lists.
         // The OCEL spec disallows duplicate (source, target, qualifier) triples; not
         // deduped here, invalid input flows through as-is.
@@ -1318,10 +1504,10 @@ impl AppendableOCEL for SlimLinkedOCEL {
                     ev_dirty.push(ev_idx);
                 }
                 None => {
-                    eprintln!(
-                        "[rust4pm] warning: dropping E2O reference to unknown object id {:?}",
+                    ctl.warn(format_args!(
+                        "dropping E2O reference to unknown object id {:?}",
                         rel.object_id
-                    );
+                    ));
                 }
             }
         }
@@ -1356,10 +1542,10 @@ impl AppendableOCEL for SlimLinkedOCEL {
                     ob_dirty.push(from_idx);
                 }
                 None => {
-                    eprintln!(
-                        "[rust4pm] warning: dropping O2O reference to unknown object id {:?}",
+                    ctl.warn(format_args!(
+                        "dropping O2O reference to unknown object id {:?}",
                         rel.object_id
-                    );
+                    ));
                 }
             }
         }
@@ -1379,6 +1565,51 @@ impl AppendableOCEL for SlimLinkedOCEL {
         }
 
         Ok(())
+    }
+}
+
+/// A [`SlimLinkedOCEL`] sink that warns through `ctl`.
+struct ControlledSlim<'s, 'c, 'a> {
+    slim: &'s mut SlimLinkedOCEL,
+    ctl: &'c Control<'a>,
+}
+
+impl AppendableOCEL for ControlledSlim<'_, '_, '_> {
+    type Error = SlimAppendError;
+
+    fn declare_event_type(&mut self, event_type: OCELType) -> Result<(), Self::Error> {
+        self.slim.declare_event_type(event_type)
+    }
+
+    fn declare_object_type(&mut self, object_type: OCELType) -> Result<(), Self::Error> {
+        self.slim.declare_object_type(object_type)
+    }
+
+    fn append_event(
+        &mut self,
+        id: String,
+        event_type: &str,
+        time: DateTime<FixedOffset>,
+        attributes: Vec<OCELEventAttribute>,
+        relationships: Vec<OCELRelationship>,
+    ) -> Result<(), Self::Error> {
+        self.slim
+            .append_event_with(id, event_type, time, attributes, relationships, self.ctl)
+    }
+
+    fn append_object(
+        &mut self,
+        id: String,
+        object_type: &str,
+        attributes: Vec<OCELObjectAttribute>,
+        relationships: Vec<OCELRelationship>,
+    ) -> Result<(), Self::Error> {
+        self.slim
+            .append_object_with(id, object_type, attributes, relationships, self.ctl)
+    }
+
+    fn finalize(&mut self) -> Result<(), Self::Error> {
+        self.slim.finalize_with(self.ctl)
     }
 }
 
@@ -1431,6 +1662,12 @@ impl ReadableOCEL for SlimLinkedOCEL {
                 .iter()
                 .map(move |oi| Cow::Owned(oi.fat_ob(self))),
         )
+    }
+    fn undeclared_event_types(&self) -> BTreeSet<String> {
+        BTreeSet::new()
+    }
+    fn undeclared_object_types(&self) -> BTreeSet<String> {
+        BTreeSet::new()
     }
     fn lookup(&self) -> SlimOCELLookup<'_> {
         SlimOCELLookup { locel: self }
@@ -1770,221 +2007,109 @@ impl<'a> LinkedOCELAccess<'a> for SlimLinkedOCEL {
 
 impl Importable for SlimLinkedOCEL {
     type Error = OCELIOError;
-    type ImportOptions = ();
+    type ImportOptions = OCELImportOptions;
 
-    fn import_from_reader_with_options<R: Read>(
+    /// Reports progress and stops on a cancel as the [`OCEL`] import from a reader does.
+    fn import_from_reader_with<R: Read>(
         reader: R,
         format: &str,
-        _: Self::ImportOptions,
+        options: Self::ImportOptions,
+        ctl: &Control<'_>,
     ) -> Result<Self, Self::Error> {
-        if is_streaming_format(format) {
-            let mut slim = SlimLinkedOCEL::new();
-            slim.stream_ocel_from_reader(reader, format, OCELImportOptions::default())?;
-            slim.finalize()?;
-            return Ok(slim);
-        }
-        #[cfg(feature = "ocel-bundle")]
-        if format.ends_with("zip") {
-            let mut reader = reader;
-            let mut bytes = Vec::new();
-            reader.read_to_end(&mut bytes)?;
-            let mut slim = SlimLinkedOCEL::new();
-            crate::core::event_data::object_centric::ocel_bundle::Container::open_bytes(&bytes)?
-                .read_into(&mut slim)?;
-            return Ok(slim);
-        }
-        Ok(SlimLinkedOCEL::from_ocel(OCEL::import_from_reader(
-            reader, format,
-        )?))
+        let f = OcelFormat::parse(format)?;
+        controlled(ctl, || {
+            import_slim(OcelSource::reader(reader, ctl, None), f, &options, ctl)
+        })
     }
 
-    fn import_from_path_with_options<P: AsRef<Path>>(
+    /// Reports progress and stops on a cancel as the [`OCEL`] import from a path does.
+    fn import_from_path_with<P: AsRef<Path>>(
         path: P,
-        _: Self::ImportOptions,
+        options: Self::ImportOptions,
+        ctl: &Control<'_>,
     ) -> Result<Self, Self::Error> {
         let path = path.as_ref();
-        let format = <Self as Importable>::infer_format(path).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Could not infer format from path",
-            )
-        })?;
-        if is_streaming_format(&format) {
-            let mut slim = SlimLinkedOCEL::new();
-            slim.stream_ocel_from_reader(
-                std::fs::File::open(path)?,
-                &format,
-                OCELImportOptions::default(),
-            )?;
-            slim.finalize()?;
-            return Ok(slim);
-        }
-        // A bundle is a directory, or an `ocel-meta.json` naming one, so it needs the path
-        // itself and not a byte stream.
-        #[cfg(feature = "ocel-bundle")]
-        if format.ends_with("zip") {
-            let mut slim = SlimLinkedOCEL::new();
-            crate::core::event_data::object_centric::ocel_bundle::Container::open(path)?
-                .read_into(&mut slim)?;
-            return Ok(slim);
-        }
-        // SQLite and DuckDB have no sink-based reader, so their importer's `OCEL` is the way in.
-        Ok(SlimLinkedOCEL::from_ocel(OCEL::import_from_path(path)?))
+        let f = infer_format_or_err(path, OcelFormat::infer)?;
+        controlled(ctl, || {
+            import_slim(OcelSource::Path(path), f, &options, ctl)
+        })
+    }
+
+    fn import_from_bytes_with(
+        bytes: &[u8],
+        format: &str,
+        options: Self::ImportOptions,
+        ctl: &Control<'_>,
+    ) -> Result<Self, Self::Error> {
+        let f = OcelFormat::parse(format)?;
+        let total = Some(bytes.len() as u64);
+        controlled(ctl, || {
+            import_slim(OcelSource::reader(bytes, ctl, total), f, &options, ctl)
+        })
     }
 
     fn infer_format(path: &Path) -> Option<String> {
-        <OCEL as Importable>::infer_format(path)
+        OcelFormat::infer(path).map(OcelFormat::name)
     }
 
-    fn known_import_formats() -> Vec<crate::core::io::ExtensionWithMime> {
-        <OCEL as Importable>::known_import_formats()
+    fn known_import_formats() -> Vec<ExtensionWithMime> {
+        OcelFormat::known()
     }
+}
+
+fn import_slim(
+    src: OcelSource<'_>,
+    f: OcelFormat,
+    options: &OCELImportOptions,
+    ctl: &Control<'_>,
+) -> Result<SlimLinkedOCEL, OCELIOError> {
+    let mut slim = SlimLinkedOCEL::new();
+    let mut sink = ControlledSlim {
+        slim: &mut slim,
+        ctl,
+    };
+    stream_ocel(&mut sink, src, f, options, ctl)?;
+    Ok(slim)
 }
 
 impl Exportable for SlimLinkedOCEL {
     type Error = OCELIOError;
-    type ExportOptions = ();
+    type ExportOptions = OCELExportOptions;
 
     fn infer_format(path: &Path) -> Option<String> {
-        <OCEL as Exportable>::infer_format(path)
+        OcelFormat::infer(path).map(OcelFormat::name)
     }
 
-    fn export_to_path_with_options<P: AsRef<Path>>(
-        &self,
-        path: P,
-        options: Self::ExportOptions,
-    ) -> Result<(), Self::Error> {
-        let path = path.as_ref();
-        let format = <Self as Exportable>::infer_format(path).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Could not infer format from path",
-            )
-        })?;
-        <Self as Exportable>::export_to_path_as(self, path, &format, options)
-    }
-
-    /// See [`Exportable::export_to_path_as`]. Formats that write a file or a directory rather
-    /// than a byte stream are handled here, everything else streams.
     fn export_to_path_as<P: AsRef<Path>>(
         &self,
         path: P,
         format: &str,
-        _: Self::ExportOptions,
+        options: Self::ExportOptions,
     ) -> Result<(), Self::Error> {
-        let path = path.as_ref();
-        if format.ends_with("sqlite") || (format.ends_with("db") && !format.ends_with("duckdb")) {
-            #[cfg(feature = "ocel-sqlite")]
-            return crate::core::event_data::object_centric::ocel_sql::export_ocel_sqlite_to_path(
-                self, path,
-            )
-            .map_err(OCELIOError::from);
-            #[cfg(not(feature = "ocel-sqlite"))]
-            return Err(OCELIOError::UnsupportedFormat(
-                "SQLite support not enabled".to_string(),
-            ));
-        }
-        if format.ends_with("duckdb") {
-            #[cfg(feature = "ocel-duckdb")]
-            return crate::core::event_data::object_centric::ocel_sql::export_ocel_duckdb_to_path(
-                self, path,
-            )
-            .map_err(OCELIOError::from);
-            #[cfg(not(feature = "ocel-duckdb"))]
-            return Err(OCELIOError::UnsupportedFormat(
-                "DuckDB support not enabled".to_string(),
-            ));
-        }
-        #[cfg(feature = "ocel-bundle")]
-        if format.ends_with("zip") {
-            use crate::core::event_data::object_centric::ocel_bundle::{
-                export_ocel_bundle, BundleExportOptions, ContainerLayout, StorageFormat,
-            };
-            // An existing directory, or a name with no extension, is the uncompressed form.
-            let layout = if path.is_dir() || path.extension().is_none() {
-                ContainerLayout::Directory
-            } else {
-                ContainerLayout::Archive
-            };
-            if layout == ContainerLayout::Directory {
-                std::fs::create_dir_all(path)?;
-            }
-            return export_ocel_bundle(
-                self,
-                path,
-                BundleExportOptions {
-                    layout,
-                    storage: if format.starts_with("ocel-parquet") {
-                        StorageFormat::Parquet
-                    } else {
-                        StorageFormat::Csv
-                    },
-                },
-            )
-            .map_err(|e| OCELIOError::Other(e.to_string()));
-        }
-        let file = std::fs::File::create(path)?;
-        let writer = std::io::BufWriter::new(file);
-        Self::export_to_writer(self, writer, format)
+        export_ocel(
+            self,
+            OcelTarget::Path(path.as_ref()),
+            OcelFormat::parse(format)?,
+            &options,
+        )
     }
 
     fn export_to_writer_with_options<W: Write>(
         &self,
-        #[cfg(feature = "ocel-sqlite")] mut writer: W,
-        #[cfg(not(feature = "ocel-sqlite"))] writer: W,
+        mut writer: W,
         format: &str,
-        _: Self::ExportOptions,
+        options: Self::ExportOptions,
     ) -> Result<(), Self::Error> {
-        if let Some(inner) = format.strip_suffix(".gz") {
-            let mut encoder = flate2::write::GzEncoder::new(
-                Box::new(writer) as Box<dyn Write>,
-                flate2::Compression::default(),
-            );
-            self.export_to_writer_with_options(&mut encoder, inner, ())?;
-            encoder.finish()?;
-            return Ok(());
-        }
-        if format.ends_with("json") || format.ends_with("jsonocel") {
-            crate::core::event_data::object_centric::ocel_json::export_ocel_json_to_writer(
-                self, writer,
-            )
-            .map_err(OCELIOError::Io)
-        } else if format.ends_with("xml") || format.ends_with("xmlocel") {
-            crate::core::event_data::object_centric::ocel_xml::xml_ocel_export::export_ocel_xml(
-                writer, self,
-            )
-            .map_err(OCELIOError::Xml)
-        } else if format.ends_with("ocel.csv") {
-            crate::core::event_data::object_centric::ocel_csv::export_ocel_csv(writer, self)
-                .map_err(|e| OCELIOError::Other(e.to_string()))
-        } else if format.ends_with("sqlite")
-            || (format.ends_with("db") && !format.ends_with("duckdb"))
-        {
-            #[cfg(feature = "ocel-sqlite")]
-            {
-                let bytes =
-                    crate::core::event_data::object_centric::ocel_sql::export_ocel_sqlite_to_vec(
-                        self,
-                    )
-                    .map_err(OCELIOError::from)?;
-                writer.write_all(&bytes)?;
-                Ok(())
-            }
-            #[cfg(not(feature = "ocel-sqlite"))]
-            return Err(OCELIOError::UnsupportedFormat(
-                "SQLite support not enabled".to_string(),
-            ));
-        } else if format.ends_with("duckdb") {
-            Err(OCELIOError::UnsupportedFormat(
-                "DuckDB export to writer not supported".to_string(),
-            ))
-        } else {
-            Err(OCELIOError::UnsupportedFormat(format.to_string()))
-        }
+        export_ocel(
+            self,
+            OcelTarget::Writer(&mut writer),
+            OcelFormat::parse(format)?,
+            &options,
+        )
     }
 
     fn known_export_formats() -> Vec<ExtensionWithMime> {
-        <OCEL as Exportable>::known_export_formats()
+        OcelFormat::known()
     }
 }
 
@@ -2230,7 +2355,7 @@ mod tests {
     #[test]
     fn append_value_type_mismatch_uncoercible_falls_back() {
         // Declared `x: integer`. We pass a String that does not parse to i64.
-        // Coercion fails; the value is stored as-is (with a warning to stderr).
+        // Coercion fails; the value is stored as-is (with a warning).
         let mut s: SlimLinkedOCEL = SlimLinkedOCEL::new();
         s.declare_event_type(OCELType {
             name: "act".into(),
@@ -2324,8 +2449,7 @@ mod tests {
         // New attribute appended at the end.
         assert_eq!(attrs[1].name, "second");
         assert_eq!(attrs[1].value_type, "string");
-        // Stored value is not re-coerced to match the new declared type: the variant stays
-        // `Integer` even though the schema now says `float`. Documented on `declare_or_merge_type`.
+        // A stored value is not re-coerced to the declared type, see `declare_or_merge_type`.
         let ev0 = &s.events[0];
         assert!(matches!(ev0.attributes[0], OCELAttributeValue::Integer(1)));
     }
@@ -2425,5 +2549,223 @@ mod tests {
         let ev = &s.events[0];
         assert_eq!(ev.attributes[0], OCELAttributeValue::String("hi".into()));
         assert_eq!(ev.attributes[1], OCELAttributeValue::Integer(42));
+    }
+
+    fn priced_item() -> (SlimLinkedOCEL, ObjectIndex) {
+        let mut s = SlimLinkedOCEL::new();
+        s.add_object_type(
+            "item",
+            vec![OCELTypeAttribute::new("price", &OCELAttributeType::Integer)],
+        );
+        let int = OCELAttributeValue::Integer;
+        let history = vec![
+            (ts("2024-01-02T00:00:00Z"), int(2)),
+            (ts("2024-01-01T00:00:00Z"), int(1)),
+            (ts("2024-01-01T00:00:00Z"), int(10)),
+            (ts("2024-01-03T00:00:00Z"), int(3)),
+            (ts("2024-01-03T00:00:00Z"), int(30)),
+        ];
+        let ob = s
+            .add_object("item", Some("i1".into()), vec![history], Vec::new())
+            .unwrap();
+        (s, ob)
+    }
+
+    #[test]
+    fn ob_attr_val_at_first_and_last_follow_time_and_recording_order() {
+        let (s, ob) = priced_item();
+        let int = |i| Some(OCELAttributeValue::Integer(i));
+        let at = |t: &str| s.get_ob_attr_val_at(ob, "price", &ts(t)).cloned();
+        assert_eq!(at("2023-12-31T00:00:00Z"), None);
+        // Ties at the same time go to the change recorded last.
+        assert_eq!(at("2024-01-01T00:00:00Z"), int(10));
+        assert_eq!(at("2024-01-02T12:00:00Z"), int(2));
+        assert_eq!(at("2025-01-01T00:00:00Z"), int(30));
+        // Except for the first value, where the change recorded first wins.
+        assert_eq!(s.get_ob_attr_val_first(ob, "price").cloned(), int(1));
+        assert_eq!(s.get_ob_attr_val_last(ob, "price").cloned(), int(30));
+        assert_eq!(s.get_ob_attr_val_last(ob, "weight"), None);
+        assert_eq!(s.get_ob_attr_val_first(ObjectIndex(9), "price"), None);
+    }
+
+    #[test]
+    fn added_attribute_value_is_recorded_last_in_an_unsorted_history() {
+        let mut s = SlimLinkedOCEL::new();
+        s.add_object_type(
+            "item",
+            vec![OCELTypeAttribute::new("price", &OCELAttributeType::Integer)],
+        );
+        let int = OCELAttributeValue::Integer;
+        let t1 = ts("2024-01-01T00:00:00Z");
+        let history = vec![
+            (ts("2024-01-03T00:00:00Z"), int(3)),
+            (ts("2024-01-04T00:00:00Z"), int(4)),
+            (t1, int(1)),
+        ];
+        let ob = s
+            .add_object("item", None, vec![history], Vec::new())
+            .unwrap();
+        assert!(s.add_object_attribute_value(ob, "price", t1, int(10)));
+        assert_eq!(s.get_ob_attr_val_at(ob, "price", &t1), Some(&int(10)));
+        assert_eq!(s.get_ob_attr_val_first(ob, "price"), Some(&int(1)));
+
+        let late = ts("2025-01-01T00:00:00Z");
+        assert!(s.add_object_attribute_value(ob, "price", late, int(99)));
+        assert_eq!(s.get_ob_attr_val_last(ob, "price"), Some(&int(99)));
+        assert!(!s.add_object_attribute_value(ob, "weight", late, int(1)));
+    }
+
+    #[test]
+    fn added_attribute_values_keep_a_sorted_history_sorted() {
+        let mut s = SlimLinkedOCEL::new();
+        s.add_object_type(
+            "item",
+            vec![OCELTypeAttribute::new("price", &OCELAttributeType::Integer)],
+        );
+        let ob = s.add_object("item", None, Vec::new(), Vec::new()).unwrap();
+        let int = OCELAttributeValue::Integer;
+        for (t, v) in [("03", 3), ("01", 1), ("02", 2), ("01", 10)] {
+            let time = ts(&format!("2024-01-{t}T00:00:00Z"));
+            assert!(s.add_object_attribute_value(ob, "price", time, int(v)));
+        }
+        let values: Vec<_> = s
+            .get_ob_attr_vals(ob, "price")
+            .map(|(_, v)| v.clone())
+            .collect();
+        assert_eq!(values, [int(1), int(10), int(2), int(3)]);
+    }
+
+    #[test]
+    fn an_auto_declared_attribute_takes_the_type_of_its_first_non_null_value() {
+        let mut s = SlimLinkedOCEL::new();
+        let ob_attr = |value, time| OCELObjectAttribute {
+            name: "n".into(),
+            value,
+            time: ts(time),
+        };
+        s.append_object(
+            "o1".into(),
+            "item",
+            vec![
+                ob_attr(OCELAttributeValue::Null, "2024-01-01T00:00:00Z"),
+                ob_attr(OCELAttributeValue::Integer(5), "2024-01-02T00:00:00Z"),
+            ],
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(s.object_types[0].attributes[0].value_type, "integer");
+        let values: Vec<_> = s
+            .get_ob_attr_vals(ObjectIndex(0), "n")
+            .map(|(_, v)| v.clone())
+            .collect();
+        assert_eq!(
+            values,
+            [OCELAttributeValue::Null, OCELAttributeValue::Integer(5)]
+        );
+    }
+
+    #[test]
+    fn an_attribute_auto_declared_from_null_takes_the_type_of_a_later_value() {
+        let mut s = SlimLinkedOCEL::new();
+        let t = ts("2024-01-01T00:00:00Z");
+        let ev_attr = |value| {
+            vec![OCELEventAttribute {
+                name: "m".into(),
+                value,
+            }]
+        };
+        let ob_attr = |value| vec![OCELObjectAttribute::new("n", value, t)];
+        s.append_event(
+            "e1".into(),
+            "go",
+            t,
+            ev_attr(OCELAttributeValue::Null),
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(s.event_types[0].attributes[0].value_type, "string");
+        s.append_event(
+            "e2".into(),
+            "go",
+            t,
+            ev_attr(OCELAttributeValue::Integer(5)),
+            vec![],
+        )
+        .unwrap();
+        s.append_object(
+            "o1".into(),
+            "item",
+            ob_attr(OCELAttributeValue::Null),
+            vec![],
+        )
+        .unwrap();
+        s.append_object(
+            "o2".into(),
+            "item",
+            ob_attr(OCELAttributeValue::Integer(5)),
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(s.event_types[0].attributes[0].value_type, "integer");
+        assert_eq!(s.object_types[0].attributes[0].value_type, "integer");
+        assert_eq!(
+            EventIndex(1).get_attribute_value("m", &s),
+            Some(&OCELAttributeValue::Integer(5))
+        );
+        assert_eq!(
+            s.get_ob_attr_val_last(ObjectIndex(1), "n"),
+            Some(&OCELAttributeValue::Integer(5))
+        );
+
+        // A declared type is not changed by a later value
+        s.append_event(
+            "e3".into(),
+            "stop",
+            t,
+            ev_attr(OCELAttributeValue::Null),
+            vec![],
+        )
+        .unwrap();
+        s.add_event_type(
+            "stop",
+            vec![OCELTypeAttribute::new("m", &OCELAttributeType::String)],
+        );
+        s.append_event(
+            "e4".into(),
+            "stop",
+            t,
+            ev_attr(OCELAttributeValue::Integer(5)),
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(s.event_types[1].attributes[0].value_type, "string");
+    }
+
+    #[test]
+    fn attribute_getters_answer_none_for_an_unknown_index() {
+        let (mut s, _ob) = priced_item();
+        assert_eq!(ObjectIndex(5).get_attribute_value("price", &s), None);
+        assert_eq!(EventIndex(5).get_attribute_value("price", &s), None);
+        assert_eq!(s.get_ob_attr_vals(ObjectIndex(5), "price").count(), 0);
+        assert_eq!(
+            ObjectIndex(5).get_attribute_value_mut("price", &mut s),
+            None
+        );
+        assert_eq!(EventIndex(5).get_attribute_value_mut("price", &mut s), None);
+    }
+
+    #[test]
+    fn slim_and_index_linked_convert_directly() {
+        let (s, _ob) = priced_item();
+        let index = IndexLinkedOCEL::from(&s);
+        assert_eq!(index.get_num_obs(), 1);
+        assert_eq!(index.get_ocel_ref().objects[0].attributes.len(), 5);
+        let back = SlimLinkedOCEL::from(&index);
+        assert_eq!(back.get_ob_id(ObjectIndex(0)), "i1");
+        let moved = SlimLinkedOCEL::from(index);
+        assert_eq!(
+            moved.get_ob_attr_val_last(ObjectIndex(0), "price"),
+            Some(&OCELAttributeValue::Integer(30))
+        );
     }
 }

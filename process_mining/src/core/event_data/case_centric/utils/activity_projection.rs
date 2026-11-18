@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::event_data::case_centric::io::EventLogIOError;
+use crate::core::event_data::case_centric::io::{EventLogFormat, EventLogIOError};
 use crate::core::io::{Exportable, ExtensionWithMime, Importable};
 use crate::core::{
     event_data::case_centric::{
@@ -20,7 +20,6 @@ use crate::core::{
     EventLog,
 };
 use std::io::{Read, Write};
-use std::path::Path;
 
 /// Name of `START_ACTIVITY` (can be added to [`EventLogActivityProjection`]/[`EventLog`] to mark START of traces)
 pub const START_ACTIVITY: &str = "__START";
@@ -33,6 +32,9 @@ pub const END_ACTIVITY: &str = "__END";
 /// Currently assumes a default activity name ([`ACTIVITY_NAME`])
 pub struct EventLogActivityProjection {
     /// All activities
+    ///
+    /// Projections built from a log or trace stream list them by name, but activities added
+    /// later (e.g., by [`add_start_end_acts_proj`]) are appended.
     ///
     /// The index of an activity corresponds to `usize` representation of activity
     ///
@@ -81,18 +83,10 @@ impl<'a> From<&mut XESParsingTraceStream<'a>> for EventLogActivityProjection {
 
             *traces.entry(trace_acts).or_insert(0) += 1;
         }
-        let mut traces: Vec<_> = traces.into_iter().collect();
-        // Sort by frequency (descending) once
-        traces.sort_by_key(|(_, freq)| std::cmp::Reverse(*freq));
-        Self {
-            activities,
-            act_to_index,
-            traces,
-        }
+        Self::from_unordered(activities, traces)
     }
 }
 
-#[register_binding]
 /// Convert an [`EventLog`] into an [`EventLogActivityProjection`]
 ///
 /// All traces with the same activity sequence are aggregated into one trace with a frequency count.
@@ -145,18 +139,41 @@ impl From<&EventLog> for EventLogActivityProjection {
                 .collect();
             *traces_set.entry(trace).or_insert(0) += 1;
         });
+        EventLogActivityProjection::from_unordered(activities, traces_set)
+    }
+}
 
-        let mut traces: Vec<_> = traces_set.into_iter().collect();
-        traces.sort_by_key(|(_, freq)| std::cmp::Reverse(*freq));
-        EventLogActivityProjection {
+impl EventLogActivityProjection {
+    /// Indexes activities in name order and sorts traces by frequency (descending), then by
+    /// activity sequence, so the same log always gives the same projection
+    fn from_unordered(mut activities: Vec<String>, traces: HashMap<Vec<usize>, u64>) -> Self {
+        let mut order: Vec<usize> = (0..activities.len()).collect();
+        order.sort_by(|&a, &b| activities[a].cmp(&activities[b]));
+        let mut new_index = vec![0; activities.len()];
+        for (new, &old) in order.iter().enumerate() {
+            new_index[old] = new;
+        }
+        activities = order
+            .iter()
+            .map(|&old| std::mem::take(&mut activities[old]))
+            .collect();
+        let act_to_index = activities
+            .iter()
+            .enumerate()
+            .map(|(i, act)| (act.clone(), i))
+            .collect();
+        let mut traces: Vec<(Vec<usize>, u64)> = traces
+            .into_iter()
+            .map(|(trace, freq)| (trace.into_iter().map(|a| new_index[a]).collect(), freq))
+            .collect();
+        traces.sort_by(|(t1, f1), (t2, f2)| f2.cmp(f1).then_with(|| t1.cmp(t2)));
+        Self {
             activities,
             act_to_index,
             traces,
         }
     }
-}
 
-impl EventLogActivityProjection {
     /// Reconstructs sorted activity name from a list of indices
     ///
     /// Uses the internal index -> activity mapping.
@@ -192,13 +209,13 @@ pub struct ProcessVariant {
 
 #[register_binding]
 /// Get the number of distinct trace variants in the projection
-pub fn get_num_variants(projection: &EventLogActivityProjection) -> usize {
+pub fn num_variants(projection: &EventLogActivityProjection) -> usize {
     projection.traces.len()
 }
 
 #[register_binding]
 /// Get the total number of cases in the projection
-pub fn get_num_cases(projection: &EventLogActivityProjection) -> u64 {
+pub fn num_cases(projection: &EventLogActivityProjection) -> u64 {
     projection.traces.iter().map(|(_, freq)| freq).sum()
 }
 
@@ -217,7 +234,7 @@ pub fn get_projection_activities(projection: &EventLogActivityProjection) -> &[S
 pub fn get_variants_iter(
     projection: &EventLogActivityProjection,
 ) -> impl Iterator<Item = ProcessVariant> + use<'_> {
-    let total_cases = get_num_cases(projection);
+    let total_cases = num_cases(projection);
     projection
         .traces
         .iter()
@@ -247,7 +264,7 @@ pub fn get_variants(projection: &EventLogActivityProjection) -> Vec<ProcessVaria
 /// Get the `n` most frequent process variants, sorted by frequency (descending)
 ///
 /// Each variant includes the activity sequence as names, its count, and percentage of total cases.
-/// To get all variants, pass `n` = [`get_num_variants`] or use the [`get_variants`] function.
+/// To get all variants, pass `n` = [`num_variants`] or use the [`get_variants`] function.
 /// To get only the most frequent variant, pass `n` = 1.
 ///
 /// Assumes `projection.traces` is sorted by descending frequency, as maintained by the provided
@@ -269,7 +286,7 @@ pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
     let mut should_add_start = true;
     let start_act = match log.act_to_index.get(START_ACTIVITY) {
         Some(a) => {
-            eprintln!("Start activity ({START_ACTIVITY}) already present in activity set! Will skip adding a start activity to every trace, which might not be the desired outcome.");
+            log::warn!("Start activity ({START_ACTIVITY}) already present in activity set! Will skip adding a start activity to every trace, which might not be the desired outcome.");
             should_add_start = false;
             *a
         }
@@ -284,7 +301,7 @@ pub fn add_start_end_acts_proj(log: &mut EventLogActivityProjection) {
     let mut should_add_end = true;
     let end_act = match log.act_to_index.get(END_ACTIVITY) {
         Some(a) => {
-            eprintln!("End activity ({END_ACTIVITY}) already present in activity set! Still adding an end activity to every trace, which might not be the desired outcome.");
+            log::warn!("End activity ({END_ACTIVITY}) already present in activity set! Still adding an end activity to every trace, which might not be the desired outcome.");
             should_add_end = false;
             *a
         }
@@ -412,29 +429,19 @@ impl Importable for EventLogActivityProjection {
     type Error = EventLogIOError;
     type ImportOptions = ();
 
-    fn import_from_reader_with_options<R: Read>(
+    fn import_from_reader_with<R: Read>(
         reader: R,
         format: &str,
         _: Self::ImportOptions,
+        ctl: &crate::Control<'_>,
     ) -> Result<Self, Self::Error> {
-        if format.ends_with("json") {
-            let reader = std::io::BufReader::new(reader);
-            let res: Self = serde_json::from_reader(reader)?;
-            Ok(res)
-        } else if format.ends_with("xes") || format.ends_with("xes.gz") {
-            let log = EventLog::import_from_reader(reader, format)?;
-            Ok((&log).into())
-        } else {
-            Err(EventLogIOError::UnsupportedFormat(format.to_string()))
-        }
-    }
-
-    fn infer_format(path: &Path) -> Option<String> {
-        let p = path.to_string_lossy().to_lowercase();
-        if p.ends_with(".json") {
-            Some("json".to_string())
-        } else {
-            <EventLog as Importable>::infer_format(path)
+        match EventLogFormat::parse(format)? {
+            EventLogFormat::Json => Ok(serde_json::from_reader(std::io::BufReader::new(reader))?),
+            EventLogFormat::Xes { .. } => {
+                let log =
+                    EventLog::import_from_reader_with(reader, format, Default::default(), ctl)?;
+                Ok((&log).into())
+            }
         }
     }
 
@@ -453,15 +460,19 @@ impl Exportable for EventLogActivityProjection {
 
     fn export_to_writer_with_options<W: Write>(
         &self,
-        writer: W,
+        mut writer: W,
         format: &str,
         _: Self::ExportOptions,
     ) -> Result<(), Self::Error> {
-        if format.ends_with("json") {
-            serde_json::to_writer(writer, self)?;
-            Ok(())
-        } else {
-            Err(EventLogIOError::UnsupportedFormat(format.to_string()))
+        match EventLogFormat::parse(format)? {
+            EventLogFormat::Json => {
+                serde_json::to_writer(&mut writer, self)?;
+                writer.flush()?;
+                Ok(())
+            }
+            EventLogFormat::Xes { .. } => {
+                Err(EventLogIOError::UnsupportedFormat(format.to_string()))
+            }
         }
     }
 
@@ -481,9 +492,9 @@ mod test {
             .join("xes")
             .join("Road_Traffic_Fine_Management_Process.xes.gz");
         let log = EventLog::import_from_path(path).unwrap();
-        let num_cases = log.traces.len();
+        let cases = log.traces.len();
         let projection = log_to_activity_projection(&log);
-        assert_eq!(get_num_cases(&projection), num_cases as u64);
+        assert_eq!(num_cases(&projection), cases as u64);
         let variants = get_variants(&projection);
         assert_eq!(variants.len(), 231);
         assert_eq!(
@@ -498,14 +509,37 @@ mod test {
                         "Send for Credit Collection".to_string(),
                     ],
                     count: 56_482,
-                    percentage: 56_482.0 / num_cases as f64 * 100.0,
+                    percentage: 56_482.0 / cases as f64 * 100.0,
                 },
                 ProcessVariant {
                     activities: vec!["Create Fine".to_string(), "Payment".to_string(),],
                     count: 46_371,
-                    percentage: 46_371.0 / num_cases as f64 * 100.0,
+                    percentage: 46_371.0 / cases as f64 * 100.0,
                 }
             ]
         )
+    }
+
+    #[test]
+    fn projection_is_the_same_from_a_log_and_a_stream() {
+        let xes = r#"<log><trace><event><string key="concept:name" value="c"/></event><event><string key="concept:name" value="a"/></event></trace><trace><event><string key="concept:name" value="b"/></event></trace><trace><event><string key="concept:name" value="a"/></event></trace></log>"#;
+        let log = EventLog::import_from_bytes(xes.as_bytes(), "xes").unwrap();
+        let from_log: EventLogActivityProjection = (&log).into();
+        let from_stream: EventLogActivityProjection =
+            crate::core::event_data::case_centric::xes::stream_xes::stream_xes(
+                xes.as_bytes(),
+                "xes",
+                Default::default(),
+            )
+            .unwrap()
+            .0
+            .into();
+        assert_eq!(from_log.activities, ["a", "b", "c"]);
+        assert_eq!(
+            from_log.traces,
+            [(vec![0], 1), (vec![1], 1), (vec![2, 0], 1)]
+        );
+        assert_eq!(from_log.activities, from_stream.activities);
+        assert_eq!(from_log.traces, from_stream.traces);
     }
 }

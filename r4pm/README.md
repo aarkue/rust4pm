@@ -1,6 +1,6 @@
 # r4pm - Rust for Process Mining CLI
 
-`r4pm` is a command-line interface for the [`process_mining`](../process_mining/README.MD) library, allowing you to access various process mining algorithms and utilities directly from your terminal.
+`r4pm` is a command-line interface for the [`process_mining`](../process_mining/README.md) library, allowing you to access various process mining algorithms and utilities directly from your terminal.
 
 Currently, the r4pm CLI is in beta mode, meaning that the exposed command and API surface is not stable and might change, also in minor releases.
 
@@ -12,7 +12,7 @@ You can build r4pm from source:
 git clone https://github.com/aarkue/rust4pm.git
 cd rust4pm
 cargo build --release -p r4pm
-./target/release/r4pm --help
+./target/release/r4pm
 ```
 
 ## Usage
@@ -51,7 +51,7 @@ r4pm discover_dfg --event_log process_mining/test_data/xes/small-example.xes dfg
 Take the `dfg.json` from the previous step and export it as an SVG image:
 
 ```bash
-r4pm export_dfg_image_svg --dfg dfg.json --path dfg.svg
+r4pm dfg_svg --dfg dfg.json dfg.svg
 ```
 
 ## Argument Resolution

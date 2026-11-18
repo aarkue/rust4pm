@@ -1,5 +1,5 @@
-//! Value (de)serialization: object attributes use the EAV string format
-//! (`to_sql_value`/`from_sql_value`), event attributes the typed `duckdb::types::Value` converters.
+//! Value (de)serialization: the EAV string format of `object_attribute_changes`
+//! (`to_sql_value`/`from_sql_value`), and `duckdb::types::Value` converters for typed columns.
 use std::borrow::Cow;
 
 use chrono::{DateTime, FixedOffset};
@@ -28,55 +28,31 @@ pub(crate) fn datetime_to_duck_timestamp(t: DateTime<FixedOffset>) -> DuckValue 
     DuckValue::Timestamp(TimeUnit::Microsecond, t.to_utc().timestamp_micros())
 }
 
-/// Convert an [`OCELAttributeValue`] to the `duckdb::types::Value` matching the target column's
-/// [`OCELAttributeType`]. On mismatch the value is parsed from its `Display` form, or `Null`.
-pub(crate) fn ocel_value_to_duck(v: &OCELAttributeValue, target: OCELAttributeType) -> DuckValue {
-    match target {
-        OCELAttributeType::String | OCELAttributeType::Null => match v {
-            OCELAttributeValue::Null => DuckValue::Null,
-            OCELAttributeValue::String(s) => DuckValue::Text(s.clone()),
-            other => DuckValue::Text(other.to_string()),
-        },
-        OCELAttributeType::Integer => match v {
-            OCELAttributeValue::Integer(i) => DuckValue::BigInt(*i),
-            OCELAttributeValue::Float(f) => DuckValue::BigInt(*f as i64),
-            OCELAttributeValue::Null => DuckValue::Null,
-            other => other
-                .to_string()
-                .parse::<i64>()
-                .map(DuckValue::BigInt)
-                .unwrap_or(DuckValue::Null),
-        },
-        OCELAttributeType::Float => match v {
-            OCELAttributeValue::Float(f) => DuckValue::Double(*f),
-            OCELAttributeValue::Integer(i) => DuckValue::Double(*i as f64),
-            OCELAttributeValue::Null => DuckValue::Null,
-            other => other
-                .to_string()
-                .parse::<f64>()
-                .map(DuckValue::Double)
-                .unwrap_or(DuckValue::Null),
-        },
-        OCELAttributeType::Boolean => match v {
-            OCELAttributeValue::Boolean(b) => DuckValue::Boolean(*b),
-            OCELAttributeValue::Null => DuckValue::Null,
-            other => other
-                .to_string()
-                .parse::<bool>()
-                .map(DuckValue::Boolean)
-                .unwrap_or(DuckValue::Null),
-        },
-        OCELAttributeType::Time => match v {
-            OCELAttributeValue::Time(t) => datetime_to_duck_timestamp(*t),
-            OCELAttributeValue::Null => DuckValue::Null,
-            other => parse_timestamp(&other.to_string(), None, false)
-                .map(datetime_to_duck_timestamp)
-                .unwrap_or(DuckValue::Null),
-        },
+/// The `DuckDB` value appended for a value already normalized to its column's type (see
+/// [`ValueNormalizer`](crate::core::event_data::object_centric::ocel_sql::ValueNormalizer)).
+pub(crate) fn ocel_value_to_duck(v: OCELAttributeValue) -> DuckValue {
+    match v {
+        OCELAttributeValue::Null => DuckValue::Null,
+        OCELAttributeValue::String(s) => DuckValue::Text(s),
+        OCELAttributeValue::Integer(i) => DuckValue::BigInt(i),
+        OCELAttributeValue::Float(f) => DuckValue::Double(f),
+        OCELAttributeValue::Boolean(b) => DuckValue::Boolean(b),
+        OCELAttributeValue::Time(t) => datetime_to_duck_timestamp(t),
     }
 }
 
-/// Reconstruct an [`OCELAttributeValue`] from a typed wide-column `duckdb::types::Value`.
+/// An integer outside `i64` is kept as its exact digits rather than wrapped or rounded.
+fn wide_int_to_ocel<I: TryInto<i64> + ToString + Copy>(i: I) -> OCELAttributeValue {
+    i.try_into().map_or_else(
+        |_| OCELAttributeValue::String(i.to_string()),
+        OCELAttributeValue::Integer,
+    )
+}
+
+/// Reconstruct an [`OCELAttributeValue`] from a typed `duckdb::types::Value`.
+///
+/// A value of a type with no OCEL counterpart (a list, a struct, ...) is `Null`. Readers that
+/// must keep such values select the column cast to `VARCHAR` instead.
 pub(crate) fn duck_value_to_ocel(v: DuckValue) -> OCELAttributeValue {
     match v {
         DuckValue::Null => OCELAttributeValue::Null,
@@ -85,24 +61,50 @@ pub(crate) fn duck_value_to_ocel(v: DuckValue) -> OCELAttributeValue {
         DuckValue::SmallInt(i) => OCELAttributeValue::Integer(i as i64),
         DuckValue::Int(i) => OCELAttributeValue::Integer(i as i64),
         DuckValue::BigInt(i) => OCELAttributeValue::Integer(i),
-        DuckValue::HugeInt(i) => OCELAttributeValue::Integer(i as i64),
+        DuckValue::HugeInt(i) => wide_int_to_ocel(i),
         DuckValue::UTinyInt(i) => OCELAttributeValue::Integer(i as i64),
         DuckValue::USmallInt(i) => OCELAttributeValue::Integer(i as i64),
         DuckValue::UInt(i) => OCELAttributeValue::Integer(i as i64),
-        DuckValue::UBigInt(i) => OCELAttributeValue::Integer(i as i64),
+        DuckValue::UBigInt(i) => wide_int_to_ocel(i),
         DuckValue::Float(f) => OCELAttributeValue::Float(f as f64),
         DuckValue::Double(f) => OCELAttributeValue::Float(f),
-        DuckValue::Text(s) => OCELAttributeValue::String(s),
-        DuckValue::Timestamp(tu, t) => duck_timestamp_to_datetime(tu, t)
-            .map_or(OCELAttributeValue::Null, OCELAttributeValue::Time),
+        DuckValue::Decimal(d) => d
+            .to_string()
+            .parse()
+            .map_or(OCELAttributeValue::Null, OCELAttributeValue::Float),
+        DuckValue::Text(s) | DuckValue::Enum(s) => OCELAttributeValue::String(s),
+        v @ (DuckValue::Timestamp(..) | DuckValue::Date32(_)) => {
+            duck_value_to_datetime(&v).map_or(OCELAttributeValue::Null, OCELAttributeValue::Time)
+        }
         _ => OCELAttributeValue::Null,
     }
 }
+
+/// Read a timestamp or date cell, at `+00:00`. Text is parsed, for databases written by other
+/// tooling. `None` for anything else, or an instant out of `chrono`'s range.
+pub(crate) fn duck_value_to_datetime(v: &DuckValue) -> Option<DateTime<FixedOffset>> {
+    match v {
+        DuckValue::Timestamp(tu, t) => duck_timestamp_to_datetime(*tu, *t),
+        DuckValue::Date32(days) => {
+            DateTime::from_timestamp(i64::from(*days) * 86_400, 0).map(|d| d.fixed_offset())
+        }
+        DuckValue::Text(s) => parse_timestamp(s, None).ok(),
+        _ => None,
+    }
+}
+
+/// The `value_type` stored for [`OCELAttributeValue::Null`].
+///
+/// [`OCELAttributeType::as_type_str`] maps `Null` to `"string"`, which would read back as
+/// `String("")`. `"null"` is outside its outputs, so [`from_sql_value`] reads it back as `Null`
+/// whatever the stored text, and readers deriving attribute types skip it.
+pub(crate) const NULL_VALUE_TYPE: &str = "null";
 
 /// Serialize a value to its `(value, value_type)` pair for the EAV columns.
 pub(crate) fn to_sql_value(v: &OCELAttributeValue) -> (Cow<'_, str>, &'static str) {
     let value_type = v.get_type().as_type_str();
     match v {
+        OCELAttributeValue::Null => (Cow::Borrowed(""), NULL_VALUE_TYPE),
         OCELAttributeValue::String(s) => (Cow::Borrowed(s.as_str()), value_type),
         other => (Cow::Owned(other.to_string()), value_type),
     }
@@ -124,7 +126,7 @@ pub(crate) fn from_sql_value(value: &str, value_type: &str) -> OCELAttributeValu
             .parse::<bool>()
             .map(OCELAttributeValue::Boolean)
             .unwrap_or(OCELAttributeValue::Null),
-        OCELAttributeType::Time => parse_timestamp(value, None, false)
+        OCELAttributeType::Time => parse_timestamp(value, None)
             .map(OCELAttributeValue::Time)
             .unwrap_or(OCELAttributeValue::Null),
         OCELAttributeType::Null => OCELAttributeValue::Null,
@@ -163,7 +165,7 @@ mod tests {
 
     #[test]
     fn roundtrip_nan_float() {
-        // The XML importer turns a literal `null` float into NaN, which must stay a float.
+        // NaN is a float like any other, not a missing value.
         let (s, t) = to_sql_value(&OCELAttributeValue::Float(f64::NAN));
         assert_eq!(t, "float");
         match from_sql_value(s.as_ref(), t) {
@@ -192,12 +194,13 @@ mod tests {
     }
 
     #[test]
-    fn null_roundtrips_to_empty_string_documented_caveat() {
+    fn null_roundtrips_as_null() {
         let (s, t) = to_sql_value(&OCELAttributeValue::Null);
-        assert_eq!(s.as_ref(), "");
-        assert_eq!(t, "string");
+        assert_eq!(t, NULL_VALUE_TYPE);
+        assert_eq!(from_sql_value(s.as_ref(), t), OCELAttributeValue::Null);
+        // Distinct from an empty string, which keeps its own type.
         assert_eq!(
-            from_sql_value(s.as_ref(), t),
+            roundtrip(OCELAttributeValue::String(String::new())),
             OCELAttributeValue::String(String::new())
         );
     }

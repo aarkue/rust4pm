@@ -1,12 +1,12 @@
 //! CSV Import for OCEL
 
-use std::{collections::HashMap, fmt::Display, io::Read};
+use std::{collections::HashMap, io::Read};
 
 use chrono::{DateTime, FixedOffset};
-use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::core::event_data::{
+    object_centric::io::{OCELCSVError, OCELIOError, OCELImportOptions},
     object_centric::ocel_struct::{
         OCELAttributeType, OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject,
         OCELObjectAttribute, OCELRelationship, OCELType, OCELTypeAttribute, OCEL,
@@ -15,71 +15,7 @@ use crate::core::event_data::{
 };
 
 use super::escaping::{find_unescaped, unescape_reference_part};
-
-/// Error type for CSV OCEL parsing
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum OCELCSVImportError {
-    /// CSV parsing error
-    CsvError(String),
-    /// Missing required column
-    MissingColumn(String),
-    /// Invalid timestamp format
-    InvalidTimestamp {
-        /// Row number where the error occurred
-        row: usize,
-        /// The invalid timestamp value
-        value: String,
-    },
-    /// Invalid object reference format
-    InvalidObjectReference {
-        /// Row number where the error occurred
-        row: usize,
-        /// The invalid object reference value
-        value: String,
-    },
-    /// General parsing error with context
-    ParseError {
-        /// Row number where the error occurred
-        row: usize,
-        /// Error message
-        message: String,
-    },
-}
-
-impl Display for OCELCSVImportError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::CsvError(e) => write!(f, "CSV error: {e}"),
-            Self::MissingColumn(col) => write!(f, "Missing required column: {col}"),
-            Self::InvalidTimestamp { row, value } => {
-                write!(f, "Invalid timestamp at row {row}: '{value}'")
-            }
-            Self::InvalidObjectReference { row, value } => {
-                write!(f, "Invalid object reference at row {row}: '{value}'")
-            }
-            Self::ParseError { row, message } => write!(f, "Parse error at row {row}: {message}"),
-        }
-    }
-}
-
-impl std::error::Error for OCELCSVImportError {}
-
-impl From<csv::Error> for OCELCSVImportError {
-    fn from(e: csv::Error) -> Self {
-        Self::CsvError(e.to_string())
-    }
-}
-
-/// Options for CSV OCEL Import
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct OCELCSVImportOptions {
-    /// Verbosely log warnings (e.g., for missing referenced objects, skipped rows)
-    pub verbose: bool,
-    /// Optional date format to use when parsing timestamps
-    pub date_format: Option<String>,
-    /// Strict mode: fail on warnings instead of skipping problematic rows
-    pub strict: bool,
-}
+use crate::utils::control::Control;
 
 /// Parsed object reference: `object_id#qualifier{json_attrs}`
 #[derive(Debug, Clone)]
@@ -196,7 +132,7 @@ fn parse_value(s: &str, date_fmt: Option<&str>) -> OCELAttributeValue {
         }
     }
     if is_timestamp_like(s, date_fmt) {
-        if let Ok(ts) = parse_timestamp(s, date_fmt, false) {
+        if let Ok(ts) = parse_timestamp(s, date_fmt) {
             return OCELAttributeValue::Time(ts);
         }
     }
@@ -263,7 +199,10 @@ fn is_timestamp_like(s: &str, date_fmt: Option<&str>) -> bool {
 }
 
 /// Convert JSON value to OCEL attribute value
-fn json_to_value(v: &serde_json::Value) -> OCELAttributeValue {
+///
+/// JSON has no timestamp type, so a string is read as a time when it looks like one, as in an
+/// event attribute cell (see [`parse_value`]).
+fn json_to_value(v: &serde_json::Value, date_fmt: Option<&str>) -> OCELAttributeValue {
     match v {
         serde_json::Value::Null => OCELAttributeValue::Null,
         serde_json::Value::Bool(b) => OCELAttributeValue::Boolean(*b),
@@ -274,13 +213,25 @@ fn json_to_value(v: &serde_json::Value) -> OCELAttributeValue {
                 OCELAttributeValue::Float(n.as_f64().unwrap_or(0.0))
             }
         }
-        serde_json::Value::String(s) => OCELAttributeValue::String(s.clone()),
+        serde_json::Value::String(s) => is_timestamp_like(s, date_fmt)
+            .then(|| parse_timestamp(s, date_fmt).ok())
+            .flatten()
+            .map_or_else(
+                || OCELAttributeValue::String(s.clone()),
+                OCELAttributeValue::Time,
+            ),
         _ => OCELAttributeValue::String(v.to_string()),
     }
 }
 
 /// Convert value to target type (mainly int -> float or any -> string)
-fn convert_to_type(value: OCELAttributeValue, target: OCELAttributeType) -> OCELAttributeValue {
+///
+/// A value converted to string is its `raw` text if it has one, since retyping must not alter it.
+fn convert_to_type(
+    value: OCELAttributeValue,
+    target: OCELAttributeType,
+    raw: Option<&str>,
+) -> OCELAttributeValue {
     let current: OCELAttributeType = value.get_type();
     if current == target {
         return value;
@@ -290,12 +241,12 @@ fn convert_to_type(value: OCELAttributeValue, target: OCELAttributeType) -> OCEL
         (OCELAttributeValue::Integer(i), OCELAttributeType::Float) => {
             OCELAttributeValue::Float(i as f64)
         }
-        (v, _) => OCELAttributeValue::String(v.to_string()),
+        (v, _) => OCELAttributeValue::String(raw.map_or_else(|| v.to_string(), str::to_string)),
     }
 }
 
 /// Type Registry: tracks inferred types per `type_name` and `attr_name`
-/// Two-level map: `type_name` → `attr_name` → `inferred_type`
+/// Two-level map: `type_name` -> `attr_name` -> `inferred_type`
 type TypeRegistry = HashMap<String, HashMap<String, OCELAttributeType>>;
 
 /// Update type registry with a new value's type, coalescing if needed
@@ -386,26 +337,34 @@ fn classify_columns(
     (columns, id_col, act_col, ts_col)
 }
 
-/// Import OCEL from CSV reader
-pub fn import_ocel_csv(reader: impl Read) -> Result<OCEL, OCELCSVImportError> {
-    import_ocel_csv_with_options(reader, &OCELCSVImportOptions::default())
+/// Import an OCEL from the OCEL CSV format read from `reader`.
+pub fn import_ocel_csv(
+    reader: impl Read,
+    options: &OCELImportOptions,
+) -> Result<OCEL, OCELIOError> {
+    read_ocel_csv(reader, options, &Control::new())
 }
 
-/// Import OCEL from CSV reader with custom options
-pub fn import_ocel_csv_with_options(
+/// [`import_ocel_csv`], warning through `ctl`.
+pub(crate) fn read_ocel_csv(
     reader: impl Read,
-    options: &OCELCSVImportOptions,
-) -> Result<OCEL, OCELCSVImportError> {
+    options: &OCELImportOptions,
+    ctl: &Control<'_>,
+) -> Result<OCEL, OCELIOError> {
     let mut rdr = csv::Reader::from_reader(reader);
     let headers = rdr.headers()?.clone();
     let (columns, id_col, act_col, ts_col) = classify_columns(&headers);
 
-    let id_col = id_col.ok_or_else(|| OCELCSVImportError::MissingColumn("id".into()))?;
-    let act_col = act_col.ok_or_else(|| OCELCSVImportError::MissingColumn("activity".into()))?;
-    let ts_col = ts_col.ok_or_else(|| OCELCSVImportError::MissingColumn("timestamp".into()))?;
+    let id_col = id_col.ok_or_else(|| OCELCSVError::MissingColumn("id".into()))?;
+    let act_col = act_col.ok_or_else(|| OCELCSVError::MissingColumn("activity".into()))?;
+    let ts_col = ts_col.ok_or_else(|| OCELCSVError::MissingColumn("timestamp".into()))?;
 
     let mut events: Vec<OCELEvent> = Vec::new();
     let mut objects: HashMap<String, OCELObject> = HashMap::new();
+    // Per attribute, in order, the text a value that is not a string was read from, for when its
+    // attribute's type is coalesced to string
+    let mut event_raw: Vec<Vec<Option<String>>> = Vec::new();
+    let mut object_raw: HashMap<String, Vec<Option<String>>> = HashMap::new();
     let mut event_type_attrs: TypeRegistry = HashMap::new();
     let mut object_type_attrs: TypeRegistry = HashMap::new();
 
@@ -426,32 +385,29 @@ pub fn import_ocel_csv_with_options(
         let mut timestamp: Option<DateTime<FixedOffset>> = if ts_str.is_empty() {
             if !is_o2o && !is_attr_only {
                 if options.strict {
-                    return Err(OCELCSVImportError::ParseError {
+                    return Err(OCELCSVError::ParseError {
                         row: row_num,
                         message: "Missing timestamp".into(),
-                    });
+                    }
+                    .into());
                 }
-                if options.verbose {
-                    eprintln!("Warning: Skipping row {row_num} (missing timestamp)");
-                }
+                ctl.warn(format_args!("Skipping row {row_num} (missing timestamp)"));
                 continue;
             }
             None
         } else {
             Some(
-                parse_timestamp(ts_str, date_fmt, options.verbose).map_err(|_| {
-                    OCELCSVImportError::InvalidTimestamp {
-                        row: row_num,
-                        value: ts_str.into(),
-                    }
+                parse_timestamp(ts_str, date_fmt).map_err(|_| OCELCSVError::InvalidTimestamp {
+                    row: row_num,
+                    value: ts_str.into(),
                 })?,
             )
         };
 
         if is_attr_only && timestamp.is_none() {
-            if options.verbose {
-                eprintln!("Warning: Row {row_num} (attribute-only without timestamp). Will assume UNIX EPOCH as time.");
-            }
+            ctl.warn(format_args!(
+                "Row {row_num} (attribute-only without timestamp). Will assume UNIX EPOCH as time."
+            ));
             timestamp = Some(DateTime::UNIX_EPOCH.into());
         }
 
@@ -465,12 +421,11 @@ pub fn import_ocel_csv_with_options(
                     continue;
                 }
 
-                let refs = parse_object_cell(cell).map_err(|e| {
-                    OCELCSVImportError::InvalidObjectReference {
+                let refs =
+                    parse_object_cell(cell).map_err(|e| OCELCSVError::InvalidObjectReference {
                         row: row_num,
                         value: format!("{cell}: {e}"),
-                    }
-                })?;
+                    })?;
 
                 for obj_ref in refs {
                     // Ensure object exists and type is registered
@@ -494,8 +449,15 @@ pub fn import_ocel_csv_with_options(
                     // Handle inline JSON attributes
                     if let (Some(attrs), Some(ts)) = (&obj_ref.attributes, timestamp) {
                         if let Some(obj) = objects.get_mut(&obj_ref.id) {
+                            let raw = object_raw.entry(obj_ref.id.clone()).or_default();
                             for (attr_name, attr_val) in attrs {
-                                let value = json_to_value(attr_val);
+                                let value = json_to_value(attr_val, date_fmt);
+                                raw.push(
+                                    attr_val
+                                        .as_str()
+                                        .filter(|_| !matches!(value, OCELAttributeValue::String(_)))
+                                        .map(str::to_string),
+                                );
                                 register_type(&mut object_type_attrs, ot_name, attr_name, &value);
                                 obj.attributes.push(OCELObjectAttribute {
                                     name: attr_name.clone(),
@@ -528,16 +490,15 @@ pub fn import_ocel_csv_with_options(
             } else {
                 // If object never appeared before, we can't know its type.
                 if options.strict {
-                    return Err(OCELCSVImportError::InvalidObjectReference {
+                    return Err(OCELCSVError::InvalidObjectReference {
                         row: row_num,
                         value: format!(
                             "O2O source {id} is not known. Type of the object is not specified."
                         ),
-                    });
+                    }
+                    .into());
                 }
-                if options.verbose {
-                    eprintln!("Warning: O2O source '{id}' not found at row {row_num}");
-                }
+                ctl.warn(format_args!("O2O source '{id}' not found at row {row_num}"));
             }
             continue;
         }
@@ -558,6 +519,7 @@ pub fn import_ocel_csv_with_options(
         }
         // Collect event attributes
         let mut attrs: Vec<OCELEventAttribute> = Vec::new();
+        let mut raw = Vec::new();
         for (col_idx, col) in columns.iter().enumerate() {
             if let Column::EventAttr(attr_name) = col {
                 // Taken exactly as written: the format preserves an event attribute value apart
@@ -565,6 +527,9 @@ pub fn import_ocel_csv_with_options(
                 let cell = record.get(col_idx).unwrap_or("");
                 if !cell.is_empty() {
                     let value = parse_value(cell, date_fmt);
+                    raw.push(
+                        (!matches!(value, OCELAttributeValue::String(_))).then(|| cell.to_string()),
+                    );
                     register_type(&mut event_type_attrs, &event_type, attr_name, &value);
                     attrs.push(OCELEventAttribute {
                         name: attr_name.clone(),
@@ -581,21 +546,23 @@ pub fn import_ocel_csv_with_options(
             attributes: attrs,
             relationships,
         });
+        event_raw.push(raw);
     }
 
     // Convert values to their final coalesced types
-    for event in &mut events {
-        for attr in &mut event.attributes {
+    for (event, raw) in events.iter_mut().zip(&event_raw) {
+        for (attr, raw) in event.attributes.iter_mut().zip(raw) {
             let target = get_type(&event_type_attrs, &event.event_type, &attr.name);
             let value = std::mem::take(&mut attr.value);
-            attr.value = convert_to_type(value, target);
+            attr.value = convert_to_type(value, target, raw.as_deref());
         }
     }
     for obj in objects.values_mut() {
-        for attr in &mut obj.attributes {
+        let raw = object_raw.get(&obj.id).map_or(&[][..], Vec::as_slice);
+        for (i, attr) in obj.attributes.iter_mut().enumerate() {
             let target = get_type(&object_type_attrs, &obj.object_type, &attr.name);
             let value = std::mem::take(&mut attr.value);
-            attr.value = convert_to_type(value, target);
+            attr.value = convert_to_type(value, target, raw.get(i).and_then(Option::as_deref));
         }
     }
 
@@ -626,25 +593,6 @@ fn build_types(registry: &TypeRegistry) -> Vec<OCELType> {
                 .collect(),
         })
         .collect()
-}
-
-/// Import OCEL from CSV file path
-pub fn import_ocel_csv_from_path<P: AsRef<std::path::Path>>(
-    path: P,
-) -> Result<OCEL, OCELCSVImportError> {
-    let file =
-        std::fs::File::open(path).map_err(|e| OCELCSVImportError::CsvError(e.to_string()))?;
-    import_ocel_csv(std::io::BufReader::new(file))
-}
-
-/// Import OCEL from CSV file path with options
-pub fn import_ocel_csv_from_path_with_options<P: AsRef<std::path::Path>>(
-    path: P,
-    options: &OCELCSVImportOptions,
-) -> Result<OCEL, OCELCSVImportError> {
-    let file =
-        std::fs::File::open(path).map_err(|e| OCELCSVImportError::CsvError(e.to_string()))?;
-    import_ocel_csv_with_options(std::io::BufReader::new(file), options)
 }
 
 #[cfg(test)]
@@ -706,7 +654,7 @@ e1,place order,2026-01-22T09:57:28+0000, o1 , i1 ,yes"#;
 
     #[test]
     fn test_import_ocel_csv() {
-        let ocel = import_ocel_csv(TEST_CSV.as_bytes()).unwrap();
+        let ocel = import_ocel_csv(TEST_CSV.as_bytes(), &Default::default()).unwrap();
         assert_eq!(ocel.events.len(), 4);
         assert!(ocel.objects.len() >= 3);
 
@@ -721,7 +669,7 @@ e1,place order,2026-01-22T09:57:28+0000, o1 , i1 ,yes"#;
 
     #[test]
     fn test_import_case_insensitive_headers() {
-        let ocel = import_ocel_csv(TEST_CSV_VARIATIONS.as_bytes()).unwrap();
+        let ocel = import_ocel_csv(TEST_CSV_VARIATIONS.as_bytes(), &Default::default()).unwrap();
         assert_eq!(ocel.events.len(), 1);
 
         let ot_names: HashSet<_> = ocel.object_types.iter().map(|t| t.name.as_str()).collect();
@@ -734,7 +682,7 @@ e1,place order,2026-01-22T09:57:28+0000, o1 , i1 ,yes"#;
     fn a_type_name_keeps_the_whitespace_the_header_gives_it() {
         let csv = "id,activity,timestamp,ot:order ,ot:order\n\
                    e1,place,2026-01-22T09:57:28+0000,o1,o2";
-        let ocel = import_ocel_csv(csv.as_bytes()).unwrap();
+        let ocel = import_ocel_csv(csv.as_bytes(), &Default::default()).unwrap();
         let names: HashSet<_> = ocel.object_types.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains("order "), "got {names:?}");
         assert!(names.contains("order"), "got {names:?}");
@@ -745,7 +693,7 @@ e1,place order,2026-01-22T09:57:28+0000, o1 , i1 ,yes"#;
     fn an_event_attribute_value_keeps_its_padding() {
         let csv = "id,activity,timestamp,note\n\
                    e1,place,2026-01-22T09:57:28+0000,\"  spaced  \"";
-        let ocel = import_ocel_csv(csv.as_bytes()).unwrap();
+        let ocel = import_ocel_csv(csv.as_bytes(), &Default::default()).unwrap();
         assert_eq!(
             ocel.events[0].attributes[0].value,
             OCELAttributeValue::String("  spaced  ".to_string())
@@ -756,12 +704,11 @@ e1,place order,2026-01-22T09:57:28+0000, o1 , i1 ,yes"#;
     fn test_strict_mode() {
         let csv = "id,activity,timestamp,ot:item
         e1,test,,i1";
-        let opts = OCELCSVImportOptions {
+        let opts = OCELImportOptions {
             strict: true,
-            verbose: false,
             ..Default::default()
         };
-        assert!(import_ocel_csv_with_options(csv.as_bytes(), &opts).is_err());
+        assert!(import_ocel_csv(csv.as_bytes(), &opts).is_err());
     }
 
     #[test]
@@ -769,7 +716,7 @@ e1,place order,2026-01-22T09:57:28+0000, o1 , i1 ,yes"#;
         let csv = "id,activity,timestamp,ea:count
         e1,test,2026-01-22T09:57:28+0000,1
         e2,test,2026-01-23T09:57:28+0000,100";
-        let ocel = import_ocel_csv(csv.as_bytes()).unwrap();
+        let ocel = import_ocel_csv(csv.as_bytes(), &Default::default()).unwrap();
         let et = ocel.event_types.iter().find(|t| t.name == "test").unwrap();
         let attr = et.attributes.iter().find(|a| a.name == "count").unwrap();
         assert_eq!(attr.value_type, "integer");
@@ -780,7 +727,7 @@ e1,place order,2026-01-22T09:57:28+0000, o1 , i1 ,yes"#;
         let csv = "id,activity,timestamp,ea:price
         e1,test,2026-01-22T09:57:28+0000,1.5
         e2,test,2026-01-23T09:57:28+0000,2.75";
-        let ocel = import_ocel_csv(csv.as_bytes()).unwrap();
+        let ocel = import_ocel_csv(csv.as_bytes(), &Default::default()).unwrap();
         let et = ocel.event_types.iter().find(|t| t.name == "test").unwrap();
         let attr = et.attributes.iter().find(|a| a.name == "price").unwrap();
         assert_eq!(attr.value_type, "float");
@@ -791,7 +738,7 @@ e1,place order,2026-01-22T09:57:28+0000, o1 , i1 ,yes"#;
         let csv = "id,activity,timestamp,ea:val
         e1,test,2026-01-22T09:57:28+0000,1
         e2,test,2026-01-23T09:57:28+0000,2.5";
-        let ocel = import_ocel_csv(csv.as_bytes()).unwrap();
+        let ocel = import_ocel_csv(csv.as_bytes(), &Default::default()).unwrap();
         let et = ocel.event_types.iter().find(|t| t.name == "test").unwrap();
         let attr = et.attributes.iter().find(|a| a.name == "val").unwrap();
         assert_eq!(attr.value_type, "float");
@@ -806,7 +753,7 @@ e1,place order,2026-01-22T09:57:28+0000, o1 , i1 ,yes"#;
         let csv = "id,activity,timestamp,ea:mixed
         e1,test,2026-01-22T09:57:28+0000,42
         e2,test,2026-01-23T09:57:28+0000,hello";
-        let ocel = import_ocel_csv(csv.as_bytes()).unwrap();
+        let ocel = import_ocel_csv(csv.as_bytes(), &Default::default()).unwrap();
         let et = ocel.event_types.iter().find(|t| t.name == "test").unwrap();
         let attr = et.attributes.iter().find(|a| a.name == "mixed").unwrap();
         assert_eq!(attr.value_type, "string");
@@ -817,7 +764,7 @@ e1,place order,2026-01-22T09:57:28+0000, o1 , i1 ,yes"#;
         let csv = "id,activity,timestamp,ea:flag
         e1,test,2026-01-22T09:57:28+0000,true
         e2,test,2026-01-23T09:57:28+0000,FALSE";
-        let ocel = import_ocel_csv(csv.as_bytes()).unwrap();
+        let ocel = import_ocel_csv(csv.as_bytes(), &Default::default()).unwrap();
         let et = ocel.event_types.iter().find(|t| t.name == "test").unwrap();
         let attr = et.attributes.iter().find(|a| a.name == "flag").unwrap();
         assert_eq!(attr.value_type, "boolean");
@@ -828,7 +775,7 @@ e1,place order,2026-01-22T09:57:28+0000, o1 , i1 ,yes"#;
         let csv = "id,activity,timestamp,ea:amount
         e1,order,2026-01-22T09:57:28+0000,100
         e2,payment,2026-01-23T09:57:28+0000,50.5";
-        let ocel = import_ocel_csv(csv.as_bytes()).unwrap();
+        let ocel = import_ocel_csv(csv.as_bytes(), &Default::default()).unwrap();
 
         let order_t = ocel.event_types.iter().find(|t| t.name == "order").unwrap();
         assert_eq!(
@@ -862,7 +809,7 @@ e1,place order,2026-01-22T09:57:28+0000, o1 , i1 ,yes"#;
         let csv = r#"id,activity,timestamp,ot:item
 e1,test,2026-01-22T09:57:28+0000,i1{"quantity": 5}
 e2,test,2026-01-23T09:57:28+0000,i2{"quantity": 10}"#;
-        let ocel = import_ocel_csv(csv.as_bytes()).unwrap();
+        let ocel = import_ocel_csv(csv.as_bytes(), &Default::default()).unwrap();
         let item_t = ocel.object_types.iter().find(|t| t.name == "item").unwrap();
         let attr = item_t
             .attributes
@@ -870,5 +817,27 @@ e2,test,2026-01-23T09:57:28+0000,i2{"quantity": 10}"#;
             .find(|a| a.name == "quantity")
             .unwrap();
         assert_eq!(attr.value_type, "integer");
+    }
+
+    /// A scope that falls back to string keeps every value as written.
+    #[test]
+    fn string_fallback_keeps_the_original_text() {
+        let csv = "id,activity,timestamp,f,t,ot:item
+e1,a,2026-01-22T09:57:28+0000,1.50,2026-01-22T09:57:28+0000,\"i1{\"\"d\"\":\"\"2024-01-01T00:00:00+0000\"\"}\"
+e2,a,2026-01-23T09:57:28+0000,n/a,TRUE,\"i1{\"\"d\"\":\"\"soon\"\"}\"";
+        let ocel = import_ocel_csv(csv.as_bytes(), &Default::default()).unwrap();
+        let values = |name: &str| -> Vec<OCELAttributeValue> {
+            ocel.events
+                .iter()
+                .flat_map(|e| e.attributes.iter().filter(|a| a.name == name))
+                .map(|a| a.value.clone())
+                .collect()
+        };
+        let s = |s: &str| OCELAttributeValue::String(s.to_string());
+        assert_eq!(values("f"), [s("1.50"), s("n/a")]);
+        assert_eq!(values("t"), [s("2026-01-22T09:57:28+0000"), s("TRUE")]);
+        let item = &ocel.objects[0];
+        let d: Vec<_> = item.attributes.iter().map(|a| a.value.clone()).collect();
+        assert_eq!(d, [s("2024-01-01T00:00:00+0000"), s("soon")]);
     }
 }

@@ -137,17 +137,15 @@ pub fn random_activity_split<'a>(
 /// For the following example, it is required to have the sepsis case event log setup on your device.
 /// ```
 /// use process_mining::core::event_data::case_centric::utils::event_log_splitter::ActivityBasedEventLogSplitter;
-/// use process_mining::core::event_data::case_centric::{
-///     utils::event_log_splitter::random_activity_split,
-///     xes::{import_xes_path, XESImportOptions},
-/// };
+/// use process_mining::core::event_data::case_centric::utils::event_log_splitter::random_activity_split;
 /// use process_mining::test_utils::get_test_data_path;
+/// use process_mining::{EventLog, Importable};
 /// use std::collections::HashSet;
 ///
 /// let path = get_test_data_path()
 ///     .join("xes")
 ///     .join("Sepsis Cases - Event Log.xes.gz");
-/// let log = import_xes_path(&path, XESImportOptions::default()).unwrap();
+/// let log = EventLog::import_from_path(&path).unwrap();
 ///
 /// let activities = HashSet::from([
 ///     "Admission IC",
@@ -309,18 +307,16 @@ impl<'a> ActivityBasedEventLogSplitter<'a> {
 /// use std::collections::HashSet;
 ///
 /// use process_mining::{
-///     core::event_data::case_centric::{
-///         utils::event_log_splitter::{
-///             random_activity_split, ActivityBasedEventLogSplitter, RandomEventLogSplitter,
-///         },
-///         xes::{import_xes_path, XESImportOptions},
+///     core::event_data::case_centric::utils::event_log_splitter::{
+///         random_activity_split, ActivityBasedEventLogSplitter, RandomEventLogSplitter,
 ///     },
 ///     test_utils::get_test_data_path,
+///     EventLog, Importable,
 /// };
 /// let path = get_test_data_path()
 ///     .join("xes")
 ///     .join("Sepsis Cases - Event Log.xes.gz");
-/// let log = import_xes_path(&path, XESImportOptions::default()).unwrap();
+/// let log = EventLog::import_from_path(&path).unwrap();
 /// let activities = HashSet::from([
 ///     "Admission IC",
 ///     "ER Sepsis Triage",
@@ -433,11 +429,11 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::{
-        core::event_data::case_centric::{
-            utils::event_log_splitter::{random_activity_split, ActivityBasedEventLogSplitter},
-            xes::{import_xes_path, XESImportOptions},
+        core::event_data::case_centric::utils::event_log_splitter::{
+            random_activity_split, ActivityBasedEventLogSplitter,
         },
         test_utils::get_test_data_path,
+        EventLog, Importable,
     };
 
     #[test]
@@ -445,7 +441,7 @@ mod tests {
         let path = get_test_data_path()
             .join("xes")
             .join("Sepsis Cases - Event Log.xes.gz");
-        let log = import_xes_path(&path, XESImportOptions::default()).unwrap();
+        let log = EventLog::import_from_path(&path).unwrap();
 
         let mut split_sets: Vec<HashSet<&str>> = Vec::new();
 
@@ -506,7 +502,7 @@ mod tests {
         let path = get_test_data_path()
             .join("xes")
             .join("Sepsis Cases - Event Log.xes.gz");
-        let log = import_xes_path(&path, XESImportOptions::default()).unwrap();
+        let log = EventLog::import_from_path(&path).unwrap();
 
         let mut activities = HashSet::new();
 

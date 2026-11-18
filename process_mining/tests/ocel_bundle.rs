@@ -6,15 +6,15 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use process_mining::core::event_data::object_centric::io::OCELIOError;
 use process_mining::core::event_data::object_centric::ocel_bundle::{
-    encode_type_name, import_ocel_bundle, import_ocel_bundle_from_bytes,
+    encode_type_name, BundleError, Container, StorageFormat,
 };
-use process_mining::core::event_data::object_centric::ocel_json::import_ocel_json_path;
 use process_mining::core::event_data::object_centric::{OCELAttributeValue, OCEL};
 use process_mining::core::io::{Exportable, Importable};
 
 fn running_example() -> OCEL {
-    import_ocel_json_path(concat!(
+    OCEL::import_from_path(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/test_data/ocel/ocel2-p2p.json"
     ))
@@ -51,7 +51,7 @@ fn observations(ocel: &OCEL) -> Vec<String> {
                         OCELAttributeValue::Time(t) => t.to_rfc3339(),
                         OCELAttributeValue::String(s) => {
                             process_mining::core::event_data::timestamp_utils::parse_timestamp(
-                                s, None, false,
+                                s, None,
                             )
                             .map_or_else(|_| s.clone(), |t| t.to_rfc3339())
                         }
@@ -214,7 +214,8 @@ fn every_parquet_column_chunk_is_compressed() {
     let mut checked = 0;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).expect("entry");
-        if !entry.name().ends_with(".parquet") {
+        let name = entry.name().expect("entry name").to_string();
+        if !name.ends_with(".parquet") {
             continue;
         }
         let mut buf = Vec::new();
@@ -226,7 +227,7 @@ fn every_parquet_column_chunk_is_compressed() {
                     column.compression(),
                     parquet::basic::Compression::UNCOMPRESSED,
                     "{}: {} is uncompressed",
-                    entry.name(),
+                    name,
                     column.column_path()
                 );
                 checked += 1;
@@ -290,7 +291,9 @@ fn a_container_round_trips_through_bytes_alone() {
             OCEL::import_from_bytes(bytes, format).expect("import")
         }),
         ("the bundle reader", |bytes, _| {
-            import_ocel_bundle_from_bytes(bytes).expect("import")
+            Container::open_bytes(bytes)
+                .and_then(|c| c.read())
+                .expect("import")
         }),
     ];
 
@@ -392,6 +395,53 @@ fn an_empty_csv_cell_is_a_missing_value_not_an_empty_string() {
         back.objects[0].attributes[0].value,
         OCELAttributeValue::Integer(3)
     );
+}
+
+/// A value that does not fit its column's declared type turns the whole column into text, so
+/// nothing is written as null, whichever row comes first.
+#[cfg(feature = "ocel-bundle-parquet")]
+#[test]
+fn a_parquet_column_with_a_value_off_its_declared_type_keeps_every_value() {
+    use process_mining::core::event_data::object_centric::{
+        OCELAttributeType, OCELEvent, OCELEventAttribute, OCELType, OCELTypeAttribute,
+    };
+
+    let event = |id: &str, value: OCELAttributeValue| OCELEvent {
+        id: id.to_string(),
+        event_type: "count".to_string(),
+        time: chrono::DateTime::from_timestamp_nanos(0).into(),
+        attributes: vec![OCELEventAttribute {
+            name: "n".to_string(),
+            value,
+        }],
+        relationships: Vec::new(),
+    };
+    let int = || event("int", OCELAttributeValue::Integer(3));
+    let float = || event("float", OCELAttributeValue::Float(2.5));
+    for events in [vec![int(), float()], vec![float(), int()]] {
+        let ocel = OCEL {
+            event_types: vec![OCELType {
+                name: "count".to_string(),
+                attributes: vec![OCELTypeAttribute::new("n", &OCELAttributeType::Integer)],
+            }],
+            events,
+            ..OCEL::default()
+        };
+        let bytes = ocel.export_to_bytes("ocel-parquet.zip").expect("export");
+        let back = OCEL::import_from_bytes(&bytes, "ocel-parquet.zip").expect("import");
+        let value = |id: &str| {
+            back.events
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| e.attributes[0].value.clone())
+        };
+        assert_eq!(value("int"), Some(OCELAttributeValue::Integer(3)));
+        // Read back as the CSV storage reads it: text that does not parse as the declared type.
+        assert_eq!(
+            value("float"),
+            Some(OCELAttributeValue::String("2.5".to_string()))
+        );
+    }
 }
 
 // The running-example fixture is written out here rather than committed, so the test states the
@@ -610,8 +660,7 @@ fn zip_dir(root: &Path, method: zip::CompressionMethod) -> Vec<u8> {
     let mut buf = Vec::new();
     {
         let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
-        let opts: zip::write::FileOptions<'_, ()> =
-            zip::write::FileOptions::default().compression_method(method);
+        let opts = zip::write::SimpleFileOptions::default().compression_method(method);
         let mut stack = vec![root.to_path_buf()];
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir).expect("read_dir") {
@@ -698,8 +747,7 @@ fn assert_running_example(ocel: &OCEL) {
 }
 
 /// The storage formats this build can write. Reading Parquet needs the same feature.
-fn storages() -> Vec<process_mining::core::event_data::object_centric::ocel_bundle::StorageFormat> {
-    use process_mining::core::event_data::object_centric::ocel_bundle::StorageFormat;
+fn storages() -> Vec<StorageFormat> {
     let mut out = vec![StorageFormat::Csv];
     if cfg!(feature = "ocel-bundle-parquet") {
         out.push(StorageFormat::Parquet);
@@ -707,12 +755,21 @@ fn storages() -> Vec<process_mining::core::event_data::object_centric::ocel_bund
     out
 }
 
+fn bundle_format(storage: StorageFormat) -> &'static str {
+    match storage {
+        StorageFormat::Csv => "ocel.zip",
+        StorageFormat::Parquet => "ocel-parquet.zip",
+    }
+}
+
 #[test]
 fn a_directory_container_imports_the_running_example() {
     let dir = tempfile::tempdir().expect("tempdir");
     write_container(dir.path());
 
-    let ocel = import_ocel_bundle(dir.path()).expect("import");
+    let ocel = Container::open(dir.path())
+        .and_then(|c| c.read())
+        .expect("import");
     assert_running_example(&ocel);
 }
 
@@ -725,32 +782,25 @@ fn a_directory_container_imports_the_running_example() {
 /// third-party writer produces it.
 #[test]
 fn every_layout_and_storage_combination_imports_to_the_same_log() {
-    use process_mining::core::event_data::object_centric::ocel_bundle::{
-        export_ocel_bundle, BundleExportOptions, ContainerLayout,
-    };
-
     // The running example, read from the hand-written CSV fixture, is what every combination
     // below is re-encoded from, so a difference is the encoding's, not the data's.
     let fixture = tempfile::tempdir().expect("tempdir");
     write_container(fixture.path());
-    let source = import_ocel_bundle(fixture.path()).expect("read the fixture");
+    let source = Container::open(fixture.path())
+        .and_then(|c| c.read())
+        .expect("read the fixture");
     assert_running_example(&source);
 
     for storage in storages() {
         let work = tempfile::tempdir().expect("tempdir");
         let as_dir = work.path().join("container");
         std::fs::create_dir_all(&as_dir).expect("mkdir");
-        export_ocel_bundle(
-            &source,
-            &as_dir,
-            BundleExportOptions {
-                layout: ContainerLayout::Directory,
-                storage,
-            },
-        )
-        .unwrap_or_else(|e| panic!("{storage:?}: export: {e}"));
+        source
+            .export_to_path_as(&as_dir, bundle_format(storage), Default::default())
+            .unwrap_or_else(|e| panic!("{storage:?}: export: {e}"));
 
-        let from_dir = import_ocel_bundle(&as_dir)
+        let from_dir = Container::open(&as_dir)
+            .and_then(|c| c.read())
             .unwrap_or_else(|e| panic!("{storage:?}/directory: import: {e}"));
         assert_running_example(&from_dir);
 
@@ -763,12 +813,14 @@ fn every_layout_and_storage_combination_imports_to_the_same_log() {
             let archive = work.path().join("log.ocel.zip");
             std::fs::write(&archive, &bytes).expect("write archive");
 
-            let from_archive =
-                import_ocel_bundle(&archive).unwrap_or_else(|e| panic!("{what}: import: {e}"));
+            let from_archive = Container::open(&archive)
+                .and_then(|c| c.read())
+                .unwrap_or_else(|e| panic!("{what}: import: {e}"));
             assert_running_example(&from_archive);
 
             // The same archive with no path to expand beside it.
-            let from_memory = import_ocel_bundle_from_bytes(&bytes)
+            let from_memory = Container::open_bytes(&bytes)
+                .and_then(|c| c.read())
                 .unwrap_or_else(|e| panic!("{what}: import from bytes: {e}"));
             assert_running_example(&from_memory);
 
@@ -782,13 +834,11 @@ fn every_layout_and_storage_combination_imports_to_the_same_log() {
 /// anyway. The format itself names neither method, so both are a writer's choice.
 #[test]
 fn a_written_archive_stores_parquet_entries_and_deflates_csv_ones() {
-    use process_mining::core::event_data::object_centric::ocel_bundle::{
-        export_ocel_bundle, BundleExportOptions, ContainerLayout, StorageFormat,
-    };
-
     let fixture = tempfile::tempdir().expect("tempdir");
     write_container(fixture.path());
-    let source = import_ocel_bundle(fixture.path()).expect("read the fixture");
+    let source = Container::open(fixture.path())
+        .and_then(|c| c.read())
+        .expect("read the fixture");
 
     for storage in storages() {
         let want = match storage {
@@ -797,22 +847,16 @@ fn a_written_archive_stores_parquet_entries_and_deflates_csv_ones() {
         };
         let dir = tempfile::tempdir().expect("tempdir");
         let archive = dir.path().join("log.ocel.zip");
-        export_ocel_bundle(
-            &source,
-            &archive,
-            BundleExportOptions {
-                layout: ContainerLayout::Archive,
-                storage,
-            },
-        )
-        .expect("export");
+        source
+            .export_to_path_as(&archive, bundle_format(storage), Default::default())
+            .expect("export");
 
         let file = std::fs::File::open(&archive).expect("open");
         let mut zip = zip::ZipArchive::new(file).expect("read archive");
         let mut tables = 0;
         for i in 0..zip.len() {
             let entry = zip.by_index(i).expect("entry");
-            let name = entry.name().to_string();
+            let name = entry.name().expect("entry name").to_string();
             if name == "ocel-meta.json" {
                 continue;
             }
@@ -845,7 +889,13 @@ fn a_manifest_naming_a_path_outside_the_container_reads_nothing() {
     )
     .expect("write manifest");
 
-    let err = import_ocel_bundle(root.join("container")).expect_err("must not escape");
+    let err = Container::open(root.join("container"))
+        .and_then(|c| c.read())
+        .expect_err("must not escape");
+    assert!(
+        matches!(err, OCELIOError::Bundle(BundleError::Table { .. })),
+        "{err:?}"
+    );
     let message = err.to_string();
     assert!(message.contains("../secret.csv"), "{message}");
     assert!(
@@ -858,8 +908,26 @@ fn a_manifest_naming_a_path_outside_the_container_reads_nothing() {
 #[test]
 fn a_path_that_is_not_a_container_is_rejected_with_a_message_naming_it() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let err = import_ocel_bundle(dir.path()).expect_err("no manifest");
+    let err = Container::open(dir.path())
+        .and_then(|c| c.read())
+        .expect_err("no manifest");
+    assert!(
+        matches!(err, OCELIOError::Bundle(BundleError::MissingManifest)),
+        "{err:?}"
+    );
     assert!(err.to_string().contains("ocel-meta.json"), "{err}");
+    let err = Container::open(dir.path().join("missing.ocel.zip")).expect_err("no file");
+    assert!(
+        matches!(&err, OCELIOError::Io(e) if e.kind() == std::io::ErrorKind::NotFound),
+        "{err:?}"
+    );
+    assert!(err.to_string().contains("missing.ocel.zip"), "{err}");
+    let err = Container::open_bytes(b"not a zip").expect_err("no archive");
+    assert!(
+        matches!(err, OCELIOError::Bundle(BundleError::Archive(_))),
+        "{err:?}"
+    );
+    assert!(std::error::Error::source(&err).is_some_and(|e| e.source().is_some()));
 }
 
 /// One column of a Parquet fixture table, for a container this crate did not write.
@@ -873,6 +941,8 @@ enum Col<'a> {
     /// `INT64` with logical type `TIMESTAMP(MICROS, isAdjustedToUTC=true)`, as the format
     /// requires: an exporter must not write timestamps as strings in Parquet storage.
     Time(&'a [&'a str]),
+    /// `INT64` with logical type `TIMESTAMP(unit, isAdjustedToUTC=true)` for another unit.
+    TimeIn(&'a str, &'a [&'a str]),
 }
 
 /// Write `columns` as a Parquet file. Fixed columns are `required`, attribute columns
@@ -893,6 +963,7 @@ fn write_parquet(path: &Path, columns: &[(&str, bool, Col<'_>)]) {
                 Col::Text(_) => format!("{rep} BYTE_ARRAY {name} (STRING);"),
                 Col::Int(_) => format!("{rep} INT64 {name};"),
                 Col::Time(_) => format!("{rep} INT64 {name} (TIMESTAMP(MICROS,true));"),
+                Col::TimeIn(unit, _) => format!("{rep} INT64 {name} (TIMESTAMP({unit},true));"),
             }
         })
         .collect();
@@ -926,13 +997,20 @@ fn write_parquet(path: &Path, columns: &[(&str, bool, Col<'_>)]) {
                     .write_batch(values, (!required).then_some(&defs), None)
                     .expect("write");
             }
-            Col::Time(values) => {
+            Col::Time(values) | Col::TimeIn(_, values) => {
+                let unit = match col {
+                    Col::TimeIn(unit, _) => *unit,
+                    _ => "MICROS",
+                };
                 let micros: Vec<i64> = values
                     .iter()
                     .map(|v| {
-                        chrono::DateTime::parse_from_rfc3339(v)
-                            .expect("rfc3339")
-                            .timestamp_micros()
+                        let t = chrono::DateTime::parse_from_rfc3339(v).expect("rfc3339");
+                        match unit {
+                            "MILLIS" => t.timestamp_millis(),
+                            "NANOS" => t.timestamp_nanos_opt().expect("in range"),
+                            _ => t.timestamp_micros(),
+                        }
                     })
                     .collect();
                 let defs: Vec<i16> = micros.iter().map(|_| 1).collect();
@@ -1019,7 +1097,9 @@ fn a_parquet_container_imports_with_types_taken_from_the_files() {
     )
     .expect("write manifest");
 
-    let ocel = import_ocel_bundle(root).expect("import");
+    let ocel = Container::open(root)
+        .and_then(|c| c.read())
+        .expect("import");
     assert_eq!(ocel.events.len(), 1);
     assert_eq!(ocel.objects.len(), 1);
     assert_eq!(
@@ -1040,4 +1120,77 @@ fn a_parquet_container_imports_with_types_taken_from_the_files() {
         "2022-01-13T12:00:00+00:00",
         "TIMESTAMP(MICROS) arrives as an instant, not as text to be parsed"
     );
+}
+
+/// Timestamps are written as `TIMESTAMP(MICROS)`, as OCEL 2.0 prescribes, which drops
+/// sub-microsecond parts; files in milli- or nanoseconds are read as well.
+#[cfg(feature = "ocel-bundle-parquet")]
+#[test]
+fn parquet_timestamps_are_written_in_microseconds_and_read_in_any_unit() {
+    use parquet::basic::{LogicalType, TimeUnit};
+    use parquet::file::reader::{FileReader, SerializedFileReader};
+    use process_mining::core::event_data::object_centric::{OCELEvent, OCELType};
+
+    let time = "2024-01-01T10:00:00.123456789+00:00";
+    let ocel = OCEL {
+        event_types: vec![OCELType {
+            name: "go".to_string(),
+            attributes: Vec::new(),
+        }],
+        object_types: Vec::new(),
+        events: vec![OCELEvent {
+            id: "e1".to_string(),
+            event_type: "go".to_string(),
+            time: time.parse().unwrap(),
+            attributes: Vec::new(),
+            relationships: Vec::new(),
+        }],
+        objects: Vec::new(),
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("log");
+    ocel.export_to_path_as(&root, "ocel-parquet.zip", Default::default())
+        .expect("export");
+    let file = std::fs::read_dir(root.join("events"))
+        .expect("events dir")
+        .next()
+        .expect("one event table")
+        .expect("entry")
+        .path();
+
+    let reader = SerializedFileReader::new(std::fs::File::open(&file).expect("open")).unwrap();
+    let schema = reader.metadata().file_metadata().schema();
+    let ocel_time = schema
+        .get_fields()
+        .iter()
+        .find(|f| f.name() == "ocel_time")
+        .expect("ocel_time column");
+    assert_eq!(
+        ocel_time.get_basic_info().logical_type_ref(),
+        Some(&LogicalType::timestamp(true, TimeUnit::MICROS))
+    );
+    let back = Container::open(&root)
+        .and_then(|c| c.read())
+        .expect("import");
+    assert_eq!(
+        back.events[0].time.to_rfc3339(),
+        "2024-01-01T10:00:00.123456+00:00"
+    );
+
+    for (unit, read) in [
+        ("MILLIS", "2024-01-01T10:00:00.123+00:00"),
+        ("NANOS", "2024-01-01T10:00:00.123456789+00:00"),
+    ] {
+        write_parquet(
+            &file,
+            &[
+                ("ocel_id", true, Col::Text(&["e1"])),
+                ("ocel_time", true, Col::TimeIn(unit, &[time])),
+            ],
+        );
+        let back = Container::open(&root)
+            .and_then(|c| c.read())
+            .expect("import");
+        assert_eq!(back.events[0].time.to_rfc3339(), read, "{unit}");
+    }
 }

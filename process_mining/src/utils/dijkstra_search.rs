@@ -7,7 +7,8 @@
 use std::{
     cell::Cell,
     collections::VecDeque,
-    ops::{Add, Rem},
+    ops::Add,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use schemars::JsonSchema;
@@ -34,19 +35,16 @@ pub trait SearchProblem {
     /// The integer type for edge and path costs.
     /// Any primitive integer (`u16`, `u32`, etc.) may be used.
     /// The type must be large enough to hold the largest path costs.
-    type Cost: Copy
-        + Ord
-        + Add<Output = Self::Cost>
-        + Rem<Output = Self::Cost>
-        + From<u8>
-        + TryInto<usize>;
+    type Cost: Copy + Ord + Add<Output = Self::Cost> + From<u8> + TryInto<usize>;
 
     /// The start state; returns its id (`0`).
     fn initial(&mut self) -> NodeID;
 
     /// Largest possible cost of a _single_ edge.
     ///
-    /// This determines the number of buckets (`num_buckets` = `max_edge_cost` + 1).
+    /// This determines the number of buckets (`num_buckets` = `max_edge_cost` + 1). If they do
+    /// not fit [`SearchLimits::max_memory`], the search fails with
+    /// [`SearchError::MemoryLimitReached`].
     fn max_edge_cost(&self) -> Self::Cost;
 
     /// Whether the given `node` is a final (goal) state.
@@ -117,15 +115,49 @@ pub enum SearchError {
     Unreachable,
     /// The maximum edge cost does not fit `usize`, so the bucket queue cannot be sized
     MaxEdgeCostTooLarge,
+    /// The [`SearchLimits::cancel`] flag was set
+    Cancelled,
 }
 
+impl std::fmt::Display for SearchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            SearchError::LimitReached => "search reached its maximum number of states",
+            SearchError::MemoryLimitReached => "search reached its memory limit",
+            SearchError::Unreachable => "no goal state is reachable",
+            SearchError::MaxEdgeCostTooLarge => "maximum edge cost does not fit usize",
+            SearchError::Cancelled => "search was cancelled",
+        })
+    }
+}
+
+impl std::error::Error for SearchError {}
+
 /// How far a search may go before it gives up (`None` means no limit)
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct SearchLimits {
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SearchLimits<'a> {
     /// Maximum number of states to visit (bounds runtime). Shared by both search directions.
     pub max_states: Option<usize>,
     /// Maximum bytes the search may hold (bounds memory). Shared by both directions.
     pub max_memory: Option<usize>,
+    /// Stops the search with [`SearchError::Cancelled`] once set. Checked once per visited
+    /// state.
+    pub cancel: Option<&'a AtomicBool>,
+}
+
+impl SearchLimits<'_> {
+    fn cancelled(&self) -> bool {
+        self.cancel.is_some_and(|c| c.load(Ordering::Relaxed))
+    }
+}
+
+impl PartialEq for SearchLimits<'_> {
+    /// Cancel flags are equal if they are the same flag
+    fn eq(&self, other: &Self) -> bool {
+        self.max_states == other.max_states
+            && self.max_memory == other.max_memory
+            && self.cancel.map(std::ptr::from_ref) == other.cancel.map(std::ptr::from_ref)
+    }
 }
 
 /// Reusable node store and bucket queue for [`search`], cleared initially.
@@ -309,11 +341,12 @@ fn reserve(
 pub fn search<P: SearchProblem>(
     problem: &mut P,
     state: &mut SearchState<P::Step, P::Cost>,
-    limits: SearchLimits,
+    limits: SearchLimits<'_>,
 ) -> Result<SearchResult<P::Step, P::Cost>, SearchError> {
     let start = problem.initial();
-    let mut side = SearchSide::seed(state, problem.max_edge_cost(), start)?;
     let budget = MemoryBudget::new(limits.max_memory);
+    let num_buckets = num_buckets(problem.max_edge_cost(), 1, &budget)?;
+    let mut side = SearchSide::seed(state, num_buckets, start)?;
     if !budget.grow(0, side.state.allocated_bytes() + problem.allocated_bytes()) {
         return Err(SearchError::MemoryLimitReached);
     }
@@ -324,6 +357,9 @@ pub fn search<P: SearchProblem>(
 
     while let Some((distance, node)) = side.peek() {
         side.finish(node);
+        if limits.cancelled() {
+            return Err(SearchError::Cancelled);
+        }
         states_visited += 1;
         if states_visited > limit {
             return Err(SearchError::LimitReached);
@@ -357,14 +393,14 @@ pub fn search_bidirectional<P: ReversibleSearchProblem>(
     backward: &mut P,
     forward_state: &mut SearchState<P::Step, P::Cost>,
     backward_state: &mut SearchState<P::Step, P::Cost>,
-    limits: SearchLimits,
+    limits: SearchLimits<'_>,
 ) -> Result<SearchResult<P::Step, P::Cost>, SearchError> {
-    let max_edge_cost = forward.max_edge_cost();
     let start = forward.initial();
     let goal = backward.initial();
-    let mut forward_side = SearchSide::seed(forward_state, max_edge_cost, start)?;
-    let mut backward_side = SearchSide::seed(backward_state, max_edge_cost, goal)?;
     let budget = MemoryBudget::new(limits.max_memory);
+    let num_buckets = num_buckets(forward.max_edge_cost(), 2, &budget)?;
+    let mut forward_side = SearchSide::seed(forward_state, num_buckets, start)?;
+    let mut backward_side = SearchSide::seed(backward_state, num_buckets, goal)?;
     let held = forward_side.state.allocated_bytes()
         + backward_side.state.allocated_bytes()
         + forward.allocated_bytes()
@@ -387,6 +423,9 @@ pub fn search_bidirectional<P: ReversibleSearchProblem>(
     {
         if best.is_some_and(|(cost, _, _)| forward_top + backward_top >= cost) {
             break;
+        }
+        if limits.cancelled() {
+            return Err(SearchError::Cancelled);
         }
         states_visited += 1;
         if states_visited > limit {
@@ -447,6 +486,28 @@ pub fn search_bidirectional<P: ReversibleSearchProblem>(
     })
 }
 
+/// The number of buckets (`max_edge_cost + 1`) of each of `sides` bucket queues, if they fit
+/// `budget` together
+fn num_buckets<C: TryInto<usize>>(
+    max_edge_cost: C,
+    sides: usize,
+    budget: &MemoryBudget,
+) -> Result<usize, SearchError> {
+    let num_buckets = max_edge_cost
+        .try_into()
+        .ok()
+        .and_then(|max: usize| max.checked_add(1))
+        .ok_or(SearchError::MaxEdgeCostTooLarge)?;
+    let fits = num_buckets
+        .checked_mul(size_of::<VecDeque<NodeID>>())
+        .and_then(|bytes| bytes.checked_mul(sides))
+        .is_some_and(|bytes| bytes <= budget.available());
+    if !fits {
+        return Err(SearchError::MemoryLimitReached);
+    }
+    Ok(num_buckets)
+}
+
 /// Check the nodes one side just reached against the other side, keeping the cheapest meeting
 /// in `best`. Empties `improved`.
 ///
@@ -481,25 +542,20 @@ struct SearchSide<'a, S, C> {
     bucket: usize,
     /// Entries in the buckets, some of which may be obsolete
     queued: usize,
-    /// Number of buckets as a cost, to take the remainder in cost space
-    num_buckets_cost: C,
 }
 
 impl<'a, S, C> SearchSide<'a, S, C>
 where
     S: Copy + Default,
-    C: Copy + Ord + Add<Output = C> + Rem<Output = C> + From<u8> + TryInto<usize>,
+    C: Copy + Ord + Add<Output = C> + From<u8> + TryInto<usize>,
 {
-    /// Clear a search state and start it off at `start`
+    /// Clear a search state and start it off at `start`, with `num_buckets` buckets (see
+    /// [`num_buckets`])
     fn seed(
         state: &'a mut SearchState<S, C>,
-        max_edge_cost: C,
+        num_buckets: usize,
         start: NodeID,
     ) -> Result<Self, SearchError> {
-        let num_buckets_cost = max_edge_cost + C::from(1);
-        let num_buckets: usize = num_buckets_cost
-            .try_into()
-            .map_err(|_| SearchError::MaxEdgeCostTooLarge)?;
         if worth_releasing(state.nodes.capacity(), state.nodes.len()) {
             state.nodes = Vec::new();
             state.buckets = Vec::new();
@@ -512,6 +568,11 @@ where
             step: S::default(),
             finished: false,
         });
+        state.buckets.truncate(num_buckets);
+        state
+            .buckets
+            .try_reserve_exact(num_buckets - state.buckets.len())
+            .map_err(|_| SearchError::MemoryLimitReached)?;
         state.buckets.resize_with(num_buckets, VecDeque::new);
         state.buckets.iter_mut().for_each(VecDeque::clear);
         state.buckets[0].push_back(start);
@@ -519,7 +580,6 @@ where
             state,
             bucket: 0,
             queued: 1,
-            num_buckets_cost,
         })
     }
 
@@ -565,14 +625,17 @@ where
         let nodes = &mut self.state.nodes;
         let buckets = &mut self.state.buckets;
         let queued = &mut self.queued;
-        let num_buckets_cost = self.num_buckets_cost;
+        // `node` sits in the bucket being drained, so a successor goes `cost` buckets further.
+        // This stays in `usize`, as `cost < num_buckets` and the buckets fit the budget.
+        let bucket = self.bucket;
+        let num_buckets = buckets.len();
         problem.expand(node, via, budget, |next, is_new, cost, step| {
             if budget.exhausted() {
                 return;
             }
             let new_distance = distance + cost;
-            // Remainder taken in cost space, where it is `< num_buckets` and thus fits `usize`
-            let idx = (new_distance % num_buckets_cost).try_into().unwrap_or(0);
+            let offset: usize = cost.try_into().unwrap_or(0);
+            let idx = (bucket + offset) % num_buckets;
             if is_new {
                 debug_assert_eq!(next as usize, nodes.len(), "no NodeID should be skipped");
                 if !reserve_vec(nodes, 1, budget) {
@@ -620,7 +683,223 @@ fn reconstruct<S: Copy, C>(nodes: &[Node<S, C>], target: NodeID) -> Vec<S> {
 
 #[cfg(test)]
 mod tests {
-    use super::{reserve_vec, MemoryBudget};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use super::{
+        reserve_vec, search, search_bidirectional, MemoryBudget, NodeID, ReversibleSearchProblem,
+        SearchError, SearchLimits, SearchProblem, SearchState,
+    };
+
+    /// A path of `len` edges, each of cost `max_edge_cost`. Node `i` is `i` edges from the start
+    /// (or, reversed, from the goal).
+    struct Chain<C> {
+        max_edge_cost: C,
+        len: u32,
+        reached: u32,
+    }
+
+    fn chain<C>(max_edge_cost: C, len: u32) -> Chain<C> {
+        Chain {
+            max_edge_cost,
+            len,
+            reached: 0,
+        }
+    }
+
+    impl<C> SearchProblem for Chain<C>
+    where
+        C: Copy + Ord + std::ops::Add<Output = C> + From<u8> + TryInto<usize>,
+    {
+        type Step = ();
+        type Cost = C;
+
+        fn initial(&mut self) -> NodeID {
+            self.reached = 1;
+            0
+        }
+
+        fn max_edge_cost(&self) -> C {
+            self.max_edge_cost
+        }
+
+        fn is_goal(&self, node: NodeID) -> bool {
+            node == self.len
+        }
+
+        fn expand<F: FnMut(NodeID, bool, C, ())>(
+            &mut self,
+            node: NodeID,
+            _via: Option<()>,
+            _budget: &MemoryBudget,
+            mut emit: F,
+        ) {
+            if node < self.len {
+                self.reached += 1;
+                emit(node + 1, true, self.max_edge_cost, ());
+            }
+        }
+
+        fn allocated_bytes(&self) -> usize {
+            0
+        }
+    }
+
+    impl<C> ReversibleSearchProblem for Chain<C>
+    where
+        Chain<C>: SearchProblem,
+    {
+        fn find_in(&self, node: NodeID, other: &Self) -> Option<NodeID> {
+            let there = self.len - node;
+            (there < other.reached).then_some(there)
+        }
+    }
+
+    #[test]
+    fn huge_edge_costs_fail_cleanly() {
+        let limits = SearchLimits {
+            max_memory: Some(1 << 30),
+            ..SearchLimits::default()
+        };
+        for max_edge_cost in [u32::MAX, 1 << 31] {
+            assert_eq!(
+                search(
+                    &mut chain(max_edge_cost, 1),
+                    &mut SearchState::default(),
+                    limits
+                )
+                .unwrap_err(),
+                SearchError::MemoryLimitReached
+            );
+            assert_eq!(
+                search_bidirectional(
+                    &mut chain(max_edge_cost, 1),
+                    &mut chain(max_edge_cost, 1),
+                    &mut SearchState::default(),
+                    &mut SearchState::default(),
+                    limits,
+                )
+                .unwrap_err(),
+                SearchError::MemoryLimitReached
+            );
+        }
+        assert_eq!(
+            search(
+                &mut chain(u128::MAX, 1),
+                &mut SearchState::default(),
+                limits
+            )
+            .unwrap_err(),
+            SearchError::MaxEdgeCostTooLarge
+        );
+    }
+
+    #[test]
+    fn cancelled_search_is_not_a_limit() {
+        let flag = AtomicBool::new(false);
+        let limits = SearchLimits {
+            max_states: Some(0),
+            cancel: Some(&flag),
+            ..SearchLimits::default()
+        };
+        let mut state = SearchState::default();
+        assert_eq!(
+            search(&mut chain(1u32, 5), &mut state, limits).unwrap_err(),
+            SearchError::LimitReached
+        );
+        flag.store(true, Ordering::Relaxed);
+        assert_eq!(
+            search(&mut chain(1u32, 5), &mut state, limits).unwrap_err(),
+            SearchError::Cancelled
+        );
+        assert_eq!(
+            search_bidirectional(
+                &mut chain(1u32, 5),
+                &mut chain(1u32, 5),
+                &mut state,
+                &mut SearchState::default(),
+                limits,
+            )
+            .unwrap_err(),
+            SearchError::Cancelled
+        );
+    }
+
+    /// A [`chain`] that sets `flag` while expanding node `at`
+    struct Tripwire<'a> {
+        chain: Chain<u32>,
+        at: NodeID,
+        flag: &'a AtomicBool,
+    }
+
+    impl SearchProblem for Tripwire<'_> {
+        type Step = ();
+        type Cost = u32;
+
+        fn initial(&mut self) -> NodeID {
+            self.chain.initial()
+        }
+
+        fn max_edge_cost(&self) -> u32 {
+            self.chain.max_edge_cost()
+        }
+
+        fn is_goal(&self, node: NodeID) -> bool {
+            self.chain.is_goal(node)
+        }
+
+        fn expand<F: FnMut(NodeID, bool, u32, ())>(
+            &mut self,
+            node: NodeID,
+            via: Option<()>,
+            budget: &MemoryBudget,
+            emit: F,
+        ) {
+            if node == self.at {
+                self.flag.store(true, Ordering::Relaxed);
+            }
+            self.chain.expand(node, via, budget, emit);
+        }
+
+        fn allocated_bytes(&self) -> usize {
+            0
+        }
+    }
+
+    #[test]
+    fn search_stops_right_after_the_flag_is_set() {
+        let flag = AtomicBool::new(false);
+        let mut problem = Tripwire {
+            chain: chain(1, 100),
+            at: 10,
+            flag: &flag,
+        };
+        let limits = SearchLimits {
+            cancel: Some(&flag),
+            ..SearchLimits::default()
+        };
+        assert_eq!(
+            search(&mut problem, &mut SearchState::default(), limits).unwrap_err(),
+            SearchError::Cancelled
+        );
+        // Node 10 reached node 11, which was popped but not expanded
+        assert_eq!(problem.chain.reached, 12);
+    }
+
+    #[test]
+    fn distances_wrap_around_the_buckets() {
+        let mut state = SearchState::default();
+        let result = search(&mut chain(7u32, 5), &mut state, SearchLimits::default()).unwrap();
+        assert_eq!((result.cost, result.path.len()), (35, 5));
+        let result = search_bidirectional(
+            &mut chain(7u32, 5),
+            &mut chain(7u32, 5),
+            &mut state,
+            &mut SearchState::default(),
+            SearchLimits::default(),
+        )
+        .unwrap();
+        assert_eq!((result.cost, result.path.len()), (35, 5));
+    }
 
     #[test]
     fn growth_counts_old_and_new_allocation() {

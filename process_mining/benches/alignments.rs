@@ -1,7 +1,7 @@
 //! Benchmark the time taken to compute optimal alignments of a log against a Petri net
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use process_mining::{
-    conformance::alignments::{align_log, AlignmentOptions},
+    conformance::alignments::{align_variants, AlignmentOptions},
     core::event_data::case_centric::utils::activity_projection::{
         log_to_activity_projection, EventLogActivityProjection,
     },
@@ -13,7 +13,7 @@ use std::time::Duration;
 fn load(log_name: &str, net_name: &str) -> (AcceptingPetriNet, EventLogActivityProjection) {
     let root = get_test_data_path();
     let log = EventLog::import_from_path(root.join("xes").join(log_name)).unwrap();
-    let net = AcceptingPetriNet::import_pnml(root.join("petri-net").join(net_name)).unwrap();
+    let net = AcceptingPetriNet::import_from_path(root.join("petri-net").join(net_name)).unwrap();
     (net, log_to_activity_projection(&log))
 }
 
@@ -26,7 +26,7 @@ fn bench_alignments(c: &mut Criterion) {
     sepsis.sample_size(25);
     sepsis.measurement_time(Duration::from_secs(20));
     sepsis.bench_function("sepsis", |b| {
-        b.iter(|| black_box(align_log(&sepsis_net, &sepsis_proj, &options)))
+        b.iter(|| black_box(align_variants(&sepsis_net, &sepsis_proj, &options)))
     });
     sepsis.finish();
 
@@ -38,7 +38,7 @@ fn bench_alignments(c: &mut Criterion) {
     rtfm.sample_size(10);
     rtfm.measurement_time(Duration::from_secs(60));
     rtfm.bench_function("rtfm", |b| {
-        b.iter(|| black_box(align_log(&rtfm_net, &rtfm_proj, &options)))
+        b.iter(|| black_box(align_variants(&rtfm_net, &rtfm_proj, &options)))
     });
     rtfm.finish();
 }

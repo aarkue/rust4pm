@@ -72,7 +72,7 @@
 //!
 //! ## Roundtrip Considerations
 //!
-//! Import → Export → Import may not be perfectly lossless:
+//! Import, export and import again may not be lossless:
 //! - Event attribute types are inferred as strings during CSV import
 //! - Column ordering may change (sorted alphabetically)
 //! - Event attribute columns written with a legacy `ea:` prefix are re-exported without it
@@ -80,7 +80,8 @@
 //!
 //! # Import Options
 //!
-//! The importer supports a `strict` mode via [`OCELCSVImportOptions`]:
+//! The importer supports a `strict` mode via
+//! [`OCELImportOptions`](crate::core::event_data::object_centric::io::OCELImportOptions):
 //! - **`strict: false`** (default): Rows with missing timestamps are skipped with a warning
 //! - **`strict: true`**: Missing timestamps cause an error
 

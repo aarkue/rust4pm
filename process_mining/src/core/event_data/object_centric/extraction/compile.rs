@@ -57,6 +57,9 @@ use super::desugar::desugar_with_paths;
 use super::expr::{AttributeMapping, ValueExpression};
 use super::report::MappingRef;
 use super::schema::full_node_schemas;
+use crate::core::event_data::object_centric::sql_columns::{
+    ocel_sql_attr_columns, ColumnNames, EVENT_BASE_COLS, T_EVENT_ATTR_COLUMNS, T_OCEL_ATTR_COLUMNS,
+};
 use crate::core::event_data::object_centric::OCELAttributeType;
 
 /// How many distinct values a column domain may have before a per-type emission refuses it.
@@ -85,11 +88,10 @@ pub enum EmissionShape {
     /// reads.
     #[default]
     PerType,
-    /// The `events`/`objects`/`e2o`/`o2o`/`object_attribute_changes`/`event_attr_meta` layout
-    /// `rust4pm`'s own reader (`DuckDbLinkedOCEL`) consumes. A type is stored as a column value
-    /// rather than encoded into a view name, so no
-    /// [`Catalog::column_domain`] lookup is needed and
-    /// [`RejectReason::DynamicTypeName`] never fires.
+    /// The `events`/`objects`/`e2o`/`o2o`/`object_attribute_changes`/`event_attr_meta`/
+    /// `object_attr_meta` layout `rust4pm`'s own `DuckDB` reader consumes. A type is stored as a
+    /// column value rather than encoded into a view name, so no [`Catalog::column_domain`] lookup
+    /// is needed and [`RejectReason::DynamicTypeName`] never fires.
     Consolidated,
 }
 
@@ -1886,13 +1888,18 @@ fn assemble(dialect: SqlDialect, attrs: &AttributePlan, acc: &Accumulator, out: 
         );
     }
 
+    // `(view, attribute, column)` for each attribute whose column is not named like it.
+    let mut renamed: Vec<[String; 3]> = Vec::new();
     for t in &object_types {
+        let name = format!("object_{t}");
+        let columns = per_type_columns(attrs, "object", t);
+        renamed.extend(renamed_columns(&name, &columns));
         // `object_type_view` always reads straight off `object`, so this dependency is fixed
         // rather than gathered from a branch.
         pending.push((
             ViewDef {
-                name: format!("object_{t}"),
-                body: object_type_view(dialect, attrs, acc, t),
+                body: object_type_view(dialect, &columns, acc, t),
+                name,
             },
             BTreeSet::from(["object".to_string()]),
         ));
@@ -1925,7 +1932,9 @@ fn assemble(dialect: SqlDialect, attrs: &AttributePlan, acc: &Accumulator, out: 
     }
 
     for t in &event_types {
-        let (body, has_rows) = event_type_view(dialect, attrs, acc, t);
+        let columns = per_type_columns(attrs, "event", t);
+        renamed.extend(renamed_columns(&format!("event_{t}"), &columns));
+        let (body, has_rows) = event_type_view(dialect, &columns, acc, t);
         pending.push((
             ViewDef {
                 name: format!("event_{t}"),
@@ -1944,6 +1953,19 @@ fn assemble(dialect: SqlDialect, attrs: &AttributePlan, acc: &Accumulator, out: 
         }
     }
 
+    if !renamed.is_empty() {
+        pending.push((
+            ViewDef {
+                name: T_OCEL_ATTR_COLUMNS.to_string(),
+                body: text_rows(
+                    dialect,
+                    &["table_name", "attr_name", "column_name"],
+                    &renamed,
+                ),
+            },
+            BTreeSet::new(),
+        ));
+    }
     pending.push((
         ViewDef {
             name: "event_map_type".to_string(),
@@ -1987,8 +2009,9 @@ fn assemble(dialect: SqlDialect, attrs: &AttributePlan, acc: &Accumulator, out: 
     out.views = order_views(pending, &mut out.errors);
 }
 
-/// Assemble [`EmissionShape::Consolidated`]'s six relations (`events`, `objects`,
-/// `object_attribute_changes`, `e2o`, `o2o` and `event_attr_meta`) from the same `Accumulator`
+/// Assemble [`EmissionShape::Consolidated`]'s relations (`events`, `objects`,
+/// `object_attribute_changes`, `e2o`, `o2o`, `event_attr_meta` and `object_attr_meta`, plus
+/// `event_attr_columns` when an attribute column is renamed) from the same `Accumulator`
 /// [`assemble`] reads for [`EmissionShape::PerType`]. Every branch was already compiled
 /// shape-aware, so this only reshapes already-correct SQL.
 #[allow(clippy::too_many_lines)]
@@ -2001,6 +2024,10 @@ fn assemble_consolidated(
     let mut event_types: BTreeSet<String> = BTreeSet::new();
     for b in &acc.events {
         event_types.extend(b.types.iter().cloned());
+    }
+    let mut object_types: BTreeSet<String> = BTreeSet::new();
+    for b in &acc.objects {
+        object_types.extend(b.types.iter().cloned());
     }
 
     let mut pending: Vec<(ViewDef, BTreeSet<String>)> = Vec::new();
@@ -2032,21 +2059,33 @@ fn assemble_consolidated(
 
     // `events(id, ocel_type, "time", <one column per declared event attribute>)`, wide across
     // every event type at once, unlike `PerType`'s bare `event`, which carries no attributes.
-    let wide_cols = attrs.event_columns_wide();
+    // Columns claimed as the `DuckDB` sink claims them, so an attribute `Time` or `id`, or two
+    // differing only in case, never resolves to another column, and readers find each by name.
+    let mut event_columns = ColumnNames::new(&EVENT_BASE_COLS);
+    let mut renamed: Vec<[String; 2]> = Vec::new();
+    let wide_cols: Vec<(String, String, OCELAttributeType)> = attrs
+        .event_columns_wide()
+        .into_iter()
+        .map(|(name, ty)| {
+            let (column, r) = event_columns.claim_event_column(&name);
+            renamed.extend(r.map(|(a, c)| [a, c]));
+            (name, column, ty)
+        })
+        .collect();
     let time_col = dialect.quote_ident("time");
     let mut events_header = vec!["id".to_string(), "ocel_type".to_string(), time_col.clone()];
-    events_header.extend(wide_cols.iter().map(|(n, _)| dialect.quote_ident(n)));
+    events_header.extend(wide_cols.iter().map(|(_, c, _)| dialect.quote_ident(c)));
 
     let mut events_empty: Vec<(&str, String)> = vec![
         ("id", dialect.null_text()),
         ("ocel_type", dialect.null_text()),
         ("time", dialect.null_timestamp()),
     ];
-    let owned: Vec<(String, String)> = wide_cols
-        .iter()
-        .map(|(n, t)| (n.clone(), dialect.null_attribute(*t)))
-        .collect();
-    events_empty.extend(owned.iter().map(|(n, v)| (n.as_str(), v.clone())));
+    events_empty.extend(
+        wide_cols
+            .iter()
+            .map(|(_, c, t)| (c.as_str(), dialect.null_attribute(*t))),
+    );
 
     let event_branches: Vec<String> = acc
         .events
@@ -2057,8 +2096,8 @@ fn assemble_consolidated(
                 format!("{} AS ocel_type", b.type_sql),
                 format!("{} AS {time_col}", b.time_sql),
             ];
-            for (name, target_ty) in &wide_cols {
-                let quoted = dialect.quote_ident(name);
+            for (name, column, target_ty) in &wide_cols {
+                let quoted = dialect.quote_ident(column);
                 // A branch that never declared `name` at all contributes a typed `NULL`,
                 // matching a `UNION ALL` branch missing a column elsewhere in this module.
                 let value = match (b.attributes.get(name), b.attribute_types.get(name)) {
@@ -2094,38 +2133,26 @@ fn assemble_consolidated(
             ProbeKind::AmbiguousEventIdentity,
         );
     }
-
-    // `event_attr_meta(event_type, attr_name, attr_type)`, best-effort: only a statically known
-    // event type contributes a row. A dynamically-typed mapping's attribute values still land in
-    // `events`, only this metadata is incomplete for it.
-    let mut meta_rows: Vec<String> = Vec::new();
-    for t in &event_types {
-        for (name, ty) in attrs.columns_of("event", t) {
-            meta_rows.push(format!(
-                "SELECT {} AS event_type, {} AS attr_name, {} AS attr_type",
-                dialect.string_literal(t),
-                dialect.string_literal(&name),
-                dialect.string_literal(ty.as_type_str())
-            ));
-        }
+    if !renamed.is_empty() {
+        pending.push((
+            ViewDef {
+                name: T_EVENT_ATTR_COLUMNS.to_string(),
+                body: text_rows(dialect, &["attr_name", "column_name"], &renamed),
+            },
+            BTreeSet::new(),
+        ));
     }
-    let event_attr_meta_body = if meta_rows.is_empty() {
-        empty_relation(
-            dialect,
-            &[
-                ("event_type", dialect.null_text()),
-                ("attr_name", dialect.null_text()),
-                ("attr_type", dialect.null_text()),
-            ],
-        )
-    } else {
-        dialect.union_all(&meta_rows)
-    };
+
+    // `event_attr_meta(event_type, attr_name, attr_type)` and its `object_attr_meta` twin,
+    // best-effort: only a statically known type contributes a row. A dynamically-typed mapping's
+    // attribute values still land in `events` or `object_attribute_changes`, only this metadata
+    // is incomplete for it.
     pending.push((
-        ViewDef {
-            name: "event_attr_meta".to_string(),
-            body: event_attr_meta_body,
-        },
+        attr_meta_view(dialect, attrs, "event", &event_types),
+        BTreeSet::new(),
+    ));
+    pending.push((
+        attr_meta_view(dialect, attrs, "object", &object_types),
         BTreeSet::new(),
     ));
 
@@ -2248,13 +2275,12 @@ fn order_views(
 /// branch actually contributes rows.
 fn event_type_view(
     dialect: SqlDialect,
-    attrs: &AttributePlan,
+    columns: &[(String, String, OCELAttributeType)],
     acc: &Accumulator,
     type_name: &str,
 ) -> (String, bool) {
-    let columns = attrs.columns_of("event", type_name);
     let mut header: Vec<String> = vec!["ocel_id".to_string(), "ocel_time".to_string()];
-    header.extend(columns.iter().map(|(n, _)| dialect.quote_ident(n)));
+    header.extend(columns.iter().map(|(_, c, _)| dialect.quote_ident(c)));
 
     let branches: Vec<String> = acc
         .events
@@ -2265,8 +2291,8 @@ fn event_type_view(
                 format!("{} AS ocel_id", b.id_sql),
                 format!("{} AS ocel_time", b.time_sql),
             ];
-            for (name, ty) in &columns {
-                let quoted = dialect.quote_ident(name);
+            for (name, column, ty) in columns {
+                let quoted = dialect.quote_ident(column);
                 let value = b
                     .attributes
                     .get(name)
@@ -2289,11 +2315,11 @@ fn event_type_view(
         ("ocel_id", dialect.null_text()),
         ("ocel_time", dialect.null_timestamp()),
     ];
-    let owned: Vec<(String, String)> = columns
-        .iter()
-        .map(|(n, t)| (n.clone(), dialect.null_attribute(*t)))
-        .collect();
-    empty.extend(owned.iter().map(|(n, v)| (n.as_str(), v.clone())));
+    empty.extend(
+        columns
+            .iter()
+            .map(|(_, c, t)| (c.as_str(), dialect.null_attribute(*t))),
+    );
 
     let has_rows = !branches.is_empty();
     (
@@ -2310,28 +2336,27 @@ fn event_type_view(
 /// conflating "observed as `Null`" with "never declared", a distinction the extractor draws.
 fn object_type_view(
     dialect: SqlDialect,
-    attrs: &AttributePlan,
+    columns: &[(String, String, OCELAttributeType)],
     acc: &Accumulator,
     type_name: &str,
 ) -> String {
-    let columns = attrs.columns_of("object", type_name);
     let mut header: Vec<String> = vec![
         "ocel_id".to_string(),
         "ocel_time".to_string(),
         "ocel_changed_field".to_string(),
     ];
-    header.extend(columns.iter().map(|(n, _)| dialect.quote_ident(n)));
+    header.extend(columns.iter().map(|(_, c, _)| dialect.quote_ident(c)));
 
     let mut projections = vec![
         "ocel_id".to_string(),
         format!("{} AS ocel_time", dialect.epoch_timestamp()),
         format!("{} AS ocel_changed_field", dialect.null_text()),
     ];
-    for (name, ty) in &columns {
+    for (_, column, ty) in columns {
         projections.push(format!(
             "{} AS {}",
             dialect.null_attribute(*ty),
-            dialect.quote_ident(name)
+            dialect.quote_ident(column)
         ));
     }
     let mut branches = vec![select(
@@ -2353,13 +2378,13 @@ fn object_type_view(
                 dialect.string_literal(&b.attribute)
             ),
         ];
-        for (name, ty) in &columns {
+        for (name, column, ty) in columns {
             let value = if *name == b.attribute {
                 b.value_sql.clone()
             } else {
                 dialect.null_attribute(*ty)
             };
-            projections.push(format!("{value} AS {}", dialect.quote_ident(name)));
+            projections.push(format!("{value} AS {}", dialect.quote_ident(column)));
         }
         let mut filters = b.filters.clone();
         filters.push(format!(
@@ -2412,6 +2437,98 @@ fn relation_view(
     )
 }
 
+/// `(attribute, column, type)` for each attribute of a per-type view, in
+/// [`AttributePlan::columns_of`] order. Columns are claimed as the SQL exporter claims them, so
+/// an attribute `ocel_id`, or two differing only in case, gets a column of its own.
+fn per_type_columns(
+    attrs: &AttributePlan,
+    kind: &'static str,
+    type_name: &str,
+) -> Vec<(String, String, OCELAttributeType)> {
+    let declared = attrs.columns_of(kind, type_name);
+    let columns = ocel_sql_attr_columns(declared.iter().map(|(n, _)| n.as_str()));
+    declared
+        .into_iter()
+        .zip(columns)
+        .map(|((name, ty), column)| (name, column, ty))
+        .collect()
+}
+
+/// The [`T_OCEL_ATTR_COLUMNS`] rows of view `view` with `columns`.
+fn renamed_columns<'a>(
+    view: &'a str,
+    columns: &'a [(String, String, OCELAttributeType)],
+) -> impl Iterator<Item = [String; 3]> + 'a {
+    columns
+        .iter()
+        .filter(|(name, column, _)| name != column)
+        .map(|(name, column, _)| [view.to_string(), name.clone(), column.clone()])
+}
+
+/// A relation of the text `rows`, its columns named `cols`.
+fn text_rows<const N: usize>(
+    dialect: SqlDialect,
+    cols: &[&str; N],
+    rows: &[[String; N]],
+) -> String {
+    let rows: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            let projections: Vec<String> = row
+                .iter()
+                .zip(cols)
+                .map(|(v, c)| {
+                    format!(
+                        "{} AS {}",
+                        dialect.string_literal(v),
+                        dialect.quote_ident(c)
+                    )
+                })
+                .collect();
+            format!("SELECT {}", projections.join(", "))
+        })
+        .collect();
+    dialect.union_all(&rows)
+}
+
+/// `<kind>_attr_meta(<kind>_type, attr_name, attr_type)`: the declared attributes of every type
+/// in `types`.
+fn attr_meta_view(
+    dialect: SqlDialect,
+    attrs: &AttributePlan,
+    kind: &'static str,
+    types: &BTreeSet<String>,
+) -> ViewDef {
+    let type_col = format!("{kind}_type");
+    let mut rows: Vec<String> = Vec::new();
+    for t in types {
+        for (name, ty) in attrs.columns_of(kind, t) {
+            rows.push(format!(
+                "SELECT {} AS {type_col}, {} AS attr_name, {} AS attr_type",
+                dialect.string_literal(t),
+                dialect.string_literal(&name),
+                dialect.string_literal(ty.as_type_str())
+            ));
+        }
+    }
+    let body = if rows.is_empty() {
+        empty_relation(
+            dialect,
+            &[
+                (type_col.as_str(), dialect.null_text()),
+                ("attr_name", dialect.null_text()),
+                ("attr_type", dialect.null_text()),
+            ],
+        )
+    } else {
+        dialect.union_all(&rows)
+    };
+    ViewDef {
+        name: format!("{kind}_attr_meta"),
+        body,
+    }
+}
+
 fn type_map(dialect: SqlDialect, types: &BTreeSet<String>) -> String {
     if types.is_empty() {
         return empty_relation(
@@ -2449,9 +2566,8 @@ fn empty_relation(dialect: SqlDialect, cols: &[(&str, String)]) -> String {
 }
 
 /// Render a `declared`-typed SQL expression as the text `to_sql_value` would produce, so that
-/// `from_sql_value`, which
-/// `DuckDbLinkedOCEL`'s
-/// reader uses, parses it back to the identical value.
+/// `from_sql_value`, which the consolidated `DuckDB` reader uses, parses it back to the identical
+/// value.
 ///
 /// `Integer`/`Float` use the engine's round-trip-safe `CAST(.. AS VARCHAR)`, which need not match
 /// Rust's `Display` digit-for-digit, only parse back to the identical value.
@@ -2480,7 +2596,7 @@ fn coerce_attr_sql(
         return expr.to_string();
     }
     if from == A::Integer && to == A::Float {
-        return format!("CAST({expr} AS DOUBLE)");
+        return format!("CAST({expr} AS {})", dialect.attribute_sql_type(A::Float));
     }
     debug_assert_eq!(
         to,

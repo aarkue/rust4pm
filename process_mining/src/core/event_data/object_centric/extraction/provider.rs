@@ -167,7 +167,7 @@ pub fn preview_rows(
 /// This reads the whole column, because a partial answer would silently drop rows: the compiler
 /// lowers a dynamic type name from the domain. A provider whose backend has `SELECT DISTINCT`
 /// should prefer that. See
-/// [`DbconRowProvider::distinct_values`](super::DbconRowProvider::distinct_values).
+/// `DbconRowProvider::distinct_values` (feature `extraction-dbcon`).
 ///
 /// Values come back in first-seen order.
 ///
@@ -195,6 +195,7 @@ pub fn distinct_column_values(
 ///
 /// `SQLite` distinguishes a missing table from a missing column only in its message text, so every
 /// provider reading a `SQLite` file has to parse it. Shared so they cannot disagree.
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 pub(crate) fn sqlite_message_error(table: &str, message: &str) -> Option<ProviderError> {
     if message.contains("no such table") {
         return Some(ProviderError::UnknownTable {

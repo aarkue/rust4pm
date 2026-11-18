@@ -22,11 +22,17 @@ pub mod macros;
 #[cfg(any(feature = "extraction-blueprint", feature = "ocel-bundle"))]
 pub mod ocel_bundle;
 pub mod ocel_csv;
-pub mod ocel_json;
+pub(crate) mod ocel_json;
 pub mod ocel_sql;
 pub(crate) mod ocel_struct;
-pub mod ocel_xml;
+pub(crate) mod ocel_xml;
 pub mod readable;
+#[cfg(any(
+    feature = "ocel-sqlite",
+    feature = "ocel-duckdb",
+    feature = "extraction-blueprint"
+))]
+pub(crate) mod sql_columns;
 pub mod type_graph;
 pub mod utils;
 #[doc(inline)]

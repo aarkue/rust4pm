@@ -1,5 +1,8 @@
 //! Read-only OCEL view trait
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::Cow,
+    collections::{BTreeSet, HashMap, HashSet},
+};
 
 use chrono::{DateTime, FixedOffset};
 
@@ -48,6 +51,30 @@ pub trait ReadableOCEL {
             self.iter_objects()
                 .filter(move |o| o.object_type == type_name),
         )
+    }
+    /// Event types some event has that [`Self::event_types`] does not declare. Default impl
+    /// scans [`Self::iter_events`]; backends whose events always have a declared type should
+    /// override it.
+    fn undeclared_event_types(&self) -> BTreeSet<String> {
+        let declared: HashSet<&str> = self.event_types().iter().map(|t| t.name.as_str()).collect();
+        self.iter_events()
+            .filter(|e| !declared.contains(e.event_type.as_str()))
+            .map(|e| e.event_type.clone())
+            .collect()
+    }
+    /// Object types some object has that [`Self::object_types`] does not declare. Default impl
+    /// scans [`Self::iter_objects`]; backends whose objects always have a declared type should
+    /// override it.
+    fn undeclared_object_types(&self) -> BTreeSet<String> {
+        let declared: HashSet<&str> = self
+            .object_types()
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        self.iter_objects()
+            .filter(|o| !declared.contains(o.object_type.as_str()))
+            .map(|o| o.object_type.clone())
+            .collect()
     }
     /// Build an id-keyed object lookup.
     fn lookup(&self) -> Self::Lookup<'_>;

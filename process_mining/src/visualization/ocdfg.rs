@@ -1,5 +1,7 @@
 //! Laying out and drawing an [`OCDirectlyFollowsGraph`]: one DFG per object type in one picture.
 
+use std::collections::BTreeMap;
+
 use graphlay::json::LayoutRequest;
 use graphlay::layout::{EdgeRoute, Placement};
 use graphlay::svg::{SceneEdge, SceneNode, Stroke};
@@ -10,13 +12,13 @@ use serde_json::Value;
 
 use crate::core::process_models::ocdfg::OCDirectlyFollowsGraph;
 use crate::visualization::annotation::node_text;
+use crate::visualization::badges::{badges_of, push_badges, TypeBadge};
 use crate::visualization::dfg::{add_dfg, count_text, DfgEdgeRef, DfgNodeRef};
 use crate::visualization::engine::VisualizationError;
 use crate::visualization::graph_build::{GraphAcc, LabelWidth};
 use crate::visualization::model::{Annotations, LayoutSettings, ModelLayoutRequest, Visualize};
 use crate::visualization::styling::{
-    edge_label, key_color, lighten, node_label, push_extra_line, scene_edge, scene_node,
-    terminal_mark, BaseStyle,
+    edge_label, key_color, lighten, node_label, scene_edge, scene_node, terminal_mark, BaseStyle,
 };
 
 /// A node of an [`OCDirectlyFollowsGraph`] drawing, e.g., `{"kind": "start", "name": "orders"}`.
@@ -70,6 +72,9 @@ pub struct OcdfgBuildOptions {
     pub object_types: Vec<String>,
     /// Labels, layout weights and line widths by node and edge, instead of the counts.
     pub annotations: OcdfgAnnotations,
+    /// Object types drawn as a row of badges in the box of an activity, by activity. See
+    /// [`super::badges`].
+    pub badges: BTreeMap<String, Vec<TypeBadge>>,
 }
 
 impl Default for OcdfgBuildOptions {
@@ -79,6 +84,7 @@ impl Default for OcdfgBuildOptions {
             terminals: true,
             object_types: Vec::new(),
             annotations: OcdfgAnnotations::default(),
+            badges: BTreeMap::new(),
         }
     }
 }
@@ -157,13 +163,16 @@ impl Visualize for OCDirectlyFollowsGraph<'_> {
                     .then_some((start_key.as_str(), end_key.as_str())),
                 Some(GroupId(index as u32)),
                 |node| {
-                    let node = match node {
-                        DfgNodeRef::Start => OcdfgNodeRef::Start(object_type.clone()),
-                        DfgNodeRef::End => OcdfgNodeRef::End(object_type.clone()),
-                        DfgNodeRef::Activity(name) => OcdfgNodeRef::Activity(name),
+                    let (node, badges) = match node {
+                        DfgNodeRef::Start => (OcdfgNodeRef::Start(object_type.clone()), &[][..]),
+                        DfgNodeRef::End => (OcdfgNodeRef::End(object_type.clone()), &[][..]),
+                        DfgNodeRef::Activity(name) => {
+                            let badges = badges_of(&options.badges, Some(&name));
+                            (OcdfgNodeRef::Activity(name), badges)
+                        }
                     };
                     let note = node_text(annotations.nodes.get(&node));
-                    (node, note)
+                    (node, note, badges)
                 },
                 |edge| {
                     let edge = OcdfgEdgeRef {
@@ -241,9 +250,12 @@ impl Visualize for OCDirectlyFollowsGraph<'_> {
                 n
             }
         };
-        if let Some(note) = node_text(options.annotations.nodes.get(node)) {
-            push_extra_line(&mut n, note, base);
-        }
+        let activity = match node {
+            OcdfgNodeRef::Activity(name) => Some(name.as_str()),
+            OcdfgNodeRef::Start(_) | OcdfgNodeRef::End(_) => None,
+        };
+        let note = node_text(options.annotations.nodes.get(node));
+        push_badges(&mut n, badges_of(&options.badges, activity), note, base);
         n
     }
 
@@ -269,6 +281,7 @@ impl Visualize for OCDirectlyFollowsGraph<'_> {
 mod tests {
     use super::*;
     use crate::core::event_data::object_centric::linked_ocel::IndexLinkedOCEL;
+    use crate::core::process_models::object_centric::ocdfg::object_centric_dfg_struct::discover_ocdfg_from;
     use crate::test_utils::get_test_data_path;
     use crate::visualization::graph_build::heuristic_label_width;
     use crate::visualization::model::{self, Visualize};
@@ -284,7 +297,7 @@ mod tests {
     ) -> R {
         let ocel = OCEL::import_from_path(get_test_data_path().join("ocel").join(file)).unwrap();
         let locel = IndexLinkedOCEL::from(ocel);
-        let model = OCDirectlyFollowsGraph::create_from_ocel(&locel);
+        let model = discover_ocdfg_from(&locel);
         f(&locel, &model)
     }
 
@@ -477,6 +490,68 @@ mod tests {
                     .reduce(f64::max);
                 assert!(max.is_none_or(|m| m == widest), "{object_type}: {max:?}");
             }
+        });
+    }
+
+    /// An activity shared by several object types gets its badges once, on its one node.
+    #[test]
+    fn badges_make_an_activity_taller_and_wide_enough() {
+        use crate::visualization::badges::{badge_row_width, BADGE_PADDING, BADGE_ROW_HEIGHT};
+        use crate::visualization::dfg::ACTIVITY_HEIGHT;
+        with_model("pm4py-ocel20_example.jsonocel", |_, model| {
+            let activity = model
+                .object_type_to_dfg
+                .values()
+                .flat_map(|d| d.activities.keys())
+                .min()
+                .unwrap()
+                .clone();
+            let badges: Vec<TypeBadge> = serde_json::from_value(serde_json::json!([
+                {"object_type": "customers", "from": "orders", "card": "1..1", "from_card": "1..*"},
+                {"object_type": "employees", "card": "0..*"},
+            ]))
+            .unwrap();
+            let mut options = OcdfgBuildOptions::default();
+            options.badges.insert(activity.clone(), badges.clone());
+            let (graph, nodes, _) = model.to_graph(&options, &heuristic_label_width);
+            let at = nodes
+                .iter()
+                .position(|n| *n == OcdfgNodeRef::Activity(activity.clone()))
+                .unwrap();
+            let size = graph.nodes[at].size;
+            assert_eq!(size.height, ACTIVITY_HEIGHT + BADGE_ROW_HEIGHT);
+            assert!(size.width >= badge_row_width(&badges) + 2.0 * BADGE_PADDING);
+            for (i, n) in graph.nodes.iter().enumerate() {
+                if i != at && matches!(nodes[i], OcdfgNodeRef::Activity(_)) {
+                    assert_eq!(n.size.height, ACTIVITY_HEIGHT);
+                }
+            }
+            let layout = model::layout(model, &options).unwrap();
+            let scene = model::scene_from_layout(
+                model,
+                &layout,
+                &options,
+                &OcdfgStyle::default(),
+                &StyleOverrides::default(),
+            )
+            .unwrap();
+            let svg = crate::visualization::engine::render_scene_svg(&scene, None);
+            assert!(svg.contains("stroke-dasharray=\"2.2 1.6\""));
+            assert!(svg.contains("gl-mapsto"));
+
+            use crate::visualization::badges::BADGE_NOTE_HEIGHT;
+            let note = crate::visualization::NodeAnnotation {
+                label: Some("2 days".to_string()),
+            };
+            options
+                .annotations
+                .nodes
+                .insert(OcdfgNodeRef::Activity(activity), note);
+            let (graph, _, _) = model.to_graph(&options, &heuristic_label_width);
+            assert_eq!(
+                graph.nodes[at].size.height,
+                ACTIVITY_HEIGHT + BADGE_ROW_HEIGHT + BADGE_NOTE_HEIGHT
+            );
         });
     }
 }

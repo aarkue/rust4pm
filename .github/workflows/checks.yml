@@ -1,0 +1,52 @@
+name: Feature, wasm32, MSRV and dependency checks
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  each-feature:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-hack
+      # `ocel-duckdb` and `extraction-dbcon-duckdb` link an installed libduckdb, which their
+      # `-bundled` variants (checked here) build instead.
+      - name: Check each feature on its own
+        run: cargo hack check -p process_mining --lib --each-feature --no-dev-deps --exclude-features all,ocel-duckdb,extraction-dbcon-duckdb
+        env:
+          RUSTFLAGS: -D warnings
+
+  wasm32:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Check for wasm32-unknown-unknown
+        run: cargo check -p process_mining --target wasm32-unknown-unknown --features bindings,ocel-bundle,extraction-blueprint,extraction-dbcon
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89
+      # `extraction-dbcon-postgres` and `dataframes` need a newer Rust (see `rust-version` in
+      # process_mining/Cargo.toml).
+      - name: Check with Rust 1.89
+        run: cargo check -p process_mining --features ocel-sqlite,ocel-duckdb-bundled,extraction-dbcon,ocel-bundle-parquet,log-splitting,token-based-replay,bindings,visualization
+      - name: Check r4pm with Rust 1.89
+        run: cargo check -p r4pm
+
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2

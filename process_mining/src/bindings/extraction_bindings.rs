@@ -7,8 +7,8 @@
 //!
 //! [`extraction_validate`] and [`extraction_compile`] are pure: they take a [`Blueprint`] and an
 //! already-discovered [`ExtractionCatalog`], open no connection and read no row. The
-//! `extraction_*_items` pair reads sources held in the registry as bytes, which needs
-//! `ocel-sqlite` but still no connector.
+//! `extraction_*_items` bindings read sources held in the registry as bytes, with no connection:
+//! `SQLite` with `ocel-sqlite`, CSV, TSV, Parquet and XLSX with `extraction-dbcon`.
 //!
 //! `extraction_discover_catalog`, `extraction_column_domain`, `extraction_run` and
 //! `extraction_run_to_duckdb` open a real connection through `dbcon` and live in the sibling
@@ -16,24 +16,28 @@
 
 use macros_process_mining::register_binding;
 
-#[cfg(feature = "ocel-sqlite")]
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 use crate::bindings::{RegistryItem, StateRef};
-#[cfg(all(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
+#[cfg(feature = "extraction-dbcon")]
 use crate::core::event_data::object_centric::extraction::DbconRowProvider;
-use crate::core::event_data::object_centric::extraction::{
-    compile, validate, Blueprint, CompiledOcel, EmissionShape, ExtractionCatalog, ExtractionReport,
-    SqlDialect, ValidationError,
-};
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
+use crate::core::event_data::object_centric::extraction::ExtractionReport;
 #[cfg(feature = "ocel-sqlite")]
+use crate::core::event_data::object_centric::extraction::SqliteRowProvider;
+use crate::core::event_data::object_centric::extraction::{
+    compile, validate, Blueprint, CompiledOcel, EmissionShape, ExtractionCatalog, SqlDialect,
+    ValidationError,
+};
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 use crate::core::event_data::object_centric::extraction::{
     extract, provider::distinct_column_values, provider::preview_rows, Catalog, RowProvider,
-    SlimOcelSink, SqliteRowProvider, TablePreview,
+    SlimOcelSink, TablePreview,
 };
-#[cfg(feature = "ocel-sqlite")]
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 use crate::core::event_data::object_centric::linked_ocel::SlimLinkedOCEL;
-#[cfg(feature = "ocel-sqlite")]
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 use crate::core::tabular_source::TabularReader;
-#[cfg(feature = "ocel-sqlite")]
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 use std::collections::HashMap;
 
 /// Check `blueprint` against `catalog` for problems decidable from the schema alone, such as an
@@ -84,10 +88,11 @@ fn extraction_compile(
 /// database rather than copying the file in again.
 ///
 /// Returns the lock guards: the reader is not `Sync`, so it may only be touched while its guard is
-/// held. Two `source_id`s naming the same item share one guard, since locking the same mutex twice
-/// would deadlock, and items are opened in registry-id order rather than in `sources` iteration
-/// order, so two concurrent calls cannot take the same locks in opposite orders.
-#[cfg(feature = "ocel-sqlite")]
+/// held. A call waits while another call holds one of its sources. Two `source_id`s naming the
+/// same item share one guard, since locking the same mutex twice would deadlock, and items are
+/// locked in registry-id order, so two concurrent calls cannot take the same locks in opposite
+/// orders.
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 fn open_sources<'a>(
     state: StateRef<'a>,
     sources: &HashMap<String, String>,
@@ -111,6 +116,7 @@ fn open_sources<'a>(
             return Err(format!("item '{item_id}' is not a data source"));
         };
         let opened = match src.format() {
+            #[cfg(feature = "ocel-sqlite")]
             "sqlite" | "sqlite3" | "db" => src
                 .reader(SqliteRowProvider::from_slice)
                 .map(OpenedSource::Sqlite),
@@ -137,7 +143,7 @@ fn open_sources<'a>(
 }
 
 /// The entry holding one `source_id`, or an error naming it.
-#[cfg(feature = "ocel-sqlite")]
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 fn opened_for<'a, 'b>(
     opened: &'b [(Vec<String>, OpenedSource<'a>)],
     source_id: &str,
@@ -150,6 +156,7 @@ fn opened_for<'a, 'b>(
 }
 
 /// Merge `from` into `into`, keyed by `source_id` so neither source can clobber the other.
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 pub(super) fn merge_into(into: &mut ExtractionCatalog, from: ExtractionCatalog) {
     into.tables.extend(from.tables);
     into.domains.extend(from.domains);
@@ -160,6 +167,7 @@ pub(super) fn merge_into(into: &mut ExtractionCatalog, from: ExtractionCatalog) 
 ///
 /// A binding returning only a log handle has nowhere to put the [`ExtractionReport`], so a run
 /// that dropped every row of a mapping would otherwise look like a clean success.
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 pub(super) fn report_error_message(report: &ExtractionReport) -> Option<String> {
     if report.errors.is_empty() {
         return None;
@@ -182,7 +190,7 @@ pub(super) fn report_error_message(report: &ExtractionReport) -> Option<String> 
 }
 
 /// Every source's schema, merged into one catalog under its own `source_id`.
-#[cfg(feature = "ocel-sqlite")]
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 fn discover_all(opened: &[(Vec<String>, OpenedSource<'_>)]) -> Result<ExtractionCatalog, String> {
     let mut catalog = ExtractionCatalog::new();
     for (source_ids, reader) in opened {
@@ -194,19 +202,21 @@ fn discover_all(opened: &[(Vec<String>, OpenedSource<'_>)]) -> Result<Extraction
 }
 
 /// A source opened as whichever reader its format calls for.
-#[cfg(feature = "ocel-sqlite")]
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 enum OpenedSource<'a> {
+    #[cfg(feature = "ocel-sqlite")]
     Sqlite(TabularReader<'a, SqliteRowProvider>),
-    /// CSV, TSV or Parquet, which need `dbcon`'s readers. `SQLite` does not go here: `dbcon`
+    /// CSV, TSV, Parquet or XLSX, which need `dbcon`'s readers. `SQLite` does not go here: `dbcon`
     /// opens a `SQLite` database by path, and these sources are bytes.
     #[cfg(feature = "extraction-dbcon")]
     Dbcon(TabularReader<'a, DbconRowProvider>),
 }
 
-#[cfg(feature = "ocel-sqlite")]
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 impl OpenedSource<'_> {
     fn provider(&self) -> &dyn RowProvider {
         match self {
+            #[cfg(feature = "ocel-sqlite")]
             Self::Sqlite(r) => r.get(),
             #[cfg(feature = "extraction-dbcon")]
             Self::Dbcon(r) => r.get(),
@@ -215,6 +225,7 @@ impl OpenedSource<'_> {
 
     fn catalog(&self, source_id: &str) -> Result<ExtractionCatalog, String> {
         match self {
+            #[cfg(feature = "ocel-sqlite")]
             Self::Sqlite(r) => r
                 .get()
                 .discover_catalog(source_id)
@@ -226,7 +237,7 @@ impl OpenedSource<'_> {
 }
 
 /// The `source_id -> provider` map [`extract`] wants, borrowed from held guards.
-#[cfg(feature = "ocel-sqlite")]
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 fn provider_refs<'a>(
     opened: &'a [(Vec<String>, OpenedSource<'a>)],
 ) -> HashMap<String, &'a dyn RowProvider> {
@@ -243,9 +254,9 @@ fn provider_refs<'a>(
 ///
 /// The in-memory counterpart of `extraction_discover_catalog`: that one takes connection strings
 /// and needs a database connector, this one reads files already in the registry and needs only
-/// `ocel-sqlite`. `sources` maps each `source_id` a blueprint names to the registry id of an
-/// imported source file.
-#[cfg(feature = "ocel-sqlite")]
+/// `ocel-sqlite` or `extraction-dbcon`. `sources` maps each `source_id` a blueprint names to the
+/// registry id of an imported source file.
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 #[register_binding(stringify_error)]
 fn extraction_discover_catalog_items(
     #[bind(state)] state: StateRef<'_>,
@@ -262,7 +273,7 @@ fn extraction_discover_catalog_items(
 /// values a dynamic type name needs, and on wasm, where every source is byte-held, not at all.
 ///
 /// `sources` maps source id to registry item id. Every entry other than `source_id` is ignored.
-#[cfg(feature = "ocel-sqlite")]
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 #[register_binding(stringify_error)]
 fn extraction_column_domain_items(
     #[bind(state)] state: StateRef<'_>,
@@ -284,7 +295,7 @@ fn extraction_column_domain_items(
 /// the compiler needs a column's full set of values.
 ///
 /// `sources` maps source id to registry item id. Every entry other than `source_id` is ignored.
-#[cfg(feature = "ocel-sqlite")]
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 #[register_binding(stringify_error)]
 fn extraction_table_preview_items(
     #[bind(state)] state: StateRef<'_>,
@@ -310,15 +321,10 @@ fn extraction_table_preview_items(
 
 /// Run `blueprint` against sources held in the registry, returning the resulting log.
 ///
-/// Returns a fresh `SlimLinkedOCEL` rather than filling one given by `&mut`, because a binding
-/// cannot both take a `&mut` big type and read the registry: the `&mut` borrow of the state guard
-/// is live across the call, so lending the same guard out as a [`StateRef`] would not borrow-check.
-///
-/// The [`ExtractionReport`] (drop reasons, per-mapping counts) is not returned, because a binding
-/// returns either a big type or plain data, never both. A run whose report carries errors
-/// therefore fails with them rather than handing back a log that silently lost rows. Validate
+/// The [`ExtractionReport`] (drop reasons, per-mapping counts) is not returned. A run whose report
+/// carries errors fails with them rather than handing back a log that silently lost rows. Validate
 /// first with [`extraction_validate`] to catch what a report would otherwise tell you.
-#[cfg(feature = "ocel-sqlite")]
+#[cfg(any(feature = "ocel-sqlite", feature = "extraction-dbcon"))]
 #[register_binding(stringify_error)]
 fn extraction_run_items(
     #[bind(state)] state: StateRef<'_>,

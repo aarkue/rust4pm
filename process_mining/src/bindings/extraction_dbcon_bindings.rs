@@ -1,18 +1,13 @@
 //! The extraction bindings that open a real connection, behind the `extraction-dbcon` feature.
 //!
 //! The sibling `extraction_bindings` module holds the pure ones (`extraction_validate`,
-//! `extraction_compile`) and the ones reading registry-held `SQLite` bytes, which need no
-//! connector.
+//! `extraction_compile`) and the `extraction_*_items` ones, which read source bytes held in the
+//! registry and open no connection.
 //!
 //! Every function here takes `connections`, a map from the `source_id` a `Blueprint`'s nodes name
 //! to a `dbcon` connection string (`postgres://...`, `sqlite:...`, or a `.csv` path), as a
 //! separate argument. A blueprint never carries connection details, so the same blueprint can run
 //! against staging and then production unedited.
-//!
-//! [`extraction_run`] cannot return `(SlimLinkedOCEL, ExtractionReport)` directly, since
-//! `#[register_binding]` recognizes a big type by matching the whole return type's name against a
-//! fixed list and a tuple's rendered name never matches. It instead takes an empty
-//! `SlimLinkedOCEL` handle (from `locel_new`) as a `&mut` argument and fills it.
 
 // See `object_centric::mod`: `ExtractionError` is deliberately descriptive.
 #![allow(clippy::result_large_err)]
@@ -22,18 +17,14 @@ use std::collections::HashMap;
 use macros_process_mining::register_binding;
 
 use crate::bindings::extraction_bindings::merge_into;
-#[cfg(not(feature = "ocel-sqlite"))]
-use crate::bindings::extraction_bindings::report_error_message;
-#[cfg(not(feature = "ocel-sqlite"))]
-use crate::bindings::{RegistryItem, StateRef};
 use crate::core::event_data::object_centric::extraction::{
     discover_catalog, extract, Blueprint, Catalog, DbconProviderError, DbconRowProvider,
     ExtractionCatalog, ExtractionError, ExtractionReport, ExtractionSink, ExtractionTiming,
     ProviderError, RowProvider, SlimOcelSink, TablePreview,
 };
 use crate::core::event_data::object_centric::linked_ocel::SlimLinkedOCEL;
-#[cfg(not(feature = "ocel-sqlite"))]
-use crate::core::tabular_source::TabularReader;
+#[cfg(feature = "ocel-duckdb")]
+use crate::core::event_data::object_centric::ocel_sql::DuckDbWriteOptions;
 
 /// Failure discovering a catalog, connecting to a source, or running an extraction against one.
 ///
@@ -51,7 +42,7 @@ enum ExtractionRunError {
     Connect(DbconProviderError),
     /// The extraction itself failed.
     Extract(ExtractionError),
-    /// Opening the `DuckDB` output file failed.
+    /// Opening the `DuckDB` output file failed, or it exists and `overwrite` was not set.
     #[cfg(feature = "ocel-duckdb")]
     Sink(crate::core::event_data::object_centric::extraction::SinkError),
 }
@@ -219,7 +210,10 @@ fn extraction_table_preview(
         .get(&source_id)
         .ok_or_else(|| ExtractionRunError::UnknownSource(source_id.clone()))?;
     let provider = DbconRowProvider::connect(&source_id, connection_string)?;
-    // Taking the columns from the schema keeps them in the source's declared order.
+    // Columns come from the source's own schema rather than from the caller, so a preview is
+    // always aligned to something the catalog agrees exists. `TableSchema::columns` is a
+    // `BTreeMap`, so that order is alphabetical: stable for a table, but not its declared order,
+    // and `TablePreview::columns` is what says which is which.
     let catalog = discover_catalog(&source_id, connection_string)?;
     let schema =
         catalog
@@ -234,155 +228,55 @@ fn extraction_table_preview(
 
 const DEFAULT_PREVIEW_ROWS: usize = 5;
 
-/// Run `blueprint` against `connections`, filling `ocel` in place and returning the
-/// `ExtractionReport`.
+/// Run `blueprint` against `connections`, storing the extracted log under `output_id` and
+/// returning the `ExtractionReport`.
 ///
-/// `ocel` must be an empty log (get one from `locel_new`), since this overwrites it wholesale
-/// rather than merging into whatever it already held. `connections` maps each source id
+/// An item already stored under `output_id` is replaced. `connections` maps each source id
 /// `blueprint`'s nodes name to a `dbcon` connection string. The blueprint itself carries no
 /// connection details, so the same blueprint can run against different connections (a staging
 /// database, then production) with no edit.
 #[register_binding(stringify_error)]
 fn extraction_run(
-    ocel: &mut SlimLinkedOCEL,
     blueprint: Blueprint,
     connections: HashMap<String, String>,
     #[bind(default)] catalog: Option<ExtractionCatalog>,
-) -> Result<ExtractionReport, ExtractionRunError> {
+) -> Result<(SlimLinkedOCEL, ExtractionReport), ExtractionRunError> {
     let mut sink = SlimOcelSink::new();
     let report = run_extraction(&blueprint, &connections, catalog, &mut sink)?;
-    *ocel = sink.into_ocel();
-    Ok(report)
+    Ok((sink.into_ocel(), report))
 }
 
-/// Run `blueprint` against `connections`, streaming straight to a fresh `DuckDB` file at
-/// `target_path` (an existing file there is replaced) instead of holding the log in memory.
+/// Run `blueprint` against `connections`, streaming straight to a new `DuckDB` file at
+/// `db_path` instead of holding the log in memory.
+///
+/// `options` apply as in [`write_ocel_to_duckdb`]: without `overwrite`, an existing `db_path` is
+/// an error, and a failed run removes the new file again.
 ///
 /// The right choice for a source too large to fit in RAM. See [`extraction_run`] for a log kept
-/// as an in-process handle instead. The written file is read back with, for example,
-/// `read_ocel_from_duckdb`.
+/// as an in-process handle instead. Read the written file back by importing its `.duckdb` path
+/// as an `OCEL` or `SlimLinkedOCEL` (`Importable`, or the registry).
+///
+/// [`write_ocel_to_duckdb`]: crate::core::event_data::object_centric::ocel_sql::write_ocel_to_duckdb
 #[cfg(feature = "ocel-duckdb")]
 #[register_binding(stringify_error)]
 fn extraction_run_to_duckdb(
     blueprint: Blueprint,
     connections: HashMap<String, String>,
-    target_path: impl AsRef<std::path::Path>,
+    db_path: impl AsRef<std::path::Path>,
     #[bind(default)] catalog: Option<ExtractionCatalog>,
+    #[bind(default)] options: &DuckDbWriteOptions,
 ) -> Result<ExtractionReport, ExtractionRunError> {
-    let mut sink =
-        crate::core::event_data::object_centric::extraction::DuckDbSink::new(target_path)
-            .map_err(ExtractionRunError::Sink)?;
-    run_extraction(&blueprint, &connections, catalog, &mut sink)
-}
+    use crate::core::event_data::object_centric::extraction::DuckDbSink;
+    use crate::core::event_data::object_centric::ocel_sql::duckdb::schema::stream::remove_database;
 
-/// Discover the schema of sources held in the registry as bytes, for the formats `dbcon` reads
-/// from memory: CSV, TSV, Parquet and XLSX.
-///
-/// Behind `not(ocel-sqlite)`, since `extraction_discover_catalog_items` covers strictly more:
-/// this route goes through [`DbconRowProvider::from_bytes`], which cannot read a `SQLite` file at
-/// all (`dbcon` opens `SQLite` by path, and a registry item is bytes).
-///
-/// `sources` maps each `source_id` a blueprint names to the registry id of an imported file.
-#[cfg(not(feature = "ocel-sqlite"))]
-#[register_binding(stringify_error)]
-fn extraction_discover_catalog_items_dbcon(
-    #[bind(state)] state: StateRef<'_>,
-    sources: HashMap<String, String>,
-) -> Result<ExtractionCatalog, String> {
-    let mut catalog = ExtractionCatalog::new();
-    for (source_ids, reader) in open_items(state, &sources)? {
-        for source_id in source_ids {
-            merge_into(&mut catalog, reader.get().discover_catalog(&source_id));
-        }
+    let db_path = db_path.as_ref();
+    let mut sink = DuckDbSink::new(db_path, options).map_err(ExtractionRunError::Sink)?;
+    let result = run_extraction(&blueprint, &connections, catalog, &mut sink);
+    drop(sink);
+    if result.is_err() {
+        remove_database(db_path);
     }
-    Ok(catalog)
-}
-
-/// Run `blueprint` against registry-held sources, returning the resulting log.
-///
-/// Returns a fresh log rather than filling one given by `&mut`, because a binding cannot both take
-/// a `&mut` big type and read the registry (see `StateRef`). The `ExtractionReport` has nowhere to
-/// go for the same reason, so a run whose report carries errors fails with them.
-///
-/// Behind `not(ocel-sqlite)` for the reason [`extraction_discover_catalog_items_dbcon`] gives.
-#[cfg(not(feature = "ocel-sqlite"))]
-#[register_binding(stringify_error)]
-fn extraction_run_items_dbcon(
-    #[bind(state)] state: StateRef<'_>,
-    blueprint: Blueprint,
-    sources: HashMap<String, String>,
-    #[bind(default)] catalog: Option<ExtractionCatalog>,
-) -> Result<SlimLinkedOCEL, String> {
-    let opened = open_items(state, &sources)?;
-    let catalog = match catalog {
-        Some(c) => c,
-        None => {
-            let mut discovered = ExtractionCatalog::new();
-            for (source_ids, reader) in &opened {
-                for source_id in source_ids {
-                    merge_into(&mut discovered, reader.get().discover_catalog(source_id));
-                }
-            }
-            discovered
-        }
-    };
-    let provider_refs: HashMap<String, &dyn RowProvider> = opened
-        .iter()
-        .flat_map(|(source_ids, reader)| {
-            let provider = reader.get() as &dyn RowProvider;
-            source_ids.iter().map(move |id| (id.clone(), provider))
-        })
-        .collect();
-    let mut sink = SlimOcelSink::new();
-    let report =
-        extract(&blueprint, &catalog, &provider_refs, &mut sink).map_err(|e| e.to_string())?;
-    if let Some(msg) = report_error_message(&report) {
-        return Err(msg);
-    }
-    Ok(sink.into_ocel())
-}
-
-/// Borrow every source in `sources` as an opened provider, keyed the same way.
-///
-/// [`TabularSource::reader`](crate::core::tabular_source::TabularSource::reader) caches the
-/// opened source on the item, so a second discovery or run does not reparse the whole file.
-///
-/// Returns the lock guards: the reader is not `Sync`, so it may only be touched while its guard is
-/// held. Two `source_id`s naming the same item share one guard, since locking the same mutex twice
-/// would deadlock, and items are opened in registry-id order rather than in `sources` iteration
-/// order, so two concurrent calls cannot take the same locks in opposite orders.
-#[cfg(not(feature = "ocel-sqlite"))]
-fn open_items<'a>(
-    state: StateRef<'a>,
-    sources: &HashMap<String, String>,
-) -> Result<Vec<(Vec<String>, TabularReader<'a, DbconRowProvider>)>, String> {
-    let mut by_item: Vec<(&str, Vec<String>)> = Vec::new();
-    for (source_id, item_id) in sources {
-        match by_item.iter_mut().find(|(id, _)| *id == item_id.as_str()) {
-            Some((_, ids)) => ids.push(source_id.clone()),
-            None => by_item.push((item_id.as_str(), vec![source_id.clone()])),
-        }
-    }
-    by_item.sort_unstable();
-
-    let mut out = Vec::with_capacity(by_item.len());
-    for (item_id, source_ids) in by_item {
-        let named = source_ids.join(", ");
-        let Some(item) = state.get(item_id) else {
-            return Err(format!("no item '{item_id}' for source '{named}'"));
-        };
-        let RegistryItem::TabularSource(src) = item else {
-            return Err(format!("item '{item_id}' is not a data source"));
-        };
-        let format = src.format().to_string();
-        let reader = src
-            .reader(|bytes| {
-                DbconRowProvider::from_bytes(&named, &format, std::sync::Arc::from(bytes))
-            })
-            .map_err(|e| format!("source '{named}': {e}"))?;
-        out.push((source_ids, reader));
-    }
-    Ok(out)
+    result
 }
 
 #[cfg(test)]
@@ -469,7 +363,7 @@ mod tests {
     }
 
     /// Discover, validate and extract a real `SQLite` fixture entirely through the registry, as a
-    /// Python or `TypeScript` caller does, and check the returned handle resolves to a
+    /// Python or `TypeScript` caller does, and check the log stored under `output_id` is a
     /// `SlimLinkedOCEL` with the expected contents.
     ///
     /// Also pins that a blueprint carries no connection details: `bp`, built by
@@ -527,23 +421,15 @@ mod tests {
             "the fixture blueprint should validate: {errors:?}"
         );
 
-        // `locel_new` first, exactly as a real caller would, to get the handle `extraction_run`
-        // fills in place.
-        let locel_new = list_functions()
-            .into_iter()
-            .find(|b| b.name == "locel_new")
-            .expect("locel_new registered");
-        let handle_bytes = call(locel_new, &serde_json::json!({}), &state).expect("locel_new");
-        let handle: String = serde_json::from_slice(&handle_bytes).expect("handle deserializes");
-
+        let handle = "extracted";
         let run_binding = list_functions()
             .into_iter()
             .find(|b| b.name == "extraction_run")
             .expect("extraction_run registered");
         let run_args = serde_json::json!({
-            "ocel": handle,
             "blueprint": bp_json,
             "connections": connections,
+            "output_id": handle,
         });
         let report_bytes = call(run_binding, &run_args, &state).expect("extraction_run succeeds");
         // `ExtractionReport` derives `Serialize` but not `Deserialize` (some `ExtractionError`
@@ -570,9 +456,11 @@ mod tests {
         assert_eq!(rows_read, 3, "the fixture table has 3 rows");
 
         let items = state.items.read().unwrap();
-        let stored = items.get(&handle).expect("handle resolves in the registry");
+        let stored = items
+            .get(handle)
+            .expect("the log is stored under output_id");
         let RegistryItem::SlimLinkedOCEL(locel) = stored else {
-            panic!("handle resolved to {stored:?}, not a SlimLinkedOCEL");
+            panic!("output_id holds {stored:?}, not a SlimLinkedOCEL");
         };
         assert_eq!(locel.get_evs_of_type("create").count(), 2);
         assert_eq!(locel.get_evs_of_type("close").count(), 1);
@@ -607,13 +495,13 @@ mod tests {
     /// `every_connected_binding_has_non_empty_schemas` above checks the binding's schema, which
     /// is satisfied by a binding that writes nothing at all.
     ///
-    /// Reads the file back through
-    /// [`read_consolidated_ocel_from_duckdb_path`](crate::core::event_data::object_centric::ocel_sql::read_consolidated_ocel_from_duckdb_path)
-    /// rather than opening a `duckdb::Connection` here.
+    /// Reads the file back through [`OCEL::import_from_path`](crate::core::io::Importable), which
+    /// detects the consolidated schema.
     #[cfg(all(feature = "ocel-duckdb", feature = "ocel-sqlite"))]
     #[test]
     fn extraction_run_to_duckdb_writes_a_readable_file() {
-        use crate::core::event_data::object_centric::ocel_sql::read_consolidated_ocel_from_duckdb_path;
+        use crate::core::event_data::object_centric::OCEL;
+        use crate::core::io::Importable;
 
         let (_dir, path) = write_fixture_sqlite();
         let connection_string = format!("sqlite:{}", path.display());
@@ -628,7 +516,7 @@ mod tests {
         let args = serde_json::json!({
             "blueprint": flat_blueprint(),
             "connections": { "db": connection_string },
-            "target_path": out_path.to_str().unwrap(),
+            "db_path": out_path.to_str().unwrap(),
         });
         let bytes = call(binding, &args, &state).expect("call succeeds");
         let report: serde_json::Value =
@@ -643,28 +531,75 @@ mod tests {
             "the DuckDB file should have been written"
         );
 
-        let ocel = read_consolidated_ocel_from_duckdb_path(&out_path).expect("read duckdb back");
+        let ocel = OCEL::import_from_path(&out_path).expect("read duckdb back");
         assert_eq!(ocel.events.len(), 3);
         assert_eq!(ocel.objects.len(), 2);
     }
 
-    /// Pins that `extraction_run`'s `ocel` argument is declared as a `SlimLinkedOCEL` registry
-    /// reference, not a plain string: the schema shape `resolve_argument` needs to accept the
-    /// live handle `locel_new` hands back, exercised end-to-end by the registry test above.
+    #[cfg(all(feature = "ocel-duckdb", feature = "ocel-sqlite"))]
     #[test]
-    fn extraction_run_declares_ocel_as_a_registry_reference() {
+    fn extraction_run_to_duckdb_refuses_to_overwrite_by_default() {
+        let (_dir, path) = write_fixture_sqlite();
+        let out_dir = tempfile::tempdir().expect("tempdir");
+        let out_path = out_dir.path().join("out.duckdb");
+        std::fs::write(&out_path, b"keep").unwrap();
+        let state = AppState::default();
+        let binding = list_functions()
+            .into_iter()
+            .find(|b| b.name == "extraction_run_to_duckdb")
+            .expect("extraction_run_to_duckdb registered");
+        let mut args = serde_json::json!({
+            "blueprint": flat_blueprint(),
+            "connections": { "db": format!("sqlite:{}", path.display()) },
+            "db_path": out_path.to_str().unwrap(),
+        });
+
+        let err = call(binding, &args, &state).unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+        assert_eq!(std::fs::read(&out_path).unwrap(), b"keep");
+
+        args["options"] = serde_json::json!({ "overwrite": true });
+        call(binding, &args, &state).expect("call succeeds");
+        assert_ne!(std::fs::read(&out_path).unwrap(), b"keep");
+    }
+
+    #[cfg(all(feature = "ocel-duckdb", feature = "ocel-sqlite"))]
+    #[test]
+    fn extraction_run_to_duckdb_removes_the_file_after_a_failed_run() {
+        let out_dir = tempfile::tempdir().expect("tempdir");
+        let out_path = out_dir.path().join("out.duckdb");
+        let missing = out_dir.path().join("missing.sqlite");
+        let binding = list_functions()
+            .into_iter()
+            .find(|b| b.name == "extraction_run_to_duckdb")
+            .expect("extraction_run_to_duckdb registered");
+        let args = serde_json::json!({
+            "blueprint": flat_blueprint(),
+            "connections": { "db": format!("sqlite:{}", missing.display()) },
+            "db_path": out_path.to_str().unwrap(),
+        });
+        call(binding, &args, &AppState::default()).unwrap_err();
+        assert!(!out_path.exists());
+    }
+
+    /// The caller names the id the log is stored under, since the call returns the report.
+    #[test]
+    fn extraction_run_requires_output_id_for_the_log() {
         let binding = list_functions()
             .into_iter()
             .find(|b| b.name == "extraction_run")
             .expect("extraction_run registered");
+        assert!((binding.required_args)().iter().any(|a| a == "output_id"));
         let (_, schema) = (binding.args)()
             .into_iter()
-            .find(|(name, _)| name == "ocel")
-            .expect("an 'ocel' argument");
+            .find(|(name, _)| name == "output_id")
+            .expect("an 'output_id' argument");
         assert_eq!(
-            schema.get("x-registry-ref").and_then(|v| v.as_str()),
+            schema.get("x-registry-out").and_then(|v| v.as_str()),
             Some("SlimLinkedOCEL")
         );
+        assert!(!(binding.args)().iter().any(|(name, _)| name == "ocel"));
+        assert!((binding.return_type)().get("x-registry-ref").is_none());
     }
 
     /// The `TableSchema` route is what a caller building a catalog by hand uses, rather than

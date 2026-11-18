@@ -1,43 +1,33 @@
 use std::collections::HashSet;
+use std::io::BufRead;
 
-use std::fs::File;
-use std::io::{BufRead, BufReader};
-
-use flate2::bufread::GzDecoder;
-
-use quick_xml::Error as QuickXMLError;
-use quick_xml::Reader;
 use serde::{Deserialize, Serialize};
 
 use crate::core::event_data::case_centric::event_log_struct::{EventLog, Trace};
+use crate::core::event_data::case_centric::io::EventLogIOError;
+use crate::utils::control::Control;
 
-///
-/// Error encountered while parsing XES
-///
-#[derive(Debug, Clone)]
+/// Error in the content of XES data. IO and XML errors are other [`EventLogIOError`] variants.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum XESParseError {
     /// An Attribute was encountered outside an open `<log>` tag
     AttributeOutsideLog,
-    /// There is not top-level `<log>`
+    /// There is no top-level `<log>`
     NoTopLevelLog,
     /// Parsing error: Expected to have a previously constructed event available
     MissingLastEvent,
-    /// Parsing error: Expected to have a previously constructed traec available
+    /// Parsing error: Expected to have a previously constructed trace available
     MissingLastTrace,
-    /// Parsing error: Expected to have a be in a different parsing mode than the current state suggests
+    /// Parsing error: Expected to be in a different parsing mode than the current state suggests
     InvalidMode,
-    /// IO errror
-    IOError(std::sync::Arc<std::io::Error>),
-    /// XML error (e.g., incorrect XML format )
-    XMLParsingError(QuickXMLError),
-    /// Missing key on XML element (with expected key included)
-    MissingKey(&'static str),
     /// Invalid value of XML attribute with key (with key included)
     InvalidKeyValue(&'static str),
     /// Parsing Transformation Error: Expected that `XESOuterLogData` would be emitted first
     ExpectedLogData,
     /// Parsing Transformation Error: Expected that Trace would be emitted now
     ExpectedTraceData,
+    /// Attributes are nested deeper than [`MAX_ATTRIBUTE_DEPTH`](super::stream_xes::MAX_ATTRIBUTE_DEPTH)
+    AttributeNestingTooDeep,
 }
 
 impl std::fmt::Display for XESParseError {
@@ -46,29 +36,9 @@ impl std::fmt::Display for XESParseError {
     }
 }
 
-impl std::error::Error for XESParseError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            XESParseError::IOError(e) => Some(e),
-            XESParseError::XMLParsingError(e) => Some(e),
-            _ => None,
-        }
-    }
-}
+impl std::error::Error for XESParseError {}
 
-impl From<std::io::Error> for XESParseError {
-    fn from(e: std::io::Error) -> Self {
-        XESParseError::IOError(std::sync::Arc::new(e))
-    }
-}
-
-impl From<QuickXMLError> for XESParseError {
-    fn from(e: QuickXMLError) -> Self {
-        XESParseError::XMLParsingError(e)
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 ///
 ///
 /// Options for XES Import
@@ -85,11 +55,11 @@ pub struct XESImportOptions {
     ///
     /// Does not effect global event attributes
     pub ignore_event_attributes_except: Option<HashSet<String>>,
-    /// Optional date format to use when parsing `DateTimes` (first trying [`chrono::DateTime`] then falling back to [`chrono::NaiveDateTime`] with UTC timezone).
+    /// Optional date format to try first when parsing dates (with time zone, else as UTC)
     ///
-    /// See <https://docs.rs/chrono/latest/chrono/format/strftime/index.html> for all available Specifiers.
-    ///
-    /// Will fall back to default formats (e.g., rfc3339) if parsing fails using passed `date_format`
+    /// See <https://docs.rs/chrono/latest/chrono/format/strftime/index.html> for all available
+    /// specifiers. Dates not matching it are parsed as by
+    /// [`parse_timestamp`](crate::core::event_data::timestamp_utils::parse_timestamp).
     pub date_format: Option<String>,
     /// Sort events via timestamp key directly when parsing:
     /// * If None: No sorting (i.e., events of traces are included in order of occurence in event log)
@@ -98,23 +68,6 @@ pub struct XESImportOptions {
     ///   * If no value is present or it is invalid, the global default event attribute value with the provided key will be used (if it exists)
     ///   * if no valid timestamp is available from the event or the global default, it will be sorted before all other events (in stable ordering)
     pub sort_events_with_timestamp_key: Option<String>,
-    /// Verbose output during parsing
-    /// * If true: Print warnings and error messages to stdout
-    /// * If false: Suppress all warnings and error messages
-    pub verbose: bool,
-}
-
-impl Default for XESImportOptions {
-    fn default() -> Self {
-        XESImportOptions {
-            ignore_log_attributes_except: None,
-            ignore_trace_attributes_except: None,
-            ignore_event_attributes_except: None,
-            date_format: None,
-            sort_events_with_timestamp_key: None,
-            verbose: true,
-        }
-    }
 }
 ///
 /// Construct a `HashSet<Vec<u8>>` from a _collection_ of String, &str, ...
@@ -128,72 +81,17 @@ where
     keys.into_iter().map(|s| s.as_ref().to_string()).collect()
 }
 
-/// Parse XES from the given reader
-pub fn import_xes<T>(reader: T, options: XESImportOptions) -> Result<EventLog, XESParseError>
-where
-    T: BufRead,
-{
-    let (mut trace_stream, log_data) = super::stream_xes::XESParsingTraceStream::try_new(
-        Box::new(Reader::from_reader(Box::new(reader))),
-        options,
-    )?;
-
+/// Parse XES from `reader`, warning through `ctl`
+pub(crate) fn import_xes<'a>(
+    reader: Box<dyn BufRead + 'a>,
+    options: XESImportOptions,
+    ctl: &'a Control<'a>,
+) -> Result<EventLog, EventLogIOError> {
+    let (mut trace_stream, log_data) =
+        super::stream_xes::XESParsingTraceStream::try_new(reader, options, ctl)?;
     let traces: Vec<Trace> = trace_stream.collect();
-
     if let Some(e) = trace_stream.error {
         return Err(e);
     }
-
     Ok(EventLog::from_traces_and_log_data(traces, log_data))
-}
-
-///
-/// Import a XES [`EventLog`] from a file path
-///
-pub fn import_xes_path<P: AsRef<std::path::Path>>(
-    path: P,
-    options: XESImportOptions,
-) -> Result<EventLog, XESParseError> {
-    if path
-        .as_ref()
-        .as_os_str()
-        .to_str()
-        .is_some_and(|p| p.ends_with(".gz"))
-    {
-        let file = File::open(path)?;
-        let dec: GzDecoder<BufReader<&File>> = GzDecoder::new(BufReader::new(&file));
-        let reader = BufReader::new(dec);
-        import_xes(reader, options)
-    } else {
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
-        import_xes(reader, options)
-    }
-}
-
-///
-/// Import a XES [`EventLog`] directly from a string
-///
-pub fn import_xes_str(xes_str: &str, options: XESImportOptions) -> Result<EventLog, XESParseError> {
-    let reader = BufReader::new(xes_str.as_bytes());
-    import_xes(reader, options)
-}
-
-///
-/// Import a XES [`EventLog`] from a byte slice (&\[u8\])
-///
-/// * `is_compressed_gz`: Parse the passed `xes_data` as a compressed .gz archive
-///
-pub fn import_xes_slice(
-    xes_data: &[u8],
-    is_compressed_gz: bool,
-    options: XESImportOptions,
-) -> Result<EventLog, XESParseError> {
-    // let buf_reader = BufReader::new(reader);
-    if is_compressed_gz {
-        let gz: GzDecoder<&[u8]> = GzDecoder::new(xes_data);
-        let reader = BufReader::new(gz);
-        return import_xes(reader, options);
-    }
-    import_xes(BufReader::new(xes_data), options)
 }

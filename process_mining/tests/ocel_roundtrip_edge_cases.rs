@@ -7,18 +7,16 @@
 
 use std::collections::BTreeMap;
 
-use process_mining::core::event_data::object_centric::ocel_csv::{
-    export_ocel_csv_to_string, import_ocel_csv,
-};
+use process_mining::Exportable;
+
+use process_mining::core::event_data::object_centric::ocel_csv::import_ocel_csv;
 use process_mining::core::event_data::object_centric::{
     OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute,
     OCELRelationship, OCELType, OCELTypeAttribute, OCEL,
 };
 
 #[cfg(feature = "ocel-bundle")]
-use process_mining::core::event_data::object_centric::ocel_bundle::{
-    export_ocel_bundle, import_ocel_bundle, BundleExportOptions, ContainerLayout, StorageFormat,
-};
+use process_mining::core::event_data::object_centric::ocel_bundle::Container;
 
 /// A one-event, one-object log with `text` woven through every name, id and qualifier.
 fn log_named(text: &str) -> OCEL {
@@ -106,8 +104,9 @@ fn facts(ocel: &OCEL) -> Vec<String> {
 }
 
 fn through_csv(ocel: &OCEL) -> OCEL {
-    let text = export_ocel_csv_to_string(ocel).expect("csv export");
-    import_ocel_csv(text.as_bytes()).unwrap_or_else(|e| panic!("csv import: {e}\n---\n{text}"))
+    let bytes = ocel.export_to_bytes("ocel.csv").expect("csv export");
+    import_ocel_csv(bytes.as_slice(), &Default::default())
+        .unwrap_or_else(|e| panic!("csv import: {e}\n---\n{}", String::from_utf8_lossy(&bytes)))
 }
 
 #[cfg(feature = "ocel-bundle")]
@@ -115,20 +114,16 @@ fn through_bundle(ocel: &OCEL, label: &str) -> OCEL {
     let dir = tempfile::tempdir().expect("tempdir");
     let target = dir.path().join(label);
     std::fs::create_dir_all(&target).expect("mkdir");
-    export_ocel_bundle(
-        ocel,
-        &target,
-        BundleExportOptions {
-            layout: ContainerLayout::Directory,
-            storage: if cfg!(feature = "ocel-bundle-parquet") {
-                StorageFormat::Parquet
-            } else {
-                StorageFormat::Csv
-            },
-        },
-    )
-    .expect("bundle export");
-    import_ocel_bundle(&target).expect("bundle import")
+    let format = if cfg!(feature = "ocel-bundle-parquet") {
+        "ocel-parquet.zip"
+    } else {
+        "ocel.zip"
+    };
+    ocel.export_to_path_as(&target, format, Default::default())
+        .expect("bundle export");
+    Container::open(&target)
+        .and_then(|c| c.read())
+        .expect("bundle import")
 }
 
 /// Text that has no special meaning to either format, so both must give it back untouched.
@@ -175,7 +170,7 @@ fn the_csv_gives_back_its_own_reserved_characters() {
 fn a_header_that_opens_with_multi_byte_text_is_read_not_split() {
     let csv = "id,activity,timestamp,Ünïcödé,ot:日本\n\
                e1,open,2024-01-01T10:00:00+0000,vÄ,o1";
-    let ocel = import_ocel_csv(csv.as_bytes()).expect("import");
+    let ocel = import_ocel_csv(csv.as_bytes(), &Default::default()).expect("import");
     assert_eq!(ocel.objects[0].object_type, "日本");
     assert_eq!(ocel.events[0].attributes[0].name, "Ünïcödé");
     assert_eq!(
@@ -190,7 +185,7 @@ fn a_header_that_opens_with_multi_byte_text_is_read_not_split() {
 fn an_unescaped_backslash_in_a_hand_written_file_is_still_a_backslash() {
     let csv = "id,activity,timestamp,ot:file\n\
                e1,open,2024-01-01T10:00:00+0000,C:\\Users\\me";
-    let ocel = import_ocel_csv(csv.as_bytes()).expect("import");
+    let ocel = import_ocel_csv(csv.as_bytes(), &Default::default()).expect("import");
     assert_eq!(ocel.objects.len(), 1);
     assert_eq!(ocel.objects[0].id, "C:\\Users\\me");
 }
@@ -291,25 +286,20 @@ fn the_csv_trims_the_three_things_the_format_says_it_may() {
 }
 
 /// An o2o row naming a source the file never gave a type to is dropped. `strict` turns that
-/// silent loss into an error on its own, without `verbose` also being set.
+/// loss into an error.
 #[test]
-fn strict_rejects_an_unknown_o2o_source_without_needing_verbose() {
+fn strict_rejects_an_unknown_o2o_source() {
     let csv = "id,activity,timestamp,ot:item\n\
                ghost,o2o,,i1#has";
-    let strict = process_mining::core::event_data::object_centric::ocel_csv::OCELCSVImportOptions {
+    let strict = process_mining::OCELImportOptions {
         strict: true,
-        verbose: false,
         ..Default::default()
     };
-    let err =
-        process_mining::core::event_data::object_centric::ocel_csv::import_ocel_csv_with_options(
-            csv.as_bytes(),
-            &strict,
-        );
+    let err = import_ocel_csv(csv.as_bytes(), &strict);
     assert!(err.is_err(), "strict should reject an unknown o2o source");
 
     // Without `strict` it stays a skip, so the rest of the file still reads.
-    let lenient = import_ocel_csv(csv.as_bytes()).expect("lenient import");
+    let lenient = import_ocel_csv(csv.as_bytes(), &Default::default()).expect("lenient import");
     assert!(lenient.objects.iter().all(|o| o.relationships.is_empty()));
 }
 
@@ -334,7 +324,13 @@ fn the_bundle_gives_everything_back_exactly() {
         );
     }
 
-    for text in ["trailing ", " leading", "  ", "007", ""] {
+    // CSV storage reads an empty cell as a missing value, so only Parquet keeps `""`.
+    let empty: &[&str] = if cfg!(feature = "ocel-bundle-parquet") {
+        &[""]
+    } else {
+        &[]
+    };
+    for text in ["trailing ", " leading", "  ", "007"].iter().chain(empty) {
         let mut src = log_named("x");
         src.events[0].attributes[0].value = OCELAttributeValue::String(text.to_string());
         src.objects[0].attributes[0].value = OCELAttributeValue::String(text.to_string());

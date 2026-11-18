@@ -753,7 +753,7 @@ impl AlignmentContext {
 pub(crate) fn align(
     net: &SyncProductNet<'_>,
     ctx: &mut AlignmentContext,
-    limits: SearchLimits,
+    limits: SearchLimits<'_>,
 ) -> Result<AlignmentResult, AlignmentError> {
     let kept = ctx.allocated_bytes() > 0;
     let mut res = search_both_ends(net, ctx, limits);
@@ -768,7 +768,7 @@ pub(crate) fn align(
 fn search_both_ends(
     net: &SyncProductNet<'_>,
     ctx: &mut AlignmentContext,
-    limits: SearchLimits,
+    limits: SearchLimits<'_>,
 ) -> Result<SearchResult<PetriNetStep>, SearchError> {
     let mut forward = PetriNetAlignment {
         net,
@@ -793,7 +793,7 @@ fn search_both_ends(
 #[cfg(test)]
 pub(crate) fn align_forward(
     net: &SyncProductNet<'_>,
-    limits: SearchLimits,
+    limits: SearchLimits<'_>,
 ) -> Result<AlignmentResult, AlignmentError> {
     let mut space = PetriNetAlignmentSpace::default();
     let mut problem = PetriNetAlignment {

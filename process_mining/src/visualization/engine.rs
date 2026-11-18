@@ -7,6 +7,7 @@
 use graphlay::json::{LayoutRequest, TreeRequest};
 use graphlay::svg::{HeuristicMeasurer, Palette, Scene, Theme};
 use graphlay::{Direction, Graph, Layout, LayoutError, LayoutOptions, Point, Preset, TreeOptions};
+use macros_process_mining::register_binding;
 use serde_json::Value;
 
 /// Why a model could not be laid out or drawn.
@@ -175,7 +176,8 @@ pub fn tree_options_of(request: &TreeRequest) -> Result<TreeOptions, Visualizati
     Ok(options)
 }
 
-/// Lay the graph of `request` out with the layered engine.
+/// Lay the graph of `request` out with the layered engine, e.g., the `request` of a
+/// `<model>_layout_request`.
 ///
 /// `layout.nodes[i]` is where `request.graph.nodes[i]` went, and `layout.edges[i]` the route of
 /// `request.graph.edges[i]`. Nodes with a `position` steer the result as the options'
@@ -184,6 +186,7 @@ pub fn tree_options_of(request: &TreeRequest) -> Result<TreeOptions, Visualizati
 /// # Errors
 ///
 /// An invalid options patch, or a graph the engine rejects.
+#[register_binding(stringify_error)]
 pub fn layout_graph(request: &LayoutRequest) -> Result<Layout, VisualizationError> {
     let options = layout_options_of(request)?;
     Ok(graphlay::layout(&request.graph, &options)?)
@@ -198,9 +201,10 @@ pub fn layout_graph(request: &LayoutRequest) -> Result<Layout, VisualizationErro
 ///
 /// An invalid options patch, a position count other than the node count, or a node without a
 /// position.
+#[register_binding(stringify_error)]
 pub fn reroute_graph(
     request: &LayoutRequest,
-    positions: &[Point],
+    #[bind(default)] positions: &[Point],
 ) -> Result<Layout, VisualizationError> {
     let options = layout_options_of(request)?;
     if positions.is_empty() {
@@ -219,11 +223,13 @@ pub fn reroute_graph(
     Ok(graphlay::reroute(&graph, &options)?)
 }
 
-/// Lay the rooted tree or forest of `request` out with the tidy-tree engine.
+/// Lay the rooted tree or forest of `request` out with the tidy-tree engine, e.g., the `request`
+/// of `process_tree_layout_request`.
 ///
 /// # Errors
 ///
 /// An invalid options patch, or a graph that is not a rooted tree or forest.
+#[register_binding(stringify_error)]
 pub fn layout_tree(request: &TreeRequest) -> Result<Layout, VisualizationError> {
     let options = tree_options_of(request)?;
     Ok(graphlay::tree::layout(&request.graph, &options)?)
@@ -231,9 +237,29 @@ pub fn layout_tree(request: &TreeRequest) -> Result<Layout, VisualizationError> 
 
 /// Draw `scene` as a standalone SVG document. Elements that name no color of their own fall back
 /// to `palette`, or to graphlay's default palette.
+///
+/// Characters XML 1.0 forbids (e.g., control characters in an activity name) are replaced with
+/// U+FFFD, so the document always parses.
 pub fn render_scene_svg(scene: &Scene, palette: Option<&Palette>) -> String {
     let theme = Theme::new(palette.cloned().unwrap_or_default());
-    graphlay::svg::render(scene, &theme, &HeuristicMeasurer::new())
+    let svg = graphlay::svg::render(scene, &theme, &HeuristicMeasurer::new());
+    // graphlay escapes markup but passes these through, and every label and attribute of the
+    // scene ends up in this one string.
+    replace_non_xml_chars(svg)
+}
+
+fn is_xml_char(c: char) -> bool {
+    !matches!(c, '\u{0}'..='\u{8}' | '\u{B}' | '\u{C}' | '\u{E}'..='\u{1F}' | '\u{FFFE}' | '\u{FFFF}')
+}
+
+/// `s` with every character XML 1.0 forbids replaced by U+FFFD.
+fn replace_non_xml_chars(s: String) -> String {
+    if s.chars().all(is_xml_char) {
+        return s;
+    }
+    s.chars()
+        .map(|c| if is_xml_char(c) { c } else { '\u{FFFD}' })
+        .collect()
 }
 
 /// Checks that `layout` was made from a graph of `nodes` nodes and `edges` edges.
@@ -344,5 +370,29 @@ mod tests {
         assert!(check_layout(&layout, 2, 1).is_ok());
         let err = check_layout(&layout, 3, 1).unwrap_err();
         assert!(err.to_string().contains("3 nodes"), "{err}");
+    }
+
+    #[test]
+    fn control_characters_in_labels_still_give_well_formed_xml() {
+        use crate::core::process_models::case_centric::dfg::DirectlyFollowsGraph;
+        use crate::visualization::dfg::{DfgBuildOptions, DfgStyle};
+        let bad = [
+            "nul\u{0}",
+            "bell\u{7}",
+            "esc\u{1B}",
+            "nonchar\u{FFFF}",
+            "tab\tok",
+        ];
+        let mut dfg = DirectlyFollowsGraph::new();
+        for a in bad {
+            dfg.add_activity(a.to_string(), 1);
+        }
+        dfg.add_df_relation(bad[0].into(), bad[1].into(), 1);
+        let svg =
+            crate::visualization::svg(&dfg, &DfgBuildOptions::default(), &DfgStyle::default())
+                .unwrap();
+        crate::test_utils::assert_xml_well_formed(&svg);
+        assert!(svg.chars().all(is_xml_char));
+        assert!(svg.contains("nul\u{FFFD}"));
     }
 }

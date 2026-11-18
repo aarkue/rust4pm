@@ -15,18 +15,16 @@ use super::ocel_struct::OCEL;
 pub mod index_linked_ocel;
 use chrono::{DateTime, FixedOffset};
 pub use index_linked_ocel::IndexLinkedOCEL;
-/// An [`OCEL`] linked through object/event identifiers (i.e., [`String`]s)
-pub mod id_linked_ocel;
+/// A linked OCEL that grows by appending, with events and objects referenced by index
 pub mod slim_linked_ocel;
 
 /// Reverse-E2O lookups grouped by event type
-pub(crate) mod e2o_rev_type_index;
-pub use id_linked_ocel::IDLinkedOCEL;
+pub mod e2o_rev_type_index;
 pub use slim_linked_ocel::SlimLinkedOCEL;
 
 /// Linked access to an [`OCEL`], making it easy to follow event-to-object and object-to-object relationships, as well as their reverse
 ///
-/// See also [`IndexLinkedOCEL`] and [`IDLinkedOCEL`].
+/// See also [`IndexLinkedOCEL`] and [`SlimLinkedOCEL`].
 pub trait LinkedOCELAccess<'a> {
     /// Return and argument type/representation for events (i.e., what type is returned when events are accessed, e.g., through [`LinkedOCELAccess::get_e2o_rev`])
     type EventRepr: 'a + Clone + Eq + std::hash::Hash;
@@ -145,6 +143,48 @@ pub trait LinkedOCELAccess<'a> {
         ob: impl Borrow<Self::ObjectRepr>,
         attr_name: impl AsRef<str>,
     ) -> impl Iterator<Item = (&'a DateTime<FixedOffset>, &'a OCELAttributeValue)>;
+
+    /// Get the value an object attribute has at `time`: the latest change at or before `time`
+    ///
+    /// Of several changes with the same timestamp, the one recorded last wins. `None` if the
+    /// attribute has no change at or before `time`.
+    fn get_ob_attr_val_at(
+        &'a self,
+        ob: impl Borrow<Self::ObjectRepr>,
+        attr_name: impl AsRef<str>,
+        time: &DateTime<FixedOffset>,
+    ) -> Option<&'a OCELAttributeValue> {
+        self.get_ob_attr_vals(ob, attr_name)
+            .filter(|(t, _v)| *t <= time)
+            .max_by_key(|(t, _v)| *t)
+            .map(|(_t, v)| v)
+    }
+
+    /// Get the earliest value of an object attribute
+    ///
+    /// Of several changes with the same timestamp, the one recorded first wins.
+    fn get_ob_attr_val_first(
+        &'a self,
+        ob: impl Borrow<Self::ObjectRepr>,
+        attr_name: impl AsRef<str>,
+    ) -> Option<&'a OCELAttributeValue> {
+        self.get_ob_attr_vals(ob, attr_name)
+            .min_by_key(|(t, _v)| *t)
+            .map(|(_t, v)| v)
+    }
+
+    /// Get the latest value of an object attribute
+    ///
+    /// Of several changes with the same timestamp, the one recorded last wins.
+    fn get_ob_attr_val_last(
+        &'a self,
+        ob: impl Borrow<Self::ObjectRepr>,
+        attr_name: impl AsRef<str>,
+    ) -> Option<&'a OCELAttributeValue> {
+        self.get_ob_attr_vals(ob, attr_name)
+            .max_by_key(|(t, _v)| *t)
+            .map(|(_t, v)| v)
+    }
 
     /// Get an event based on its ID
     fn get_ev_by_id(&'a self, ev_id: impl AsRef<str>) -> Option<Self::EventRepr>;

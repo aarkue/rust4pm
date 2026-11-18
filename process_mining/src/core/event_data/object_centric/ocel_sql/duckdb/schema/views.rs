@@ -1,10 +1,17 @@
 //! On-demand generation of per-type wide views.
+use std::collections::HashMap;
+
 use duckdb::Connection;
 
+use crate::core::event_data::object_centric::io::OCELIOError;
+use crate::core::event_data::object_centric::ocel_sql::quoted_ident;
+
 use super::tables::{
-    event_attr_column, object_attr_column, quote_ident, T_EVENTS, T_EVENT_ATTR_META, T_OBJECTS,
-    T_OBJECT_ATTR_CHANGES,
+    event_attr_column, event_column_renames, object_attr_column, ColumnNames,
+    OBJECT_VIEW_BASE_COLS, T_E2O, T_EVENTS, T_EVENT_ATTR_COLUMNS, T_EVENT_ATTR_META, T_O2O,
+    T_OBJECTS, T_OBJECT_ATTR_CHANGES, T_OBJECT_ATTR_META,
 };
+use super::value::NULL_VALUE_TYPE;
 
 /// `DuckDB` cast target for an OCEL `value_type` string.
 fn cast_type(value_type: &str) -> &'static str {
@@ -26,12 +33,16 @@ fn distinct_types(con: &Connection, entity_table: &str) -> Result<Vec<String>, d
 }
 
 /// (`attr_name`, `cast_type`) for one object type. If a name has >1 `value_type`, coerce to VARCHAR.
+///
+/// `Null` values (`NULL_VALUE_TYPE`) have no type of their own and are not counted.
 fn object_attrs_for_type(
     con: &Connection,
     ocel_type: &str,
 ) -> Result<Vec<(String, &'static str)>, duckdb::Error> {
+    let typed = format!("a.value_type <> '{NULL_VALUE_TYPE}'");
     let sql = format!(
-        "SELECT a.name, count(DISTINCT a.value_type) AS n, any_value(a.value_type) AS vt \
+        "SELECT a.name, count(DISTINCT a.value_type) FILTER (WHERE {typed}) AS n, \
+         any_value(a.value_type) FILTER (WHERE {typed}) AS vt \
          FROM {T_OBJECT_ATTR_CHANGES} a JOIN {T_OBJECTS} e ON a.id = e.id \
          WHERE e.ocel_type = ? GROUP BY a.name ORDER BY a.name"
     );
@@ -39,13 +50,17 @@ fn object_attrs_for_type(
     let rows = stmt.query_map([ocel_type], |r| {
         let name: String = r.get(0)?;
         let n: i64 = r.get(1)?;
-        let vt: String = r.get(2)?;
+        let vt: Option<String> = r.get(2)?;
         Ok((name, n, vt))
     })?;
     let mut out = Vec::new();
     for row in rows {
         let (name, n, vt) = row?;
-        out.push((name, if n > 1 { "VARCHAR" } else { cast_type(&vt) }));
+        let cast = match vt {
+            Some(vt) if n == 1 => cast_type(&vt),
+            _ => "VARCHAR",
+        };
+        out.push((name, cast));
     }
     Ok(out)
 }
@@ -63,24 +78,48 @@ fn event_attrs_for_type(con: &Connection, ocel_type: &str) -> Result<Vec<String>
 ///
 /// An attribute aliased to its bare name would collide with the view's base columns
 /// (`id`/`time` for events, `id` for objects), so such a name takes an `_attr` suffix instead.
-pub fn generate_type_views(con: &Connection) -> Result<(), duckdb::Error> {
+/// Aliases are compared case-insensitively, like all `DuckDB` identifiers, so of two attributes
+/// whose names differ only in case, the second takes a `_<n>` suffix too.
+///
+/// View names take a `_<n>` suffix the same way, if they would reuse a schema table's name (type
+/// `attr_meta`) or another view's (types `Pay` and `pay`).
+pub fn generate_type_views(con: &Connection) -> Result<(), OCELIOError> {
     const BASE_COLS: &[&str] = &["id", "time"];
 
+    let mut view_names = ColumnNames::new(&[
+        T_EVENTS,
+        T_OBJECTS,
+        T_EVENT_ATTR_META,
+        T_OBJECT_ATTR_META,
+        T_OBJECT_ATTR_CHANGES,
+        T_E2O,
+        T_O2O,
+        T_EVENT_ATTR_COLUMNS,
+    ]);
+
+    let renamed: HashMap<String, String> = event_column_renames(con)?
+        .into_iter()
+        .map(|(column, attr)| (attr, column))
+        .collect();
     // Events: project the type's typed columns straight off the wide `events` table.
     for ty in distinct_types(con, T_EVENTS)? {
         let attrs = event_attrs_for_type(con, &ty)?;
+        let mut aliases = ColumnNames::new(BASE_COLS);
         let cols: String = attrs
             .iter()
             .map(|name| {
-                let alias = if BASE_COLS.contains(&name.as_str()) {
-                    quote_ident(&format!("{name}_attr"))
+                let alias = if BASE_COLS.iter().any(|b| b.eq_ignore_ascii_case(name)) {
+                    aliases.claim(&format!("{name}_attr"))
                 } else {
-                    quote_ident(name)
+                    aliases.claim(name)
                 };
-                format!(", {} AS {alias}", quote_ident(&event_attr_column(name)))
+                let column = renamed
+                    .get(name)
+                    .map_or_else(|| event_attr_column(name), |c| c.as_str().into());
+                format!(", {} AS {}", quoted_ident(&column), quoted_ident(&alias))
             })
             .collect();
-        let view = quote_ident(&format!("event_{ty}"));
+        let view = quoted_ident(&view_names.claim(&format!("event_{ty}")));
         let ty_lit = ty.replace('\'', "''");
         let sql = format!(
             "CREATE OR REPLACE VIEW {view} AS \
@@ -92,17 +131,19 @@ pub fn generate_type_views(con: &Connection) -> Result<(), duckdb::Error> {
     // Objects: pivot the EAV `object_attribute_changes` table into wide columns.
     for ty in distinct_types(con, T_OBJECTS)? {
         let attrs = object_attrs_for_type(con, &ty)?;
+        let mut aliases = ColumnNames::new(&OBJECT_VIEW_BASE_COLS);
         let cols: String = attrs
             .iter()
             .map(|(name, cast)| {
                 let n = name.replace('\'', "''");
-                let alias = quote_ident(&object_attr_column(name));
+                let alias = quoted_ident(&aliases.claim(&object_attr_column(name)));
                 format!(
-                    ", CAST(any_value(a.value) FILTER (WHERE a.name = '{n}') AS {cast}) AS {alias}"
+                    ", CAST(any_value(a.value) FILTER (WHERE a.name = '{n}' \
+                     AND a.value_type <> '{NULL_VALUE_TYPE}') AS {cast}) AS {alias}"
                 )
             })
             .collect();
-        let view = quote_ident(&format!("object_{ty}"));
+        let view = quoted_ident(&view_names.claim(&format!("object_{ty}")));
         let ty_lit = ty.replace('\'', "''");
         let sql = format!(
             "CREATE OR REPLACE VIEW {view} AS \
@@ -118,6 +159,7 @@ pub fn generate_type_views(con: &Connection) -> Result<(), duckdb::Error> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::stream::DuckDbWriteOptions;
     use super::*;
     use crate::core::event_data::object_centric::ocel_sql::duckdb::schema::stream::stream_ocel_file_to_duckdb;
     use crate::test_utils::get_test_data_path;
@@ -131,7 +173,16 @@ mod tests {
             .join("export")
             .join("stream-views.duckdb");
         let _ = std::fs::remove_file(&out);
-        stream_ocel_file_to_duckdb(&src, &out).unwrap();
+        stream_ocel_file_to_duckdb(
+            &src,
+            &out,
+            &DuckDbWriteOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+            &Default::default(),
+        )
+        .unwrap();
         let con = Connection::open(&out).unwrap();
         generate_type_views(&con).unwrap();
 
@@ -302,5 +353,38 @@ mod tests {
             .unwrap();
         assert_eq!(id_attr, "v1", "the `id` attribute value");
         assert_eq!(id_attr_attr, "v2", "the `id_attr` attribute value");
+    }
+
+    #[test]
+    fn type_views_never_replace_each_other_or_a_schema_table() {
+        let con = Connection::open_in_memory().unwrap();
+        super::super::tables::create_schema(&con).unwrap();
+        con.execute_batch(&super::super::tables::build_events_table(&[]))
+            .unwrap();
+        con.execute_batch(
+            "INSERT INTO events VALUES ('e1', 'Pay', TIMESTAMP '2024-01-01 00:00:00');
+             INSERT INTO events VALUES ('e2', 'pay', TIMESTAMP '2024-01-01 00:00:00');
+             INSERT INTO events VALUES ('e3', 'attr_meta', TIMESTAMP '2024-01-01 00:00:00');
+             INSERT INTO objects VALUES ('o1', 'attribute_changes');",
+        )
+        .unwrap();
+
+        generate_type_views(&con).unwrap();
+
+        for (view, id) in [
+            ("event_Pay", "e1"),
+            ("event_pay_2", "e2"),
+            ("event_attr_meta_2", "e3"),
+            ("object_attribute_changes_2", "o1"),
+        ] {
+            let ids: Vec<String> = con
+                .prepare(&format!("SELECT id FROM \"{view}\""))
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect();
+            assert_eq!(ids, [id], "{view}");
+        }
     }
 }

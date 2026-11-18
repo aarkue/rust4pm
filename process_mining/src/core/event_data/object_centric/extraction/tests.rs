@@ -172,10 +172,8 @@ fn case_1_flat_event_table_case_centric() {
     let stats = &report.per_mapping[0];
     // Zero, not `rows - distinct cases`. This blueprint's single mapping creates its case objects
     // through an inline object reference, and resolving a relation endpoint is not a
-    // deduplication (see `MappingStats::deduplicated`). Counting only the repeats among those
-    // resolutions is what the per-mapping id set used to buy, and a deferring sink could never
-    // have agreed with it. The three repeated case ids still produce three objects, not six; only
-    // the counter changed.
+    // deduplication (see `MappingStats::deduplicated`). The three repeated case ids still produce
+    // three objects, not six.
     assert_eq!(
         stats.deduplicated, 0,
         "an inline object reference resolves an endpoint; it does not deduplicate an entity"
@@ -485,15 +483,14 @@ fn case_4_join_right_prefix_matches_validate_prediction() {
     }
 }
 
-/// C1: a `Filter` hands its consumers the input's row verbatim, so its projected schema must be
-/// the input's, not a narrower one. `demanded_columns` used to propagate demand downward only,
-/// so a source read by both a mapping and a filter produced rows wider than the filter's own
-/// schema, and every mapping reading the filter then silently indexed the wrong slot.
+/// A `Filter` hands its consumers the input's row verbatim, so its projected schema must be the
+/// input's. A source read by both a mapping and a filter would otherwise produce rows wider than
+/// the filter's own schema, and every mapping reading the filter would index the wrong slot.
 ///
 /// The dropped column is deliberately not the last one: `b` sits between `a` and `c`, so the
 /// filter's narrower schema `{a, c}` puts `c` at slot 1, where the row actually carries `b`.
 #[test]
-fn c1_a_filter_reads_the_same_row_layout_its_consumers_index_it_with() {
+fn a_filter_reads_the_same_row_layout_its_consumers_index_it_with() {
     let fx = Fixture::new();
     {
         let con = fx.build();
@@ -579,9 +576,8 @@ fn c1_a_filter_reads_the_same_row_layout_its_consumers_index_it_with() {
 }
 
 /// The `right_<name>` rule is one rule, shared by demand routing and the runtime row assembly.
-/// A left table with a real column literally named `right_foo` used to route demand to the right
-/// input, so it was never fetched from the left and materialized as `Null`, while the runtime
-/// rule resolved it from the left.
+/// A left table's own column literally named `right_foo` is demanded from, and resolved from, the
+/// left input.
 #[test]
 fn a_left_column_literally_named_right_foo_resolves_from_the_left() {
     let fx = Fixture::new();
@@ -655,9 +651,9 @@ fn a_left_column_literally_named_right_foo_resolves_from_the_left() {
 /// there `right_id`'s unprefixed twin is the join key and so is demanded from the left anyway.
 ///
 /// Here `foo` exists on both sides but is neither a join key nor read by any mapping, so nothing
-/// demands it from the left. The runtime rule tested "does the left have `foo`?" against the
-/// projected left schema, which by then did not, so `right_foo` materialized as `Null` and the
-/// row was dropped for an unusable id. Both rules now ask both sides' full schemas.
+/// demands it from the left. Asked against the projected left schema, which lacks `foo`, the
+/// runtime rule would materialize `right_foo` as `Null` and drop the row for an unusable id, so
+/// both rules ask both sides' full schemas.
 #[test]
 fn a_right_prefixed_column_resolves_when_its_unprefixed_twin_is_not_a_join_key() {
     let fx = Fixture::new();
@@ -725,8 +721,7 @@ fn a_right_prefixed_column_resolves_when_its_unprefixed_twin_is_not_a_join_key()
     );
 }
 
-/// I-e: a join key column that is a `Float` used to render through `Value::canonical_string`,
-/// which is `None` for floats, so the join silently produced zero rows where SQL joins them.
+/// A `Float` join key joins as in SQL, although `Value::canonical_string` is `None` for floats.
 #[test]
 fn a_join_on_a_float_key_matches_rows_instead_of_silently_producing_none() {
     let fx = Fixture::new();
@@ -817,11 +812,11 @@ fn an_empty_projection_yields_empty_rows_not_every_column() {
     assert_eq!(widths, vec![0, 0, 0], "one empty row per table row");
 }
 
-// C3: endpoint resolution is staged, so mapping order cannot change the result.
+// Endpoint resolution is staged, so mapping order cannot change the result.
 
-/// Fixture, catalog and the three mappings of the C3 test, so the test can assemble them in
+/// Fixture, catalog and the three mappings of the mapping order test, so the test can assemble them in
 /// either order.
-fn c3_fixture() -> (Fixture, ExtractionCatalog, Vec<MappingEntry>, Vec<Node>) {
+fn mapping_order_fixture() -> (Fixture, ExtractionCatalog, Vec<MappingEntry>, Vec<Node>) {
     let fx = Fixture::new();
     {
         let con = fx.build();
@@ -897,18 +892,15 @@ fn c3_fixture() -> (Fixture, ExtractionCatalog, Vec<MappingEntry>, Vec<Node>) {
     )
 }
 
-/// C3: a blueprint whose `O2O` mapping is written before the mappings creating its endpoints
-/// must produce the same log as the reverse order.
-///
-/// Resolution used to see only what had been emitted so far, under a first-seen-node execution
-/// order the author never wrote, so this legal blueprint silently dropped its one relation. SQL
-/// cannot reproduce that either: a compiled relation view joins against all objects.
+/// A blueprint whose `O2O` mapping is written before the mappings creating its endpoints must
+/// produce the same log as the reverse order, as a compiled relation view joins against all
+/// objects.
 #[test]
-fn c3_mapping_order_does_not_change_the_result() {
+fn mapping_order_does_not_change_the_result() {
     use super::differential::snapshot;
 
     let run = |mappings: Vec<MappingEntry>| {
-        let (fx, catalog, _, nodes) = c3_fixture();
+        let (fx, catalog, _, nodes) = mapping_order_fixture();
         let bp = blank_blueprint(nodes, mappings);
         assert_eq!(validate(&bp, &catalog), vec![]);
         let provider = fx.provider();
@@ -918,7 +910,7 @@ fn c3_mapping_order_does_not_change_the_result() {
         (snapshot(sink.ocel()), report)
     };
 
-    let (_, _, mappings, _) = c3_fixture();
+    let (_, _, mappings, _) = mapping_order_fixture();
     let relation_first = mappings.clone();
     let mut endpoints_first = mappings;
     endpoints_first.rotate_left(1); // [A, B, o2o]
@@ -955,7 +947,7 @@ fn c3_mapping_order_does_not_change_the_result() {
 ///
 /// Event ids are minted per run, so the two runs are compared on everything except them.
 #[test]
-fn c3_an_inline_object_reference_resolves_against_every_object_whatever_the_order() {
+fn an_inline_object_reference_resolves_against_every_object_whatever_the_order() {
     use super::differential::{snapshot, OcelSnapshot};
 
     let build = || {
@@ -1060,7 +1052,7 @@ fn c3_an_inline_object_reference_resolves_against_every_object_whatever_the_orde
 /// invariant is named after a bug in the OCPQ extractor, which discarded `add_event`'s return
 /// value while checking `add_object`'s, so `total_events` overreported.)
 #[test]
-fn i4_a_duplicate_event_id_is_counted_as_deduplicated_not_as_emitted() {
+fn a_duplicate_event_id_is_counted_as_deduplicated_not_as_emitted() {
     let fx = Fixture::new();
     {
         let con = fx.build();
@@ -1119,10 +1111,9 @@ fn i4_a_duplicate_event_id_is_counted_as_deduplicated_not_as_emitted() {
     assert!(stats.dropped.is_empty(), "a repeat is not a drop");
 }
 
-/// I-d: a row whose event id repeats an earlier row's used to return before its inline object
-/// references were processed, so those relations vanished with no `DropReason`. They belong to
-/// the row, not to the event insertion, and a compiled relation view emits one per row regardless
-/// of how many distinct events the id column names.
+/// A row whose event id repeats an earlier row's still has its inline object references
+/// processed. They belong to the row, not to the event insertion, and a compiled relation view
+/// emits one per row regardless of how many distinct events the id column names.
 #[test]
 fn i_d_a_duplicate_event_id_keeps_that_row_s_inline_object_relations() {
     let fx = Fixture::new();
@@ -1192,9 +1183,8 @@ fn i_d_a_duplicate_event_id_keeps_that_row_s_inline_object_relations() {
     assert!(ocel.get_ob_by_id("o2").is_some(), "the second row's object");
 }
 
-/// I-c: `deduplicated` used to count every relation endpoint that resolved, so an `E2O` mapping
-/// over n rows with every endpoint present and every id distinct reported n deduplications while
-/// nothing had been deduplicated.
+/// A resolved relation endpoint is not a deduplication: an `E2O` mapping over n rows with every
+/// endpoint present and every id distinct deduplicates nothing.
 #[test]
 fn i_c_resolving_an_existing_endpoint_is_not_a_deduplication() {
     let fx = Fixture::new();
@@ -1306,10 +1296,10 @@ fn i_c_resolving_an_existing_endpoint_is_not_a_deduplication() {
     );
 }
 
-/// I-a: two object types sharing one rendered id under `IdRendering::Raw` (the default). The
-/// lookup ignored the type, so the second type's object silently merged into the first's, and
-/// writing the second's attributes onto it failed as soon as the first type had not declared that
-/// attribute name, aborting the whole extraction with `?`.
+/// Two object types sharing one rendered id under `IdRendering::Raw` (the default). A lookup
+/// ignoring the type would merge the second type's object into the first's, and writing the
+/// second's attributes onto it would fail as soon as the first type had not declared that
+/// attribute name, aborting the whole extraction.
 #[test]
 fn i_a_a_cross_type_id_collision_is_reported_not_merged_and_does_not_abort() {
     let fx = Fixture::new();
@@ -1486,9 +1476,9 @@ fn dynamic_type_a_type_gaining_an_attribute_after_an_object_exists_does_not_abor
     assert_eq!(note[0].1, OCELAttributeValue::String("hello".into()));
 }
 
-/// I-f: an empty id cell is not an identity. `''` is how an ERP export routinely writes "no id";
-/// accepting it collapsed every such row into one entity whose id is the empty string, counted as
-/// deduplication rather than as the loss it is.
+/// An empty id cell is not an identity. `''` is how an ERP export routinely writes "no id", and
+/// accepting it would collapse every such row into one entity whose id is the empty string,
+/// counted as deduplication instead of as the loss it is.
 #[test]
 fn i_f_an_empty_id_is_dropped_not_treated_as_an_identity() {
     let fx = Fixture::new();
@@ -1537,7 +1527,7 @@ fn i_f_an_empty_id_is_dropped_not_treated_as_an_identity() {
     assert_eq!(stats.deduplicated, 0, "they are not one entity seen twice");
 }
 
-/// I-g: two mappings declaring one attribute of one type under different value types. The sink
+/// Two mappings declaring one attribute of one type under different value types. The sink
 /// merges last-wins while each mapping converts its own rows against the type it declared, so the
 /// attribute ends up holding values of two types under one declaration and nothing noticed.
 #[test]
@@ -1657,7 +1647,7 @@ fn i_g_conflicting_attribute_declarations_are_reported_and_widened() {
 /// `run_e2o` gives up before it ever looks at the object endpoint of the row whose event is
 /// missing, so under `Create` the eager sink never creates that object, while a deferring sink,
 /// which cannot fail an event endpoint at all, staged it and synthesized it at finalize.
-fn i5_fixture(target: Target, node: &str) -> (Fixture, Blueprint, ExtractionCatalog) {
+fn missing_endpoint_fixture(target: Target, node: &str) -> (Fixture, Blueprint, ExtractionCatalog) {
     let fx = Fixture::new();
     {
         let con = fx.build();
@@ -1735,7 +1725,7 @@ fn e2o_target() -> Target {
     }
 }
 
-fn i5_run(
+fn missing_endpoint_run(
     bp: &Blueprint,
     catalog: &ExtractionCatalog,
     fx: &Fixture,
@@ -1749,7 +1739,7 @@ fn i5_run(
 
 /// `E2O`'s object side: the policy applies exactly as it does to an `O2O`'s target.
 #[test]
-fn i5_e2o_object_side_honors_every_missing_endpoint_policy() {
+fn e2o_object_side_honors_every_missing_endpoint_policy() {
     for (policy, expect_objects, expect_drops, expect_error) in [
         (MissingEndpointPolicy::Drop, 0, 2u64, false),
         // One relation is still dropped: its event endpoint is missing, and `Create` cannot
@@ -1757,10 +1747,10 @@ fn i5_e2o_object_side_honors_every_missing_endpoint_policy() {
         (MissingEndpointPolicy::Create, 1, 1, false),
         (MissingEndpointPolicy::Error, 0, 2, true),
     ] {
-        let (fx, mut bp, catalog) = i5_fixture(e2o_target(), "rels");
+        let (fx, mut bp, catalog) = missing_endpoint_fixture(e2o_target(), "rels");
         bp.on_missing_endpoint = policy;
         assert_eq!(validate(&bp, &catalog), vec![]);
-        let (sink, report) = i5_run(&bp, &catalog, &fx);
+        let (sink, report) = missing_endpoint_run(&bp, &catalog, &fx);
         let stats = report
             .per_mapping
             .iter()
@@ -1793,11 +1783,11 @@ fn i5_e2o_object_side_honors_every_missing_endpoint_policy() {
 /// event, since there is no timestamp to give it, so it degrades to `Drop` there while still
 /// creating objects.
 #[test]
-fn i5_create_cannot_synthesize_an_event_endpoint_and_degrades_to_drop() {
-    let (fx, mut bp, catalog) = i5_fixture(e2o_target(), "rels");
+fn create_cannot_synthesize_an_event_endpoint_and_degrades_to_drop() {
+    let (fx, mut bp, catalog) = missing_endpoint_fixture(e2o_target(), "rels");
     bp.on_missing_endpoint = MissingEndpointPolicy::Create;
     assert_eq!(validate(&bp, &catalog), vec![]);
-    let (sink, report) = i5_run(&bp, &catalog, &fx);
+    let (sink, report) = missing_endpoint_run(&bp, &catalog, &fx);
 
     assert_eq!(
         sink.ocel().get_all_evs().count(),
@@ -1824,7 +1814,7 @@ fn i5_create_cannot_synthesize_an_event_endpoint_and_degrades_to_drop() {
 /// an event's inline object reference: same policy, same code path, same counts as the `E2O`
 /// object side above.
 #[test]
-fn i5_inline_object_references_honor_every_missing_endpoint_policy() {
+fn inline_object_references_honor_every_missing_endpoint_policy() {
     for (policy, expect_objects, expect_drops, expect_error) in [
         (MissingEndpointPolicy::Drop, 0, 1u64, false),
         (MissingEndpointPolicy::Create, 1, 0, false),
@@ -1875,7 +1865,7 @@ fn i5_inline_object_references_honor_every_missing_endpoint_policy() {
             ),
         );
         assert_eq!(validate(&bp, &catalog), vec![]);
-        let (sink, report) = i5_run(&bp, &catalog, &fx);
+        let (sink, report) = missing_endpoint_run(&bp, &catalog, &fx);
         let stats = report
             .per_mapping
             .iter()
@@ -2700,7 +2690,7 @@ fn assert_both_sinks_agree(fx: &Fixture, bp: &Blueprint, catalog: &ExtractionCat
 
     let db_dir = tempdir().expect("tempdir");
     let db_path = db_dir.path().join("out.duckdb");
-    let mut duck_sink = DuckDbSink::new(&db_path).expect("open duckdb sink");
+    let mut duck_sink = DuckDbSink::new(&db_path, &Default::default()).expect("open duckdb sink");
 
     run_against_both(&mut slim_sink, &mut duck_sink, |sink| {
         extract(bp, catalog, &providers, sink).expect("extract")
@@ -2740,7 +2730,7 @@ fn assert_both_sinks_agree_on_separate_runs(
     let db_dir = tempdir().expect("tempdir");
     let db_path = db_dir.path().join("out.duckdb");
     let mut slim = SlimOcelSink::new();
-    let mut duck = DuckDbSink::new(&db_path).expect("open duckdb sink");
+    let mut duck = DuckDbSink::new(&db_path, &Default::default()).expect("open duckdb sink");
     let (slim_report, duck_report) =
         extract_separately(bp, catalog, &providers, &mut slim, &mut duck).expect("extract");
     assert_eq!(
@@ -2796,7 +2786,7 @@ fn case_11_both_sinks_agree_on_flat_event_table() {
 #[cfg(feature = "ocel-duckdb")]
 #[test]
 fn case_11_a_deferring_sink_agrees_with_an_eager_one_on_separate_runs() {
-    let (fx, catalog, mappings, nodes) = c3_fixture();
+    let (fx, catalog, mappings, nodes) = mapping_order_fixture();
     let bp = blank_blueprint(nodes, mappings);
     assert_eq!(validate(&bp, &catalog), vec![]);
 
@@ -2814,14 +2804,14 @@ fn case_11_a_deferring_sink_agrees_with_an_eager_one_on_separate_runs() {
 /// the mapping and the row are long gone. The policy silently degraded to `Drop`.
 #[cfg(feature = "ocel-duckdb")]
 #[test]
-fn i6_the_error_policy_reports_unresolved_endpoints_under_a_deferring_sink() {
+fn the_error_policy_reports_unresolved_endpoints_under_a_deferring_sink() {
     use super::duckdb_sink::DuckDbSink;
 
-    let (fx, mut bp, catalog) = i5_fixture(e2o_target(), "rels");
+    let (fx, mut bp, catalog) = missing_endpoint_fixture(e2o_target(), "rels");
     bp.on_missing_endpoint = MissingEndpointPolicy::Error;
     assert_eq!(validate(&bp, &catalog), vec![]);
 
-    let (eager_sink, eager) = i5_run(&bp, &catalog, &fx);
+    let (eager_sink, eager) = missing_endpoint_run(&bp, &catalog, &fx);
     drop(eager_sink);
     let eager_errors = eager
         .errors
@@ -2837,7 +2827,8 @@ fn i6_the_error_policy_reports_unresolved_endpoints_under_a_deferring_sink() {
     let provider = fx.provider();
     let providers = providers_of("db", &provider);
     let db_dir = tempdir().expect("tempdir");
-    let mut duck = DuckDbSink::new(db_dir.path().join("out.duckdb")).expect("open duckdb sink");
+    let mut duck = DuckDbSink::new(db_dir.path().join("out.duckdb"), &Default::default())
+        .expect("open duckdb sink");
     let deferred = extract(&bp, &catalog, &providers, &mut duck).expect("extract to duckdb");
 
     assert_eq!(deferred.finalize.unresolved_endpoints, 2);
@@ -2857,7 +2848,7 @@ fn i6_the_error_policy_reports_unresolved_endpoints_under_a_deferring_sink() {
 #[cfg(feature = "ocel-duckdb")]
 #[test]
 fn case_11_create_synthesizes_the_same_objects_under_both_sinks() {
-    let (fx, mut bp, catalog) = i5_fixture(e2o_target(), "rels");
+    let (fx, mut bp, catalog) = missing_endpoint_fixture(e2o_target(), "rels");
     bp.on_missing_endpoint = MissingEndpointPolicy::Create;
     assert_eq!(validate(&bp, &catalog), vec![]);
 
@@ -2868,15 +2859,12 @@ fn case_11_create_synthesizes_the_same_objects_under_both_sinks() {
     );
 }
 
-/// `Create`'s `O2O` half, and the case the endpoint gate regressed: a relation row whose source
-/// exists nowhere but that row.
+/// `Create`'s `O2O` half: a relation row whose source exists nowhere but that row.
 ///
-/// The eager path creates the source, then resolves the target against a log that now contains
-/// it, then creates the target too. A deferring sink cannot: it gates the target's ask on the
-/// source id, and evaluated that gate against `objects` from inside the very `INSERT INTO objects`
-/// that creates the source. The source was therefore never there, the target ask was ruled
-/// unreachable, the target was never created, and the relation was deleted for want of it. The
-/// gate has to test the set the statement is about to produce, not the one it reads.
+/// The eager path creates the source, then resolves the target against a log that contains it,
+/// then creates the target too. A deferring sink gates the target's ask on the source id from
+/// inside the `INSERT INTO objects` that creates the source, so the gate has to test the set the
+/// statement is about to produce, not the one it reads.
 #[cfg(feature = "ocel-duckdb")]
 #[test]
 fn case_11_create_synthesizes_both_ends_of_a_relation_only_o2o() {
@@ -3075,9 +3063,9 @@ fn case_11_an_o2o_target_ask_for_an_unresolvable_source_does_not_win_the_type() 
 
 /// Two object mappings naming the same id, the second carrying an attribute (the lazy-declaration shape, and
 /// an entirely ordinary blueprint). The second mapping's `resolve_object` answers `Exists` to an
-/// eager sink and `Deferred` to a deferring one; the deferring path used to treat the ensuing
-/// `add_object` rejection as a deduplication and throw the attributes away, so the same blueprint
-/// produced an object with a `note` under one sink and without it under the other.
+/// eager sink and `Deferred` to a deferring one, and the deferring path must still write the
+/// attributes after the ensuing `add_object` rejection, so both sinks produce an object with a
+/// `note`.
 #[cfg(feature = "ocel-duckdb")]
 #[test]
 fn case_11_a_deferring_sink_writes_a_second_mapping_s_attributes_too() {
@@ -3481,7 +3469,7 @@ fn case_12_join_reports_materialized_rows() {
 /// makes: `run_e2o` gives up on row 1 before it looks at the object endpoint, because the event
 /// does not resolve.
 #[cfg(feature = "ocel-duckdb")]
-fn finding1_fixture() -> (Fixture, Blueprint, ExtractionCatalog) {
+fn repeated_object_unresolved_event_fixture() -> (Fixture, Blueprint, ExtractionCatalog) {
     let fx = Fixture::new();
     {
         let con = fx.build();
@@ -3563,30 +3551,26 @@ fn finding1_fixture() -> (Fixture, Blueprint, ExtractionCatalog) {
     (fx, bp, catalog)
 }
 
-/// Finding 1: `DuckDbSink::resolve_deferred`'s `arg_min` used to range over every staged ask for
-/// an id, including the ones `finding1_fixture` sets up on purpose, so it picked `T1` (staged
-/// first, from the row whose event never resolves) for an id the eager path only ever asks about
-/// under `T2`.
+/// `DuckDbSink::resolve_deferred`'s `arg_min` ignores the staged asks the eager path never makes,
+/// such as the ones `repeated_object_unresolved_event_fixture` sets up on purpose: it must not pick `T1` (staged first,
+/// from the row whose event never resolves) for an id the eager path only asks about under `T2`.
 ///
-/// This runs `DuckDbSink` alone, pinning the type `arg_min` picks. The second divergence this
-/// fixture used to trigger, the `rels` mapping's own `deduplicated` count differing between the
-/// sinks because `resolve_object_endpoint` recorded the ghost ask at row-processing time and
-/// nothing at finalize could undo it, is gone with the per-mapping id set, and
-/// `both_sinks_agree_on_deduplicated_where_a_ghost_ask_used_to_split_them` runs this
-/// fixture through the full agreement helper to keep it that way.
+/// This runs `DuckDbSink` alone, pinning the type `arg_min` picks.
+/// `both_sinks_agree_on_deduplicated_despite_a_ghost_ask` runs this fixture
+/// through the full agreement helper.
 #[cfg(feature = "ocel-duckdb")]
 #[test]
-fn finding1_arg_min_ignores_asks_the_eager_path_never_makes() {
+fn arg_min_ignores_asks_the_eager_path_never_makes() {
     use super::duckdb_sink::DuckDbSink;
 
-    let (fx, bp, catalog) = finding1_fixture();
+    let (fx, bp, catalog) = repeated_object_unresolved_event_fixture();
     assert_eq!(validate(&bp, &catalog), vec![]);
 
     let provider = fx.provider();
     let providers = providers_of("db", &provider);
     let db_dir = tempdir().expect("tempdir");
     let db_path = db_dir.path().join("out.duckdb");
-    let mut duck = DuckDbSink::new(&db_path).expect("open duckdb sink");
+    let mut duck = DuckDbSink::new(&db_path, &Default::default()).expect("open duckdb sink");
     let report = extract(&bp, &catalog, &providers, &mut duck).expect("extract to duckdb");
     assert_eq!(
         report.finalize.objects_created, 1,
@@ -3604,24 +3588,22 @@ fn finding1_arg_min_ignores_asks_the_eager_path_never_makes() {
     );
 }
 
-/// Finding 2: two `Target::Object` mappings on the same node name the same id under two
-/// different types (only possible under `IdRendering::Raw`). An eager sink's `resolve_object`
-/// answers `Missing` for the second mapping (the id is taken by another type), so its `add_object`
-/// failure is unconditionally an `IdTypeCollision`. A deferring sink cannot answer that at
-/// `resolve_object` time, so it always takes the "maybe I already own this id" branch, and used to
-/// treat the `add_object` rejection that follows as "the id already exists, append to it",
-/// writing the second mapping's attribute onto the first mapping's object instead of reporting
-/// a collision.
+/// Two `Target::Object` mappings on the same node name the same id under two different types
+/// (only possible under `IdRendering::Raw`). An eager sink's `resolve_object` answers `Missing`
+/// for the second mapping (the id is taken by another type), so its `add_object` failure is
+/// unconditionally an `IdTypeCollision`. A deferring sink cannot answer that at `resolve_object`
+/// time, so it takes the "maybe I already own this id" branch, and must still report the
+/// `add_object` rejection that follows as a collision instead of writing the second mapping's
+/// attribute onto the first mapping's object.
 ///
 /// Runs `DuckDbSink` alone rather than through `assert_both_sinks_agree_on_separate_runs`: its
 /// full snapshot comparison also flags that a type declared with zero objects (`Item` here, once
 /// its one candidate object collides and is dropped) does not round-trip through `DuckDB`, which
-/// derives `object_types()` from `DISTINCT ocel_type` over the `objects` table rather than a
-/// persisted declaration. That is a separate, pre-existing limitation this fixture happens to
-/// trigger, not the content-merge bug this test pins.
+/// derives `object_types()` from `DISTINCT ocel_type` over the `objects` table instead of a
+/// persisted declaration. That is a separate limitation this fixture happens to trigger.
 #[cfg(feature = "ocel-duckdb")]
 #[test]
-fn finding2_a_deferring_sink_does_not_merge_a_type_collision() {
+fn a_deferring_sink_does_not_merge_a_type_collision() {
     use super::duckdb_sink::DuckDbSink;
 
     let fx = Fixture::new();
@@ -3687,7 +3669,7 @@ fn finding2_a_deferring_sink_does_not_merge_a_type_collision() {
     let providers = providers_of("db", &provider);
     let db_dir = tempdir().expect("tempdir");
     let db_path = db_dir.path().join("out.duckdb");
-    let mut duck = DuckDbSink::new(&db_path).expect("open duckdb sink");
+    let mut duck = DuckDbSink::new(&db_path, &Default::default()).expect("open duckdb sink");
     let report = extract(&bp, &catalog, &providers, &mut duck).expect("extract to duckdb");
 
     let item = report
@@ -3715,14 +3697,11 @@ fn finding2_a_deferring_sink_does_not_merge_a_type_collision() {
     );
 }
 
-/// Finding 8: `Blueprint::from_flat_event_table`'s case-object mapping now creates the case
-/// objects (the objects pass runs before the events pass), rather than merely finding them
-/// already created by the event mapping's inline `Create` reference. Pins the counter the
-/// three-phase split corrected: before it, this mapping's `entities_emitted` was 0, because the
-/// event mapping's own inline reference (also `Create`) always ran first and created the object,
-/// leaving the case mapping nothing to do but append.
+/// `Blueprint::from_flat_event_table`'s case-object mapping creates the case objects (the objects
+/// pass runs before the events pass), instead of finding them already created by the event
+/// mapping's inline `Create` reference, so its `entities_emitted` counts them.
 #[test]
-fn finding8_case_object_mapping_creates_the_case_objects_not_the_event_mapping() {
+fn case_object_mapping_creates_the_case_objects_not_the_event_mapping() {
     let fx = Fixture::new();
     {
         let con = fx.build();
@@ -3832,7 +3811,7 @@ fn compile_default(bp: &Blueprint, catalog: &ExtractionCatalog) -> super::compil
 /// `validate`, and a `{"version": 2, ...}` blueprint whose new constructs are additive fields
 /// was silently compiled under a v1 reading with zero entries in `errors`.
 #[test]
-fn i1_compile_refuses_a_blueprint_from_a_future_model_version() {
+fn compile_refuses_a_blueprint_from_a_future_model_version() {
     let (mut bp, catalog) = compilable_blueprint();
     bp.version = super::MODEL_VERSION + 1;
     assert!(!validate(&bp, &catalog).is_empty());
@@ -3849,12 +3828,11 @@ fn i1_compile_refuses_a_blueprint_from_a_future_model_version() {
     );
 }
 
-/// Duplicate node ids used to read differently in two places: `Blueprint::node` takes the first
-/// match, `full_node_schemas` lets the last win. `node_sql_inner` then took the op from one and the
-/// columns from another and emitted wrong SQL rather than none. `validate` rejects the duplicate;
-/// `compile` has to act on that.
+/// Duplicate node ids read differently in two places: `Blueprint::node` takes the first match,
+/// `full_node_schemas` lets the last win, so `node_sql_inner` would take the op from one and the
+/// columns from another. `validate` rejects the duplicate, and `compile` has to refuse it too.
 #[test]
-fn i1_compile_refuses_duplicate_node_ids() {
+fn compile_refuses_duplicate_node_ids() {
     let (mut bp, catalog) = compilable_blueprint();
     bp.nodes.push(Node {
         id: "docs".into(),
@@ -3882,7 +3860,7 @@ fn i1_compile_refuses_duplicate_node_ids() {
 /// empty view set. A caller that does not read `errors()` gets a silent empty log; the failure
 /// has to be in `errors`.
 #[test]
-fn i1_compile_refuses_an_unknown_table() {
+fn compile_refuses_an_unknown_table() {
     let (bp, _) = compilable_blueprint();
     let catalog = ExtractionCatalog::new();
     assert!(!validate(&bp, &catalog).is_empty());
@@ -3902,7 +3880,7 @@ fn i1_compile_refuses_an_unknown_table() {
 /// The complement: a blueprint that does validate still compiles exactly as before, so adding
 /// the precondition check did not turn a working compile into a rejection.
 #[test]
-fn i1_compile_still_emits_views_for_a_valid_blueprint() {
+fn compile_still_emits_views_for_a_valid_blueprint() {
     let (bp, catalog) = compilable_blueprint();
     assert_eq!(validate(&bp, &catalog), vec![]);
 
@@ -3915,23 +3893,18 @@ fn i1_compile_still_emits_views_for_a_valid_blueprint() {
 
 /// A declared type with zero matching rows is part of the log: `extract` declares every
 /// statically-named type up front so the declared type set is a function of the blueprint alone,
-/// not of which rows happen to match. `case_2`'s `CreditNote` is such a type, and the fixture used
-/// to run through `SlimOcelSink` only.
+/// not of which rows happen to match. `case_2`'s `CreditNote` is such a type.
 ///
-/// This is a known divergence, not closable from this module. The consolidated `DuckDB` layout has
-/// nowhere to record a declared object type: `declare_object_type` has no table to write to, and
-/// `read_ocel_from_duckdb` rebuilds the type list from `SELECT DISTINCT ocel_type FROM objects`.
-/// A type with no rows therefore cannot survive the round trip. Closing it needs an
-/// `object_attr_meta(object_type, attr_name, attr_type)` table in
-/// `ocel_sql::duckdb::schema::tables` and a declared-types union in that module's reader, i.e. a
-/// change to the crate's on-disk OCEL 2.0 `DuckDB` format, which the SQL compiler's
-/// `EmissionShape::Consolidated` output would have to emit as well.
+/// This is a known divergence, not closable from this module. The consolidated `DuckDB` layout
+/// records a declared object type only through its attributes in `object_attr_meta`, and
+/// `CreditNote` declares none, so a type with no rows and no attributes cannot survive the round
+/// trip.
 ///
 /// This test pins the divergence exactly: everything except the declared type set agrees, and
 /// the only difference is the zero-entity type. It fails the moment either half changes.
 #[cfg(feature = "ocel-duckdb")]
 #[test]
-fn i3_a_declared_type_with_zero_entities_is_lost_by_the_duckdb_layout() {
+fn a_declared_type_with_zero_entities_is_lost_by_the_duckdb_layout() {
     let (fx, bp, catalog) = case2_fixture_and_blueprint();
     assert_eq!(validate(&bp, &catalog), vec![]);
     let (slim, duck) = snapshot_both_sinks(&fx, &bp, &catalog);
@@ -3962,7 +3935,7 @@ fn i3_a_declared_type_with_zero_entities_is_lost_by_the_duckdb_layout() {
 /// its `(event_type, attr_name)` declared type, again a change to the shared reader.
 #[cfg(feature = "ocel-duckdb")]
 #[test]
-fn i4_an_attribute_declared_under_two_event_types_is_widened_by_the_duckdb_layout() {
+fn an_attribute_declared_under_two_event_types_is_widened_by_the_duckdb_layout() {
     let (fx, bp, catalog) = retyped_event_attribute_fixture();
     assert_eq!(validate(&bp, &catalog), vec![]);
     let (slim, duck) = snapshot_both_sinks(&fx, &bp, &catalog);
@@ -4007,7 +3980,7 @@ fn snapshot_both_sinks(
     let mut slim_sink = SlimOcelSink::new();
     let db_dir = tempdir().expect("tempdir");
     let db_path = db_dir.path().join("out.duckdb");
-    let mut duck_sink = DuckDbSink::new(&db_path).expect("open duckdb sink");
+    let mut duck_sink = DuckDbSink::new(&db_path, &Default::default()).expect("open duckdb sink");
     run_against_both(&mut slim_sink, &mut duck_sink, |sink| {
         extract(bp, catalog, &providers, sink).expect("extract")
     });
@@ -4023,24 +3996,18 @@ fn snapshot_both_sinks(
 /// `(type, name)`, from a query with no `ORDER BY`.
 #[cfg(feature = "ocel-duckdb")]
 #[test]
-fn i5_both_sinks_agree_when_one_type_is_declared_by_two_mappings() {
+fn both_sinks_agree_when_one_type_is_declared_by_two_mappings() {
     let (fx, bp, catalog) = twice_declared_type_fixture();
     assert_eq!(validate(&bp, &catalog), vec![]);
     assert_both_sinks_agree(&fx, &bp, &catalog);
 }
 
-/// A `NULL` cell written as an object attribute. `to_sql_value` renders `Null` as `("",
-/// "string")`, which `from_sql_value` reads back as `String("")` where the eager sink holds
-/// `Null`; `DuckDbSink` now stores it under the `"null"` type string instead, so the value
-/// round-trips exactly.
-///
-/// The declared-type half remains a known divergence. `read_ocel_from_duckdb` derives an
-/// object type's declared attributes from the `value_type` of the change rows it observes, not
-/// from any declaration, so a name whose values span two types yields two entries for it. Same
-/// shared-reader change.
+/// A `NULL` cell written as an object attribute is stored under the `"null"` value type, so it
+/// round-trips as `Null` (not `String("")`), and the reader does not derive a declared type from
+/// it.
 #[cfg(feature = "ocel-duckdb")]
 #[test]
-fn i6_a_null_object_attribute_round_trips_as_null() {
+fn a_null_object_attribute_round_trips_as_null() {
     let (fx, bp, catalog) = null_object_attribute_fixture();
     assert_eq!(validate(&bp, &catalog), vec![]);
     let (slim, duck) = snapshot_both_sinks(&fx, &bp, &catalog);
@@ -4061,13 +4028,8 @@ fn i6_a_null_object_attribute_round_trips_as_null() {
         "the extractor declares note once, as the string the blueprint asked for"
     );
     assert_eq!(
-        duck.object_types["Order"],
-        vec![
-            ("note".to_string(), "null".to_string()),
-            ("note".to_string(), "string".to_string())
-        ],
-        "the reader derives object attribute types from observed values, so a name whose \
-         values span two types yields two entries"
+        slim.object_types["Order"], duck.object_types["Order"],
+        "a Null value has no type of its own, so the reader declares note only as declared"
     );
 }
 
@@ -4293,7 +4255,7 @@ fn null_object_attribute_fixture() -> (Fixture, Blueprint, ExtractionCatalog) {
 /// makes them reconcilable: `emitted - unresolved_endpoints` is the same on both sides.
 #[cfg(feature = "ocel-duckdb")]
 #[test]
-fn i7_entities_emitted_counts_hand_offs_not_survivors_for_a_deferring_sink() {
+fn entities_emitted_counts_hand_offs_not_survivors_for_a_deferring_sink() {
     let (fx, bp, catalog) = dangling_e2o_fixture();
     assert_eq!(validate(&bp, &catalog), vec![]);
 
@@ -4515,8 +4477,8 @@ fn one_object_id_on_a_hundred_thousand_rows_extracts_cleanly() {
 }
 
 /// Two static object mappings on one row, writing the same `(id, attribute, time)` with the same
-/// value. First-wins now spans every mapping, because it lives in the sink rather than in one
-/// mapping's own bookkeeping, so this stores one value, not two, and is not an error.
+/// value. First-wins spans every mapping, because it lives in the sink, so this stores one value,
+/// not two, and is not an error.
 fn repeated_attribute_fixture(second_value: &str) -> (Fixture, Blueprint, ExtractionCatalog) {
     let fx = Fixture::new();
     {
@@ -4629,20 +4591,16 @@ fn both_sinks_keep_exactly_one_value_per_id_attribute_time() {
     }
 }
 
-/// The two sinks must agree on `deduplicated` on the
-/// fixture that used to make them disagree.
+/// The two sinks agree on `deduplicated` for `repeated_object_unresolved_event_fixture`.
 ///
-/// `finding1_fixture` interleaves a repeated object id with a row whose event never resolves. A
-/// deferring sink cannot fail `resolve_event` at the call site, so it reached
-/// `resolve_object_endpoint` on a row the eager path abandons earlier, and the per-mapping id set
-/// that function touched had already recorded the ghost ask by the time `finalize` could tell the
-/// relation would not survive. Nothing at finalize could undo it, so the `rels` mapping's
-/// `deduplicated` differed between the sinks. With no such set, endpoint resolution counts nothing
-/// on either side and the divergence is closed by construction.
+/// It interleaves a repeated object id with a row whose event never resolves. A deferring sink
+/// cannot fail `resolve_event` at the call site, so it reaches `resolve_object_endpoint` on a row
+/// the eager path abandons earlier. Endpoint resolution counts nothing on either side, so that
+/// ghost ask cannot show up in the `rels` mapping's `deduplicated`.
 #[cfg(feature = "ocel-duckdb")]
 #[test]
-fn both_sinks_agree_on_deduplicated_where_a_ghost_ask_used_to_split_them() {
-    let (fx, bp, catalog) = finding1_fixture();
+fn both_sinks_agree_on_deduplicated_despite_a_ghost_ask() {
+    let (fx, bp, catalog) = repeated_object_unresolved_event_fixture();
     assert_eq!(validate(&bp, &catalog), vec![]);
 
     let (slim_report, _) = assert_both_sinks_agree_on_separate_runs(&fx, &bp, &catalog);
@@ -4657,9 +4615,8 @@ fn both_sinks_agree_on_deduplicated_where_a_ghost_ask_used_to_split_them() {
     );
 }
 
-/// The other half: a *cross-mapping* repeat, which the old per-mapping set could not see at all.
-/// Two object mappings name one id; the second one finds an object the sink already has, which is
-/// now a deduplication under both sinks.
+/// The other half: a *cross-mapping* repeat. Two object mappings name one id, and the second one
+/// finds an object the sink already has, which is a deduplication under both sinks.
 #[cfg(feature = "ocel-duckdb")]
 #[test]
 fn a_second_mapping_finding_the_first_s_object_is_a_deduplication() {
@@ -4675,7 +4632,7 @@ fn a_second_mapping_finding_the_first_s_object_is_a_deduplication() {
             .expect("stats");
         assert_eq!(
             with_attr.deduplicated, 1,
-            "the sink already had this id, which is what `deduplicated` now counts"
+            "the sink already had this id, which is what `deduplicated` counts"
         );
     }
 }

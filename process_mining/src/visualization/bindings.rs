@@ -1,20 +1,17 @@
 //! The visualization bindings, registered in the [`crate::bindings`] registry: five per model
 //! (`<model>_layout_request`, `<model>_layout`, `<model>_scene_from_layout`, `<model>_svg` and
-//! `<model>_svg_from_layout`), and [`layout_graph`], [`reroute_graph`], [`layout_tree`] and
-//! [`render_scene_svg`] for any model.
+//! `<model>_svg_from_layout`), and [`render_scene_svg`] for any model. [`engine::layout_graph`],
+//! [`engine::reroute_graph`] and [`engine::layout_tree`] are registered where they are defined.
 
-use std::collections::BTreeMap;
-
-use graphlay::json::{LayoutRequest, TreeRequest};
 use graphlay::svg::{Palette, Scene};
-use graphlay::{Layout, Point};
+use graphlay::Layout;
 use macros_process_mining::register_binding;
 
 use crate::core::event_data::case_centric::utils::partial_orders::PartialOrderTrace;
 use crate::core::event_data::object_centric::linked_ocel::SlimLinkedOCEL;
 use crate::core::process_models::dfg::DirectlyFollowsGraph;
 use crate::core::process_models::object_centric::ocpn::json::ObjectCentricPetriNetJson;
-use crate::core::process_models::oc_declare::{OCDeclareArc, ObjectInvolvementCounts};
+use crate::core::process_models::oc_declare::OCDeclareArc;
 use crate::core::process_models::ocdfg::OCDirectlyFollowsGraph;
 use crate::core::process_models::process_tree::ProcessTree;
 use crate::visualization::{
@@ -126,15 +123,6 @@ model_bindings! {
     oc_declare_svg_from_layout,
 }
 
-/// Per activity of an OCEL, how many objects of each type one of its events involves, as the
-/// `involvements` of the OC-DECLARE build options take them.
-#[register_binding]
-pub fn oc_declare_involvements(
-    locel: &SlimLinkedOCEL,
-) -> BTreeMap<String, BTreeMap<String, ObjectInvolvementCounts>> {
-    oc_declare::oc_declare_involvements(locel)
-}
-
 model_bindings! {
     tree: (ProcessTree),
     process_tree::{ProcessTreeBuildOptions, ProcessTreeStyle, ProcessTreeLayoutRequest},
@@ -161,30 +149,6 @@ model_bindings! {
     partial_order::{PartialOrderBuildOptions, PartialOrderStyle, PartialOrderLayoutRequest},
     partial_order_layout, partial_order_svg, partial_order_layout_request,
     partial_order_scene_from_layout, partial_order_svg_from_layout,
-}
-
-/// Lay out the graph of a layout request, e.g., the `request` of a `<model>_layout_request`.
-#[register_binding(stringify_error)]
-pub fn layout_graph(request: LayoutRequest) -> Result<Layout, VisualizationError> {
-    engine::layout_graph(&request)
-}
-
-/// Keep every node of a layout request where it is and route the edges again, e.g., after the
-/// user dragged a node. `positions` are the node centers in node order. Without them, every node
-/// of the request needs a `position`.
-#[register_binding(stringify_error)]
-pub fn reroute_graph(
-    request: LayoutRequest,
-    #[bind(default)] positions: Vec<Point>,
-) -> Result<Layout, VisualizationError> {
-    engine::reroute_graph(&request, &positions)
-}
-
-/// Lay out the rooted tree or forest of a tidy-tree request, e.g., the `request` of
-/// `process_tree_layout_request`.
-#[register_binding(stringify_error)]
-pub fn layout_tree(request: TreeRequest) -> Result<Layout, VisualizationError> {
-    engine::layout_tree(&request)
 }
 
 /// Draw a scene, e.g., from a `<model>_scene_from_layout`, as a standalone SVG document. Elements
@@ -272,14 +236,14 @@ mod tests {
     /// export the rearranged drawing with a dimmed node.
     #[test]
     fn a_request_goes_through_layout_reroute_scene_and_svg() {
-        use crate::core::process_models::dfg::DirectlyFollowsGraph;
+        use crate::discovery::case_centric::dfg::discover_dfg;
         use crate::test_utils::get_test_data_path;
         use crate::{EventLog, Importable};
         use serde_json::json;
 
         let path = get_test_data_path().join("xes").join("small-example.xes");
         let log = EventLog::import_from_path(path).unwrap();
-        let dfg = serde_json::to_value(DirectlyFollowsGraph::discover(&log)).unwrap();
+        let dfg = serde_json::to_value(discover_dfg(&log)).unwrap();
         let options = json!({"layout_patch": {"routing": {"style": "diagonal"}}});
 
         let request = call(
@@ -411,13 +375,13 @@ mod tests {
 
     #[test]
     fn an_svg_binding_takes_a_style() {
-        use crate::core::process_models::dfg::DirectlyFollowsGraph;
+        use crate::discovery::case_centric::dfg::discover_dfg;
         use crate::test_utils::get_test_data_path;
         use crate::{EventLog, Importable};
         use serde_json::json;
         let path = get_test_data_path().join("xes").join("small-example.xes");
         let log = EventLog::import_from_path(path).unwrap();
-        let dfg = serde_json::to_value(DirectlyFollowsGraph::discover(&log)).unwrap();
+        let dfg = serde_json::to_value(discover_dfg(&log)).unwrap();
         let svg = call(
             "dfg_svg",
             json!({"dfg": dfg, "style": {"start_fill": "#123456"}}),

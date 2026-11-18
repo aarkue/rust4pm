@@ -45,7 +45,8 @@ pub enum StorageFormat {
     /// Every cell is text, read according to the declared attribute type.
     #[default]
     Csv,
-    /// Attribute types are carried by the file's own schema.
+    /// Attribute types are carried by the file's own schema. Timestamps are written in
+    /// microseconds, so sub-microsecond parts are dropped; milli- and nanoseconds are read too.
     Parquet,
 }
 

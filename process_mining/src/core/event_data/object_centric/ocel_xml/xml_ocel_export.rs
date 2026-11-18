@@ -1,40 +1,31 @@
+use chrono::DateTime;
 use quick_xml::{
     events::{BytesDecl, BytesText, Event},
     Writer,
 };
-use std::{
-    fs::File,
-    io::{BufWriter, Write},
-};
+use std::io::Write;
 
-use crate::{
-    core::event_data::object_centric::{
-        ocel_struct::{OCELRelationship, OCELTypeAttribute},
+use crate::core::{
+    event_data::object_centric::{
+        ocel_struct::{OCELAttributeValue, OCELRelationship, OCELTypeAttribute},
         readable::ReadableOCEL,
     },
-    XMLWriterWrapper,
+    io::xml_chars,
 };
 const OK: Result<(), std::io::Error> = Ok(());
 
-///
-/// Export an OCEL to an XML Writer
-///
-pub fn export_ocel_xml<'b, W, O>(
-    writer: impl Into<XMLWriterWrapper<'b, W>>,
+/// Export an OCEL as XML to `writer`
+pub(crate) fn export_ocel_xml<O: ReadableOCEL + ?Sized>(
+    writer: impl Write,
     ocel: &O,
-) -> Result<(), quick_xml::Error>
-where
-    W: Write + 'b,
-    O: ReadableOCEL + ?Sized,
-{
-    let mut xml_writer = writer.into();
-    let writer: &mut Writer<W> = xml_writer.to_xml_writer();
+) -> Result<(), std::io::Error> {
+    let mut writer = Writer::new(writer);
     writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)))?;
     writer.create_element("log").write_inner_content(|w| {
         w.create_element("object-types").write_inner_content(|w| {
             for ot in ocel.object_types() {
                 w.create_element("object-type")
-                    .with_attributes(vec![("name", ot.name.as_str())])
+                    .with_attributes(vec![("name", xml_chars(&ot.name).as_ref())])
                     .write_inner_content(|w| {
                         write_ocel_type_attrs(&ot.attributes, w)?;
                         OK
@@ -45,7 +36,7 @@ where
         w.create_element("event-types").write_inner_content(|w| {
             for et in ocel.event_types() {
                 w.create_element("event-type")
-                    .with_attributes(vec![("name", et.name.as_str())])
+                    .with_attributes(vec![("name", xml_chars(&et.name).as_ref())])
                     .write_inner_content(|w| {
                         write_ocel_type_attrs(&et.attributes, w)?;
                         OK
@@ -56,18 +47,24 @@ where
         w.create_element("objects").write_inner_content(|w| {
             for o in ocel.iter_objects() {
                 w.create_element("object")
-                    .with_attribute(("id", o.id.as_str()))
-                    .with_attribute(("type", o.object_type.as_str()))
+                    .with_attribute(("id", xml_chars(&o.id).as_ref()))
+                    .with_attribute(("type", xml_chars(&o.object_type).as_ref()))
                     .write_inner_content(|w| {
                         w.create_element("attributes").write_inner_content(|w| {
-                            for oa in &o.attributes {
+                            // A `Null` initial value is left out: an empty element is read back
+                            // as `""` for a string attribute. A change to `Null` cannot be left
+                            // out without losing it, so it is written as an empty element.
+                            for oa in o.attributes.iter().filter(|oa| {
+                                !(oa.value == OCELAttributeValue::Null
+                                    && oa.time == DateTime::UNIX_EPOCH)
+                            }) {
                                 w.create_element("attribute")
-                                    .with_attribute(("name", oa.name.as_str()))
+                                    .with_attribute(("name", xml_chars(&oa.name).as_ref()))
                                     .with_attribute(("time", oa.time.to_rfc3339().as_str()))
                                     .write_inner_content(|w| {
-                                        w.write_event(Event::Text(BytesText::new(
+                                        w.write_event(Event::Text(BytesText::new(&xml_chars(
                                             &oa.value.to_string(),
-                                        )))?;
+                                        ))))?;
                                         OK
                                     })?;
                             }
@@ -82,18 +79,23 @@ where
         w.create_element("events").write_inner_content(|w| {
             for e in ocel.iter_events() {
                 w.create_element("event")
-                    .with_attribute(("id", e.id.as_str()))
-                    .with_attribute(("type", e.event_type.as_str()))
+                    .with_attribute(("id", xml_chars(&e.id).as_ref()))
+                    .with_attribute(("type", xml_chars(&e.event_type).as_ref()))
                     .with_attribute(("time", e.time.to_rfc3339().as_str()))
                     .write_inner_content(|w| {
                         w.create_element("attributes").write_inner_content(|w| {
-                            for ea in &e.attributes {
+                            // Left out like `Null` initial object values above.
+                            for ea in e
+                                .attributes
+                                .iter()
+                                .filter(|ea| ea.value != OCELAttributeValue::Null)
+                            {
                                 w.create_element("attribute")
-                                    .with_attribute(("name", ea.name.as_str()))
+                                    .with_attribute(("name", xml_chars(&ea.name).as_ref()))
                                     .write_inner_content(|w| {
-                                        w.write_event(Event::Text(BytesText::new(
+                                        w.write_event(Event::Text(BytesText::new(&xml_chars(
                                             &ea.value.to_string(),
-                                        )))?;
+                                        ))))?;
                                         OK
                                     })?;
                             }
@@ -119,8 +121,8 @@ fn write_ocel_type_attrs<W: Write>(
         for at in attrs {
             w.create_element("attribute")
                 .with_attributes(vec![
-                    ("name", at.name.as_str()),
-                    ("type", at.value_type.as_str()),
+                    ("name", xml_chars(&at.name).as_ref()),
+                    ("type", xml_chars(&at.value_type).as_ref()),
                 ])
                 .write_empty()?;
         }
@@ -136,8 +138,8 @@ fn write_ocel_relationships<W: Write>(
     w.create_element("objects").write_inner_content(|w| {
         for r in rels {
             w.create_element("relationship")
-                .with_attribute(("object-id", r.object_id.as_str()))
-                .with_attribute(("qualifier", r.qualifier.as_str()))
+                .with_attribute(("object-id", xml_chars(&r.object_id).as_ref()))
+                .with_attribute(("qualifier", xml_chars(&r.qualifier).as_ref()))
                 .write_empty()?;
         }
         OK
@@ -145,26 +147,60 @@ fn write_ocel_relationships<W: Write>(
     OK
 }
 
-/// Export an OCEL to a path
-pub fn export_ocel_xml_path<P, O>(ocel: &O, path: P) -> Result<(), quick_xml::Error>
-where
-    P: AsRef<std::path::Path>,
-    O: ReadableOCEL + ?Sized,
-{
-    let file = File::create(path)?;
-    export_ocel_xml(&mut Writer::new(BufWriter::new(file)), ocel)
-}
-
 #[cfg(test)]
 mod ocel_xml_export_test {
     use std::time::Instant;
 
-    use crate::{
-        core::event_data::object_centric::ocel_xml::{
-            xml_ocel_export::export_ocel_xml_path, xml_ocel_import::import_ocel_xml_path,
-        },
-        test_utils::get_test_data_path,
-    };
+    use crate::{test_utils::get_test_data_path, Exportable, Importable, OCEL};
+
+    #[test]
+    fn invalid_xml_chars_are_dropped() {
+        use crate::core::event_data::object_centric::ocel_struct::{
+            OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute,
+            OCELRelationship, OCELType, OCELTypeAttribute,
+        };
+        use crate::core::event_data::object_centric::ocel_xml::xml_ocel_export::export_ocel_xml;
+        let log = |x: &str| {
+            let string_type = |name: String| OCELType {
+                name,
+                attributes: vec![OCELTypeAttribute {
+                    name: format!("a{x}"),
+                    value_type: "string".into(),
+                }],
+            };
+            OCEL {
+                event_types: vec![string_type(format!("et{x}"))],
+                object_types: vec![string_type(format!("ot{x}"))],
+                events: vec![OCELEvent {
+                    id: format!("e{x}"),
+                    event_type: format!("et{x}"),
+                    time: "2024-01-01T10:00:00+00:00".parse().unwrap(),
+                    attributes: vec![OCELEventAttribute {
+                        name: format!("a{x}"),
+                        value: OCELAttributeValue::String(format!("v{x}")),
+                    }],
+                    relationships: vec![OCELRelationship {
+                        object_id: format!("o{x}"),
+                        qualifier: format!("q{x}"),
+                    }],
+                }],
+                objects: vec![OCELObject {
+                    id: format!("o{x}"),
+                    object_type: format!("ot{x}"),
+                    attributes: vec![OCELObjectAttribute {
+                        name: format!("a{x}"),
+                        value: OCELAttributeValue::String(format!("v{x}")),
+                        time: "2024-01-02T10:00:00+00:00".parse().unwrap(),
+                    }],
+                    relationships: vec![],
+                }],
+            }
+        };
+        let mut data = Vec::new();
+        export_ocel_xml(&mut data, &log("\u{1}\u{FFFE}")).unwrap();
+        crate::core::io::assert_xml_well_formed(&data);
+        assert_eq!(OCEL::import_from_bytes(&data, "xml").unwrap(), log(""));
+    }
 
     #[test]
     fn export_round_trip_order_management() {
@@ -172,7 +208,7 @@ mod ocel_xml_export_test {
             .join("ocel")
             .join("order-management.xml");
         let mut now = Instant::now();
-        let ocel = import_ocel_xml_path(&path).unwrap();
+        let ocel = OCEL::import_from_path(&path).unwrap();
         let obj = ocel.objects.first().unwrap();
         println!("{obj:?}");
         println!(
@@ -191,7 +227,7 @@ mod ocel_xml_export_test {
             .join("export")
             .join("order-mangement-export.xml");
         now = Instant::now();
-        export_ocel_xml_path(&ocel, &export_path).unwrap();
+        ocel.export_to_path(&export_path).unwrap();
         println!(
             "Exported OCEL with {} objects and {} events in {:#?}",
             ocel.objects.len(),
@@ -199,7 +235,7 @@ mod ocel_xml_export_test {
             now.elapsed()
         );
         now = Instant::now();
-        let ocel2 = import_ocel_xml_path(&export_path).unwrap();
+        let ocel2 = OCEL::import_from_path(&export_path).unwrap();
         println!(
             "Imported OCEL AGAIN with {} objects and {} events in {:#?}",
             ocel.objects.len(),
@@ -218,7 +254,7 @@ mod ocel_xml_export_test {
     fn export_round_trip_p2p() {
         let path = get_test_data_path().join("ocel").join("ocel2-p2p.xml");
         let mut now = Instant::now();
-        let ocel = import_ocel_xml_path(&path).unwrap();
+        let ocel = OCEL::import_from_path(&path).unwrap();
         let obj = ocel.objects.first().unwrap();
         println!("{obj:?}");
         println!(
@@ -234,7 +270,7 @@ mod ocel_xml_export_test {
             .join("export")
             .join("ocel2-p2p-export.xml");
         now = Instant::now();
-        export_ocel_xml_path(&ocel, &export_path).unwrap();
+        ocel.export_to_path(&export_path).unwrap();
         println!(
             "Exported OCEL with {} objects and {} events in {:#?}",
             ocel.objects.len(),
@@ -242,7 +278,7 @@ mod ocel_xml_export_test {
             now.elapsed()
         );
         now = Instant::now();
-        let ocel2 = import_ocel_xml_path(&export_path).unwrap();
+        let ocel2 = OCEL::import_from_path(&export_path).unwrap();
         println!(
             "Imported OCEL AGAIN with {} objects and {} events in {:#?}",
             ocel.objects.len(),
@@ -258,11 +294,5 @@ mod ocel_xml_export_test {
 
         // Do not use assert_eq!(...) because this will flood stdout with full OCEL if not true
         assert!(ocel == ocel2);
-
-        // for (o1,o2) in ocel.objects.iter().zip(ocel2.objects.iter()) {
-        //     for (a1,a2) in o1.attributes.iter().zip(o2.attributes.iter()) {
-        //         assert_eq!(a1,a2);
-        //     }
-        // }
     }
 }

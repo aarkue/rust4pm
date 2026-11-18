@@ -2,12 +2,10 @@ pub(crate) mod duckdb_ocel_export;
 pub(crate) mod duckdb_ocel_import;
 pub(crate) mod schema;
 
-#[cfg(feature = "ocel-duckdb")]
+#[cfg(test)]
+pub(crate) use schema::read_ocel_from_duckdb;
 pub use schema::{
-    generate_type_views, read_consolidated_ocel_from_duckdb_path,
-    read_consolidated_slim_ocel_from_duckdb_path, read_ocel_from_duckdb,
-    stream_ocel_file_to_duckdb, stream_ocel_file_to_duckdb_with, write_ocel_to_duckdb,
-    write_ocel_to_duckdb_with, DuckDbImportOptions,
+    generate_type_views, stream_ocel_file_to_duckdb, write_ocel_to_duckdb, DuckDbWriteOptions,
 };
 
 #[cfg(test)]
@@ -18,26 +16,27 @@ mod duckdb_tests {
 
     use crate::{
         core::event_data::object_centric::{
-            ocel_sql::{export_ocel_duckdb_to_path, import_ocel_duckdb_from_path},
+            io::OCELIOError,
+            ocel_sql::export_ocel_duckdb_to_path,
             ocel_struct::{OCELAttributeValue, OCELRelationship},
-            ocel_xml::xml_ocel_import::import_ocel_xml_path,
         },
         test_utils::get_test_data_path,
+        Importable, OCEL,
     };
 
     #[test]
-    fn test_duckdb_round_trip_ocel() -> Result<(), ::duckdb::Error> {
+    fn test_duckdb_round_trip_ocel() -> Result<(), OCELIOError> {
         let path = get_test_data_path()
             .join("ocel")
             .join("order-management.xml");
-        let ocel = import_ocel_xml_path(path).unwrap();
+        let ocel = OCEL::import_from_path(path).unwrap();
         let export_path = get_test_data_path()
             .join("export")
             .join("order-management.duckdb");
         let _ = std::fs::remove_file(&export_path);
         export_ocel_duckdb_to_path(&ocel, &export_path).unwrap();
 
-        let ocel2 = import_ocel_duckdb_from_path(&export_path).unwrap();
+        let ocel2 = OCEL::import_from_path(&export_path).unwrap();
 
         assert_eq!(ocel.events.len(), ocel2.events.len());
         assert_eq!(ocel.objects.len(), ocel2.objects.len());
@@ -110,17 +109,17 @@ mod duckdb_tests {
     }
 
     #[test]
-    fn test_duckdb_containers_round_trip_ocel() -> Result<(), ::duckdb::Error> {
+    fn test_duckdb_containers_round_trip_ocel() -> Result<(), OCELIOError> {
         let path = get_test_data_path()
             .join("ocel")
             .join("ContainerLogistics.xml");
-        let ocel = import_ocel_xml_path(path).unwrap();
+        let ocel = OCEL::import_from_path(path).unwrap();
         let export_path = get_test_data_path()
             .join("export")
             .join("ContainerLogistics.duckdb");
         let _ = std::fs::remove_file(&export_path);
         export_ocel_duckdb_to_path(&ocel, &export_path).unwrap();
-        let ocel2 = import_ocel_duckdb_from_path(&export_path).unwrap();
+        let ocel2 = OCEL::import_from_path(&export_path).unwrap();
 
         assert_eq!(ocel.events.len(), ocel2.events.len());
         assert_eq!(ocel.objects.len(), ocel2.objects.len());

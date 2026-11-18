@@ -9,8 +9,7 @@ use std::{
 
 use process_mining::{
     conformance::alignments::{
-        align_variants, align_variants_with_retry, petri_net::AlignmentError, AlignmentOptions,
-        VariantAlignmentResult,
+        align_variants, petri_net::AlignmentError, AlignmentOptions, VariantAlignmentResult,
     },
     core::{
         event_data::case_centric::utils::activity_projection::EventLogActivityProjection,
@@ -185,8 +184,18 @@ fn retry_stays_within_budget() {
     };
     let parallel = pool.install(|| align_variants(&net, &log, &options));
     assert!(ran_out(&parallel) > 0, "the share was never exhausted");
-    let (results, peak, left) =
-        measure(|| pool.install(|| align_variants_with_retry(&net, &log, &options)));
+    let (results, peak, left) = measure(|| {
+        pool.install(|| {
+            align_variants(
+                &net,
+                &log,
+                &AlignmentOptions {
+                    retry_out_of_memory: true,
+                    ..options.clone()
+                },
+            )
+        })
+    });
     assert!(peak <= 32 * MIB + ALLOWANCE, "peak {peak} bytes");
     assert!(
         ran_out(&results) < ran_out(&parallel),

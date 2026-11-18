@@ -18,7 +18,8 @@
 //! [`LayoutSettings`], whose `layout_patch` is deep-merged over the model's own engine options.
 //! Those of DFGs, OC-DFGs, Petri nets and object-centric Petri nets also take [`Annotations`] by
 //! model element: labels, layout weights and line widths that replace the model's own, e.g.,
-//! durations instead of counts.
+//! durations instead of counts. Those of DFGs, OC-DFGs and object-centric Petri nets take
+//! [`badges`] by activity too: object types drawn as OC-DECLARE-style discs in the activity's node.
 //!
 //! ```no_run
 //! use process_mining::visualization::engine::{layout_graph, render_scene_svg, reroute_graph};
@@ -45,8 +46,9 @@
 //! ```
 
 pub mod annotation;
+pub mod badges;
 #[cfg(all(feature = "bindings", feature = "visualization"))]
-pub mod bindings;
+mod bindings;
 pub mod dfg;
 pub mod engine;
 pub mod graph_build;

@@ -4,6 +4,7 @@ use std::any::Any;
 use std::sync::{Mutex, MutexGuard};
 
 use crate::core::io::{ExtensionWithMime, Importable};
+use crate::utils::control::{Cancelled, Control};
 
 /// A tabular data file kept in memory: a `SQLite` database, a CSV, a Parquet file, a workbook.
 ///
@@ -19,7 +20,7 @@ pub struct TabularSource {
     opened: Mutex<Option<Box<dyn Any + Send>>>,
 }
 
-/// Reports the byte count rather than the bytes: [`RegistryItem`](crate::bindings::RegistryItem)
+/// Reports the byte count rather than the bytes: `RegistryItem` (feature `bindings`)
 /// derives `Debug`, so one `{:?}` of the registry would otherwise dump every file it holds.
 impl std::fmt::Debug for TabularSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -49,22 +50,21 @@ impl TabularSource {
     /// The guard is returned rather than a reference: the reader is not `Sync`, so it can only be
     /// touched while the lock is held.
     ///
+    /// Blocks while another reader of the same source is alive, so a thread must not call this
+    /// again on a source whose reader it still holds: that would deadlock.
+    ///
     /// # Errors
-    /// Returns `open`'s error, or a message if a cached reader is not of type `T`. Errors rather
-    /// than blocking while another reader of the same source is alive, since a nested call would
-    /// otherwise deadlock the thread against itself.
+    /// Returns `open`'s error, or a message if a cached reader is not of type `T`.
     pub fn reader<T, E, F>(&self, open: F) -> Result<TabularReader<'_, T>, String>
     where
         T: Any + Send,
         E: std::fmt::Display,
         F: FnOnce(&[u8]) -> Result<T, E>,
     {
-        let mut guard = self.opened.try_lock().map_err(|e| match e {
-            std::sync::TryLockError::WouldBlock => {
-                "data source is already open for reading elsewhere".to_string()
-            }
-            std::sync::TryLockError::Poisoned(_) => "data source lock poisoned".to_string(),
-        })?;
+        let mut guard = self
+            .opened
+            .lock()
+            .map_err(|_| "data source lock poisoned".to_string())?;
         if guard.is_none() {
             *guard = Some(Box::new(open(&self.bytes).map_err(|e| e.to_string())?));
         }
@@ -113,17 +113,27 @@ impl<T: Any + Send> TabularReader<'_, T> {
 pub enum TabularSourceError {
     /// An I/O error while reading the bytes.
     Io(std::io::Error),
+    /// The import's [`Control`] was cancelled.
+    Cancelled,
 }
 
 impl std::fmt::Display for TabularSourceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Io(e) => write!(f, "{e}"),
+            Self::Cancelled => write!(f, "{Cancelled}"),
         }
     }
 }
 
-impl std::error::Error for TabularSourceError {}
+impl std::error::Error for TabularSourceError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            Self::Cancelled => None,
+        }
+    }
+}
 
 impl From<std::io::Error> for TabularSourceError {
     fn from(e: std::io::Error) -> Self {
@@ -131,14 +141,21 @@ impl From<std::io::Error> for TabularSourceError {
     }
 }
 
+impl From<Cancelled> for TabularSourceError {
+    fn from(_: Cancelled) -> Self {
+        Self::Cancelled
+    }
+}
+
 impl Importable for TabularSource {
     type Error = TabularSourceError;
     type ImportOptions = ();
 
-    fn import_from_reader_with_options<R: std::io::Read>(
+    fn import_from_reader_with<R: std::io::Read>(
         mut reader: R,
         data_format: &str,
-        _options: Self::ImportOptions,
+        _: Self::ImportOptions,
+        _: &Control<'_>,
     ) -> Result<Self, Self::Error> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes)?;

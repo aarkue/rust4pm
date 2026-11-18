@@ -13,9 +13,7 @@ authors:
     orcid: 'https://orcid.org/0009-0006-9195-5380'
 repository-code: 'https://github.com/aarkue/rust4pm'
 url: 'https://crates.io/crates/process_mining'
-license: MIT
-version: 2.0.4
-date-released: '2023-12-13'
+license: [MIT, Apache-2.0]
 preferred-citation:
   type: conference-paper
   authors:

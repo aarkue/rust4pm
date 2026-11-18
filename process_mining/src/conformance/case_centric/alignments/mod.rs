@@ -1,7 +1,10 @@
 //! Implements optimal alignment search
-use std::cell::RefCell;
+//!
+//! A place holds at most 255 ([`petri_net::TokenCount::MAX`]) tokens. The search does not enter
+//! markings above that.
+use std::{cell::RefCell, sync::atomic::AtomicBool};
 
-use macros_process_mining::register_binding;
+use macros_process_mining::{controlled, register_binding};
 use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -16,7 +19,10 @@ use crate::{
         event_data::case_centric::utils::activity_projection::EventLogActivityProjection,
         process_models::petri_net::TransitionID,
     },
-    utils::dijkstra_search::{SearchError, SearchLimits},
+    utils::{
+        control::{Cancelled, Control},
+        dijkstra_search::{SearchError, SearchLimits},
+    },
     AcceptingPetriNet,
 };
 
@@ -50,6 +56,18 @@ pub enum AlignmentMove {
         trace_event_index: usize,
     },
 }
+impl AlignmentMove {
+    /// Whether this move is a deviation between log and model, i.e., a log move or a model move
+    /// of a visible transition
+    pub fn is_deviation(&self) -> bool {
+        match self {
+            AlignmentMove::SyncMove { .. } => false,
+            AlignmentMove::ModelMove { label, .. } => label.is_some(),
+            AlignmentMove::LogMove { .. } => true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 /// Alignment Result
 pub struct AlignmentResult {
@@ -92,23 +110,12 @@ pub struct AlignmentOptions {
     /// This bounds the buffers of the searches. The event log, the model and the alignments come
     /// on top, as does memory the allocator keeps, so leave some headroom.
     ///
-    /// [`align_variants_with_retry`] aligns the traces that ran out again, one at a time with
-    /// the whole budget. By hand:
-    ///
-    /// ```no_run
-    /// # use process_mining::{conformance::alignments::{*, petri_net::AlignmentError}, utils::dijkstra_search::SearchError, AcceptingPetriNet};
-    /// # use process_mining::core::event_data::case_centric::utils::activity_projection::EventLogActivityProjection;
-    /// # fn retry(net: &AcceptingPetriNet, log: &EventLogActivityProjection, options: &AlignmentOptions) {
-    /// let mut results = align_variants(net, log, options);
-    /// for variant in &mut results {
-    ///     if variant.result == Err(AlignmentError::SearchError(SearchError::MemoryLimitReached)) {
-    ///         let trace: Vec<&str> = variant.activities.iter().map(String::as_str).collect();
-    ///         variant.result = align_trace(net, &trace, options);
-    ///     }
-    /// }
-    /// # }
-    /// ```
+    /// See [`AlignmentOptions::retry_out_of_memory`] for aligning the traces that ran out again.
     pub max_memory_mib: Option<usize>,
+    /// Whether [`align_variants`] aligns every variant that ran out of its memory share again, one
+    /// at a time with the whole [`AlignmentOptions::max_memory_mib`] (default `false`).
+    #[serde(default)]
+    pub retry_out_of_memory: bool,
 }
 
 impl Default for AlignmentOptions {
@@ -117,18 +124,20 @@ impl Default for AlignmentOptions {
             cost_fn: CostFunction::standard(),
             max_states: None,
             max_memory_mib: Some(6 * 1024),
+            retry_out_of_memory: false,
         }
     }
 }
 
 impl AlignmentOptions {
     /// The limits of each of `searches` searches running at once
-    fn limits_for(&self, searches: usize) -> SearchLimits {
+    fn limits_for<'a>(&self, searches: usize, cancel: Option<&'a AtomicBool>) -> SearchLimits<'a> {
         SearchLimits {
             max_states: self.max_states,
             max_memory: self
                 .max_memory_mib
                 .map(|mib| mib.saturating_mul(1 << 20) / searches.max(1)),
+            cancel,
         }
     }
 }
@@ -138,72 +147,95 @@ thread_local! {
     static CONTEXT: RefCell<AlignmentContext> = RefCell::new(AlignmentContext::default());
 }
 
-/// Compute alignments for all variants of an event log.
-///
-/// Permits at most 255 ([`petri_net::TokenCount::MAX`]) tokens in each place.
-pub fn align_log<'a>(
-    net: &AcceptingPetriNet,
-    log: impl Into<&'a EventLogActivityProjection>,
-    options: &AlignmentOptions,
-) -> Vec<VariantAlignmentResult> {
-    let projection: &EventLogActivityProjection = log.into();
-    align_variants(net, projection, options)
+/// Progress stage of [`align_variants`]: one unit per aligned variant
+const ALIGN_STAGE: &str = "Aligning variants";
+
+/// One partial result of [`align_variants`]
+#[derive(Serialize)]
+struct VariantPartial<'a> {
+    /// Index of the variant in [`EventLogActivityProjection::traces`]
+    variant: usize,
+    result: &'a VariantAlignmentResult,
 }
 
 /// Compute alignments for all variants from a pre-computed activity projection.
 ///
-/// Permits at most 255 ([`petri_net::TokenCount::MAX`]) tokens in each place.
+/// With [`AlignmentOptions::retry_out_of_memory`], every variant that ran out of its memory share
+/// is aligned again afterwards, one at a time on the calling thread, with the whole
+/// [`AlignmentOptions::max_memory_mib`]. Such a search may take much longer than its first
+/// attempt, and may still run out.
+///
+/// Reports progress with stage `"Aligning variants"`, one unit per variant. One partial result is
+/// a finished variant, `{"variant": i, "result": r}`, where `i` is its index in
+/// `projection.traces` and `r` its [`VariantAlignmentResult`]. A retry reports stage
+/// `"Retrying variants with more memory"`, one unit per retried variant, and emits each retried
+/// variant again: a later partial result with the same index replaces the earlier one.
+#[controlled]
 #[register_binding]
 pub fn align_variants(
-    net: &AcceptingPetriNet,
+    #[bind(handle)] net: &AcceptingPetriNet,
     projection: &EventLogActivityProjection,
     #[bind(default)] options: &AlignmentOptions,
-) -> Vec<VariantAlignmentResult> {
-    // Both the model half and its reachability are properties of the net, shared by every trace
-    align_variants_on(&build_model(net, &options.cost_fn), projection, options)
-}
-
-/// Like [`align_variants`], then aligns every variant that ran out of memory again, one at a
-/// time on the calling thread, with the whole [`AlignmentOptions::max_memory_mib`].
-///
-/// A retried search may take much longer than its first attempt, and may still run out.
-#[register_binding]
-pub fn align_variants_with_retry(
-    net: &AcceptingPetriNet,
-    projection: &EventLogActivityProjection,
-    #[bind(default)] options: &AlignmentOptions,
-) -> Vec<VariantAlignmentResult> {
+    ctl: &Control<'_>,
+) -> Result<Vec<VariantAlignmentResult>, Cancelled> {
+    // Both the model half and its reachability are properties of the net, shared by every
+    // trace
     let model = build_model(net, &options.cost_fn);
-    let mut results = align_variants_on(&model, projection, options);
+    let mut results = align_variants_on(&model, projection, options, ctl)?;
     // Without a model every variant already carries its error
-    let Ok(model) = model else {
-        return results;
+    let (true, Ok(model)) = (options.retry_out_of_memory, model) else {
+        return Ok(results);
     };
-    let limits = options.limits_for(1);
-    let mut ctx = AlignmentContext::default();
-    for variant in &mut results {
-        if matches!(
-            variant.result,
-            Err(AlignmentError::SearchError(SearchError::MemoryLimitReached))
-        ) {
-            let trace: Vec<&str> = variant.activities.iter().map(String::as_str).collect();
-            variant.result = align_on(&model, &trace, &options.cost_fn, &mut ctx, limits);
-        }
+    let out_of_memory: Vec<usize> = results
+        .iter()
+        .enumerate()
+        .filter(|(_, variant)| {
+            matches!(
+                variant.result,
+                Err(AlignmentError::SearchError(SearchError::MemoryLimitReached))
+            )
+        })
+        .map(|(index, _)| index)
+        .collect();
+    if out_of_memory.is_empty() {
+        return Ok(results);
     }
-    results
+    let counter = ctl.counter(
+        "Retrying variants with more memory",
+        Some(out_of_memory.len() as u64),
+    );
+    let limits = options.limits_for(1, ctl.cancel_flag_ref());
+    let mut ctx = AlignmentContext::default();
+    for index in out_of_memory {
+        ctl.check()?;
+        let variant = &mut results[index];
+        let trace: Vec<&str> = variant.activities.iter().map(String::as_str).collect();
+        variant.result =
+            not_cancelled(align_on(&model, &trace, &options.cost_fn, &mut ctx, limits))?;
+        ctl.partial(&VariantPartial {
+            variant: index,
+            result: variant,
+        });
+        counter.tick();
+    }
+    Ok(results)
 }
 
 fn align_variants_on(
     model: &Result<ModelNet, AlignmentError>,
     projection: &EventLogActivityProjection,
     options: &AlignmentOptions,
-) -> Vec<VariantAlignmentResult> {
+    ctl: &Control<'_>,
+) -> Result<Vec<VariantAlignmentResult>, Cancelled> {
     let searches = rayon::current_num_threads().min(projection.traces.len());
-    let limits = options.limits_for(searches);
+    let limits = options.limits_for(searches, ctl.cancel_flag_ref());
+    let counter = ctl.counter(ALIGN_STAGE, Some(projection.traces.len() as u64));
     let results = projection
         .traces
         .par_iter()
-        .map(|(trace_indices, count)| {
+        .enumerate()
+        .map(|(index, (trace_indices, count))| {
+            ctl.check()?;
             let activities: Vec<String> = trace_indices
                 .iter()
                 .map(|&idx| projection.activities[idx].clone())
@@ -221,11 +253,17 @@ fn align_variants_on(
                     )
                 }),
             };
-            VariantAlignmentResult {
+            let variant = VariantAlignmentResult {
                 activities,
                 frequency: *count,
-                result,
-            }
+                result: not_cancelled(result)?,
+            };
+            ctl.partial(&VariantPartial {
+                variant: index,
+                result: &variant,
+            });
+            counter.tick();
+            Ok(variant)
         })
         .collect();
     // Kept buffers would otherwise stay allocated after the call, next to a later search that
@@ -234,12 +272,22 @@ fn align_variants_on(
     results
 }
 
+/// A cancelled search ends the whole call rather than being a result of its variant
+fn not_cancelled(
+    result: Result<AlignmentResult, AlignmentError>,
+) -> Result<Result<AlignmentResult, AlignmentError>, Cancelled> {
+    match result {
+        Err(AlignmentError::SearchError(SearchError::Cancelled)) => Err(Cancelled),
+        result => Ok(result),
+    }
+}
+
 fn align_on(
     model: &ModelNet,
     trace: &[&str],
     cost_fn: &CostFunction,
     ctx: &mut AlignmentContext,
-    limits: SearchLimits,
+    limits: SearchLimits<'_>,
 ) -> Result<AlignmentResult, AlignmentError> {
     let sp = SyncProductNet::construct(model, trace, cost_fn)?;
     petri_net::align(&sp, ctx, limits)
@@ -259,11 +307,14 @@ fn build_model(
 
 /// Compute alignment for a single trace (given as activity sequence).
 ///
-/// Permits at most 255 ([`petri_net::TokenCount::MAX`]) tokens in each place.
+/// Stops once a [`Control`] is cancelled, and reports no progress or partial results.
+#[controlled]
+#[register_binding(stringify_error)]
 pub fn align_trace(
-    net: &AcceptingPetriNet,
+    #[bind(handle)] net: &AcceptingPetriNet,
     trace: &[&str],
-    options: &AlignmentOptions,
+    #[bind(default)] options: &AlignmentOptions,
+    ctl: &Control<'_>,
 ) -> Result<AlignmentResult, AlignmentError> {
     let model = build_model(net, &options.cost_fn)?;
     let mut ctx = AlignmentContext::default();
@@ -272,34 +323,8 @@ pub fn align_trace(
         trace,
         &options.cost_fn,
         &mut ctx,
-        options.limits_for(1),
+        options.limits_for(1, ctl.cancel_flag_ref()),
     )
-}
-
-/// Compute alignment for a single trace (given as activity sequence).
-///
-/// Permits at most 255 ([`petri_net::TokenCount::MAX`]) tokens in each place.
-#[allow(dead_code)]
-#[register_binding(stringify_error, name = "align_trace")]
-fn align_trace_binding(
-    net: &AcceptingPetriNet,
-    trace: &[String],
-    #[bind(default)] options: &AlignmentOptions,
-) -> Result<AlignmentResult, AlignmentError> {
-    let trace_as_str: Vec<_> = trace.iter().map(|s| s.as_str()).collect();
-    align_trace(net, &trace_as_str, options)
-}
-
-/// Align the empty trace to the given model
-/// with the specified options
-///
-/// Permits at most 255 ([`petri_net::TokenCount::MAX`]) tokens in each place.
-#[register_binding(stringify_error)]
-pub fn align_empty_trace(
-    net: &AcceptingPetriNet,
-    #[bind(default)] options: &AlignmentOptions,
-) -> Result<AlignmentResult, AlignmentError> {
-    align_trace(net, &[], options)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -309,7 +334,8 @@ pub struct FitnessResult {
     pub log_fitness: f64,
     /// Average trace fitness (across all traces)
     pub average_fitness: f64,
-    /// Fraction of traces that perfectly fit (i.e., have an alignment cost of `0`)
+    /// Fraction of traces that perfectly fit (i.e., whose alignment has no log moves and no
+    /// model moves of visible transitions)
     pub perfectly_fitting_frac: f64,
     /// The total cost, summed up from all traces
     pub total_costs: u64,
@@ -317,24 +343,26 @@ pub struct FitnessResult {
 
 /// Compute fitness stats from alignment results
 ///
-/// Also constructs the empty-trace alignment (shortest path through model)
+/// Also constructs the empty-trace alignment (shortest path through model).
+/// Without any traces, all fitness values are `1.0`.
 #[register_binding(stringify_error)]
 pub fn compute_fitness(
-    align_res: &[VariantAlignmentResult],
-    net: &AcceptingPetriNet,
+    #[bind(handle)] net: &AcceptingPetriNet,
+    alignments: &[VariantAlignmentResult],
     #[bind(default)] options: &AlignmentOptions,
 ) -> Result<FitnessResult, AlignmentError> {
-    let empty = align_empty_trace(net, options)?;
+    let empty = align_trace(net, &[], options)?;
     let model_path_min = empty.cost;
     let mut num_perfectly_fitting = 0;
     let mut total_costs = 0;
     let mut fitness_sum_for_avg = 0f64;
     let mut num_traces = 0;
     let mut num_events = 0;
-    for variant in align_res {
+    for variant in alignments {
         let res = variant.result.as_ref().map_err(|e| e.clone())?;
         let costs = res.cost;
-        if costs == 0 {
+        // Sync and silent moves may have a cost, so a fitting trace can have a nonzero cost
+        if !res.moves.iter().any(AlignmentMove::is_deviation) {
             num_perfectly_fitting += variant.frequency;
         }
         total_costs += variant.frequency * costs as u64;
@@ -360,13 +388,12 @@ pub fn compute_fitness(
     Ok(FitnessResult {
         log_fitness,
         average_fitness: if num_traces == 0 {
-            // Could be either way..
-            0f64
+            1f64
         } else {
             fitness_sum_for_avg / num_traces as f64
         },
         perfectly_fitting_frac: if num_traces == 0 {
-            0f64
+            1f64
         } else {
             num_perfectly_fitting as f64 / num_traces as f64
         },
@@ -380,26 +407,35 @@ mod test {
 
     use crate::{
         conformance::alignments::{
-            align_empty_trace, align_log, align_trace, align_variants, align_variants_with_retry,
-            compute_fitness,
+            align_trace, align_variants, compute_fitness,
             cost::CostFunction,
             petri_net::{self, AlignmentContext, AlignmentError, TracePos},
             sync_prod_net::{ModelNet, SyncProdNetConstructionError, SyncProductNet},
             AlignmentMove, AlignmentOptions,
         },
         core::{
-            event_data::case_centric::utils::activity_projection::{
-                log_to_activity_projection, EventLogActivityProjection,
+            event_data::case_centric::{
+                utils::activity_projection::{
+                    log_to_activity_projection, EventLogActivityProjection,
+                },
+                Event, Trace,
             },
             process_models::petri_net::{ArcType, Marking, PlaceID, TransitionID},
         },
         test_utils::get_test_data_path,
-        utils::dijkstra_search::{SearchError, SearchLimits},
+        utils::{
+            control::{Cancelled, Control, Progress},
+            dijkstra_search::{SearchError, SearchLimits},
+        },
         AcceptingPetriNet, EventLog, Importable, PetriNet,
+    };
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
     };
 
     fn sepsis_net() -> AcceptingPetriNet {
-        AcceptingPetriNet::import_pnml(
+        AcceptingPetriNet::import_from_path(
             get_test_data_path()
                 .join("petri-net")
                 .join("sepsis-DISCovered.apnml"),
@@ -416,14 +452,14 @@ mod test {
     ) {
         let test_path = get_test_data_path();
         let log = EventLog::import_from_path(test_path.join("xes").join(log_name)).unwrap();
-        let net =
-            AcceptingPetriNet::import_pnml(test_path.join("petri-net").join(net_name)).unwrap();
+        let net = AcceptingPetriNet::import_from_path(test_path.join("petri-net").join(net_name))
+            .unwrap();
         let act_proj = log_to_activity_projection(&log);
         let options = AlignmentOptions::default();
         let now = Instant::now();
-        let result = align_log(&net, &act_proj, &options);
+        let result = align_variants(&net, &act_proj, &options);
         println!("Aligning traces took {:?}", now.elapsed());
-        let fitness = compute_fitness(&result, &net, &options);
+        let fitness = compute_fitness(&net, &result, &options);
         println!("{fitness:?}");
         (result, fitness)
     }
@@ -484,7 +520,11 @@ mod test {
         let parallel = pool.install(|| align_variants(&net, &projection, &options));
         assert!(parallel.iter().any(|v| v.result == out_of_memory));
 
-        let retried = pool.install(|| align_variants_with_retry(&net, &projection, &options));
+        let retry = AlignmentOptions {
+            retry_out_of_memory: true,
+            ..options
+        };
+        let retried = pool.install(|| align_variants(&net, &projection, &retry));
         let unlimited = align_variants(
             &net,
             &projection,
@@ -505,6 +545,208 @@ mod test {
     }
 
     #[test]
+    fn control_reports_every_variant() {
+        let (net, projection) = sepsis();
+        let progress = Mutex::new(Vec::new());
+        let partials = Mutex::new(Vec::new());
+        let ctl = Control::new()
+            .on_progress(|p| progress.lock().unwrap().push(p))
+            .on_partial(|v| partials.lock().unwrap().push(v));
+        let results = ctl
+            .align_variants(&net, &projection, &AlignmentOptions::default())
+            .unwrap();
+        drop(ctl);
+
+        let total = projection.traces.len() as u64;
+        let progress: Vec<Progress> = progress.into_inner().unwrap();
+        assert!(progress
+            .iter()
+            .all(|p| p.stage == "Aligning variants" && p.total == Some(total)));
+        // Parallel workers may skip an intermediate count, never the first or the last
+        let done: Vec<u64> = progress.iter().map(|p| p.done).collect();
+        assert_eq!(done.first(), Some(&0));
+        assert_eq!(done.last(), Some(&total));
+        assert!(done.is_sorted());
+
+        let mut partials = partials.into_inner().unwrap();
+        partials.sort_by_key(|p| p["variant"].as_u64().unwrap());
+        assert_eq!(partials.len(), results.len());
+        for (index, (partial, result)) in partials.iter().zip(&results).enumerate() {
+            assert_eq!(
+                partial,
+                &serde_json::json!({ "variant": index, "result": result })
+            );
+        }
+    }
+
+    #[test]
+    fn control_cancels_after_the_first_variant() {
+        let (net, projection) = sepsis();
+        let options = AlignmentOptions::default();
+        let flag = AtomicBool::new(false);
+        let finished = Mutex::new(0);
+        let ctl = Control::new()
+            .on_progress(|p| {
+                if p.done >= 1 {
+                    flag.store(true, Ordering::Relaxed);
+                }
+            })
+            .on_partial(|_| *finished.lock().unwrap() += 1)
+            .cancel_flag(&flag);
+        assert_eq!(
+            ctl.align_variants(&net, &projection, &options).unwrap_err(),
+            Cancelled
+        );
+        // Each thread finishes at most the variant it was aligning when the flag was set
+        assert!(*finished.lock().unwrap() <= rayon::current_num_threads());
+
+        flag.store(false, Ordering::Relaxed);
+        assert_eq!(
+            ctl.align_variants(
+                &net,
+                &projection,
+                &AlignmentOptions {
+                    retry_out_of_memory: true,
+                    ..options.clone()
+                }
+            )
+            .unwrap_err(),
+            Cancelled
+        );
+        flag.store(false, Ordering::Relaxed);
+        assert_eq!(
+            ctl.align_variants(&net, &projection, &options).unwrap_err(),
+            Cancelled
+        );
+    }
+
+    #[test]
+    fn cancelled_search_is_cancelled_not_a_limit() {
+        let flag = AtomicBool::new(true);
+        let ctl = Control::new().cancel_flag(&flag);
+        let options = AlignmentOptions {
+            max_states: Some(0),
+            ..AlignmentOptions::default()
+        };
+        assert_eq!(
+            ctl.align_trace(&sepsis_net(), &["A", "B"], &options),
+            Err(AlignmentError::SearchError(SearchError::Cancelled))
+        );
+        flag.store(false, Ordering::Relaxed);
+        assert_eq!(
+            ctl.align_trace(&sepsis_net(), &["A", "B"], &options),
+            Err(AlignmentError::SearchError(SearchError::LimitReached))
+        );
+    }
+
+    #[test]
+    fn retry_emits_replaced_variants_again() {
+        let (net, projection) = sepsis();
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(32)
+            .build()
+            .unwrap();
+        let options = AlignmentOptions {
+            max_memory_mib: Some(1),
+            ..AlignmentOptions::default()
+        };
+        let partials = Mutex::new(Vec::new());
+        let retries = Mutex::new(Vec::new());
+        let ctl = Control::new()
+            .on_partial(|v| partials.lock().unwrap().push(v))
+            .on_progress(|p| {
+                if p.stage == "Retrying variants with more memory" {
+                    retries.lock().unwrap().push((p.done, p.total));
+                }
+            });
+        let results = pool
+            .install(|| {
+                ctl.align_variants(
+                    &net,
+                    &projection,
+                    &AlignmentOptions {
+                        retry_out_of_memory: true,
+                        ..options.clone()
+                    },
+                )
+            })
+            .unwrap();
+        drop(ctl);
+
+        let partials = partials.into_inner().unwrap();
+        let retried = (partials.len() - results.len()) as u64;
+        assert!(retried > 0);
+        assert_eq!(
+            retries.into_inner().unwrap().last(),
+            Some(&(retried, Some(retried)))
+        );
+        let mut last = vec![None; results.len()];
+        for partial in partials {
+            last[partial["variant"].as_u64().unwrap() as usize] = Some(partial["result"].clone());
+        }
+        for (last, result) in last.into_iter().zip(&results) {
+            assert!(result.result.is_ok());
+            assert_eq!(last, Some(serde_json::to_value(result).unwrap()));
+        }
+    }
+
+    #[cfg(feature = "bindings")]
+    #[test]
+    fn align_variants_binding_streams_and_cancels() {
+        use crate::bindings::{
+            call_with_outcome, list_functions, AppState, CallError, RegistryItem,
+        };
+        let mut net = PetriNet::new();
+        let start = net.add_place(None);
+        let mid = net.add_place(None);
+        let end = net.add_place(None);
+        let a = net.add_transition(Some("a".to_string()), None);
+        let b = net.add_transition(Some("b".to_string()), None);
+        net.add_arc(ArcType::place_to_transition(start, a), None);
+        net.add_arc(ArcType::transition_to_place(a, mid), None);
+        net.add_arc(ArcType::place_to_transition(mid, b), None);
+        net.add_arc(ArcType::transition_to_place(b, end), None);
+        let net =
+            AcceptingPetriNet::new(net, Marking::from([(start, 1)]), Marking::from([(end, 1)]));
+        let log = crate::event_log!(["a", "b"], ["a"], ["b", "a", "b"]);
+        let state = AppState::default();
+        state.add("net", RegistryItem::custom(net));
+        state.add(
+            "log",
+            RegistryItem::EventLogActivityProjection(log_to_activity_projection(&log)),
+        );
+        let binding = list_functions()
+            .into_iter()
+            .find(|b| b.name == "align_variants")
+            .unwrap();
+        let args = serde_json::json!({ "net": "net", "projection": "log" });
+
+        let partials = Mutex::new(Vec::new());
+        let ctl = Control::new().on_partial(|v| partials.lock().unwrap().push(v));
+        let out = call_with_outcome(binding, &args, &state, &ctl)
+            .unwrap()
+            .result;
+        drop(ctl);
+        let results: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        let mut partials = partials.into_inner().unwrap();
+        partials.sort_by_key(|p| p["variant"].as_u64().unwrap());
+        assert_eq!(partials.len(), 3);
+        for (index, partial) in partials.iter().enumerate() {
+            assert_eq!(partial["variant"], index);
+            assert_eq!(partial["result"], results[index]);
+        }
+
+        let flag = AtomicBool::new(false);
+        let ctl = Control::new()
+            .on_progress(|_| flag.store(true, Ordering::Relaxed))
+            .cancel_flag(&flag);
+        assert_eq!(
+            call_with_outcome(binding, &args, &state, &ctl),
+            Err(CallError::Cancelled)
+        );
+    }
+
+    #[test]
     fn kept_buffers_never_cause_a_failure() {
         let (net, projection) = sepsis();
         let cost_fn = CostFunction::standard();
@@ -513,6 +755,7 @@ mod test {
             let limits = SearchLimits {
                 max_states: None,
                 max_memory: Some(max_memory),
+                cancel: None,
             };
             let mut kept = AlignmentContext::default();
             for trace in variants(&projection) {
@@ -535,6 +778,7 @@ mod test {
         let limits = SearchLimits {
             max_states: None,
             max_memory: Some(64),
+            cancel: None,
         };
         assert_eq!(
             petri_net::align(&sp, &mut AlignmentContext::default(), limits),
@@ -552,6 +796,7 @@ mod test {
             let limits = SearchLimits {
                 max_states: None,
                 max_memory,
+                cancel: None,
             };
             petri_net::align(&sp, &mut AlignmentContext::default(), limits)
         };
@@ -774,12 +1019,12 @@ mod test {
             max_states: None,
             ..AlignmentOptions::default()
         };
-        let empty_trace_align = align_empty_trace(&net, &options);
+        let empty_trace_align = align_trace(&net, &[], &options);
         assert_eq!(
             empty_trace_align,
             Err(AlignmentError::SearchError(SearchError::Unreachable))
         );
-        let result = align_log(&net, &act_proj, &options);
+        let result = align_variants(&net, &act_proj, &options);
         for variant in result {
             assert_eq!(
                 variant.result,
@@ -803,12 +1048,12 @@ mod test {
             max_states: Some(10),
             ..AlignmentOptions::default()
         };
-        let empty_trace_align = align_empty_trace(&net, &options);
+        let empty_trace_align = align_trace(&net, &[], &options);
         assert_eq!(
             empty_trace_align,
             Err(AlignmentError::SearchError(SearchError::LimitReached))
         );
-        let result = align_log(&net, &act_proj, &options);
+        let result = align_variants(&net, &act_proj, &options);
         for variant in result {
             assert_eq!(
                 variant.result,
@@ -825,18 +1070,19 @@ mod test {
                 .join("Sepsis Cases - Event Log.xes.gz"),
         )
         .unwrap();
-        let net =
-            AcceptingPetriNet::import_pnml(test_path.join("petri-net").join("sepsis-fodina.apnml"))
-                .unwrap();
+        let net = AcceptingPetriNet::import_from_path(
+            test_path.join("petri-net").join("sepsis-fodina.apnml"),
+        )
+        .unwrap();
         let act_proj = log_to_activity_projection(&log);
         let options = AlignmentOptions::default();
         // The state equation has no solution for this net, so the final marking is unreachable
-        let empty_trace_align = align_empty_trace(&net, &options);
+        let empty_trace_align = align_trace(&net, &[], &options);
         assert_eq!(
             empty_trace_align,
             Err(AlignmentError::SearchError(SearchError::Unreachable))
         );
-        let result = align_log(&net, &act_proj, &options);
+        let result = align_variants(&net, &act_proj, &options);
         for variant in result {
             assert_eq!(
                 variant.result,
@@ -870,6 +1116,53 @@ mod test {
                 .unwrap()
         };
         assert_eq!(chosen(["A", "B"]), chosen(["B", "A"]));
+    }
+
+    #[test]
+    fn perfectly_fitting_ignores_sync_and_silent_costs() {
+        let mut net = PetriNet::new();
+        let start = net.add_place(None);
+        let mid = net.add_place(None);
+        let end = net.add_place(None);
+        let a = net.add_transition(Some("a".to_string()), None);
+        let tau = net.add_transition(None, None);
+        net.add_arc(ArcType::place_to_transition(start, a), None);
+        net.add_arc(ArcType::transition_to_place(a, mid), None);
+        net.add_arc(ArcType::place_to_transition(mid, tau), None);
+        net.add_arc(ArcType::transition_to_place(tau, end), None);
+        let net =
+            AcceptingPetriNet::new(net, Marking::from([(start, 1)]), Marking::from([(end, 1)]));
+        let options = AlignmentOptions {
+            cost_fn: CostFunction {
+                sync_move_cost: 1,
+                silent_move_cost: 1,
+                ..CostFunction::standard()
+            },
+            ..AlignmentOptions::default()
+        };
+        let mut log = EventLog::new();
+        for trace in [&["a"][..], &["a", "b"]] {
+            let mut t = Trace::new();
+            t.events
+                .extend(trace.iter().map(|a| Event::new(a.to_string())));
+            log.traces.push(t);
+        }
+        let results = align_variants(&net, &log_to_activity_projection(&log), &options);
+        let fitting = results.iter().find(|v| v.activities == ["a"]).unwrap();
+        assert_eq!(fitting.result.as_ref().unwrap().cost, 2);
+        let fitness = compute_fitness(&net, &results, &options).unwrap();
+        assert_eq!(fitness.perfectly_fitting_frac, 0.5);
+    }
+
+    #[test]
+    fn fitness_of_empty_log_is_one() {
+        let net = sepsis_net();
+        let options = AlignmentOptions::default();
+        let fitness = compute_fitness(&net, &[], &options).unwrap();
+        assert_eq!(fitness.log_fitness, 1.0);
+        assert_eq!(fitness.average_fitness, 1.0);
+        assert_eq!(fitness.perfectly_fitting_frac, 1.0);
+        assert_eq!(fitness.total_costs, 0);
     }
 
     #[test]
@@ -1006,9 +1299,13 @@ mod test {
                 .collect();
             let model = ModelNet::build(&net, &options.cost_fn).unwrap();
             let sp = SyncProductNet::construct(&model, &trace, &options.cost_fn).unwrap();
-            let forward = petri_net::align_forward(&sp, options.limits_for(1)).map(|a| a.cost);
-            let both =
-                petri_net::align(&sp, &mut AlignmentContext::default(), options.limits_for(1));
+            let forward =
+                petri_net::align_forward(&sp, options.limits_for(1, None)).map(|a| a.cost);
+            let both = petri_net::align(
+                &sp,
+                &mut AlignmentContext::default(),
+                options.limits_for(1, None),
+            );
             assert_eq!(
                 both.as_ref().map(|a| a.cost),
                 forward.as_ref().copied(),
@@ -1036,10 +1333,10 @@ mod test {
         ] {
             let log = EventLog::import_from_path(test_path.join("xes").join(log)).unwrap();
             let net =
-                AcceptingPetriNet::import_pnml(test_path.join("petri-net").join(net)).unwrap();
+                AcceptingPetriNet::import_from_path(test_path.join("petri-net").join(net)).unwrap();
             let options = AlignmentOptions::default();
             let model = ModelNet::build(&net, &options.cost_fn).unwrap();
-            for variant in align_log(&net, &log_to_activity_projection(&log), &options) {
+            for variant in align_variants(&net, &log_to_activity_projection(&log), &options) {
                 let trace: Vec<&str> = variant.activities.iter().map(String::as_str).collect();
                 let alignment = variant.result.unwrap();
                 assert_eq!(
@@ -1047,7 +1344,7 @@ mod test {
                     Ok(alignment.cost)
                 );
                 let sp = SyncProductNet::construct(&model, &trace, &options.cost_fn).unwrap();
-                let forward = petri_net::align_forward(&sp, options.limits_for(1)).unwrap();
+                let forward = petri_net::align_forward(&sp, options.limits_for(1, None)).unwrap();
                 assert_eq!(forward.cost, alignment.cost, "{trace:?}");
             }
         }

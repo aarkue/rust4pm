@@ -58,11 +58,6 @@ impl PartialOrderTrace {
         }
     }
 
-    /// Serialize to JSON string.
-    pub fn to_json(self) -> String {
-        serde_json::to_string(&self).unwrap()
-    }
-
     /// Returns all the start events of the [`PartialOrderTrace`], i.e., the events having no
     /// preceding event.
     pub fn get_start_events(&self) -> HashSet<&Event> {

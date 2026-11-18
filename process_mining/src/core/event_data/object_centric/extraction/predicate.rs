@@ -387,8 +387,7 @@ mod tests {
 
     #[test]
     fn a_text_literal_is_coerced_to_match_an_integer_column() {
-        // The regression this replaces: a text-input editor emits Literal::Text("1"), which
-        // used to leave docstatus = 1 matching zero rows against an INTEGER column.
+        // A text-input editor emits Literal::Text("1") for `docstatus = 1`.
         let schema = schema_of(&[("docstatus", "INTEGER")]);
         let p = Predicate::Compare {
             left: col("docstatus"),
@@ -591,9 +590,7 @@ mod tests {
 
     #[test]
     fn in_coerces_a_text_literal_to_match_an_integer_column() {
-        // Same regression as `a_text_literal_is_coerced_to_match_an_integer_column`, but for
-        // `In`: `docstatus IN ["1"]` authored the same way as `docstatus = 1` must behave the
-        // same way, not silently match zero rows.
+        // `docstatus IN ["1"]`, authored like `docstatus = 1`, must match the same rows.
         let schema = schema_of(&[("docstatus", "INTEGER")]);
         let p = Predicate::In {
             column: "docstatus".into(),
@@ -742,8 +739,7 @@ mod tests {
 
     #[test]
     fn an_empty_column_name_is_not_swallowed() {
-        // A dropped guard here used to hide `{"type":"column","column":""}`, which drops every
-        // row at evaluation time, from validation.
+        // `{"type":"column","column":""}` drops every row at evaluation time.
         let p = Predicate::IsNull {
             column: String::new(),
         };

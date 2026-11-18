@@ -12,9 +12,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::event_data::object_centric::ocel_struct::{OCELEvent, OCELObject, OCELType, OCEL};
 use crate::core::io::{Exportable, Importable};
-use crate::core::{event_data::object_centric::io::OCELIOError, io::ExtensionWithMime};
+use crate::core::{
+    event_data::object_centric::io::{OCELExportOptions, OCELIOError, OCELImportOptions},
+    io::ExtensionWithMime,
+};
 
-use super::LinkedOCELAccess;
+use super::{LinkedOCELAccess, SlimLinkedOCEL};
 
 /// An Event Index
 ///
@@ -147,15 +150,6 @@ impl IndexLinkedOCEL {
         &self.ocel
     }
 
-    /// Get a mutable reference of the inner [`OCEL`]
-    ///
-    /// Carefull! Changing the inner ocel might render event/object references or relationships invalid or inconsistent.
-    ///
-    /// Consider alternatively calling [`IndexLinkedOCEL::into_inner`], modifying the returned [`OCEL`] and then re-processing it again ([`IndexLinkedOCEL::from_ocel`])
-    pub fn get_ocel_mut(&mut self) -> &mut OCEL {
-        &mut self.ocel
-    }
-
     /// Get all objects involved with an event as a [`HashSet`]
     ///
     pub fn get_e2o_set(&self, index: &EventIndex) -> &HashSet<ObjectIndex> {
@@ -252,6 +246,13 @@ fn build_type_index<'a>(
         })
         .collect();
     (names, idx)
+}
+
+/// Materializes the [`OCEL`] once ([`LinkedOCELAccess::construct_ocel`]) and indexes it.
+impl From<&SlimLinkedOCEL> for IndexLinkedOCEL {
+    fn from(value: &SlimLinkedOCEL) -> Self {
+        Self::from_ocel(value.construct_ocel())
+    }
 }
 
 impl From<OCEL> for IndexLinkedOCEL {
@@ -400,20 +401,6 @@ impl From<OCEL> for IndexLinkedOCEL {
             event_type_idx,
             object_type_idx,
         }
-    }
-}
-
-#[cfg(feature = "ocel-duckdb")]
-impl IndexLinkedOCEL {
-    /// Build an in-memory index by fully materializing a `DuckDB` connection (see
-    /// [`stream_ocel_file_to_duckdb`](crate::core::event_data::object_centric::ocel_sql::stream_ocel_file_to_duckdb)).
-    ///
-    /// Convenience eager-load for logs that fit in memory; for out-of-core access use
-    /// `DuckDbLinkedOCEL`
-    /// instead.
-    pub fn from_duckdb(con: &duckdb::Connection) -> Result<Self, OCELIOError> {
-        let ocel = crate::core::event_data::object_centric::ocel_sql::read_ocel_from_duckdb(con)?;
-        Ok(Self::from_ocel(ocel))
     }
 }
 
@@ -592,37 +579,69 @@ impl<'a> LinkedOCELAccess<'a> for IndexLinkedOCEL {
 
 impl Importable for IndexLinkedOCEL {
     type Error = OCELIOError;
-    type ImportOptions = ();
+    type ImportOptions = OCELImportOptions;
 
-    fn import_from_reader_with_options<R: Read>(
+    fn import_from_reader_with<R: Read>(
         reader: R,
         format: &str,
-        _: Self::ImportOptions,
+        options: Self::ImportOptions,
+        ctl: &crate::Control<'_>,
     ) -> Result<Self, Self::Error> {
-        let ocel = OCEL::import_from_reader(reader, format)?;
-        Ok(IndexLinkedOCEL::from_ocel(ocel))
+        OCEL::import_from_reader_with(reader, format, options, ctl).map(IndexLinkedOCEL::from_ocel)
+    }
+
+    /// See [`OCEL::import_from_path_with`](Importable::import_from_path_with).
+    fn import_from_path_with<P: AsRef<Path>>(
+        path: P,
+        options: Self::ImportOptions,
+        ctl: &crate::Control<'_>,
+    ) -> Result<Self, Self::Error> {
+        OCEL::import_from_path_with(path, options, ctl).map(IndexLinkedOCEL::from_ocel)
+    }
+
+    fn import_from_bytes_with(
+        bytes: &[u8],
+        format: &str,
+        options: Self::ImportOptions,
+        ctl: &crate::Control<'_>,
+    ) -> Result<Self, Self::Error> {
+        OCEL::import_from_bytes_with(bytes, format, options, ctl).map(IndexLinkedOCEL::from_ocel)
     }
 
     fn infer_format(path: &Path) -> Option<String> {
         <OCEL as Importable>::infer_format(path)
     }
 
-    fn known_import_formats() -> Vec<crate::core::io::ExtensionWithMime> {
+    fn known_import_formats() -> Vec<ExtensionWithMime> {
         <OCEL as Importable>::known_import_formats()
     }
 }
 
 impl Exportable for IndexLinkedOCEL {
     type Error = OCELIOError;
-    type ExportOptions = ();
+    type ExportOptions = OCELExportOptions;
+
+    fn infer_format(path: &Path) -> Option<String> {
+        <OCEL as Exportable>::infer_format(path)
+    }
+
+    fn export_to_path_as<P: AsRef<Path>>(
+        &self,
+        path: P,
+        format: &str,
+        options: Self::ExportOptions,
+    ) -> Result<(), Self::Error> {
+        self.ocel.export_to_path_as(path, format, options)
+    }
 
     fn export_to_writer_with_options<W: Write>(
         &self,
         writer: W,
         format: &str,
-        _: Self::ExportOptions,
+        options: Self::ExportOptions,
     ) -> Result<(), Self::Error> {
-        self.ocel.export_to_writer(writer, format)
+        self.ocel
+            .export_to_writer_with_options(writer, format, options)
     }
 
     fn known_export_formats() -> Vec<ExtensionWithMime> {
@@ -632,16 +651,13 @@ impl Exportable for IndexLinkedOCEL {
 #[cfg(test)]
 mod tests {
 
-    use crate::{
-        core::event_data::object_centric::ocel_xml::xml_ocel_import::import_ocel_xml_path,
-        test_utils::get_test_data_path,
-    };
+    use crate::test_utils::get_test_data_path;
 
     use super::*;
 
     #[test]
     fn test_indexing() {
-        let ocel = import_ocel_xml_path(
+        let ocel = OCEL::import_from_path(
             get_test_data_path()
                 .join("ocel")
                 .join("order-management.xml"),

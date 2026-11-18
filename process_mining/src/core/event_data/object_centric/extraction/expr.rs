@@ -606,8 +606,7 @@ mod tests {
 
     #[test]
     fn a_substituted_value_containing_braces_is_not_treated_as_a_placeholder() {
-        // Regression: the old implementation inspected the output for braces, so a JSON
-        // value (ERPNext tabVersion.data) made the whole expression None and dropped the row.
+        // E.g., a JSON value such as ERPNext's tabVersion.data.
         let e = ValueExpression::Template {
             template: "v-{payload}".into(),
         };
@@ -618,8 +617,6 @@ mod tests {
 
     #[test]
     fn an_unterminated_placeholder_yields_no_value() {
-        // Regression in the other direction: "a{b" used to pass the old brace check and
-        // become the literal identity "a{b".
         let e = ValueExpression::Template {
             template: "a{b".into(),
         };
@@ -670,8 +667,7 @@ mod tests {
 
     #[test]
     fn an_empty_column_name_is_not_swallowed() {
-        // A dropped guard here used to hide `{"type":"column","column":""}`, which drops every
-        // row at evaluation time, from validation.
+        // `{"type":"column","column":""}` drops every row at evaluation time.
         let e = ValueExpression::Column {
             column: String::new(),
         };

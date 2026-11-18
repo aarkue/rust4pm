@@ -962,7 +962,9 @@ pub(crate) fn attribute_sql(
         });
     }
     Ok(match (kind, declared) {
-        (ValueKind::Integer, A::Float) => format!("CAST({q} AS DOUBLE)"),
+        (ValueKind::Integer, A::Float) => {
+            format!("CAST({q} AS {})", dialect.attribute_sql_type(A::Float))
+        }
         (ValueKind::Timestamp, A::Time) => dialect.timestamp_column(&q, is_naive_timestamp(col)),
         _ => q,
     })

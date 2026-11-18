@@ -14,6 +14,7 @@ use crate::core::process_models::dfg::DirectlyFollowsGraph;
 use crate::visualization::annotation::{
     edge_text, edge_thickness, edge_weight, node_text, EdgeAnnotation,
 };
+use crate::visualization::badges::{badge_node_size, badges_of, push_badges, TypeBadge};
 use crate::visualization::engine::VisualizationError;
 use crate::visualization::graph_build::{
     dfg_width_with, edge_label_size_with, thickness_from_count, weight_from_count, GraphAcc,
@@ -21,10 +22,10 @@ use crate::visualization::graph_build::{
 };
 use crate::visualization::model::{Annotations, LayoutSettings, ModelLayoutRequest, Visualize};
 use crate::visualization::styling::{
-    edge_label, node_label, push_extra_line, scene_edge, scene_node, terminal_mark, BaseStyle,
+    edge_label, node_label, scene_edge, scene_node, terminal_mark, BaseStyle,
 };
 
-/// Height of a DFG activity box.
+/// Height of a DFG activity box, without badges.
 pub const ACTIVITY_HEIGHT: f64 = 52.0;
 
 /// A node of a [`DirectlyFollowsGraph`] drawing, e.g., `{"kind": "activity", "name": "pay"}`.
@@ -68,6 +69,16 @@ pub enum DfgEdgeRef {
         /// How many traces end with it.
         count: u32,
     },
+}
+
+impl DfgNodeRef {
+    /// The activity's name, `None` for a terminal.
+    pub(crate) fn activity(&self) -> Option<&str> {
+        match self {
+            DfgNodeRef::Activity(name) => Some(name),
+            DfgNodeRef::Start | DfgNodeRef::End => None,
+        }
+    }
 }
 
 impl DfgEdgeRef {
@@ -114,6 +125,9 @@ pub struct DfgBuildOptions {
     pub terminals: bool,
     /// Labels, layout weights and line widths by node and edge, instead of the counts.
     pub annotations: DfgAnnotations,
+    /// Object types drawn as a row of badges in the box of an activity, by activity. See
+    /// [`super::badges`].
+    pub badges: BTreeMap<String, Vec<TypeBadge>>,
 }
 
 impl Default for DfgBuildOptions {
@@ -122,6 +136,7 @@ impl Default for DfgBuildOptions {
             layout: LayoutSettings::default(),
             terminals: true,
             annotations: DfgAnnotations::default(),
+            badges: BTreeMap::new(),
         }
     }
 }
@@ -173,7 +188,8 @@ impl Visualize for DirectlyFollowsGraph<'_> {
             None,
             |node| {
                 let note = node_text(annotations.nodes.get(&node));
-                (node, note)
+                let badges = badges_of(&options.badges, node.activity());
+                (node, note, badges)
             },
             |edge| {
                 let annotation = annotations.edges.get(&edge.endpoints());
@@ -238,9 +254,13 @@ impl Visualize for DirectlyFollowsGraph<'_> {
                     .push(node_label(name, placement.size.width, 2, base));
             }
         }
-        if let Some(note) = node_text(options.annotations.nodes.get(node)) {
-            push_extra_line(&mut n, note, base);
-        }
+        let note = node_text(options.annotations.nodes.get(node));
+        push_badges(
+            &mut n,
+            badges_of(&options.badges, node.activity()),
+            note,
+            base,
+        );
         n
     }
 
@@ -271,18 +291,18 @@ fn activity_key(activity: &str) -> String {
     format!("act:{activity}")
 }
 
-/// Adds the activities and relations of `dfg` to `acc`, and with `terminals` (the keys of its START
-/// and END node) also those nodes and their edges. An activity already in `acc` is shared.
+/// Adds the activities and relations of `dfg` to `acc`, and with `terminals` (the keys of its
+/// START and END node) also those nodes and their edges. An activity already in `acc` is shared.
 ///
-/// `node` and `edge` give the meta of a node or edge, with the node's annotated line or the edge's
-/// annotation. Edges are widened by their count against the largest count among the edges added
-/// here.
+/// `node` and `edge` give the meta of a node or edge, with the node's annotated line and badges
+/// or the edge's annotation. Edges are widened by their count against the largest count among the
+/// edges added here.
 pub(crate) fn add_dfg<'a, N, E>(
     acc: &mut GraphAcc<N, E>,
     dfg: &DirectlyFollowsGraph<'_>,
     terminals: Option<(&str, &str)>,
     group: Option<GroupId>,
-    node: impl Fn(DfgNodeRef) -> (N, Option<&'a str>),
+    node: impl Fn(DfgNodeRef) -> (N, Option<&'a str>, &'a [TypeBadge]),
     edge: impl Fn(DfgEdgeRef) -> (E, Option<&'a EdgeAnnotation>),
     measure: LabelWidth<'_>,
 ) {
@@ -305,9 +325,10 @@ pub(crate) fn add_dfg<'a, N, E>(
     let mut activities: Vec<&String> = dfg.activities.keys().collect();
     activities.sort();
     for name in activities {
-        let (meta, note) = node(DfgNodeRef::Activity(name.clone()));
+        let (meta, note, badges) = node(DfgNodeRef::Activity(name.clone()));
+        let size = graphlay::Size::new(activity_width(name, note, measure), ACTIVITY_HEIGHT);
         let activity = Node {
-            size: graphlay::Size::new(activity_width(name, note, measure), ACTIVITY_HEIGHT),
+            size: badge_node_size(size, badges, note.is_some()),
             shape: Shape::Box,
             group,
             ..Node::default()
@@ -405,6 +426,7 @@ fn boundary_counts(
 mod tests {
     use super::*;
     use crate::core::event_data::case_centric::EventLogClassifier;
+    use crate::discovery::case_centric::dfg::discover_dfg;
     use crate::test_utils::{assert_xml_well_formed, get_test_data_path};
     use crate::visualization::graph_build::heuristic_label_width;
     use crate::visualization::model::{self, Visualize};
@@ -420,7 +442,7 @@ mod tests {
     #[test]
     fn every_activity_and_relation_is_drawn_with_its_count() {
         let log = log();
-        let dfg = DirectlyFollowsGraph::discover(&log);
+        let dfg = discover_dfg(&log);
         let (graph, nodes, edges) =
             dfg.to_graph(&DfgBuildOptions::default(), &heuristic_label_width);
         assert_eq!(graph.nodes.len(), dfg.activities.len() + 2);
@@ -439,7 +461,7 @@ mod tests {
     #[test]
     fn start_and_end_edges_count_the_traces_beginning_and_ending_there() {
         let log = log();
-        let dfg = DirectlyFollowsGraph::discover(&log);
+        let dfg = discover_dfg(&log);
         let (_, _, edges) = dfg.to_graph(&DfgBuildOptions::default(), &heuristic_label_width);
         let classifier = EventLogClassifier::default();
         let name = |e| classifier.get_class_identity(e);
@@ -465,7 +487,7 @@ mod tests {
     #[test]
     fn terminals_are_pinned_and_optional() {
         let log = log();
-        let dfg = DirectlyFollowsGraph::discover(&log);
+        let dfg = discover_dfg(&log);
         let (graph, _, _) = dfg.to_graph(&DfgBuildOptions::default(), &heuristic_label_width);
         assert_eq!(graph.nodes[0].rank, RankConstraint::First);
         assert_eq!(graph.nodes[1].rank, RankConstraint::Last);
@@ -485,7 +507,7 @@ mod tests {
     fn the_layout_request_carries_the_options_and_the_refs() {
         use crate::visualization::engine::layout_options_of;
         let log = log();
-        let dfg = DirectlyFollowsGraph::discover(&log);
+        let dfg = discover_dfg(&log);
         let options = DfgBuildOptions::default();
         let request = model::layout_request(&dfg, &options).unwrap();
         assert_eq!(request.request.preset, Preset::ProcessMap);
@@ -523,7 +545,7 @@ mod tests {
         use crate::visualization::styling::ElementStyle;
         use graphlay::svg::Paint;
         let log = log();
-        let dfg = DirectlyFollowsGraph::discover(&log);
+        let dfg = discover_dfg(&log);
         let options = DfgBuildOptions::default();
         let layout = model::layout(&dfg, &options).unwrap();
         let red = || "#dc2626".to_string();
@@ -592,7 +614,7 @@ mod tests {
         use crate::visualization::engine::layout_graph;
         use crate::visualization::graph_build::{dfg_width, edge_label_size};
         let log = log();
-        let dfg = DirectlyFollowsGraph::discover(&log);
+        let dfg = discover_dfg(&log);
         let plain = DfgBuildOptions::default();
         let (plain_graph, nodes, edges) = dfg.to_graph(&plain, &heuristic_label_width);
         let start = edges
@@ -660,7 +682,7 @@ mod tests {
     #[test]
     fn start_and_end_marks_are_inline_polygons() {
         let log = log();
-        let dfg = DirectlyFollowsGraph::discover(&log);
+        let dfg = discover_dfg(&log);
         let svg = model::svg(&dfg, &DfgBuildOptions::default(), &DfgStyle::default()).unwrap();
         assert_xml_well_formed(&svg);
         assert_eq!(svg.matches("<polygon").count(), 2);
@@ -673,7 +695,7 @@ mod tests {
     fn edges_are_drawn_as_wide_as_the_layout_keeps_them() {
         use crate::visualization::engine::layout_graph;
         let log = log();
-        let dfg = DirectlyFollowsGraph::discover(&log);
+        let dfg = discover_dfg(&log);
         for terminals in [true, false] {
             let options = DfgBuildOptions {
                 terminals,
@@ -692,5 +714,81 @@ mod tests {
             let kept: Vec<f64> = graph.edges.iter().map(|e| e.thickness).collect();
             assert_eq!(drawn, kept);
         }
+    }
+
+    /// Badges add a row to an activity's box, which widens to fit them, and are drawn at its
+    /// bottom with the label moved up.
+    #[test]
+    fn badges_make_an_activity_taller_and_wide_enough() {
+        use crate::visualization::badges::{badge_row_width, BADGE_PADDING, BADGE_ROW_HEIGHT};
+        use graphlay::svg::NodeContent;
+        let log = log();
+        let dfg = discover_dfg(&log);
+        let activity = dfg.activities.keys().min().unwrap().clone();
+        let badges: Vec<TypeBadge> = serde_json::from_value(serde_json::json!([
+            {"object_type": "items", "from": "orders", "card": "1..*", "from_card": "1..1"},
+            {"object_type": "products", "from": "orders", "card": "0..*"},
+            {"object_type": "customers", "card": "0..1"},
+            {"object_type": "employees", "card": "1..1"},
+        ]))
+        .unwrap();
+        let mut options = DfgBuildOptions::default();
+        options.badges.insert(activity.clone(), badges.clone());
+        let at = |nodes: &[DfgNodeRef]| {
+            let node = DfgNodeRef::Activity(activity.clone());
+            nodes.iter().position(|n| *n == node).unwrap()
+        };
+        let (plain, plain_nodes, _) =
+            dfg.to_graph(&DfgBuildOptions::default(), &heuristic_label_width);
+        let (graph, nodes, _) = dfg.to_graph(&options, &heuristic_label_width);
+        let (before, after) = (
+            plain.nodes[at(&plain_nodes)].size,
+            graph.nodes[at(&nodes)].size,
+        );
+        assert_eq!(before.height, ACTIVITY_HEIGHT);
+        assert_eq!(after.height, ACTIVITY_HEIGHT + BADGE_ROW_HEIGHT);
+        let row = badge_row_width(&badges);
+        assert!(after.width >= row + 2.0 * BADGE_PADDING);
+        assert_eq!(after.width, before.width.max(row + 2.0 * BADGE_PADDING));
+
+        let layout = model::layout(&dfg, &options).unwrap();
+        let scene = model::scene_from_layout(
+            &dfg,
+            &layout,
+            &options,
+            &DfgStyle::default(),
+            &StyleOverrides::default(),
+        )
+        .unwrap();
+        let node = &scene.nodes[at(&nodes)];
+        assert_eq!(node.rect.h, ACTIVITY_HEIGHT + BADGE_ROW_HEIGHT);
+        let label = node.content.iter().find_map(|c| match c {
+            NodeContent::Text(run) => Some(run),
+            _ => None,
+        });
+        assert_eq!(label.unwrap().dy, -BADGE_ROW_HEIGHT / 2.0);
+        let rows = node
+            .content
+            .iter()
+            .filter(|c| matches!(c, NodeContent::Glyphs(_)))
+            .count();
+        assert_eq!(rows, 2);
+        let svg = crate::visualization::engine::render_scene_svg(&scene, None);
+        assert!(svg.contains("stroke-dasharray=\"2.2 1.6\""));
+        assert_xml_well_formed(&svg);
+
+        use crate::visualization::badges::BADGE_NOTE_HEIGHT;
+        let note = crate::visualization::NodeAnnotation {
+            label: Some("2 days".to_string()),
+        };
+        options
+            .annotations
+            .nodes
+            .insert(DfgNodeRef::Activity(activity.clone()), note);
+        let (graph, nodes, _) = dfg.to_graph(&options, &heuristic_label_width);
+        assert_eq!(
+            graph.nodes[at(&nodes)].size.height,
+            ACTIVITY_HEIGHT + BADGE_ROW_HEIGHT + BADGE_NOTE_HEIGHT
+        );
     }
 }

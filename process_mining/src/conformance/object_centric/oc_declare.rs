@@ -1,5 +1,5 @@
 //! Checking OC-DECLARE constraints against object-centric event data
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rustc_hash::FxHashSet;
 
@@ -18,10 +18,12 @@ use chrono::{DateTime, FixedOffset};
 use macros_process_mining::register_binding;
 use rayon::prelude::*;
 
-/// Get all events of the given event type satisfying the filters
+/// The events of type `etype` (synthetic `<init>`/`<exit>` types included) whose E2O objects
+/// satisfy every filter in `objs`, as produced by [`OCDeclareArcLabel::get_bindings`].
 ///
-/// `view` is `etype` resolved against an [`E2ORevByTypeIndex`]; `None` falls back to scanning.
-pub(crate) fn target_events_for_binding<'a>(
+/// `view` is `etype` resolved by [`E2ORevByTypeIndex::for_ev_type`]. Without it, the reverse E2O
+/// relations are scanned, with the same result.
+pub fn target_events_for_binding<'a>(
     objs: &'a [SetFilter<&ObjectIndex>],
     linked_ocel: &'a SlimLinkedOCEL,
     etype: &'a str,
@@ -160,7 +162,9 @@ fn directly_adjacent_event<'a>(
 
 /// Get fraction of source events violating this constraint arc
 ///
-/// Returns a value from 0 (all source events satisfy this constraint) to 1 (all source events violate this constraint)
+/// Returns a value from 0 (all source events satisfy this constraint) to 1 (all source events
+/// violate this constraint). Without any source events, the constraint is vacuously satisfied and
+/// this returns 0.
 pub(crate) fn violation_fraction(
     from_et: &str,
     to_et: &str,
@@ -178,12 +182,44 @@ pub(crate) fn violation_fraction(
         .into_iter()
         .filter(|ev| event_violates(ev, label, to_et, arc_type, counts, linked_ocel, view))
         .count();
+    if ev_count == 0 {
+        return 0.0;
+    }
     violated_evs_count as f64 / ev_count as f64
+}
+
+/// Largest number of violating events out of `ev_count` whose fraction is still
+/// `<= violation_thresh`
+///
+/// Uses the same `f64` division as [`violation_fraction`], so both agree exactly.
+/// `None` if not even zero violations are allowed (negative or NaN threshold).
+fn max_allowed_violations(ev_count: usize, violation_thresh: f64) -> Option<usize> {
+    let within = |v: usize| {
+        let frac = if ev_count == 0 {
+            0.0
+        } else {
+            v as f64 / ev_count as f64
+        };
+        frac <= violation_thresh
+    };
+    if !within(0) {
+        return None;
+    }
+    // The rounded product only approximates the answer; the loops correct it.
+    let mut v = ((ev_count as f64 * violation_thresh).floor().max(0.0) as usize).min(ev_count);
+    while v > 0 && !within(v) {
+        v -= 1;
+    }
+    while v < ev_count && within(v + 1) {
+        v += 1;
+    }
+    Some(v)
 }
 
 /// Checks whether the number of events violating this constraint arc is below (<=) the given noise threshold
 ///
 /// Returns false, if the fraction of events violating the constraint is above the noise threshold.
+/// Always agrees with `violation_fraction(..) <= violation_thresh`, but may stop early.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn satisfies_threshold(
     from_et: &str,
@@ -198,63 +234,28 @@ pub(crate) fn satisfies_threshold(
     let view = index.and_then(|i| i.for_ev_type(to_et));
     let evs = EventOrSynthetic::get_all_syn_evs(linked_ocel, from_et);
     let ev_count = evs.len();
-    let min_s = (ev_count as f64 * (1.0 - violation_thresh)).ceil() as u32;
-    let min_v = (ev_count as f64 * violation_thresh).floor() as u32 + 1;
-    // Non-Atomic:
-    // for ev in evs {
-    //     let violated = get_for_ev_perf(&ev, label, to_et, arc_type, counts, linked_ocel);
-    //     if violated {
-    //         min_v -= 1;
-    //         if min_v == 0 {
-    //             return false;
-    //         }
-    //     } else {
-    //         min_s -= 1;
-    //         if min_s == 0 {
-    //             return true;
-    //         }
-    //     }
-    // }
-    // if min_s <= 0 {
-    //     return true;
-    // }
-    // if min_v <= 0 {
-    //     return false;
-    // }
-
-    // // Atomic:
-    let min_v_atomic = AtomicU32::new(0);
-    let min_s_atomic = AtomicU32::new(0);
+    // Stop as soon as either count decides the outcome; `min_s + min_v == ev_count + 1`, so
+    // exactly one of them is reached once all events are checked.
+    let (min_s, min_v) = match max_allowed_violations(ev_count, violation_thresh) {
+        Some(max_v) => (ev_count - max_v, max_v + 1),
+        None => (ev_count + 1, 0),
+    };
+    let v_count = AtomicUsize::new(0);
+    let s_count = AtomicUsize::new(0);
     evs.into_par_iter()
         .map(|ev| {
             let violated = event_violates(&ev, label, to_et, arc_type, counts, linked_ocel, view);
             if violated {
-                min_v_atomic.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                v_count.fetch_add(1, Ordering::Relaxed);
             } else {
-                min_s_atomic.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                s_count.fetch_add(1, Ordering::Relaxed);
             }
         })
         .take_any_while(|_| {
-            if min_s_atomic.load(std::sync::atomic::Ordering::Relaxed) >= min_s {
-                return false;
-            }
-            if min_v_atomic.load(std::sync::atomic::Ordering::Relaxed) >= min_v {
-                return false;
-            }
-            true
+            s_count.load(Ordering::Relaxed) < min_s && v_count.load(Ordering::Relaxed) < min_v
         })
         .for_each(|_| {});
-    let min_s_atomic = min_s_atomic.into_inner();
-    let min_v_atomic = min_v_atomic.into_inner();
-    // println!("{} and {}",min_s_atomic,min_v_atomic);
-    if min_s_atomic >= min_s {
-        return true;
-    }
-    if min_v_atomic >= min_v {
-        return false;
-    }
-
-    unreachable!()
+    s_count.into_inner() >= min_s
 }
 
 /// Returns true if violated!
@@ -332,7 +333,9 @@ pub(crate) fn event_violates(
 #[register_binding]
 /// Returns the confidence conformance of an OC-DECLARE arc on the given OCEL
 ///
-/// Returns a value from 0.0 (all source events violate this constraint) to 1.0 (all source events satisfy this constraint)
+/// Returns a value from 0.0 (all source events violate this constraint) to 1.0 (all source events
+/// satisfy this constraint). Without any source events, the constraint is vacuously satisfied and
+/// this returns 1.0.
 pub fn oc_declare_conformance(ocel: &SlimLinkedOCEL, arc: &OCDeclareArc) -> f64 {
     1.0 - violation_fraction(
         arc.from.as_str(),
@@ -351,7 +354,7 @@ mod tests {
     use crate::core::event_data::object_centric::{
         appendable::AppendableOCEL, OCELRelationship, OCELType,
     };
-    use crate::core::process_models::oc_declare::ObjectTypeAssociation;
+    use crate::core::process_models::oc_declare::{OCDeclareNode, ObjectTypeAssociation};
     use chrono::DateTime;
 
     fn empty_type(name: &str) -> OCELType {
@@ -496,6 +499,105 @@ mod tests {
             compared > 500,
             "expected at least 500 comparison instead of just {compared}; something is wrong with the input SlimLinked OCEL."
         );
+    }
+
+    /// `n` events of type "a", each with its own order. The first `n - violating` are followed by
+    /// a "b".
+    fn locel_with_violations(n: usize, violating: usize) -> SlimLinkedOCEL {
+        let mut s = SlimLinkedOCEL::new();
+        for t in ["a", "b"] {
+            s.declare_event_type(empty_type(t)).unwrap();
+        }
+        s.declare_object_type(empty_type("order")).unwrap();
+        let base = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z").unwrap();
+        let rel = |o: &str| {
+            vec![OCELRelationship {
+                object_id: o.into(),
+                qualifier: "q".into(),
+            }]
+        };
+        for i in 0..n {
+            let o = format!("o{i}");
+            s.append_object(o.clone(), "order", Vec::new(), Vec::new())
+                .unwrap();
+            let t = base + chrono::Duration::hours(2 * i as i64);
+            s.append_event(format!("a{i}"), "a", t, Vec::new(), rel(&o))
+                .unwrap();
+            if i < n - violating {
+                let t = t + chrono::Duration::hours(1);
+                s.append_event(format!("b{i}"), "b", t, Vec::new(), rel(&o))
+                    .unwrap();
+            }
+        }
+        s.finalize().unwrap();
+        s
+    }
+
+    #[test]
+    fn satisfies_threshold_agrees_with_violation_fraction() {
+        let label = OCDeclareArcLabel {
+            each: vec![ObjectTypeAssociation::new_simple("order")],
+            any: vec![],
+            all: vec![],
+        };
+        let mut thresholds: Vec<f64> = (0..=100).map(|i| i as f64 / 100.0).collect();
+        thresholds.extend([0.18, 0.7, 0.94, 1.0 / 3.0, 2.0 / 3.0, -0.1, 1.1]);
+        for n in [0, 1, 3, 7, 10, 17] {
+            for violating in 0..=n {
+                let locel = locel_with_violations(n, violating);
+                let c = (Some(1), None);
+                let frac =
+                    violation_fraction("a", "b", &label, &OCDeclareArcType::EF, &c, &locel, None);
+                if n > 0 {
+                    assert_eq!(frac, violating as f64 / n as f64);
+                } else {
+                    assert_eq!(frac, 0.0);
+                }
+                for &t in &thresholds {
+                    let sat = satisfies_threshold(
+                        "a",
+                        "b",
+                        &label,
+                        &OCDeclareArcType::EF,
+                        &c,
+                        &locel,
+                        t,
+                        None,
+                    );
+                    assert_eq!(sat, frac <= t, "n={n}, violating={violating}, t={t}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn max_allowed_violations_matches_brute_force() {
+        for n in 0..=60usize {
+            for i in -5..=105 {
+                let t = i as f64 / 100.0;
+                let frac = |v: usize| if n == 0 { 0.0 } else { v as f64 / n as f64 };
+                let expected = (0..=n).filter(|&v| frac(v) <= t).max();
+                assert_eq!(max_allowed_violations(n, t), expected, "n={n}, t={t}");
+            }
+        }
+        assert_eq!(max_allowed_violations(10, f64::NAN), None);
+    }
+
+    #[test]
+    fn conformance_without_source_events_is_one() {
+        let locel = locel_with_violations(0, 0);
+        let arc = OCDeclareArc {
+            from: OCDeclareNode::new("a"),
+            to: OCDeclareNode::new("b"),
+            arc_type: OCDeclareArcType::EF,
+            label: OCDeclareArcLabel {
+                each: vec![ObjectTypeAssociation::new_simple("order")],
+                any: vec![],
+                all: vec![],
+            },
+            counts: (Some(1), None),
+        };
+        assert_eq!(oc_declare_conformance(&locel, &arc), 1.0);
     }
 
     // `SetFilter::check` is vacuously true for `All(&[])`, since an event trivially references

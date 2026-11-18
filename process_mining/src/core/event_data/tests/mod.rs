@@ -1,9 +1,6 @@
 use crate::{
-    core::event_data::case_centric::{
-        event_log_struct::XESEditableAttribute,
-        xes::import_xes::{import_xes_path, XESImportOptions},
-    },
-    test_utils::get_test_data_path,
+    core::event_data::case_centric::event_log_struct::XESEditableAttribute,
+    test_utils::get_test_data_path, EventLog, Importable,
 };
 
 mod ocel_gz_io_tests;
@@ -14,7 +11,7 @@ mod xes_import_tests;
 #[test]
 fn test_event_log_attribute_helpers() {
     let path = get_test_data_path().join("xes").join("RepairExample.xes");
-    let mut log = import_xes_path(&path, XESImportOptions::default()).unwrap();
+    let mut log = EventLog::import_from_path(&path).unwrap();
     // Global trace attribute for "concept:name" is set to "__INVALID__"
     let trace = log.traces.last_mut().unwrap();
     // Last trace has a "concept:name" value 999

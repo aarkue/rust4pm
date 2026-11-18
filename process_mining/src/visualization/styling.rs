@@ -7,22 +7,27 @@ use serde::{Deserialize, Serialize};
 
 /// `color` moved `amount` (0 to 1) towards white. A color that is not `#rrggbb` is kept.
 pub fn lighten(color: &str, amount: f64) -> String {
-    let Some(rgb) = parse_hex(color) else {
-        return color.to_string();
-    };
-    let amount = amount.clamp(0.0, 1.0);
-    let mix = |v: u8| (v as f64 + (255.0 - v as f64) * amount).round() as u8;
-    format!("#{:02x}{:02x}{:02x}", mix(rgb.0), mix(rgb.1), mix(rgb.2))
+    mix(color, "#ffffff", amount)
 }
 
 /// `color` moved `amount` (0 to 1) towards black. A color that is not `#rrggbb` is kept.
 pub fn darken(color: &str, amount: f64) -> String {
-    let Some(rgb) = parse_hex(color) else {
+    mix(color, "#000000", amount)
+}
+
+/// `color` moved `amount` (0 to 1) towards `toward`. Unless both are `#rrggbb`, `color` is kept.
+pub fn mix(color: &str, toward: &str, amount: f64) -> String {
+    let (Some(rgb), Some(to)) = (parse_hex(color), parse_hex(toward)) else {
         return color.to_string();
     };
-    let keep = 1.0 - amount.clamp(0.0, 1.0);
-    let mix = |v: u8| (v as f64 * keep).round() as u8;
-    format!("#{:02x}{:02x}{:02x}", mix(rgb.0), mix(rgb.1), mix(rgb.2))
+    let amount = amount.clamp(0.0, 1.0);
+    let mix = |v: u8, t: u8| (v as f64 + (t as f64 - v as f64) * amount).round() as u8;
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        mix(rgb.0, to.0),
+        mix(rgb.1, to.1),
+        mix(rgb.2, to.2)
+    )
 }
 
 /// The color of `key` in `scope` (`"objectType"` or `"activity"`), the same for the same name.
@@ -69,7 +74,9 @@ fn oklch_hex(l: f64, c: f64, hue_deg: f64) -> String {
 
 fn parse_hex(color: &str) -> Option<(u8, u8, u8)> {
     let hex = color.strip_prefix('#')?;
-    if hex.len() != 6 {
+    // Also keeps the byte slicing below on char boundaries, and rejects the sign
+    // `from_str_radix` would accept.
+    if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     Some((
@@ -356,8 +363,7 @@ mod scene_build {
 
     /// One more line of `text` at the bottom of `node`, with its content moved up to make room.
     pub(crate) fn push_extra_line(node: &mut SceneNode, text: &str, base: &BaseStyle) {
-        let size = base.edge_label_size;
-        let shift = size / 2.0 + 1.0;
+        let shift = base.edge_label_size / 2.0 + 1.0;
         for content in &mut node.content {
             match content {
                 NodeContent::Text(run) => run.dy -= shift,
@@ -370,7 +376,13 @@ mod scene_build {
                 _ => {}
             }
         }
-        node.content.push(NodeContent::Text(TextRun {
+        node.content.push(extra_line(node, text, base));
+    }
+
+    /// A line of `text` at the bottom of `node`, which must have room for it.
+    pub(crate) fn extra_line(node: &SceneNode, text: &str, base: &BaseStyle) -> NodeContent {
+        let size = base.edge_label_size;
+        NodeContent::Text(TextRun {
             text: text.to_string(),
             dy: node.rect.h / 2.0 - size / 2.0 - EXTRA_LINE_INSET,
             size: Some(size),
@@ -382,7 +394,7 @@ mod scene_build {
                 line_height: size + 1.5,
             }),
             ..TextRun::default()
-        }));
+        })
     }
 
     /// `edge` with `style` applied. An extra line goes under its last label, or on a chip at its
@@ -469,6 +481,17 @@ mod tests {
         assert_eq!(lighten("#000000", 0.5), "#808080");
         assert_eq!(darken("#ffffff", 0.25), "#bfbfbf");
         assert_eq!(lighten("currentColor", 0.5), "currentColor");
+        assert_eq!(mix("#000000", "#ffffff", 0.5), lighten("#000000", 0.5));
+        assert_eq!(mix("#ffffff", "#000000", 0.25), darken("#ffffff", 0.25));
+        assert_eq!(mix("#123456", "currentColor", 0.5), "#123456");
+    }
+
+    #[test]
+    fn a_color_that_is_not_ascii_hex_is_left_unchanged() {
+        for color in ["#a\u{e9}abc", "#ab\u{e9}cd", "#+1+2+3", "#12345g"] {
+            assert_eq!(lighten(color, 0.5), color);
+            assert_eq!(darken(color, 0.5), color);
+        }
     }
 
     #[test]

@@ -3,19 +3,19 @@
 //! 🔐 Requires the `ocel-sqlite` or `ocel-duckdb` feature to be enabled.
 #![cfg(not(all(not(feature = "ocel-duckdb"), not(feature = "ocel-sqlite"))))]
 use std::borrow::Cow;
+use std::collections::HashSet;
 
 use chrono::DateTime;
+#[cfg(feature = "ocel-duckdb")]
+use duckdb::schema::value::ocel_value_to_duck;
+#[cfg(feature = "ocel-sqlite")]
+use rusqlite::types::Value as SqliteValue;
+
+pub(crate) use super::sql_columns::T_OCEL_ATTR_COLUMNS;
 
 pub(crate) const OCEL_ID_COLUMN: &str = "ocel_id";
 pub(crate) const OCEL_TIME_COLUMN: &str = "ocel_time";
 pub(crate) const OCEL_CHANGED_FIELD: &str = "ocel_changed_field";
-/// A misspelling of [`OCEL_CHANGED_FIELD`] (missing the `d`) seen in the wild.
-///
-/// Never treated as the real column: it exists only so importers can name the misspelling in the
-/// diagnostic they report.
-pub(crate) const OCEL_CHANGE_FIELD_MISSPELLED: &str = "ocel_change_field";
-pub(crate) const IGNORED_PRAGMA_COLUMNS: [&str; 3] =
-    [OCEL_ID_COLUMN, OCEL_TIME_COLUMN, OCEL_CHANGED_FIELD];
 pub(crate) const OCEL_TYPE_MAP_COLUMN: &str = "ocel_type_map";
 pub(crate) const OCEL_TYPE_COLUMN: &str = "ocel_type";
 pub(crate) const OCEL_O2O_SOURCE_ID_COLUMN: &str = "ocel_source_id";
@@ -27,67 +27,34 @@ pub(crate) const OCEL_REL_QUALIFIER_COLUMN: &str = "ocel_qualifier";
 #[cfg(feature = "ocel-duckdb")]
 pub(crate) mod duckdb;
 pub(crate) mod export;
+pub(crate) mod import;
 #[cfg(feature = "ocel-sqlite")]
 pub(crate) mod sqlite;
 
 #[cfg(feature = "ocel-duckdb")]
-pub use duckdb::duckdb_ocel_export::export_ocel_duckdb_to_path;
+pub(crate) use duckdb::duckdb_ocel_export::export_ocel_duckdb_to_path;
 #[cfg(feature = "ocel-duckdb")]
-pub use duckdb::duckdb_ocel_import::import_ocel_duckdb_from_con;
-#[cfg(feature = "ocel-duckdb")]
-pub use duckdb::duckdb_ocel_import::import_ocel_duckdb_from_con_with_options;
-#[cfg(feature = "ocel-duckdb")]
-pub use duckdb::duckdb_ocel_import::import_ocel_duckdb_from_path;
+pub use duckdb::duckdb_ocel_import::import_ocel_duckdb;
+#[cfg(all(test, feature = "ocel-duckdb"))]
+pub(crate) use duckdb::read_ocel_from_duckdb;
 #[cfg(feature = "ocel-duckdb")]
 pub use duckdb::{
-    generate_type_views, read_consolidated_ocel_from_duckdb_path,
-    read_consolidated_slim_ocel_from_duckdb_path, read_ocel_from_duckdb,
-    stream_ocel_file_to_duckdb, stream_ocel_file_to_duckdb_with, write_ocel_to_duckdb,
-    write_ocel_to_duckdb_with, DuckDbImportOptions,
+    generate_type_views, stream_ocel_file_to_duckdb, write_ocel_to_duckdb, DuckDbWriteOptions,
 };
+pub use export::export_ocel_to_sql_con;
 
 #[cfg(feature = "ocel-sqlite")]
-pub use sqlite::sqlite_ocel_export::export_ocel_sqlite_to_path;
+pub(crate) use sqlite::sqlite_ocel_export::{
+    export_ocel_sqlite_to_path, export_ocel_sqlite_to_vec,
+};
 #[cfg(feature = "ocel-sqlite")]
-pub use sqlite::sqlite_ocel_export::export_ocel_sqlite_to_vec;
+pub use sqlite::sqlite_ocel_import::import_ocel_sqlite;
 
-#[cfg(feature = "ocel-sqlite")]
-pub use sqlite::sqlite_ocel_import::import_ocel_sqlite_from_con;
-#[cfg(feature = "ocel-sqlite")]
-pub use sqlite::sqlite_ocel_import::import_ocel_sqlite_from_con_with_options;
-#[cfg(feature = "ocel-sqlite")]
-pub use sqlite::sqlite_ocel_import::import_ocel_sqlite_from_path;
-#[cfg(feature = "ocel-sqlite")]
-pub use sqlite::sqlite_ocel_import::import_ocel_sqlite_from_path_with_options;
-#[cfg(feature = "ocel-sqlite")]
-pub use sqlite::sqlite_ocel_import::import_ocel_sqlite_from_slice;
-
-use crate::core::event_data::object_centric::ocel_struct::OCELAttributeType;
-use crate::core::event_data::object_centric::ocel_struct::OCELType;
-use crate::core::event_data::object_centric::ocel_struct::OCELTypeAttribute;
-
-/// Options controlling how strictly a `SQLite`/`DuckDB` OCEL 2.0 file is read.
-#[derive(Debug, Clone, Copy)]
-pub struct SqlOcelImportOptions {
-    /// When `true`, an object-type table missing its `ocel_changed_field` column is
-    /// tolerated: every row is read as that object's initial state, as if the column
-    /// existed and were `NULL` everywhere. Default: `true`.
-    ///
-    /// The OCEL 2.0 specification requires the column on every object-type table, and
-    /// writers in the wild leave it off types that have no attribute to change. Nothing is
-    /// lost by reading such a file: a table without the column records no attribute change
-    /// in the first place, so refusing it would only cost the caller the rest of the log.
-    /// Set to `false` to hold a file to the specification and reject it by name instead.
-    pub allow_missing_changed_field: bool,
-}
-
-impl Default for SqlOcelImportOptions {
-    fn default() -> Self {
-        Self {
-            allow_missing_changed_field: true,
-        }
-    }
-}
+use crate::core::event_data::object_centric::io::OCELIOError;
+use crate::core::event_data::object_centric::ocel_struct::{
+    OCELAttributeType, OCELAttributeValue, OCELEvent, OCELObject, OCELObjectAttribute,
+    OCELRelationship, OCELType, OCELTypeAttribute,
+};
 
 /// A double-quoted SQL identifier, embedded quotes doubled. For table/column names that come
 /// from the file being read, which nothing has sanitized.
@@ -97,126 +64,32 @@ pub(crate) fn quoted_ident(name: &str) -> String {
 
 /// A single-quoted SQL string literal, embedded quotes doubled. For the same untrusted names
 /// where a literal is needed (`PRAGMA table_info('...')`).
+#[cfg(feature = "ocel-sqlite")]
 pub(crate) fn quoted_str(name: &str) -> String {
     format!("'{}'", name.replace('\'', "''"))
 }
 
-/// Build the diagnostic for an object-type table missing its required
-/// `ocel_changed_field` column, pointing out a same-shaped misspelling if one is present.
-pub(crate) fn missing_changed_field_message(
-    db_path: Option<&str>,
-    ob_type: &str,
-    table_name: &str,
-    raw_column_names: &[String],
-) -> String {
-    let where_ = db_path.map(|p| format!(" in '{p}'")).unwrap_or_default();
-    let mut msg = format!(
-        "object type '{ob_type}' (table '{table_name}'{where_}) has no '{OCEL_CHANGED_FIELD}' \
-         column. This file does not conform to the OCEL 2.0 SQLite/DuckDB specification, which \
-         requires that column on every object-type table."
-    );
-    if raw_column_names
-        .iter()
-        .any(|n| n == OCEL_CHANGE_FIELD_MISSPELLED)
-    {
-        msg.push_str(&format!(
-            " Note: a column named '{OCEL_CHANGE_FIELD_MISSPELLED}' (missing the 'd') is \
-             present. This looks like a misspelling of '{OCEL_CHANGED_FIELD}', but rust4pm \
-             does not guess at that; fix the source file to use the standard column name."
-        ));
-    }
-    msg
-}
-
-/// What the columns of one object-type table mean for the import.
-pub(crate) struct ObjectTablePlan {
-    /// The attribute columns, i.e. every column that is not OCEL-reserved.
-    pub attributes: Vec<OCELTypeAttribute>,
-    /// Query for the rows carrying an object's initial state.
-    pub initial_query: String,
-    /// Query for the rows carrying an attribute change, `None` when the table has no
-    /// `ocel_changed_field` column.
-    pub changed_query: Option<String>,
-}
-
-/// Interpret the `PRAGMA table_info` columns of one object-type table.
-///
-/// Both SQL importers read this the same way, so a rejection comes back as a message for the
-/// caller to wrap in its own error type.
-///
-/// # Errors
-/// The table has no `ocel_changed_field` column and `options` does not tolerate that.
-pub(crate) fn plan_object_table(
-    db_path: Option<&str>,
-    ob_type: &str,
-    table_name: &str,
-    raw_ob_columns: Vec<(String, String)>,
-    options: SqlOcelImportOptions,
-) -> Result<ObjectTablePlan, String> {
-    let has_column = |wanted: &str| raw_ob_columns.iter().any(|(name, _)| name == wanted);
-    let has_changed_field = has_column(OCEL_CHANGED_FIELD);
-    if !has_changed_field {
-        if !options.allow_missing_changed_field {
-            let raw_ob_column_names: Vec<String> = raw_ob_columns
-                .iter()
-                .map(|(name, _)| name.clone())
-                .collect();
-            return Err(missing_changed_field_message(
-                db_path,
-                ob_type,
-                table_name,
-                &raw_ob_column_names,
-            ));
-        }
-        if has_column(OCEL_CHANGE_FIELD_MISSPELLED) {
-            eprintln!(
-                "Warning: object type '{ob_type}' (table '{table_name}') has no \
-                 '{OCEL_CHANGED_FIELD}' column but does have a column named \
-                 '{OCEL_CHANGE_FIELD_MISSPELLED}'. This looks like a misspelling, but it is \
-                 imported as a regular attribute, not as change tracking. Fix the source \
-                 file to use '{OCEL_CHANGED_FIELD}'."
-            );
-        }
-    }
-    let attributes: Vec<OCELTypeAttribute> = raw_ob_columns
-        .into_iter()
-        .filter(|(name, _)| !IGNORED_PRAGMA_COLUMNS.contains(&name.as_str()))
-        .map(|(name, atype)| OCELTypeAttribute {
-            name,
-            value_type: sql_type_to_ocel(&atype).to_type_string(),
-        })
-        .collect();
-    // Without `ocel_changed_field` there is nothing to exclude: every row is an object's
-    // initial (and only) state.
-    let table = quoted_ident(table_name);
-    let (initial_query, changed_query) = if has_changed_field {
-        (
-            format!("SELECT * FROM {table} WHERE {OCEL_CHANGED_FIELD} IS NULL"),
-            Some(format!(
-                "SELECT * FROM {table} WHERE {OCEL_CHANGED_FIELD} IS NOT NULL"
-            )),
-        )
-    } else {
-        (format!("SELECT * FROM {table}"), None)
-    };
-    Ok(ObjectTablePlan {
-        attributes,
-        initial_query,
-        changed_query,
-    })
-}
-
+/// The attribute type of a column declared as `s`: `SQLite`'s declared type as written, or
+/// `DuckDB`'s normalized one (`DECIMAL(18,3)`, `TIMESTAMP WITH TIME ZONE`, ...).
 pub(crate) fn sql_type_to_ocel(s: &str) -> OCELAttributeType {
-    match s {
-        "TEXT" => OCELAttributeType::String,
-        "REAL" => OCELAttributeType::Float,
-        // Used by duckdb
-        "FLOAT" => OCELAttributeType::Float,
-        // SQL type written for floats (see `ocel_type_to_sql`); DuckDB PRAGMA reports it as "DOUBLE"
-        "DOUBLE" | "DOUBLE PRECISION" => OCELAttributeType::Float,
-        "INTEGER" => OCELAttributeType::Integer,
-        "BOOLEAN" => OCELAttributeType::Boolean,
-        "TIMESTAMP" => OCELAttributeType::Time,
+    let s = s.trim().to_ascii_uppercase();
+    let base = s.split('(').next().unwrap_or_default().trim_end();
+    match base {
+        "REAL" | "FLOAT" | "FLOAT4" | "FLOAT8" | "DOUBLE" | "DOUBLE PRECISION" | "DECIMAL"
+        | "NUMERIC" => OCELAttributeType::Float,
+        "INTEGER" | "INT" | "BIGINT" | "SMALLINT" | "TINYINT" | "MEDIUMINT" | "HUGEINT"
+        | "UHUGEINT" | "UBIGINT" | "UINTEGER" | "USMALLINT" | "UTINYINT" | "INT1" | "INT2"
+        | "INT4" | "INT8" | "INT64" | "UNSIGNED BIG INT" => OCELAttributeType::Integer,
+        "BOOLEAN" | "BOOL" => OCELAttributeType::Boolean,
+        "TIMESTAMP"
+        | "TIMESTAMPTZ"
+        | "TIMESTAMP WITH TIME ZONE"
+        | "TIMESTAMP_S"
+        | "TIMESTAMP_MS"
+        | "TIMESTAMP_US"
+        | "TIMESTAMP_NS"
+        | "DATETIME"
+        | "DATE" => OCELAttributeType::Time,
         _ => OCELAttributeType::String,
     }
 }
@@ -226,7 +99,8 @@ pub(crate) fn ocel_type_to_sql(attr: &OCELAttributeType) -> &'static str {
         OCELAttributeType::String => "TEXT",
         // DOUBLE PRECISION instead of REAL for full f64 float support in both DuckDB and SQLite
         OCELAttributeType::Float => "DOUBLE PRECISION",
-        OCELAttributeType::Integer => "INTEGER",
+        // `INTEGER` is 32-bit in DuckDB. In SQLite, BIGINT has the same INTEGER affinity.
+        OCELAttributeType::Integer => "BIGINT",
         OCELAttributeType::Boolean => "BOOLEAN",
         OCELAttributeType::Time => "TIMESTAMP",
         _ => "TEXT",
@@ -259,55 +133,17 @@ impl<'a> From<&'a ::duckdb::Connection> for DatabaseConnection<'a> {
     }
 }
 
-#[derive(Debug)]
-
-/// SQL Database Error
-///
-/// Used to abstract away from actual implementation (currently `SQLite` or `DuckDB`)
-pub enum DatabaseError {
-    #[cfg(feature = "ocel-sqlite")]
-    /// `SQLite` Database Error
-    SQLITE(rusqlite::Error),
-    #[cfg(feature = "ocel-duckdb")]
-    /// `DuckDB` Database Error
-    DUCKDB(::duckdb::Error),
-}
-
-#[cfg(feature = "ocel-sqlite")]
-impl From<rusqlite::Error> for DatabaseError {
-    fn from(value: rusqlite::Error) -> Self {
-        Self::SQLITE(value)
-    }
-}
-#[cfg(feature = "ocel-duckdb")]
-impl From<::duckdb::Error> for DatabaseError {
-    fn from(value: ::duckdb::Error) -> Self {
-        Self::DUCKDB(value)
-    }
-}
-
-impl std::fmt::Display for DatabaseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            #[cfg(feature = "ocel-sqlite")]
-            DatabaseError::SQLITE(e) => write!(f, "SQLite error: {}", e),
-            #[cfg(feature = "ocel-duckdb")]
-            DatabaseError::DUCKDB(e) => write!(f, "DuckDB error: {}", e),
-        }
-    }
-}
-
 #[cfg(all(not(feature = "ocel-duckdb"), not(feature = "ocel-sqlite")))]
 /// SQL Query Parameter
 ///
 /// Neither SQLite nor DuckDB is enabled!
 /// No Params creation is possible.
-pub trait Params {}
+pub(crate) trait Params {}
 #[cfg(all(feature = "ocel-sqlite", not(feature = "ocel-duckdb")))]
 /// SQL Query Parameter
 ///
 /// See [`rusqlite::Params`]  
-pub trait Params: rusqlite::Params {}
+pub(crate) trait Params: rusqlite::Params {}
 #[cfg(all(feature = "ocel-sqlite", not(feature = "ocel-duckdb")))]
 impl<P: rusqlite::Params> Params for P {}
 
@@ -315,7 +151,7 @@ impl<P: rusqlite::Params> Params for P {}
 /// SQL Query Parameter
 ///
 /// See [`::duckdb::Params`]  
-pub trait Params: ::duckdb::Params {}
+pub(crate) trait Params: ::duckdb::Params {}
 #[cfg(all(feature = "ocel-duckdb", not(feature = "ocel-sqlite")))]
 impl<P: ::duckdb::Params> Params for P {}
 
@@ -323,13 +159,13 @@ impl<P: ::duckdb::Params> Params for P {}
 /// SQL Query Parameter
 ///
 /// See [`rusqlite::Params`] and [`::duckdb::Params`]
-pub trait Params: rusqlite::Params + ::duckdb::Params {}
+pub(crate) trait Params: rusqlite::Params + ::duckdb::Params {}
 #[cfg(all(feature = "ocel-duckdb", feature = "ocel-sqlite"))]
 impl<P: rusqlite::Params + ::duckdb::Params> Params for P {}
 
 impl<'a> DatabaseConnection<'a> {
     /// Execute a SQL statement with the given parameters
-    pub fn execute<P: Params>(&self, query: &str, p: P) -> Result<usize, DatabaseError> {
+    pub(crate) fn execute<P: Params>(&self, query: &str, p: P) -> Result<usize, OCELIOError> {
         match self {
             #[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => Ok(connection.execute(query, p)?),
@@ -339,7 +175,7 @@ impl<'a> DatabaseConnection<'a> {
     }
 
     /// Execute a SQL statement without any parameters
-    pub fn execute_no_params(&self, query: &str) -> Result<usize, DatabaseError> {
+    pub(crate) fn execute_no_params(&self, query: &str) -> Result<usize, OCELIOError> {
         match self {
             #[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => Ok(connection.execute(query, [])?),
@@ -348,14 +184,13 @@ impl<'a> DatabaseConnection<'a> {
         }
     }
 
-    /// Insert one `(id, type)` row per item into `table_name`. Used by both
-    /// [`add_objects`] (`(id, object_type)`) and [`add_events`] (`(id, event_type)`).
+    /// Insert one `(id, type)` row per item into `table_name`.
     fn add_id_type_rows<'b, T, I, F>(
         &self,
         table_name: &str,
         items: I,
         extract: F,
-    ) -> Result<(), DatabaseError>
+    ) -> Result<(), OCELIOError>
     where
         T: Clone + 'b,
         I: IntoIterator<Item = Cow<'b, T>>,
@@ -364,11 +199,10 @@ impl<'a> DatabaseConnection<'a> {
         match self {
             #[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => {
+                let mut insert =
+                    connection.prepare(&format!(r#"INSERT INTO "{table_name}" VALUES (?,?)"#))?;
                 for item in items {
-                    connection.execute(
-                        &format!(r#"INSERT INTO "{table_name}" VALUES (?,?)"#),
-                        extract(&item),
-                    )?;
+                    insert.execute(extract(&item))?;
                 }
                 Ok(())
             }
@@ -383,39 +217,44 @@ impl<'a> DatabaseConnection<'a> {
         }
     }
 
-    pub(crate) fn add_objects<'b, I>(
-        &self,
-        table_name: &str,
-        objects: I,
-    ) -> Result<(), DatabaseError>
+    pub(crate) fn add_objects<'b, I>(&self, table_name: &str, objects: I) -> Result<(), OCELIOError>
     where
-        I: IntoIterator<Item = Cow<'b, super::ocel_struct::OCELObject>>,
+        I: IntoIterator<Item = Cow<'b, OCELObject>>,
     {
         self.add_id_type_rows(table_name, objects, |o| [&o.id, &o.object_type])
     }
 
-    pub(crate) fn add_events<'b, I>(&self, table_name: &str, events: I) -> Result<(), DatabaseError>
+    pub(crate) fn add_events<'b, I>(&self, table_name: &str, events: I) -> Result<(), OCELIOError>
     where
-        I: IntoIterator<Item = Cow<'b, super::ocel_struct::OCELEvent>>,
+        I: IntoIterator<Item = Cow<'b, OCELEvent>>,
     {
         self.add_id_type_rows(table_name, events, |e| [&e.id, &e.event_type])
     }
 
-    /// Add rows for all object changes for _objects of one type_ to the specified database table (e.g., `objects_Orders`)
+    /// Add the rows of `objects`, all of `object_type`, to its table `table_name`: one with the
+    /// initial values, and one per later attribute change.
     pub(crate) fn add_object_changes_for_type<'b, I>(
         &self,
         table_name: &str,
         object_type: &OCELType,
         objects: I,
-    ) -> Result<(), DatabaseError>
+    ) -> Result<(), OCELIOError>
     where
-        I: IntoIterator<Item = Cow<'b, super::ocel_struct::OCELObject>>,
+        I: IntoIterator<Item = Cow<'b, OCELObject>>,
     {
+        let columns = TypeColumns::new(object_type);
+        let mut norm = ValueNormalizer::default();
         match self {
             #[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => {
+                let placeholders = ",?".repeat(object_type.attributes.len());
+                let mut insert = connection.prepare(&format!(
+                    r#"INSERT INTO "{table_name}" VALUES (?,?,?{placeholders})"#
+                ))?;
                 for o in objects {
-                    write_object_changes_sqlite(connection, table_name, object_type, &o)?;
+                    for row in object_rows(&columns, &o, &mut norm) {
+                        insert_sqlite_row(&mut insert, row)?;
+                    }
                 }
                 Ok(())
             }
@@ -423,7 +262,9 @@ impl<'a> DatabaseConnection<'a> {
             DatabaseConnection::DUCKDB(connection) => {
                 let mut ap = connection.appender(table_name)?;
                 for o in objects {
-                    write_object_changes_duckdb(&mut ap, object_type, &o)?;
+                    for row in object_rows(&columns, &o, &mut norm) {
+                        append_duckdb_row(&mut ap, row)?;
+                    }
                 }
                 Ok(())
             }
@@ -435,15 +276,21 @@ impl<'a> DatabaseConnection<'a> {
         table_name: &str,
         event_type: &OCELType,
         events: I,
-    ) -> Result<(), DatabaseError>
+    ) -> Result<(), OCELIOError>
     where
-        I: IntoIterator<Item = Cow<'b, super::ocel_struct::OCELEvent>>,
+        I: IntoIterator<Item = Cow<'b, OCELEvent>>,
     {
+        let columns = TypeColumns::new(event_type);
+        let mut norm = ValueNormalizer::default();
         match self {
             #[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => {
+                let placeholders = ",?".repeat(event_type.attributes.len());
+                let mut insert = connection.prepare(&format!(
+                    r#"INSERT INTO "{table_name}" VALUES (?,?{placeholders})"#
+                ))?;
                 for e in events {
-                    write_event_attrs_sqlite(connection, table_name, event_type, &e)?;
+                    insert_sqlite_row(&mut insert, event_row(&columns, &e, &mut norm))?;
                 }
                 Ok(())
             }
@@ -451,7 +298,7 @@ impl<'a> DatabaseConnection<'a> {
             DatabaseConnection::DUCKDB(connection) => {
                 let mut ap = connection.appender(table_name)?;
                 for e in events {
-                    write_event_attrs_duckdb(&mut ap, event_type, &e)?;
+                    append_duckdb_row(&mut ap, event_row(&columns, &e, &mut norm))?;
                 }
                 Ok(())
             }
@@ -459,28 +306,26 @@ impl<'a> DatabaseConnection<'a> {
     }
 
     /// Insert one `(source_id, target_object_id, qualifier)` row per relationship.
-    /// Used by both [`add_o2o_relationships`] and [`add_e2o_relationships`].
     fn add_relationship_rows<'b, T, I, F>(
         &self,
         table_name: &str,
         items: I,
         extract: F,
-    ) -> Result<(), DatabaseError>
+    ) -> Result<(), OCELIOError>
     where
         T: Clone + 'b,
         I: IntoIterator<Item = Cow<'b, T>>,
-        F: for<'r> Fn(&'r T) -> (&'r String, &'r [super::ocel_struct::OCELRelationship]),
+        F: for<'r> Fn(&'r T) -> (&'r String, &'r [OCELRelationship]),
     {
         match self {
             #[cfg(feature = "ocel-sqlite")]
             DatabaseConnection::SQLITE(connection) => {
+                let mut insert =
+                    connection.prepare(&format!(r#"INSERT INTO "{table_name}" VALUES (?,?,?)"#))?;
                 for item in items {
                     let (id, rels) = extract(&item);
                     for r in rels {
-                        connection.execute(
-                            &format!(r#"INSERT INTO "{table_name}" VALUES (?,?,?)"#),
-                            [id, &r.object_id, &r.qualifier],
-                        )?;
+                        insert.execute([id, &r.object_id, &r.qualifier])?;
                     }
                 }
                 Ok(())
@@ -503,9 +348,9 @@ impl<'a> DatabaseConnection<'a> {
         &self,
         table_name: &str,
         objects: I,
-    ) -> Result<(), DatabaseError>
+    ) -> Result<(), OCELIOError>
     where
-        I: IntoIterator<Item = Cow<'b, super::ocel_struct::OCELObject>>,
+        I: IntoIterator<Item = Cow<'b, OCELObject>>,
     {
         self.add_relationship_rows(table_name, objects, |o| (&o.id, &o.relationships))
     }
@@ -514,203 +359,305 @@ impl<'a> DatabaseConnection<'a> {
         &self,
         table_name: &str,
         events: I,
-    ) -> Result<(), DatabaseError>
+    ) -> Result<(), OCELIOError>
     where
-        I: IntoIterator<Item = Cow<'b, super::ocel_struct::OCELEvent>>,
+        I: IntoIterator<Item = Cow<'b, OCELEvent>>,
     {
         self.add_relationship_rows(table_name, events, |e| (&e.id, &e.relationships))
     }
 }
 
-#[cfg(feature = "ocel-sqlite")]
-fn write_object_changes_sqlite(
-    connection: &rusqlite::Connection,
-    table_name: &str,
-    object_type: &OCELType,
-    o: &super::ocel_struct::OCELObject,
-) -> Result<(), DatabaseError> {
-    let placeholders = ",?".repeat(object_type.attributes.len());
-    let sql = format!(r#"INSERT INTO "{table_name}" VALUES (?,?,?{placeholders})"#);
+/// Converts attribute values to the declared type of their column with
+/// [`OCELAttributeValue::normalize_to`], so both SQL formats store the same values. A value that
+/// does not convert is written as `NULL`, with one warning per type and attribute.
+#[derive(Debug, Default)]
+pub(crate) struct ValueNormalizer {
+    warned: HashSet<(String, String)>,
+}
 
-    let initial_vals = object_type.attributes.iter().map(|a| {
+impl ValueNormalizer {
+    pub(crate) fn normalize(
+        &mut self,
+        v: &OCELAttributeValue,
+        target: OCELAttributeType,
+        type_name: &str,
+        attr_name: &str,
+    ) -> OCELAttributeValue {
+        v.normalize_to(target).unwrap_or_else(|| {
+            if self
+                .warned
+                .insert((type_name.to_string(), attr_name.to_string()))
+            {
+                log::warn!(
+                    "attribute '{attr_name}' of type '{type_name}' has {} values that do not \
+                     convert to its declared type {}. They are written as NULL.",
+                    v.get_type().as_type_str(),
+                    target.as_type_str(),
+                );
+            }
+            OCELAttributeValue::Null
+        })
+    }
+}
+
+/// The attribute columns of one type's table, with the type each column holds.
+struct TypeColumns<'t> {
+    ty: &'t OCELType,
+    targets: Vec<OCELAttributeType>,
+}
+
+impl<'t> TypeColumns<'t> {
+    fn new(ty: &'t OCELType) -> Self {
+        let targets = ty
+            .attributes
+            .iter()
+            .map(|a| OCELAttributeType::from_type_str(&a.value_type))
+            .collect();
+        Self { ty, targets }
+    }
+
+    /// `v`, a value of the `i`th attribute, converted to the type of its column.
+    fn value(
+        &self,
+        norm: &mut ValueNormalizer,
+        i: usize,
+        v: &OCELAttributeValue,
+    ) -> OCELAttributeValue {
+        norm.normalize(
+            v,
+            self.targets[i],
+            &self.ty.name,
+            &self.ty.attributes[i].name,
+        )
+    }
+}
+
+/// The `SQLite` value stored for a value already normalized to its column's type.
+///
+/// Typed columns cannot convert the `Display` forms of `Null` (`''`) and booleans (`'true'`), so
+/// they are stored as SQL `NULL` and as `0`/`1`, `SQLite`'s own boolean representation.
+#[cfg(feature = "ocel-sqlite")]
+fn ocel_value_to_sqlite(v: OCELAttributeValue) -> SqliteValue {
+    match v {
+        OCELAttributeValue::Null => SqliteValue::Null,
+        OCELAttributeValue::String(s) => SqliteValue::Text(s),
+        OCELAttributeValue::Integer(i) => SqliteValue::Integer(i),
+        OCELAttributeValue::Float(f) => SqliteValue::Real(f),
+        OCELAttributeValue::Boolean(b) => SqliteValue::Integer(i64::from(b)),
+        OCELAttributeValue::Time(t) => SqliteValue::Text(t.to_rfc3339()),
+    }
+}
+
+/// The rows of `o` in its type's table, as `[id, time, changed field, attribute values...]`: one
+/// with its values at the epoch and no changed field, then one per later change.
+fn object_rows(
+    columns: &TypeColumns<'_>,
+    o: &OCELObject,
+    norm: &mut ValueNormalizer,
+) -> Vec<Vec<OCELAttributeValue>> {
+    let id = || OCELAttributeValue::String(o.id.clone());
+    let mut rows = Vec::new();
+    let initial = columns.ty.attributes.iter().enumerate().map(|(i, a)| {
         o.attributes
             .iter()
             .find(|oa| oa.name == a.name && oa.time == DateTime::UNIX_EPOCH)
-            .map(|v| v.value.to_string())
+            .map_or(OCELAttributeValue::Null, |v| {
+                columns.value(norm, i, &v.value)
+            })
     });
-    let params: Vec<Option<String>> = [
-        Some(o.id.clone()),
-        Some(DateTime::UNIX_EPOCH.to_rfc3339()),
-        None,
-    ]
-    .into_iter()
-    .chain(initial_vals)
-    .collect();
-    connection.execute(&sql, rusqlite::params_from_iter(params))?;
-
-    for a in o
-        .attributes
-        .iter()
-        .filter(|a| a.time != DateTime::UNIX_EPOCH)
-    {
-        let vals = object_type.attributes.iter().map(|ot_attr| {
-            if a.name == ot_attr.name {
-                Some(a.value.to_string())
-            } else {
-                None
-            }
-        });
-        let params: Vec<Option<String>> = [
-            Some(o.id.clone()),
-            Some(a.time.to_rfc3339()),
-            Some(a.name.clone()),
+    rows.push(
+        [
+            id(),
+            OCELAttributeValue::Time(DateTime::UNIX_EPOCH.into()),
+            OCELAttributeValue::Null,
         ]
         .into_iter()
-        .chain(vals)
-        .collect();
-        connection.execute(&sql, rusqlite::params_from_iter(params))?;
-    }
-    Ok(())
-}
-
-#[cfg(feature = "ocel-duckdb")]
-fn write_object_changes_duckdb(
-    ap: &mut ::duckdb::Appender<'_>,
-    object_type: &OCELType,
-    o: &super::ocel_struct::OCELObject,
-) -> Result<(), DatabaseError> {
-    let initial_vals: Vec<Option<String>> = object_type
-        .attributes
-        .iter()
-        .map(|a| {
-            o.attributes
-                .iter()
-                .find(|oa| oa.name == a.name && oa.time == DateTime::UNIX_EPOCH)
-                .map(|v| v.value.to_string())
-        })
-        .collect();
-    let unix = DateTime::UNIX_EPOCH.naive_utc();
-    let no_field: Option<String> = None;
-    let chained: Vec<&dyn ::duckdb::ToSql> = vec![
-        &o.id as &dyn ::duckdb::ToSql,
-        &unix as &dyn ::duckdb::ToSql,
-        &no_field as &dyn ::duckdb::ToSql,
-    ]
-    .into_iter()
-    .chain(initial_vals.iter().map(|v| v as &dyn ::duckdb::ToSql))
-    .collect();
-    ap.append_row(::duckdb::appender_params_from_iter(chained))?;
-
+        .chain(initial)
+        .collect(),
+    );
     for a in o
         .attributes
         .iter()
         .filter(|a| a.time != DateTime::UNIX_EPOCH)
     {
-        let vals: Vec<Option<String>> = object_type
+        // A `NULL` in the changed column is unambiguous here: `ocel_changed_field` says the
+        // attribute changed, so the importer reads it back as `OCELAttributeValue::Null`.
+        let values = columns
+            .ty
             .attributes
             .iter()
-            .map(|ot_attr| {
+            .enumerate()
+            .map(|(i, ot_attr)| {
                 if a.name == ot_attr.name {
-                    Some(a.value.to_string())
+                    columns.value(norm, i, &a.value)
                 } else {
-                    None
+                    OCELAttributeValue::Null
                 }
-            })
-            .collect();
-        let time_naive = a.time.naive_utc();
-        let name_opt: Option<String> = Some(a.name.clone());
-        let chained: Vec<&dyn ::duckdb::ToSql> = vec![
-            &o.id as &dyn ::duckdb::ToSql,
-            &time_naive as &dyn ::duckdb::ToSql,
-            &name_opt as &dyn ::duckdb::ToSql,
-        ]
-        .into_iter()
-        .chain(vals.iter().map(|v| v as &dyn ::duckdb::ToSql))
-        .collect();
-        ap.append_row(::duckdb::appender_params_from_iter(chained))?;
+            });
+        rows.push(
+            [
+                id(),
+                OCELAttributeValue::Time(a.time),
+                OCELAttributeValue::String(a.name.clone()),
+            ]
+            .into_iter()
+            .chain(values)
+            .collect(),
+        );
     }
-    Ok(())
+    rows
 }
 
-#[cfg(feature = "ocel-sqlite")]
-fn write_event_attrs_sqlite(
-    connection: &rusqlite::Connection,
-    table_name: &str,
-    event_type: &OCELType,
-    e: &super::ocel_struct::OCELEvent,
-) -> Result<(), DatabaseError> {
-    let placeholders = ",?".repeat(event_type.attributes.len());
-    let vals = event_type.attributes.iter().map(|a| {
+/// The row of `e` in its type's table, as `[id, time, attribute values...]`.
+fn event_row(
+    columns: &TypeColumns<'_>,
+    e: &OCELEvent,
+    norm: &mut ValueNormalizer,
+) -> Vec<OCELAttributeValue> {
+    let values = columns.ty.attributes.iter().enumerate().map(|(i, a)| {
         e.attributes
             .iter()
             .find(|ea| ea.name == a.name)
-            .map(|v| v.value.to_string())
+            .map_or(OCELAttributeValue::Null, |v| {
+                columns.value(norm, i, &v.value)
+            })
     });
-    let params: Vec<Option<String>> = [Some(e.id.clone()), Some(e.time.to_rfc3339())]
-        .into_iter()
-        .chain(vals)
-        .collect();
-    connection.execute(
-        &format!(r#"INSERT INTO "{table_name}" VALUES (?,?{placeholders})"#),
-        rusqlite::params_from_iter(params),
-    )?;
+    [
+        OCELAttributeValue::String(e.id.clone()),
+        OCELAttributeValue::Time(e.time),
+    ]
+    .into_iter()
+    .chain(values)
+    .collect()
+}
+
+#[cfg(feature = "ocel-sqlite")]
+fn insert_sqlite_row(
+    insert: &mut rusqlite::Statement<'_>,
+    row: Vec<OCELAttributeValue>,
+) -> Result<(), OCELIOError> {
+    insert.execute(rusqlite::params_from_iter(
+        row.into_iter().map(ocel_value_to_sqlite),
+    ))?;
     Ok(())
 }
 
 #[cfg(feature = "ocel-duckdb")]
-fn write_event_attrs_duckdb(
+fn append_duckdb_row(
     ap: &mut ::duckdb::Appender<'_>,
-    event_type: &OCELType,
-    e: &super::ocel_struct::OCELEvent,
-) -> Result<(), DatabaseError> {
-    let vals: Vec<Option<String>> = event_type
-        .attributes
-        .iter()
-        .map(|a| {
-            e.attributes
-                .iter()
-                .find(|ea| ea.name == a.name)
-                .map(|v| v.value.to_string())
-        })
-        .collect();
-    let time_naive = e.time.naive_utc();
-    let chained: Vec<&dyn ::duckdb::ToSql> = vec![
-        &e.id as &dyn ::duckdb::ToSql,
-        &time_naive as &dyn ::duckdb::ToSql,
-    ]
-    .into_iter()
-    .chain(vals.iter().map(|v| v as &dyn ::duckdb::ToSql))
-    .collect();
-    ap.append_row(::duckdb::appender_params_from_iter(chained))?;
+    row: Vec<OCELAttributeValue>,
+) -> Result<(), OCELIOError> {
+    ap.append_row(::duckdb::appender_params_from_iter(
+        row.into_iter().map(ocel_value_to_duck),
+    ))?;
     Ok(())
 }
 
-// The only test here round-trips through SQLite, so it needs the connector, not just `test`.
 #[cfg(all(test, feature = "ocel-sqlite"))]
 mod test {
     use std::fs::remove_file;
 
     use crate::{
-        core::event_data::object_centric::{
-            ocel_json::import_ocel_json_path,
-            ocel_sql::{export::export_ocel_to_sql_con, import_ocel_sqlite_from_path},
-        },
-        test_utils,
+        core::event_data::object_centric::ocel_sql::{export_ocel_to_sql_con, import_ocel_sqlite},
+        test_utils, Importable, OCEL,
     };
 
     #[test]
     fn test_sqlite_ocel_round_trip_order() {
         let path: std::path::PathBuf = test_utils::get_test_data_path();
-        let ocel = import_ocel_json_path(path.join("ocel").join("order-management.json")).unwrap();
+        let ocel = OCEL::import_from_path(path.join("ocel").join("order-management.json")).unwrap();
         let export_path = path.join("export").join("roundtrip-sqlite-export.sqlite");
         let _ = remove_file(&export_path);
         let conn = rusqlite::Connection::open(&export_path).unwrap();
         export_ocel_to_sql_con(&conn, &ocel).unwrap();
-        let ocel2 = import_ocel_sqlite_from_path(export_path).unwrap();
+        let ocel2 = import_ocel_sqlite(&conn, &Default::default()).unwrap();
         assert_eq!(ocel.event_types.len(), ocel2.event_types.len());
         assert_eq!(ocel.object_types.len(), ocel2.object_types.len());
 
         assert_eq!(ocel.objects.len(), ocel2.objects.len());
         assert_eq!(ocel.events.len(), ocel2.events.len());
+    }
+}
+
+/// A file in which the `object` table lists objects that no type table has: `Truck` has no
+/// attributes and an empty table, `Crate` is not in `object_map_type`. `b1` has two initial
+/// rows, and `e2` has a type without a table.
+#[cfg(test)]
+pub(crate) mod object_table_fixture {
+    use crate::core::event_data::object_centric::ocel_struct::{
+        OCELAttributeValue, OCELRelationship, OCEL,
+    };
+
+    pub(crate) const SQL: &str = "
+        CREATE TABLE event_map_type (ocel_type TEXT, ocel_type_map TEXT);
+        CREATE TABLE object_map_type (ocel_type TEXT, ocel_type_map TEXT);
+        CREATE TABLE event (ocel_id TEXT, ocel_type TEXT);
+        CREATE TABLE object (ocel_id TEXT, ocel_type TEXT);
+        CREATE TABLE event_object (ocel_event_id TEXT, ocel_object_id TEXT, ocel_qualifier TEXT);
+        CREATE TABLE object_object (ocel_source_id TEXT, ocel_target_id TEXT, ocel_qualifier TEXT);
+        CREATE TABLE event_Ev (ocel_id TEXT, ocel_time TIMESTAMP);
+        CREATE TABLE object_Truck (ocel_id TEXT, ocel_time TIMESTAMP);
+        CREATE TABLE object_Box (
+            ocel_id TEXT, ocel_time TIMESTAMP, ocel_changed_field TEXT, weight REAL, color TEXT
+        );
+        INSERT INTO event_map_type VALUES ('Ev', 'Ev');
+        INSERT INTO object_map_type VALUES ('Truck', 'Truck'), ('Box', 'Box');
+        INSERT INTO event VALUES ('e1', 'Ev'), ('e2', 'Ghost');
+        INSERT INTO event_Ev VALUES ('e1', '2020-01-01T00:00:00+00:00');
+        INSERT INTO object VALUES
+            ('t1', 'Truck'), ('t2', 'Truck'), ('b1', 'Box'), ('b2', 'Box'), ('x1', 'Crate');
+        INSERT INTO object_Box VALUES ('b1', '1970-01-01T00:00:00+00:00', NULL, 1.5, NULL);
+        INSERT INTO object_Box VALUES ('b1', '1970-01-01T00:00:00+00:00', NULL, 9.0, 'red');
+        INSERT INTO object_object VALUES ('t1', 'b1', 'carries');
+        INSERT INTO event_object VALUES ('e1', 't1', 'uses');
+    ";
+
+    pub(crate) fn check(ocel: &OCEL) {
+        let mut objects: Vec<_> = ocel
+            .objects
+            .iter()
+            .map(|o| (o.id.as_str(), o.object_type.as_str()))
+            .collect();
+        objects.sort_unstable();
+        assert_eq!(
+            objects,
+            [
+                ("b1", "Box"),
+                ("b2", "Box"),
+                ("t1", "Truck"),
+                ("t2", "Truck"),
+                ("x1", "Crate")
+            ]
+        );
+        let mut types: Vec<_> = ocel.object_types.iter().map(|t| t.name.as_str()).collect();
+        types.sort_unstable();
+        assert_eq!(types, ["Box", "Crate", "Truck"]);
+
+        let ob = |id: &str| ocel.objects.iter().find(|o| o.id == id).unwrap();
+        assert!(ob("t2").attributes.is_empty());
+        assert_eq!(
+            ob("t1").relationships,
+            [OCELRelationship {
+                object_id: "b1".into(),
+                qualifier: "carries".into()
+            }]
+        );
+        let mut b1: Vec<_> = ob("b1")
+            .attributes
+            .iter()
+            .map(|a| (a.name.as_str(), a.value.clone()))
+            .collect();
+        b1.sort_by(|a, b| a.0.cmp(b.0));
+        assert_eq!(
+            b1,
+            [
+                ("color", OCELAttributeValue::String("red".into())),
+                ("weight", OCELAttributeValue::Float(1.5)),
+            ],
+            "the first initial row wins, later ones only fill in its NULLs"
+        );
+
+        assert_eq!(ocel.events.len(), 1);
+        assert_eq!(ocel.events[0].relationships.len(), 1);
     }
 }

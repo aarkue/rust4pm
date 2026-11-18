@@ -10,10 +10,11 @@ use crate::core::event_data::object_centric::ocel_struct::{
 };
 
 use super::tables::{
-    add_events_column, build_events_table, T_E2O, T_EVENTS, T_EVENT_ATTR_META, T_O2O, T_OBJECTS,
-    T_OBJECT_ATTR_CHANGES, T_OBJECT_ATTR_META,
+    add_events_column, create_events_table, ColumnNames, EVENT_BASE_COLS, T_E2O, T_EVENTS,
+    T_EVENT_ATTR_META, T_O2O, T_OBJECTS, T_OBJECT_ATTR_CHANGES, T_OBJECT_ATTR_META,
 };
 use super::value::{datetime_to_duck_timestamp, ocel_value_to_duck, to_sql_value};
+use crate::core::event_data::object_centric::ocel_sql::ValueNormalizer;
 
 /// Streaming sink for the schema. Holds one appender per table, each borrowing `&'con Connection`.
 /// The `events` appender is created once the wide schema is known.
@@ -34,6 +35,8 @@ pub(crate) struct DuckDbOcelSink<'con> {
     ev_columns: Vec<(String, OCELAttributeType)>,
     /// name -> index into `ev_columns` (for building a full-width row per event).
     ev_col_index: HashMap<String, usize>,
+    /// The `events` column names taken so far.
+    ev_column_names: ColumnNames,
     events_created: bool,
     /// Undeclared attribute name -> event types already written to `event_attr_meta`,
     /// so a recurring name costs one meta row per event type, not one per event.
@@ -41,6 +44,7 @@ pub(crate) struct DuckDbOcelSink<'con> {
     /// Event type -> attribute names it declared, so an attribute another type declared still
     /// gets this type's own `event_attr_meta` row when it first shows up on one of its events.
     declared_ev_attrs: HashMap<String, HashSet<String>>,
+    normalizer: ValueNormalizer,
 }
 
 impl<'con> DuckDbOcelSink<'con> {
@@ -57,9 +61,11 @@ impl<'con> DuckDbOcelSink<'con> {
             ev_attr_types: HashMap::new(),
             ev_columns: Vec::new(),
             ev_col_index: HashMap::new(),
+            ev_column_names: ColumnNames::new(&EVENT_BASE_COLS),
             events_created: false,
             undeclared_meta_written: HashMap::new(),
             declared_ev_attrs: HashMap::new(),
+            normalizer: ValueNormalizer::default(),
         })
     }
 
@@ -76,9 +82,8 @@ impl<'con> DuckDbOcelSink<'con> {
         }
         // Nothing declared this attribute, so nothing says what it holds.
         let ty = OCELAttributeType::String;
-        self.con.execute_batch(&add_events_column(name, ty))?;
+        add_events_column(self.con, name, ty, &mut self.ev_column_names)?;
         self.events = Some(self.con.appender(T_EVENTS)?);
-        // `ADD COLUMN` appends at the end, matching the push onto `ev_columns`.
         self.ev_col_index
             .insert(name.to_string(), self.ev_columns.len());
         self.ev_columns.push((name.to_string(), ty));
@@ -117,23 +122,8 @@ impl<'con> DuckDbOcelSink<'con> {
         if self.events_created {
             return Ok(());
         }
-        let mut names: Vec<String> = self.ev_attr_types.keys().cloned().collect();
-        names.sort();
-        self.ev_columns = names
-            .into_iter()
-            .map(|n| {
-                let ty = self.ev_attr_types[&n];
-                (n, ty)
-            })
-            .collect();
-        self.ev_col_index = self
-            .ev_columns
-            .iter()
-            .enumerate()
-            .map(|(i, (n, _))| (n.clone(), i))
-            .collect();
-        self.con
-            .execute_batch(&build_events_table(&self.ev_columns))?;
+        (self.ev_columns, self.ev_col_index) =
+            create_events_table(self.con, &self.ev_attr_types, &mut self.ev_column_names)?;
         self.events = Some(self.con.appender(T_EVENTS)?);
         self.events_created = true;
         Ok(())
@@ -207,7 +197,9 @@ impl<'con> AppendableOCEL for DuckDbOcelSink<'con> {
         ));
         for a in &attributes {
             let idx = self.ev_col_index[&a.name];
-            row[3 + idx] = ocel_value_to_duck(&a.value, self.ev_columns[idx].1);
+            let ty = self.ev_columns[idx].1;
+            row[3 + idx] =
+                ocel_value_to_duck(self.normalizer.normalize(&a.value, ty, event_type, &a.name));
         }
         let params: Vec<&dyn ToSql> = row.iter().map(|v| v as &dyn ToSql).collect();
         self.events

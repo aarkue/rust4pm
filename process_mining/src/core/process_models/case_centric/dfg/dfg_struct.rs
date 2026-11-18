@@ -7,8 +7,6 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
-use crate::{core::EventLog, discovery::case_centric::dfg::discover_dfg};
-
 /// Activity in a directly-follows graph.
 pub type Activity = String;
 
@@ -46,18 +44,6 @@ impl<'a> DirectlyFollowsGraph<'a> {
             end_activities: HashMap::new(),
         }
     }
-    /// Discover a [`DirectlyFollowsGraph`] from an [`EventLog`] using the specified [`EventLogClassifier`](crate::core::event_data::case_centric::EventLogClassifier) to derive the 'activity' names
-    ///
-    /// If there is no special classifier to be used, the default (`&EventLogClassifier::default()`) can also simply be passed in
-    pub fn discover(event_log: &EventLog) -> Self {
-        discover_dfg(event_log)
-    }
-
-    /// Serialize to JSON string.
-    pub fn to_json(self) -> String {
-        serde_json::to_string(&self).unwrap()
-    }
-
     /// Add an activity with a frequency.
     ///
     /// If the activity already exists, the frequency count is added to the existing activity.
@@ -188,6 +174,7 @@ impl<'a> DirectlyFollowsGraph<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::{core::EventLog, discovery::case_centric::dfg::discover_dfg};
     pub const SAMPLE_JSON_DFG: &str = r#"
 {
     "activities": {
@@ -225,8 +212,8 @@ mod tests {
 }"#;
 
     use crate::{
-        core::event_data::case_centric::xes::import_xes::{import_xes_path, XESImportOptions},
-        test_utils::get_test_data_path,
+        core::event_data::case_centric::xes::import_xes::XESImportOptions,
+        test_utils::get_test_data_path, Control, Importable,
     };
 
     use super::*;
@@ -284,7 +271,7 @@ mod tests {
     fn reading_dfg_from_event_log_repair_example() {
         let path = get_test_data_path().join("xes").join("RepairExample.xes");
 
-        let log: EventLog = import_xes_path(
+        let log: EventLog = EventLog::import_from_path_with(
             path,
             XESImportOptions {
                 ignore_log_attributes_except: Some(HashSet::default()),
@@ -298,11 +285,12 @@ mod tests {
                 ),
                 ..XESImportOptions::default()
             },
+            &Control::new(),
         )
         .unwrap();
 
         #[allow(unused_variables)]
-        let graph = DirectlyFollowsGraph::discover(&log);
+        let graph = discover_dfg(&log);
 
         #[cfg(feature = "visualization")]
         {
@@ -319,7 +307,7 @@ mod tests {
             .join("xes")
             .join("Sepsis Cases - Event Log.xes.gz");
 
-        let log: EventLog = import_xes_path(
+        let log: EventLog = EventLog::import_from_path_with(
             path,
             XESImportOptions {
                 ignore_log_attributes_except: Some(HashSet::default()),
@@ -333,11 +321,12 @@ mod tests {
                 ),
                 ..XESImportOptions::default()
             },
+            &Control::new(),
         )
         .unwrap();
 
         #[allow(unused_variables)]
-        let graph = DirectlyFollowsGraph::discover(&log);
+        let graph = discover_dfg(&log);
 
         #[cfg(feature = "visualization")]
         {
@@ -350,7 +339,7 @@ mod tests {
     fn test_dfg_from_an1_example() {
         let path = get_test_data_path().join("xes").join("AN1-example.xes");
 
-        let log: EventLog = import_xes_path(
+        let log: EventLog = EventLog::import_from_path_with(
             path,
             XESImportOptions {
                 ignore_log_attributes_except: Some(HashSet::default()),
@@ -364,10 +353,11 @@ mod tests {
                 ),
                 ..XESImportOptions::default()
             },
+            &Control::new(),
         )
         .unwrap();
 
-        let graph = DirectlyFollowsGraph::discover(&log);
+        let graph = discover_dfg(&log);
 
         assert_eq!(graph.activities.len(), 6);
         assert_eq!(graph.directly_follows_relations.len(), 16);

@@ -26,9 +26,6 @@ pub const TRACE_PREFIX: &str = "case:";
 /// Convert a attribute ([Attribute]) to an [`AnyValue`]
 ///
 /// Used for converting values and data types to the `DataFrame` equivalent
-///
-/// The UTC timezone argument is used to correctly convert to `AnyValue::Datetime` with UTC timezone
-///
 fn attribute_to_any_value<'a>(from_option: Option<&Attribute>) -> AnyValue<'a> {
     match from_option {
         Some(from) => {
@@ -43,21 +40,15 @@ fn attribute_to_any_value<'a>(from_option: Option<&Attribute>) -> AnyValue<'a> {
 /// Convert a attribute ([`AttributeValue`]) to an [`AnyValue`]
 ///
 /// Used for converting values and data types to the `DataFrame` equivalent
-///
-/// The UTC timezone argument is used to correctly convert to `AnyValue::Datetime` with UTC timezone
-///
 fn attribute_value_to_any_value<'a>(from: &AttributeValue) -> AnyValue<'a> {
     match from {
         AttributeValue::String(v) => AnyValue::StringOwned(v.into()),
         AttributeValue::Date(v) => {
-            // Fallback for testing:
-            // return AnyValue::StringOwned(v.to_string().into());
             AnyValue::Datetime(
                 v.timestamp_micros(),
                 polars::prelude::TimeUnit::Microseconds,
-                // Unfortunately, we cannot pass fixed timezone offsets here.
-                // Polars would also not support mixed timezones in a single column.
-                // Thus, timezone information is lost, but the timestamps are still correct (i.e., the right moment in time)
+                // Polars takes no fixed offsets and no mixed time zones in a column, so the offset
+                // is dropped (the instant stays correct)
                 None,
             )
         }
@@ -151,9 +142,7 @@ pub fn convert_log_to_dataframe(
             let mut unique_dtypes: HashSet<DataType> = entries.iter().map(|v| v.dtype()).collect();
             unique_dtypes.remove(&DataType::Null);
             if unique_dtypes.len() > 1 {
-                eprintln!(
-                    "Warning: Attribute {k} contains values of different dtypes ({unique_dtypes:?})"
-                );
+                log::warn!("Attribute {k} contains values of different dtypes ({unique_dtypes:?})");
                 if unique_dtypes
                     == vec![DataType::Float64, DataType::Int64]
                         .into_iter()
@@ -188,7 +177,7 @@ pub fn convert_log_to_dataframe(
     }
     now = Instant::now();
     let df = unsafe {
-        DataFrame::new_no_checks(
+        DataFrame::new_unchecked(
             x.first().map(|e| e.len()).unwrap_or_default(),
             x.into_iter().map(|s| Column::Series(s.into())).collect(),
         )
@@ -306,11 +295,8 @@ mod df_xes_tests {
     use std::time::Instant;
 
     use crate::{
-        core::event_data::case_centric::{
-            dataframe::convert_log_to_dataframe,
-            xes::import_xes::{import_xes_path, XESImportOptions},
-        },
-        test_utils::get_test_data_path,
+        core::event_data::case_centric::dataframe::convert_log_to_dataframe,
+        test_utils::get_test_data_path, EventLog, Importable,
     };
 
     #[test]
@@ -320,13 +306,7 @@ mod df_xes_tests {
         let path = get_test_data_path()
             .join("xes")
             .join("Road_Traffic_Fine_Management_Process.xes.gz");
-        let log = import_xes_path(
-            path,
-            XESImportOptions {
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let log = EventLog::import_from_path(path).unwrap();
         let num_events = log.traces.iter().map(|t| t.events.len()).sum::<usize>();
         println!(
             "Got log with {} traces in {:?}",

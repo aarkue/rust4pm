@@ -92,6 +92,14 @@ pub enum JsonArcType {
 impl ObjectCentricPetriNet {
     /// Converts to the [flat JSON form](ObjectCentricPetriNetJson).
     pub fn to_json_form(&self) -> ObjectCentricPetriNetJson {
+        self.to_json_form_indexed().0
+    }
+
+    /// [`Self::to_json_form`], and the index in `places` of each exported place by object type.
+    pub(crate) fn to_json_form_indexed(
+        &self,
+    ) -> (ObjectCentricPetriNetJson, HashMap<(String, PlaceID), usize>) {
+        let mut place_index: HashMap<(String, PlaceID), usize> = HashMap::new();
         let mut json = ObjectCentricPetriNetJson::default();
         let mut taken: HashSet<String> =
             self.activities().into_iter().map(str::to_string).collect();
@@ -106,33 +114,35 @@ impl ObjectCentricPetriNet {
                 if let Some(name) = names.get(&id) {
                     return name.clone();
                 }
-                let label = match id {
-                    NodeID::Transition(t) => Some(net.transition(t).label.as_deref()),
-                    NodeID::Place(_) => None,
-                };
-                let name = match label {
+                let name = match id {
                     // Nets sharing an activity agree on its name, so it is written out once.
-                    Some(Some(activity)) => {
-                        if exported_activities.insert(activity) {
-                            json.transitions.push(JsonTransition {
-                                name: activity.to_string(),
-                                label: Some(activity.to_string()),
-                            });
+                    NodeID::Transition(t) => match net.transition(t).label.as_deref() {
+                        Some(activity) => {
+                            if exported_activities.insert(activity) {
+                                json.transitions.push(JsonTransition {
+                                    name: activity.to_string(),
+                                    label: Some(activity.to_string()),
+                                });
+                            }
+                            activity.to_string()
                         }
-                        activity.to_string()
-                    }
-                    Some(None) => {
-                        let name =
-                            fresh_name(&format!("{object_type} tau"), &mut next_tau, &mut taken);
-                        json.transitions.push(JsonTransition {
-                            name: name.clone(),
-                            label: None,
-                        });
-                        name
-                    }
-                    None => {
+                        None => {
+                            let name = fresh_name(
+                                &format!("{object_type} tau"),
+                                &mut next_tau,
+                                &mut taken,
+                            );
+                            json.transitions.push(JsonTransition {
+                                name: name.clone(),
+                                label: None,
+                            });
+                            name
+                        }
+                    },
+                    NodeID::Place(p) => {
                         let name =
                             fresh_name(&format!("{object_type} p"), &mut next_place, &mut taken);
+                        place_index.insert((object_type.to_string(), p), json.places.len());
                         json.places.push(JsonPlace {
                             name: name.clone(),
                             object_type: object_type.to_string(),
@@ -185,7 +195,7 @@ impl ObjectCentricPetriNet {
             }
         }
 
-        json
+        (json, place_index)
     }
 
     /// Rebuilds an object-centric Petri net from the [flat JSON form](ObjectCentricPetriNetJson).

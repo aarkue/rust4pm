@@ -8,7 +8,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use process_mining::{
     core::event_data::object_centric::{
         linked_ocel::SlimLinkedOCEL,
-        ocel_sql::{stream_ocel_file_to_duckdb_with, DuckDbImportOptions},
+        ocel_sql::{stream_ocel_file_to_duckdb, DuckDbWriteOptions},
     },
     Importable, OCEL,
 };
@@ -20,10 +20,14 @@ fn bench_format(c: &mut Criterion, ext: &str) {
     // The importer recreates its target, so one path serves every iteration.
     let tmp_dir = tempfile::tempdir().expect("create temp dir");
     let out = tmp_dir.path().join(format!("bench_import_{ext}.duckdb"));
-    let opt_default = DuckDbImportOptions::default();
-    let opt_raw = DuckDbImportOptions {
+    let opt_default = DuckDbWriteOptions {
+        overwrite: true,
+        ..Default::default()
+    };
+    let opt_raw = DuckDbWriteOptions {
         compression: false,
         optimize_filesize: false,
+        overwrite: true,
     };
 
     let mut g = c.benchmark_group(format!("ocel_import_{ext}"));
@@ -36,19 +40,21 @@ fn bench_format(c: &mut Criterion, ext: &str) {
         b.iter(|| black_box(SlimLinkedOCEL::import_from_path(black_box(&src)).unwrap()))
     });
     g.bench_function("duckdb_default", |b| {
-        b.iter(|| stream_ocel_file_to_duckdb_with(&src, &out, &opt_default).unwrap())
+        b.iter(|| {
+            stream_ocel_file_to_duckdb(&src, &out, &opt_default, &Default::default()).unwrap()
+        })
     });
     g.bench_function("duckdb_raw", |b| {
-        b.iter(|| stream_ocel_file_to_duckdb_with(&src, &out, &opt_raw).unwrap())
+        b.iter(|| stream_ocel_file_to_duckdb(&src, &out, &opt_raw, &Default::default()).unwrap())
     });
     // In-memory DuckDB (":memory:") isolates engine cost from disk I/O; a fresh in-memory
     // database per iteration, discarded after.
     let mem = std::path::Path::new(":memory:");
     g.bench_function("duckdb_mem_default", |b| {
-        b.iter(|| stream_ocel_file_to_duckdb_with(&src, mem, &opt_default).unwrap())
+        b.iter(|| stream_ocel_file_to_duckdb(&src, mem, &opt_default, &Default::default()).unwrap())
     });
     g.bench_function("duckdb_mem_raw", |b| {
-        b.iter(|| stream_ocel_file_to_duckdb_with(&src, mem, &opt_raw).unwrap())
+        b.iter(|| stream_ocel_file_to_duckdb(&src, mem, &opt_raw, &Default::default()).unwrap())
     });
     g.finish();
 }

@@ -86,8 +86,8 @@ pub trait Visualize {
         DrawOrder::default()
     }
 
-    /// `edge` along `route`, or `None` if the route has no line. `graph_edge` is the edge the layout
-    /// was made for, e.g., for its line width.
+    /// `edge` along `route`, or `None` if the route has no line. `graph_edge` is the edge the
+    /// layout was made for, e.g., for its line width.
     fn draw_edge(
         &self,
         edge: &Self::EdgeRef,

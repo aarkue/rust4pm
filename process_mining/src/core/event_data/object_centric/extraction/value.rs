@@ -374,8 +374,7 @@ mod tests {
 
     #[test]
     fn join_keys_are_total_except_for_null() {
-        // Regression: Float and Timestamp keys used to render through `canonical_string`, which
-        // is `None` for both, so a join on such a column silently produced zero rows.
+        // `canonical_string` is `None` for floats and timestamps, so it cannot be the key.
         assert!(Value::Float(1.5).join_key_part().is_some());
         assert!(Value::Timestamp(
             chrono::DateTime::parse_from_rfc3339("2020-01-01T00:00:00Z").unwrap()

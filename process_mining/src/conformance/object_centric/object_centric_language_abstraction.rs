@@ -9,7 +9,9 @@ use crate::core::event_data::object_centric::linked_ocel::index_linked_ocel::{
     EventIndex, ObjectIndex,
 };
 use crate::core::event_data::object_centric::linked_ocel::{IndexLinkedOCEL, LinkedOCELAccess};
-use crate::core::process_models::object_centric::ocdfg::object_centric_dfg_struct::OCDirectlyFollowsGraph;
+use crate::core::process_models::object_centric::ocdfg::object_centric_dfg_struct::{
+    discover_ocdfg_from, OCDirectlyFollowsGraph,
+};
 use crate::core::process_models::object_centric::ocpt::object_centric_process_tree_struct::{
     OCPTLeafLabel, OCPTNode, OCPT,
 };
@@ -349,8 +351,7 @@ impl OCLanguageAbstraction {
     ///
     pub fn create_from_ocel(locel: &IndexLinkedOCEL) -> Self {
         // Computes the directly-follows graphs for all object types
-        let directly_follows_graph: OCDirectlyFollowsGraph<'_> =
-            OCDirectlyFollowsGraph::create_from_ocel(locel);
+        let directly_follows_graph: OCDirectlyFollowsGraph<'_> = discover_ocdfg_from(locel);
 
         // Sets up the result hashmaps
         let mut start_ev_type_per_ob_type: HashMap<ObjectType, HashSet<EventType>> = HashMap::new();

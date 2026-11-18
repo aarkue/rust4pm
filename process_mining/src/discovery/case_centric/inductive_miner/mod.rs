@@ -3,11 +3,11 @@
 //! <https://doi.org/10.1007/978-3-030-96655-3>. Section numbers in this module refer to that book.
 //!
 //! For a log it tries the base cases, then cut detection with a log split and
-//! recursion, and finally the [fall throughs](fallthrough), ending in a flower model. `IMf` adds
+//! recursion, and finally the fall throughs, ending in a flower model. `IMf` adds
 //! a deviation threshold `f` to all four steps and gives up the fitness guarantee of plain IM.
 //!
 //! For the variant that recurses on a directly-follows graph instead of the log, see
-//! [`dfg_miner`].
+//! [`InductiveMinerDfgOptions`].
 //!
 //! ```
 //! use process_mining::discovery::case_centric::inductive_miner::{
@@ -26,7 +26,7 @@
 //! assert_eq!(tree.to_string(), "→(a, ×(b, c), d)");
 //! ```
 
-use macros_process_mining::register_binding;
+use macros_process_mining::{controlled, register_binding};
 use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -35,6 +35,7 @@ use crate::core::event_data::case_centric::utils::activity_projection::EventLogA
 use crate::core::event_data::case_centric::EventLogClassifier;
 use crate::core::process_models::case_centric::petri_net::AcceptingPetriNet;
 use crate::core::process_models::process_tree::{Node, OperatorType, ProcessTree};
+use crate::utils::control::{Cancelled, Control, Counter};
 use crate::EventLog;
 
 use base_cases::{find_base_case, BaseCase};
@@ -46,10 +47,10 @@ use splits::split_log;
 
 pub(crate) mod base_cases;
 pub(crate) mod cut_finder;
-pub mod dfg;
-pub mod dfg_miner;
-pub mod fallthrough;
-pub mod log;
+pub(crate) mod dfg;
+pub(crate) mod dfg_miner;
+pub(crate) mod fallthrough;
+pub(crate) mod log;
 pub(crate) mod splits;
 pub(crate) mod structures;
 
@@ -70,7 +71,7 @@ pub struct InductiveMinerOptions {
     /// Deviation threshold `f ∈ [0, 1]` of `IMf`, clamped to that range. `0.0` turns filtering
     /// off.
     pub noise_threshold: f64,
-    /// Whether to try the [fall throughs](fallthrough) before resorting to a flower model.
+    /// Whether to try the fall throughs before resorting to a flower model.
     pub use_fallthroughs: bool,
     /// Whether to merge the parts of a sequence cut that only occur together with a skippable
     /// neighbor.
@@ -91,12 +92,12 @@ pub struct InductiveMinerOptions {
     pub use_minimum_self_distance: bool,
     /// Whether to take a tau loop that cuts every trace into single events, as the thesis does.
     /// Mining those single events gives the flower model, so this only decides whether
-    /// [`two_activities_concurrent`](fallthrough::two_activities_concurrent) gets a chance first.
+    /// the two-activities-concurrent fall through gets a chance first.
     pub use_degenerate_tau_loops: bool,
     /// Whether `IMf` keeps the single-activity base case despite repetitions when single
     /// executions dominate (§6.2.2.3). Without it any repetition ends the recursion in a loop.
     pub filter_single_activity: bool,
-    /// Whether the [activity-concurrent fall through](fallthrough::activity_concurrent) also
+    /// Whether the activity-concurrent fall through also
     /// accepts a candidate whose remaining log only has a cut after filtering. The thesis
     /// (§6.2.2.4) probes the unfiltered graph.
     pub filter_activity_concurrent_probe: bool,
@@ -105,7 +106,7 @@ pub struct InductiveMinerOptions {
     pub keep_at_threshold: bool,
     /// Whether `IMf` also removes infrequent start and end activities.
     pub filter_start_end: bool,
-    /// Whether the [activity-concurrent fall through](fallthrough::activity_concurrent) tries the
+    /// Whether the activity-concurrent fall through tries the
     /// activities by name instead of the most frequent first. It takes the first whose removal
     /// leaves a cut.
     pub activity_concurrent_by_name: bool,
@@ -216,7 +217,7 @@ impl InductiveMinerOptions {
 }
 
 /// An Inductive Miner with its settings: one that recurses on the log, or the
-/// [directly-follows variant](dfg_miner).
+/// directly-follows variant ([`InductiveMinerDfgOptions`]).
 ///
 /// In JSON, `kind` tells them apart, e.g., `{"kind": "log", "noise_threshold": 0.2}` or
 /// `{"kind": "dfg"}`, and fields left out take their default value.
@@ -319,13 +320,13 @@ impl InductiveMinerVariant {
     }
 }
 
-/// The settings of an Inductive Miner variant under a preset. See
-/// [`InductiveMinerVariant::options`].
+/// The settings of an Inductive Miner variant under a preset, with a noise threshold of `0.2`
+/// unless given. See [`InductiveMinerVariant::options`].
 #[register_binding]
 pub fn inductive_miner_options(
     variant: InductiveMinerVariant,
     #[bind(default)] preset: InductiveMinerPreset,
-    #[bind(default)] noise_threshold: f64,
+    #[bind(default = 0.2)] noise_threshold: f64,
 ) -> InductiveMiner {
     variant.options(preset, noise_threshold)
 }
@@ -352,87 +353,105 @@ struct Miner<'a> {
     /// Activity labels, indexed by [`ActivityID`].
     labels: &'a [String],
     options: &'a InductiveMinerOptions,
+    ctl: &'a Control<'a>,
+    steps: Counter<'a, 'a>,
 }
 
-/// Discovers an [`AcceptingPetriNet`] with a variant of the Inductive Miner, `IMf` at `0.2` by
-/// default.
-///
-/// The threshold applies to `IMf`, `IMa` and `IMfd`, and the preset says whose behavior to follow
-/// (see [`InductiveMinerVariant::options`]). For other settings, use
-/// [`discover_inductive_net_with`].
-#[register_binding]
-pub fn discover_inductive_net(
-    log: &EventLogActivityProjection,
-    #[bind(default = InductiveMinerVariant::Imf)] variant: InductiveMinerVariant,
-    #[bind(default = 0.2)] noise_threshold: f64,
-    #[bind(default)] preset: InductiveMinerPreset,
-) -> AcceptingPetriNet {
-    discover_inductive_net_with(log, variant.options(preset, noise_threshold))
-}
-
-/// Discovers a [`ProcessTree`] with a variant of the Inductive Miner. See
-/// [`discover_inductive_net`].
-#[register_binding]
-pub fn discover_inductive_tree(
-    log: &EventLogActivityProjection,
-    #[bind(default = InductiveMinerVariant::Imf)] variant: InductiveMinerVariant,
-    #[bind(default = 0.2)] noise_threshold: f64,
-    #[bind(default)] preset: InductiveMinerPreset,
-) -> ProcessTree {
-    discover_inductive_tree_with(log, variant.options(preset, noise_threshold))
-}
+/// Progress stage of the Inductive Miner: `done` counts the base cases, cuts and fall throughs
+/// found so far, with no total.
+const STAGE: &str = "Mining process tree";
 
 /// Discovers a [`ProcessTree`] with the Inductive Miner.
 ///
-/// See [`InductiveMiner`] for the variants and their settings, and the
-/// [module documentation](self) for an example. To read activities from an [`EventLog`] with a
-/// classifier, use [`discover_inductive_tree_from_log`].
+/// See [`InductiveMiner`] for the variants and their settings, [`InductiveMinerVariant::options`]
+/// for a named variant under a preset, and the [module documentation](self) for an example. To
+/// read activities from an [`EventLog`] with a classifier, use
+/// [`discover_inductive_tree_from_log`]. Without a `miner`, the binding runs `IMf` at `0.2`.
+///
+/// Reports progress with stage `"Mining process tree"`, counting the base cases, cuts and fall
+/// throughs found, with no total.
+#[controlled]
 #[register_binding]
-pub fn discover_inductive_tree_with(
+pub fn discover_inductive_tree(
     log: &EventLogActivityProjection,
-    #[bind(default)] miner: InductiveMiner,
-) -> ProcessTree {
+    #[bind(default = default_binding_miner())] miner: InductiveMiner,
+    ctl: &Control<'_>,
+) -> Result<ProcessTree, Cancelled> {
     let (labels, activity_log) = log::from_activity_projection(log);
-    mine(&labels, &activity_log, miner)
+    mine(&labels, &activity_log, miner, ctl)
 }
 
-/// Discovers an [`AcceptingPetriNet`] with the Inductive Miner, by converting the discovered
-/// [`ProcessTree`] with [`ProcessTree::to_petri_net`].
+/// Discovers an [`AcceptingPetriNet`] with the Inductive Miner, by converting the
+/// [`discover_inductive_tree`] with [`ProcessTree::to_petri_net`]. Without a `miner`, the binding
+/// runs `IMf` at `0.2`.
+///
+/// Reports progress as [`discover_inductive_tree`].
+#[controlled]
 #[register_binding]
-pub fn discover_inductive_net_with(
+pub fn discover_inductive_net(
     log: &EventLogActivityProjection,
-    #[bind(default)] miner: InductiveMiner,
-) -> AcceptingPetriNet {
-    discover_inductive_tree_with(log, miner).to_petri_net()
+    #[bind(default = default_binding_miner())] miner: InductiveMiner,
+    ctl: &Control<'_>,
+) -> Result<AcceptingPetriNet, Cancelled> {
+    Ok(ctl.discover_inductive_tree(log, miner)?.to_petri_net())
+}
+
+/// What the discovery bindings run when not given a miner: `IMf` at `0.2`.
+#[cfg_attr(not(feature = "bindings"), allow(dead_code))]
+fn default_binding_miner() -> InductiveMiner {
+    InductiveMinerOptions::imf(0.2).into()
 }
 
 /// Discovers a [`ProcessTree`] from an event log with the Inductive Miner, where the classifier
 /// decides what counts as an activity, e.g., `&EventLogClassifier::default()` for
 /// `concept:name`.
+///
+/// Reports progress to a [`Control`] with stage `"Mining process tree"`, counting the steps found.
+#[controlled]
 pub fn discover_inductive_tree_from_log(
     event_log: &EventLog,
     classifier: &EventLogClassifier,
     miner: impl Into<InductiveMiner>,
-) -> ProcessTree {
+    ctl: &Control<'_>,
+) -> Result<ProcessTree, Cancelled> {
     let (labels, activity_log) = log::project_event_log(event_log, classifier);
-    mine(&labels, &activity_log, miner.into())
+    mine(&labels, &activity_log, miner.into(), ctl)
 }
 
-fn mine(labels: &[String], activity_log: &ActivityLog, miner: InductiveMiner) -> ProcessTree {
+fn mine(
+    labels: &[String],
+    activity_log: &ActivityLog,
+    miner: InductiveMiner,
+    ctl: &Control<'_>,
+) -> Result<ProcessTree, Cancelled> {
     match miner {
-        InductiveMiner::Log(options) => discover(labels, activity_log, options),
-        InductiveMiner::Dfg(options) => {
-            dfg_miner::discover_dfg(labels, &ActivityDfg::discover(activity_log), options)
-        }
+        InductiveMiner::Log(options) => discover_controlled(labels, activity_log, options, ctl),
+        InductiveMiner::Dfg(options) => dfg_miner::discover_dfg_controlled(
+            labels,
+            &ActivityDfg::discover(activity_log),
+            options,
+            ctl,
+        ),
     }
 }
 
-/// Runs the recursion and wraps the result up as a [`ProcessTree`].
+#[cfg(test)]
 fn discover(
     labels: &[String],
     activity_log: &ActivityLog,
     options: InductiveMinerOptions,
 ) -> ProcessTree {
+    discover_controlled(labels, activity_log, options, &Control::new())
+        .expect(crate::utils::control::NEVER_CANCELLED)
+}
+
+/// Runs the recursion and wraps the result up as a [`ProcessTree`].
+fn discover_controlled(
+    labels: &[String],
+    activity_log: &ActivityLog,
+    options: InductiveMinerOptions,
+    ctl: &Control<'_>,
+) -> Result<ProcessTree, Cancelled> {
     let options = InductiveMinerOptions {
         noise_threshold: options.noise_threshold.clamp(0.0, 1.0),
         ..options
@@ -440,36 +459,37 @@ fn discover(
     let miner = Miner {
         labels,
         options: &options,
+        ctl,
+        steps: ctl.counter(STAGE, None),
     };
-    let tree = ProcessTree::new(miner.mine(activity_log));
+    let tree = ProcessTree::new(miner.mine(activity_log)?);
 
-    if options.fold {
-        tree.fold()
-    } else {
-        tree
-    }
+    Ok(if options.fold { tree.fold() } else { tree })
 }
 
 impl Miner<'_> {
     /// Discovers the sub-tree for one (sub-)log.
     ///
     /// Mines the rest of an activity-concurrent fall through in a loop to keep the stack flat.
-    fn mine(&self, log: &ActivityLog) -> Node {
+    fn mine(&self, log: &ActivityLog) -> Result<Node, Cancelled> {
         let mut taken_out = Vec::new();
         let mut rest = None;
         let last = loop {
-            match self.step(rest.as_ref().unwrap_or(log)) {
+            self.ctl.check()?;
+            let step = self.step(rest.as_ref().unwrap_or(log))?;
+            self.steps.tick();
+            match step {
                 Step::Done(node) => break node,
                 Step::TakeOut {
                     activity_log,
                     rest: next,
                 } => {
-                    taken_out.push(self.mine(&activity_log));
+                    taken_out.push(self.mine(&activity_log)?);
                     rest = Some(next);
                 }
             }
         };
-        if taken_out.is_empty() {
+        Ok(if taken_out.is_empty() {
             last
         } else if self.options.fold {
             // What folding the nested concurrency gives, without building it first.
@@ -479,14 +499,14 @@ impl Miner<'_> {
             taken_out.into_iter().rev().fold(last, |inner, node| {
                 operator(OperatorType::Concurrency, [node, inner])
             })
-        }
+        })
     }
 
     /// Base cases, cut detection or a fall through for one log.
-    fn step(&self, log: &ActivityLog) -> Step {
+    fn step(&self, log: &ActivityLog) -> Result<Step, Cancelled> {
         // Base cases and cut detection are not defined for a log with empty traces.
         if let Some(fallthrough) = empty_traces(log, self.options) {
-            return Step::Done(self.build(fallthrough));
+            return Ok(Step::Done(self.build(fallthrough)?));
         }
 
         let base_case_threshold = if self.options.filter_single_activity {
@@ -495,9 +515,9 @@ impl Miner<'_> {
             0.0
         };
         match find_base_case(log, base_case_threshold) {
-            Some(BaseCase::EmptyLog) => return Step::Done(tau()),
+            Some(BaseCase::EmptyLog) => return Ok(Step::Done(tau())),
             Some(BaseCase::SingleActivity(activity)) => {
-                return Step::Done(leaf(self.labels, activity))
+                return Ok(Step::Done(leaf(self.labels, activity)))
             }
             None => {}
         }
@@ -516,21 +536,24 @@ impl Miner<'_> {
                 || sub_logs.iter().all(|sub_log| sub_log.num_events() > 0);
 
             if usable {
-                return Step::Done(operator(cut.operator(), self.mine_all(&sub_logs)));
+                return Ok(Step::Done(operator(
+                    cut.operator(),
+                    self.mine_all(&sub_logs)?,
+                )));
             }
         }
 
-        match find_fallthrough(log, &dfg, self.options) {
+        Ok(match find_fallthrough(log, &dfg, self.options) {
             Fallthrough::ActivityConcurrent { activity_log, rest } => {
                 Step::TakeOut { activity_log, rest }
             }
-            fallthrough => Step::Done(self.build(fallthrough)),
-        }
+            fallthrough => Step::Done(self.build(fallthrough)?),
+        })
     }
 
     /// Discovers the sub-trees of a list of sub-logs, in order, in parallel if they are large
     /// enough.
-    fn mine_all(&self, sub_logs: &[ActivityLog]) -> Vec<Node> {
+    fn mine_all(&self, sub_logs: &[ActivityLog]) -> Result<Vec<Node>, Cancelled> {
         /// Total events below which the sub-logs are mined on the current thread.
         const PARALLEL_THRESHOLD: u64 = 2_048;
 
@@ -684,24 +707,24 @@ impl Miner<'_> {
     }
 
     /// Builds the sub-tree a fall through decided on, recursing where it asked for it.
-    fn build(&self, fallthrough: Fallthrough) -> Node {
-        match fallthrough {
+    fn build(&self, fallthrough: Fallthrough) -> Result<Node, Cancelled> {
+        Ok(match fallthrough {
             // Avoids `×(τ, τ)`.
             Fallthrough::OptionalEmptyTraces(rest) if rest.is_empty() => tau(),
             Fallthrough::OptionalEmptyTraces(rest) => {
-                operator(OperatorType::ExclusiveChoice, [tau(), self.mine(&rest)])
+                operator(OperatorType::ExclusiveChoice, [tau(), self.mine(&rest)?])
             }
-            Fallthrough::DroppedEmptyTraces(rest) => self.mine(&rest),
+            Fallthrough::DroppedEmptyTraces(rest) => self.mine(&rest)?,
             Fallthrough::ActivityConcurrent { activity_log, rest } => operator(
                 OperatorType::Concurrency,
-                [self.mine(&activity_log), self.mine(&rest)],
+                [self.mine(&activity_log)?, self.mine(&rest)?],
             ),
-            Fallthrough::TauLoop(body) => operator(OperatorType::Loop, [self.mine(&body), tau()]),
+            Fallthrough::TauLoop(body) => operator(OperatorType::Loop, [self.mine(&body)?, tau()]),
             Fallthrough::FlowerModel(activities) => {
                 let flower = choice(self.labels, &activities);
                 operator(OperatorType::Loop, [flower, tau()])
             }
-        }
+        })
     }
 }
 
@@ -1002,7 +1025,7 @@ mod test_inductive_miner {
 
         let projection: EventLogActivityProjection = (&log).into();
         assert_eq!(
-            discover_inductive_tree_with(&projection, options.into()).to_string(),
+            discover_inductive_tree(&projection, options.into()).to_string(),
             "→(a, b)"
         );
     }
@@ -1011,24 +1034,22 @@ mod test_inductive_miner {
     #[test]
     fn test_plain_im_replays_the_log() {
         use crate::conformance::case_centric::alignments::{
-            align_log, compute_fitness, AlignmentOptions,
-        };
-        use crate::core::event_data::case_centric::xes::import_xes::{
-            import_xes_path, XESImportOptions,
+            align_variants, compute_fitness, AlignmentOptions,
         };
         use crate::test_utils::get_test_data_path;
+        use crate::{EventLog, Importable};
 
         for name in ["RepairExample.xes", "AN1-example.xes"] {
             let path = get_test_data_path().join("xes").join(name);
-            let log = import_xes_path(path, XESImportOptions::default()).unwrap();
+            let log = EventLog::import_from_path(path).unwrap();
             // Mine the projection the alignment uses, so both agree on the activities.
             let projection = EventLogActivityProjection::from(&log);
-            let tree = discover_inductive_tree_with(&projection, InductiveMiner::default());
+            let tree = discover_inductive_tree(&projection, InductiveMiner::default());
 
             let net = tree.to_petri_net();
             let options = AlignmentOptions::default();
-            let alignments = align_log(&net, &projection, &options);
-            let fitness = compute_fitness(&alignments, &net, &options).unwrap();
+            let alignments = align_variants(&net, &projection, &options);
+            let fitness = compute_fitness(&net, &alignments, &options).unwrap();
             assert_eq!(fitness.log_fitness, 1.0, "{name} is not replayed by {tree}");
         }
     }
@@ -1036,14 +1057,12 @@ mod test_inductive_miner {
     /// Runs the miner over the real-life test logs, with the footprint and exhaustive checks on.
     #[test]
     fn test_real_life_logs() {
-        use crate::core::event_data::case_centric::xes::import_xes::{
-            import_xes_path, XESImportOptions,
-        };
         use crate::test_utils::get_test_data_path;
+        use crate::{EventLog, Importable};
 
         for name in ["RepairExample.xes", "Sepsis Cases - Event Log.xes.gz"] {
             let path = get_test_data_path().join("xes").join(name);
-            let log = import_xes_path(path, XESImportOptions::default()).unwrap();
+            let log = EventLog::import_from_path(path).unwrap();
 
             for noise_threshold in [0.0, 0.2] {
                 let tree = discover_inductive_tree_from_log(
@@ -1277,43 +1296,16 @@ mod test_presets {
         );
     }
 
-    #[test]
-    fn the_simple_entry_points_default_to_imf() {
-        let log = crate::event_log!(["a", "b"], ["a", "c"], ["a", "c"], ["a", "c"], ["a", "c"]);
-        let projection: EventLogActivityProjection = (&log).into();
-        let tree = discover_inductive_tree(
-            &projection,
-            InductiveMinerVariant::Imf,
-            0.2,
-            InductiveMinerPreset::Default,
-        );
-        assert_eq!(
-            tree.to_string(),
-            discover_inductive_tree_with(&projection, InductiveMinerOptions::imf(0.2).into())
-                .to_string()
-        );
-        assert_eq!(
-            discover_inductive_net(
-                &projection,
-                InductiveMinerVariant::Imd,
-                0.2,
-                InductiveMinerPreset::Default,
-            ),
-            discover_inductive_tree_with(&projection, InductiveMinerDfgOptions::default().into())
-                .to_petri_net()
-        );
-    }
-
-    /// The simple binding, called with only a log, runs `IMf` at 0.2.
+    /// The binding, called with only a log, runs `IMf` at 0.2.
     #[cfg(feature = "bindings")]
     #[test]
-    fn the_simple_binding_defaults_to_imf() {
+    fn the_binding_defaults_to_imf() {
         use crate::bindings::{call_resolved, get_fn_binding, AppState, RegistryItem};
         let state = AppState::default();
         let log = crate::event_log!(["a", "b", "d"], ["a", "c", "d"], ["a", "b", "b", "d"]);
         state.add("log", RegistryItem::EventLog(log));
         let call = |name: &str, args: serde_json::Value| -> AcceptingPetriNet {
-            let id = format!("process_mining::discovery::case_centric::inductive_miner::{name}");
+            let id = format!("process_mining::{name}");
             let out = call_resolved(get_fn_binding(&id).unwrap(), &args, &state).unwrap();
             serde_json::from_slice(&out).unwrap()
         };
@@ -1324,8 +1316,24 @@ mod test_presets {
         let imf =
             serde_json::json!({ "log": "log", "miner": { "kind": "log", "noise_threshold": 0.2 } });
         let im = serde_json::json!({ "log": "log", "miner": { "kind": "log" } });
-        assert_eq!(simple, call("discover_inductive_net_with", imf));
-        assert_ne!(simple, call("discover_inductive_net_with", im));
+        assert_eq!(simple, call("discover_inductive_net", imf));
+        assert_ne!(simple, call("discover_inductive_net", im));
+    }
+
+    /// `inductive_miner_options` and the discovery bindings agree on the default threshold.
+    #[cfg(feature = "bindings")]
+    #[test]
+    fn the_options_binding_defaults_to_the_same_threshold() {
+        use crate::bindings::{call, get_fn_binding, AppState};
+        let id = "process_mining::inductive_miner_options";
+        let out = call(
+            get_fn_binding(id).unwrap(),
+            &serde_json::json!({ "variant": "IMf" }),
+            &AppState::default(),
+        )
+        .unwrap();
+        let miner: InductiveMiner = serde_json::from_slice(&out).unwrap();
+        assert_eq!(miner, InductiveMiner::Log(InductiveMinerOptions::imf(0.2)));
     }
 
     #[test]
@@ -1361,7 +1369,7 @@ mod test_presets {
         let from_log =
             discover_inductive_tree_from_log(&log, &EventLogClassifier::default(), options);
         let projection = EventLogActivityProjection::from(&log);
-        let from_projection = discover_inductive_tree_with(&projection, options.into());
+        let from_projection = discover_inductive_tree(&projection, options.into());
         assert_eq!(from_projection.to_string(), from_log.to_string());
     }
 
@@ -1382,6 +1390,82 @@ mod test_presets {
             let from_graph = discover_inductive_tree_from_dfg(&discover_dfg(&log), options);
             assert_eq!(from_graph.to_string(), from_log.to_string());
         }
+    }
+
+    #[test]
+    fn control_counts_steps_and_cancels() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Mutex;
+
+        let log = crate::event_log!(
+            ["a", "b", "c"],
+            ["a", "c", "b"],
+            ["a", "d"],
+            ["a", "d", "d"]
+        );
+        let projection: EventLogActivityProjection = (&log).into();
+        for miner in [
+            InductiveMiner::default(),
+            InductiveMinerDfgOptions::default().into(),
+        ] {
+            let steps = Mutex::new(Vec::new());
+            let ctl = Control::new().on_progress(|p| {
+                assert_eq!((p.stage.as_ref(), p.total), ("Mining process tree", None));
+                steps.lock().unwrap().push(p.done);
+            });
+            assert_eq!(
+                ctl.discover_inductive_tree(&projection, miner)
+                    .unwrap()
+                    .to_string(),
+                discover_inductive_tree(&projection, miner).to_string()
+            );
+            drop(ctl);
+            let steps = steps.into_inner().unwrap();
+            assert!(steps.len() > 2, "{miner:?}: {steps:?}");
+            assert_eq!(steps, (0..steps.len() as u64).collect::<Vec<_>>());
+
+            let flag = AtomicBool::new(false);
+            let ctl = Control::new()
+                .on_progress(|p| {
+                    if p.done >= 1 {
+                        flag.store(true, Ordering::Relaxed);
+                    }
+                })
+                .cancel_flag(&flag);
+            assert_eq!(
+                ctl.discover_inductive_net(&projection, miner).unwrap_err(),
+                Cancelled
+            );
+        }
+    }
+
+    /// Sepsis is large enough that sub-logs are mined in parallel.
+    #[test]
+    fn control_cancels_parallel_mining() {
+        use crate::{EventLog, Importable};
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let path = crate::test_utils::get_test_data_path()
+            .join("xes")
+            .join("Sepsis Cases - Event Log.xes.gz");
+        let log = EventLog::import_from_path(path).unwrap();
+        let flag = AtomicBool::new(false);
+        let ctl = Control::new()
+            .on_progress(|p| {
+                if p.done >= 5 {
+                    flag.store(true, Ordering::Relaxed);
+                }
+            })
+            .cancel_flag(&flag);
+        assert_eq!(
+            ctl.discover_inductive_tree_from_log(
+                &log,
+                &EventLogClassifier::default(),
+                InductiveMinerOptions::default(),
+            )
+            .unwrap_err(),
+            Cancelled
+        );
     }
 
     #[test]

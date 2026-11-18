@@ -54,21 +54,10 @@
 //! carries no attribute type information and dates an undated attribute row to the UNIX epoch,
 //! so `TYPE` and `TIME` differences are reported for it but tolerated.
 
-#[cfg(not(feature = "ocel-bundle-parquet"))]
-fn main() {
-    eprintln!(
-        "This example needs the `ocel-bundle-parquet` feature:\n  \
-         cargo run --release --features ocel-bundle-parquet --example ocel_dataset_crosscheck"
-    );
-    std::process::exit(2);
-}
-
-#[cfg(feature = "ocel-bundle-parquet")]
 fn main() -> std::process::ExitCode {
     imp::run()
 }
 
-#[cfg(feature = "ocel-bundle-parquet")]
 mod imp {
     use std::collections::{BTreeMap, HashMap, HashSet};
     use std::path::{Path, PathBuf};
@@ -425,7 +414,7 @@ Cross-check every re-exported form of a log against the source it was written fr
         {
             return None;
         }
-        parse_timestamp(t, None, false)
+        parse_timestamp(t, None)
             .ok()
             .map(|d| d.to_utc().to_rfc3339())
     }

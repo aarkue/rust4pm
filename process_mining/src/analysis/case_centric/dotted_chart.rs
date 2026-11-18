@@ -202,7 +202,7 @@ impl Default for DottedChartOptions {
 /// Traces are sorted by the timestamp of their first event. Each event
 /// produces one dot with coordinates determined by the configured axes.
 pub fn get_dotted_chart(
-    xes: &EventLog,
+    log: &EventLog,
     #[bind(default)] options: &DottedChartOptions,
 ) -> Result<DottedChartData, String> {
     let DottedChartOptions {
@@ -214,7 +214,7 @@ pub fn get_dotted_chart(
     let mut y_values: HashMap<String, usize> = HashMap::default();
     let mut data_per_color: HashMap<String, DottedChartPoints> = HashMap::default();
 
-    xes.traces
+    log.traces
         .iter()
         .sorted_by_cached_key(|t: &&Trace| {
             t.events

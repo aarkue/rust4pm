@@ -1,35 +1,35 @@
 use crate::core::event_data::object_centric::readable::ReadableOCEL;
 
-use super::super::export::export_ocel_to_sql_con;
+use super::super::export::{export_ocel_to_sql_con, export_via_temp_file};
 use super::super::*;
 use rusqlite::Connection;
 
 ///
 /// Export an OCEL to an `SQLite` file at the specified path
 ///
+/// A file already at `path` is replaced once the export succeeded, and kept if it fails.
+///
 /// Note: This function is only available if the `ocel-sqlite` feature is enabled.
 ///
-pub fn export_ocel_sqlite_to_path<P, O>(ocel: &O, path: P) -> Result<(), DatabaseError>
+pub(crate) fn export_ocel_sqlite_to_path<P, O>(ocel: &O, path: P) -> Result<(), OCELIOError>
 where
     P: AsRef<std::path::Path>,
     O: ReadableOCEL + ?Sized,
 {
-    if path.as_ref().exists() {
-        let _ = std::fs::remove_file(&path);
-    }
-    let con = Connection::open(path)?;
-    export_ocel_to_sql_con(&con, ocel)
+    export_via_temp_file(path.as_ref(), &["-journal", "-wal", "-shm"], |tmp| {
+        export_ocel_to_sql_con(&Connection::open(tmp)?, ocel)
+    })
 }
 
 ///
 /// Export an OCEL to a `SQLite` byte array
 ///
 /// Note: This function is only available if the `ocel-sqlite` feature is enabled.
-pub fn export_ocel_sqlite_to_vec<O>(ocel: &O) -> Result<Vec<u8>, DatabaseError>
+pub(crate) fn export_ocel_sqlite_to_vec<O>(ocel: &O) -> Result<Vec<u8>, OCELIOError>
 where
     O: ReadableOCEL + ?Sized,
 {
-    let con = Connection::open_in_memory()?;
+    let mut con = Connection::open_in_memory()?;
     export_ocel_to_sql_con(&con, ocel)?;
     let data = con.serialize(rusqlite::MAIN_DB)?;
     Ok((*data).to_vec())
@@ -42,7 +42,7 @@ mod sqlite_export_tests {
     use rusqlite::Connection;
 
     use crate::{
-        core::event_data::object_centric::ocel_sql::import_ocel_sqlite_from_con,
+        core::event_data::object_centric::ocel_sql::import_ocel_sqlite,
         test_utils::get_test_data_path,
     };
 
@@ -55,7 +55,7 @@ mod sqlite_export_tests {
             .join("order-management.sqlite");
 
         let in_con = Connection::open(path).unwrap();
-        let ocel = import_ocel_sqlite_from_con(in_con).unwrap();
+        let ocel = import_ocel_sqlite(&in_con, &Default::default()).unwrap();
 
         let export_path = get_test_data_path()
             .join("export")
@@ -66,7 +66,7 @@ mod sqlite_export_tests {
         export_ocel_to_sql_con(&con, &ocel).unwrap();
 
         let in_con2 = Connection::open(export_path).unwrap();
-        let ocel2 = import_ocel_sqlite_from_con(in_con2).unwrap();
+        let ocel2 = import_ocel_sqlite(&in_con2, &Default::default()).unwrap();
         println!(
             "Got OCEL2 in round trip SQLite with {} events and {} objects",
             ocel2.events.len(),
@@ -95,7 +95,7 @@ mod sqlite_export_tests {
         let path = get_test_data_path().join("ocel").join("ocel2-p2p.sqlite");
 
         let in_con = Connection::open(path).unwrap();
-        let ocel = import_ocel_sqlite_from_con(in_con).unwrap();
+        let ocel = import_ocel_sqlite(&in_con, &Default::default()).unwrap();
 
         let export_path = get_test_data_path()
             .join("export")
@@ -106,7 +106,7 @@ mod sqlite_export_tests {
         export_ocel_to_sql_con(&con, &ocel).unwrap();
 
         let in_con2 = Connection::open(export_path).unwrap();
-        let ocel2 = import_ocel_sqlite_from_con(in_con2).unwrap();
+        let ocel2 = import_ocel_sqlite(&in_con2, &Default::default()).unwrap();
         println!(
             "Got OCEL2 in round trip SQLite with {} events and {} objects",
             ocel2.events.len(),

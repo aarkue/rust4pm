@@ -1,7 +1,4 @@
-use std::{
-    collections::HashSet,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashSet;
 
 use macros_process_mining::register_binding;
 use schemars::JsonSchema;
@@ -24,42 +21,6 @@ use super::{
     },
 };
 
-#[derive(Debug, Serialize, Deserialize)]
-/// Duration (in seconds) per parts of the Alpha+++ algorithm (+ total time)
-pub struct AlgoDuration {
-    /// Duration for loop repair (in seconds)
-    pub loop_repair: f32,
-    /// Duration for skip repair (in seconds)
-    pub skip_repair: f32,
-    /// Duration for filtering DFG (in seconds)
-    pub filter_dfg: f32,
-    /// Duration for building place candidates (in seconds)
-    pub cnd_building: f32,
-    /// Duration for pruning place candidates (in seconds)
-    pub prune_cnd: f32,
-    /// Duration for constructing Petri net (in seconds)
-    pub build_net: f32,
-    /// Total duration (in seconds)
-    pub total: f32,
-}
-impl AlgoDuration {
-    /// Serialize to JSON string
-    pub fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap()
-    }
-    /// Deerialize from JSON string
-    pub fn from_json(json: &str) -> Self {
-        serde_json::from_str(json).unwrap()
-    }
-}
-/// Get current system time milliseconds
-pub fn get_current_time_millis() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards ;)")
-        .as_millis()
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, JsonSchema)]
 /// Algorithm parameters for Alpha+++
 pub struct AlphaPPPConfig {
@@ -78,17 +39,6 @@ pub struct AlphaPPPConfig {
     /// Relative threshold for weighted DFG cleaning
     pub relative_df_clean_thresh: f32,
 }
-impl AlphaPPPConfig {
-    /// Serialize Alpha+++ parameters to JSON string
-    pub fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap()
-    }
-    /// Deserialize Alpha+++ parameters from JSON string
-    pub fn from_json(json: &str) -> Self {
-        serde_json::from_str(json).unwrap()
-    }
-}
-
 impl Default for AlphaPPPConfig {
     fn default() -> Self {
         Self {
@@ -107,43 +57,9 @@ impl Default for AlphaPPPConfig {
 #[register_binding]
 pub fn discover_alphappp_net(
     log: &EventLogActivityProjection,
-    #[bind(default = Default::default())] config: AlphaPPPConfig,
+    #[bind(default = Default::default())] options: AlphaPPPConfig,
 ) -> AcceptingPetriNet {
-    alphappp_discover_petri_net_with_timing_fn(log, config, &|| 0).0
-}
-
-/// Discovers an [`AcceptingPetriNet`] with the Alpha+++ process discovery algorithm.
-#[deprecated(note = "renamed to `discover_alphappp_net`")]
-pub fn alphappp_discover_petri_net(
-    log_proj: &EventLogActivityProjection,
-    config: AlphaPPPConfig,
-) -> AcceptingPetriNet {
-    discover_alphappp_net(log_proj, config)
-}
-
-/// Run Alpha+++ discovery
-///
-/// Measures [`AlgoDuration`] using the passed `get_time_millis_fn` function
-///
-/// Returns the discovered Petri net as well as performance measurements
-pub fn alphappp_discover_petri_net_with_timing_fn(
-    log_proj: &EventLogActivityProjection,
-    config: AlphaPPPConfig,
-    get_time_millis_fn: &dyn Fn() -> u128,
-) -> (AcceptingPetriNet, AlgoDuration) {
-    println!("Started Alpha+++ Discovery");
-    let mut algo_dur = AlgoDuration {
-        loop_repair: 0.0,
-        skip_repair: 0.0,
-        filter_dfg: 0.0,
-        cnd_building: 0.0,
-        prune_cnd: 0.0,
-        build_net: 0.0,
-        total: 0.0,
-    };
-    let total_start = get_time_millis_fn();
-    let mut start = get_time_millis_fn();
-    let mut log_proj = log_proj.clone();
+    let mut log_proj = log.clone();
     add_start_end_acts_proj(&mut log_proj);
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
     let dfg_sum: u64 = dfg.edges.values().sum();
@@ -151,30 +67,15 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
 
     let start_act = log_proj.act_to_index.get(START_ACTIVITY).unwrap();
     let end_act = log_proj.act_to_index.get(END_ACTIVITY).unwrap();
-    println!(
-        "Adding start/end acts took: {:.4}s",
-        get_time_millis_fn() - start
-    );
-    start = get_time_millis_fn();
-    let (log_proj, added_loop) = add_artificial_acts_for_loops(
+    let (log_proj, _) = add_artificial_acts_for_loops(
         &log_proj,
-        (config.log_repair_loop_df_thresh_rel * mean_dfg).ceil() as u64,
+        (options.log_repair_loop_df_thresh_rel * mean_dfg).ceil() as u64,
     );
-    algo_dur.loop_repair = (get_time_millis_fn() - start) as f32 / 1000.0;
-    println!(
-        "Using Loop Log Repair with df_threshold of {}",
-        (config.log_repair_loop_df_thresh_rel * mean_dfg).ceil() as u64,
-    );
-    println!("#Added for loop: {}", added_loop.len());
 
-    start = get_time_millis_fn();
-    let (log_proj, added_skip) = add_artificial_acts_for_skips(
+    let (log_proj, _) = add_artificial_acts_for_skips(
         &log_proj,
-        (config.log_repair_skip_df_thresh_rel * mean_dfg).ceil() as u64,
+        (options.log_repair_skip_df_thresh_rel * mean_dfg).ceil() as u64,
     );
-    algo_dur.skip_repair = (get_time_millis_fn() - start) as f32 / 1000.0;
-    println!("Log Skip/Loop Repair took: {:.4}s", algo_dur.skip_repair);
-    start = get_time_millis_fn();
 
     let mut act_count = vec![0_i128; log_proj.activities.len()];
     log_proj.traces.iter().for_each(|(trace, w)| {
@@ -182,56 +83,21 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
             act_count[*act] += *w as i128;
         })
     });
-    println!("Act count: {act_count:?}");
-    println!(
-        "Acts: {:?}",
-        log_proj
-            .activities
-            .iter()
-            .zip(act_count.clone())
-            .collect::<Vec<(&String, i128)>>()
-    );
-
-    println!("#Added for skip: {}", added_skip.len());
     let dfg = ActivityProjectionDFG::from_event_log_projection(&log_proj);
     let dfg = filter_dfg(
         &dfg,
-        config.absolute_df_clean_thresh,
-        config.relative_df_clean_thresh,
+        options.absolute_df_clean_thresh,
+        options.relative_df_clean_thresh,
     );
-    println!(
-        "Filtered DFG (aDFG) #Edges: {}, Weight Sum: {}",
-        dfg.edges.len(),
-        dfg.edges.values().sum::<u64>()
-    );
-    algo_dur.filter_dfg = (get_time_millis_fn() - start) as f32 / 1000.0;
-    println!("Filtering DFG took: {:.4}s", algo_dur.filter_dfg);
-    start = get_time_millis_fn();
     let cnds: HashSet<(Vec<usize>, Vec<usize>)> = build_candidates(&dfg);
-    println!("Built candidates {}", cnds.len());
-
-    algo_dur.cnd_building = (get_time_millis_fn() - start) as f32 / 1000.0;
-    println!("Building candidates took: {:.4}s", algo_dur.cnd_building);
-    start = get_time_millis_fn();
-    let sel = prune_candidates(
+    let mut sel = prune_candidates(
         &cnds,
-        config.balance_thresh,
-        config.fitness_thresh,
-        config.replay_thresh,
+        options.balance_thresh,
+        options.fitness_thresh,
+        options.replay_thresh,
         act_count,
         &log_proj,
     );
-    // sel.iter().for_each(|(a, b)| {
-    //     let mut a = log_proj.acts_to_names(a);
-    //     let mut b = log_proj.acts_to_names(b);
-    //     a.sort();
-    //     b.sort();
-    //     println!("{:?} => {:?}", a,b);
-    // });
-    println!("Final pruned candidates: {}", sel.len());
-    algo_dur.prune_cnd = (get_time_millis_fn() - start) as f32 / 1000.0;
-    println!("Pruning candidates took: {:.4}s", algo_dur.prune_cnd);
-    start = get_time_millis_fn();
     let mut pn = PetriNet::new();
     let mut initial_marking = Marking::new();
     let mut final_marking = Marking::new();
@@ -240,19 +106,28 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
         .flat_map(|(a, b)| a.iter().chain(b))
         .copied()
         .collect();
-    // A silent activity no candidate place connects would become an isolated transition
-    let transitions: Vec<Option<TransitionID>> = log_proj
-        .activities
-        .iter()
-        .enumerate()
-        .map(|(act, act_name)| {
-            let is_silent = act_name.starts_with(SILENT_ACT_PREFIX);
-            let is_start_or_end =
-                act_name == &START_ACTIVITY.to_string() || act_name == &END_ACTIVITY.to_string();
-            (!is_start_or_end && (!is_silent || connected.contains(&act)))
-                .then(|| pn.add_transition((!is_silent).then(|| act_name.clone()), None))
-        })
-        .collect();
+    // Activity indices follow hash order, so transitions, places and arcs are added in activity
+    // name order to give the same net, ids included, on every run.
+    let names = &log_proj.activities;
+    let mut acts_by_name: Vec<usize> = (0..names.len()).collect();
+    acts_by_name.sort_by(|x, y| names[*x].cmp(&names[*y]));
+    let mut transitions: Vec<Option<TransitionID>> = vec![None; names.len()];
+    for &act in &acts_by_name {
+        let act_name = &names[act];
+        let is_silent = act_name.starts_with(SILENT_ACT_PREFIX);
+        let is_start_or_end = act_name == START_ACTIVITY || act_name == END_ACTIVITY;
+        // A silent activity no candidate place connects would become an isolated transition
+        if !is_start_or_end && (!is_silent || connected.contains(&act)) {
+            transitions[act] =
+                Some(pn.add_transition((!is_silent).then(|| act_name.clone()), None));
+        }
+    }
+    for (a, b) in &mut sel {
+        a.sort_by(|x, y| names[*x].cmp(&names[*y]));
+        b.sort_by(|x, y| names[*x].cmp(&names[*y]));
+    }
+    let named = |v: &[usize]| v.iter().map(|i| &names[*i]).collect::<Vec<_>>();
+    sel.sort_by_cached_key(|(a, b)| (named(a), named(b)));
     sel.iter().for_each(|(a, b)| {
         let place_id = pn.add_place(None);
         a.iter().for_each(|in_act| {
@@ -276,26 +151,28 @@ pub fn alphappp_discover_petri_net_with_timing_fn(
             }
         });
     });
-    let pn = AcceptingPetriNet::new(pn, initial_marking, final_marking);
-    algo_dur.build_net = (get_time_millis_fn() - start) as f32 / 1000.0;
-    println!("Building PN took: {:.4}s", algo_dur.build_net);
-
-    algo_dur.total = (get_time_millis_fn() - total_start) as f32 / 1000.0;
-    println!("\n====\nWhole Discovery took: {:.4}s", algo_dur.total);
-    (pn, algo_dur)
+    AcceptingPetriNet::new(pn, initial_marking, final_marking)
 }
 
-/// Helper function to transform a place candidate to a list of input and output transition names/label
-pub fn cnds_to_names(
-    log_proj: &EventLogActivityProjection,
-    cnd: &[(Vec<usize>, Vec<usize>)],
-) -> Vec<(Vec<String>, Vec<String>)> {
-    cnd.iter()
-        .map(|(a, b)| {
-            (
-                log_proj.acts_to_names_sorted(a),
-                log_proj.acts_to_names_sorted(b),
-            )
-        })
-        .collect()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_utils::get_test_data_path;
+    use crate::{EventLog, Importable};
+
+    #[test]
+    fn discovery_gives_the_same_net_on_every_run() {
+        let log =
+            EventLog::import_from_path(get_test_data_path().join("xes").join("RepairExample.xes"))
+                .unwrap();
+        let discover = || {
+            let proj = EventLogActivityProjection::from(&log);
+            let pn = discover_alphappp_net(&proj, AlphaPPPConfig::default());
+            serde_json::to_value(&pn).unwrap()
+        };
+        let first = discover();
+        for _ in 0..5 {
+            assert_eq!(discover(), first);
+        }
+    }
 }

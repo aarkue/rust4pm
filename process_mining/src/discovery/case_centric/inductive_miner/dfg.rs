@@ -275,6 +275,7 @@ impl ActivityDfg {
     }
 
     /// The local index of a global [`ActivityID`], or `None` if it does not occur in this graph.
+    #[cfg(test)]
     pub fn local_index(&self, activity: ActivityID) -> Option<usize> {
         self.local_of
             .get(activity)
@@ -305,6 +306,7 @@ impl ActivityDfg {
     }
 
     /// How often the activity occurs in the log.
+    #[cfg(test)]
     pub fn occurrences(&self, activity: usize) -> u64 {
         self.occurrences[activity]
     }

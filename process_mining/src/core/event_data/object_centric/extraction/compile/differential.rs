@@ -49,8 +49,12 @@ use crate::core::event_data::object_centric::extraction::report::{
 use crate::core::event_data::object_centric::extraction::slim_sink::SlimOcelSink;
 use crate::core::event_data::object_centric::extraction::validate::validate;
 use crate::core::event_data::object_centric::extraction::value::Value;
+use crate::core::event_data::object_centric::ocel_sql::duckdb::schema::tables::event_attr_name;
 use crate::core::event_data::object_centric::ocel_sql::duckdb::schema::value::from_sql_value;
 use crate::core::event_data::object_centric::readable::ReadableOCEL;
+use crate::core::event_data::object_centric::sql_columns::{
+    T_EVENT_ATTR_COLUMNS, T_OCEL_ATTR_COLUMNS,
+};
 use crate::core::event_data::object_centric::{OCELAttributeType, OCELAttributeValue};
 
 /// A `DuckDB` database in its own temporary directory. Every test gets its own, so a shared path
@@ -266,10 +270,35 @@ fn text_of(v: &Value) -> String {
     }
 }
 
+/// The text rows of `relation`, none if the compiled SQL did not emit it.
+fn text_rows_if_emitted(con: &Connection, relation: &str) -> Vec<Vec<String>> {
+    let (_, found) = query(
+        con,
+        &format!("SELECT 1 FROM information_schema.tables WHERE table_name = '{relation}'"),
+    );
+    if found.is_empty() {
+        return Vec::new();
+    }
+    let (_, rows) = query(con, &format!("SELECT * FROM \"{relation}\""));
+    rows.iter()
+        .map(|r| r.iter().map(text_of).collect())
+        .collect()
+}
+
 /// Reduce the compiled views to [`LogSets`], reading the same OCEL 2.0 relations an external
 /// tool would.
 fn from_sql(con: &Connection) -> LogSets {
     let mut out = LogSets::default();
+    let renamed: HashMap<(String, String), String> = text_rows_if_emitted(con, T_OCEL_ATTR_COLUMNS)
+        .into_iter()
+        .map(|r| ((r[0].clone(), r[2].clone()), r[1].clone()))
+        .collect();
+    let attr_of = |table: &str, column: &str| {
+        renamed
+            .get(&(table.to_string(), column.to_string()))
+            .cloned()
+            .unwrap_or_else(|| column.to_string())
+    };
 
     let (_, event_types) = query(
         con,
@@ -286,8 +315,9 @@ fn from_sql(con: &Connection) -> LogSets {
             out.events
                 .insert((id.clone(), ocel_type.clone(), instant(*t)));
             for (i, name) in names.iter().enumerate().skip(2) {
+                let name = attr_of(&format!("event_{suffix}"), name);
                 out.event_attributes
-                    .insert((id.clone(), name.clone(), render(&r[i])));
+                    .insert((id.clone(), name, render(&r[i])));
             }
         }
     }
@@ -314,9 +344,8 @@ fn from_sql(con: &Connection) -> LogSets {
             let Value::Timestamp(t) = &r[1] else {
                 panic!("object_{suffix}.ocel_time is not a timestamp: {:?}", r[1]);
             };
-            let column = names
-                .iter()
-                .position(|n| n == changed)
+            let column = (3..names.len())
+                .find(|&i| attr_of(&format!("object_{suffix}"), &names[i]) == *changed)
                 .unwrap_or_else(|| panic!("object_{suffix} has no column '{changed}'"));
             out.object_attributes
                 .insert((id, changed.clone(), instant(*t), render(&r[column])));
@@ -345,10 +374,13 @@ fn from_sql(con: &Connection) -> LogSets {
 /// Reduce [`EmissionShape::Consolidated`]'s relations to [`LogSets`], reading them the way an
 /// external reader would: `events` is a plain wide `SELECT *`, and
 /// `object_attribute_changes.value`/`value_type` round-trip through [`from_sql_value`], the same
-/// function
-/// `DuckDbLinkedOCEL` uses.
+/// function the consolidated `DuckDB` reader uses.
 fn from_sql_consolidated(con: &Connection) -> LogSets {
     let mut out = LogSets::default();
+    let renamed: HashMap<String, String> = text_rows_if_emitted(con, T_EVENT_ATTR_COLUMNS)
+        .into_iter()
+        .map(|r| (r[1].clone(), r[0].clone()))
+        .collect();
 
     let (names, events) = query(con, "SELECT * FROM \"events\"");
     for r in &events {
@@ -364,8 +396,12 @@ fn from_sql_consolidated(con: &Connection) -> LogSets {
             if matches!(r[i], Value::Null) {
                 continue;
             }
+            let name = renamed
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| event_attr_name(name).into_owned());
             out.event_attributes
-                .insert((id.clone(), name.clone(), render(&r[i])));
+                .insert((id.clone(), name, render(&r[i])));
         }
     }
 
@@ -573,8 +609,8 @@ fn every_event_type_is_static(blueprint: &Blueprint) -> bool {
     })
 }
 
-/// `event_attr_meta`, the one `Consolidated` relation [`from_sql_consolidated`] does not read, so
-/// no [`LogSets`] comparison can catch it being wrong. Compared against the extractor's own
+/// `event_attr_meta`, a `Consolidated` relation [`from_sql_consolidated`] does not read, so no
+/// [`LogSets`] comparison can catch it being wrong. Compared against the extractor's own
 /// [`ReadableOCEL::event_types`].
 fn assert_event_attr_meta_agrees<O: ReadableOCEL + ?Sized>(con: &Connection, ocel: &O) {
     let expected: BTreeSet<(String, String, String)> = ocel
@@ -1548,6 +1584,118 @@ fn case_6_change_tracked_object_attributes_agree() {
     )));
 }
 
+const RESERVED_NAMES: &str = "
+CREATE TABLE things (id BIGINT, a VARCHAR, b BIGINT, c VARCHAR, d VARCHAR, e VARCHAR, f VARCHAR,
+  p1 DOUBLE, p2 DOUBLE, ts TIMESTAMP);
+INSERT INTO things VALUES
+  (1, 'a1', 10, 'c1', 'd1', 'e1', 'f1', 1.5, 2.5, TIMESTAMP '2024-01-01 00:00:00');
+";
+
+/// `(attribute name, source column, rendered value)` of every attribute of the `things` row,
+/// named like a fixed column of some relation the compiler emits, or like another attribute
+/// in all but case.
+const RESERVED_ATTRS: [(&str, &str, &str); 8] = [
+    ("Time", "a", "s:a1"),
+    ("id", "b", "i:10"),
+    ("ocel_id", "c", "s:c1"),
+    ("ocel_type", "d", "s:d1"),
+    ("ocel_time", "e", "s:e1"),
+    ("ocel_changed_field", "f", "s:f1"),
+    ("Price", "p1", "f:1.5"),
+    ("price", "p2", "f:2.5"),
+];
+
+fn reserved_names_catalog() -> ExtractionCatalog {
+    ExtractionCatalog::new().with_table(
+        "db",
+        TableSchema::new(
+            "things",
+            [
+                ("id", "BIGINT", false),
+                ("a", "VARCHAR", true),
+                ("b", "BIGINT", true),
+                ("c", "VARCHAR", true),
+                ("d", "VARCHAR", true),
+                ("e", "VARCHAR", true),
+                ("f", "VARCHAR", true),
+                ("p1", "DOUBLE", true),
+                ("p2", "DOUBLE", true),
+                ("ts", "TIMESTAMP", false),
+            ],
+        ),
+    )
+}
+
+#[test]
+fn attributes_named_like_fixed_columns_or_alike_in_case_keep_their_values() {
+    use crate::core::event_data::object_centric::ocel_sql::{
+        import::import_ocel, read_ocel_from_duckdb,
+    };
+
+    let fx = Fixture::new(RESERVED_NAMES);
+    let attributes: Vec<AttributeMapping> = RESERVED_ATTRS
+        .iter()
+        .map(|(name, column, _)| AttributeMapping {
+            source_column: (*column).into(),
+            name: (*name).into(),
+            value_type: None,
+        })
+        .collect();
+    let bp = blueprint(
+        IdRendering::TypePrefixed,
+        vec![source("things", "things")],
+        vec![
+            single(
+                "things",
+                "thing",
+                None,
+                Target::Object {
+                    object_type: constant("Thing"),
+                    id: col("id"),
+                    timestamp: None,
+                    attributes: attributes.clone(),
+                },
+            ),
+            single(
+                "things",
+                "seen",
+                None,
+                Target::Event {
+                    event_type: constant("Seen"),
+                    id: Some(col("id")),
+                    timestamp: ts("ts"),
+                    attributes,
+                    objects: vec![],
+                },
+            ),
+        ],
+    );
+    let run = assert_agrees(&fx, &bp, &reserved_names_catalog());
+    for (name, _, value) in RESERVED_ATTRS {
+        assert!(run.extractor.event_attributes.contains(&(
+            "Seen-1".to_string(),
+            name.to_string(),
+            value.to_string()
+        )));
+        assert!(run.extractor.object_attributes.contains(&(
+            "Thing-1".to_string(),
+            name.to_string(),
+            "1970-01-01T00:00:00+00:00".to_string(),
+            value.to_string()
+        )));
+    }
+
+    // The library's own readers find each attribute by the same column maps.
+    let per_type = import_ocel(&fx.con, &Default::default(), &crate::Control::new()).unwrap();
+    assert_eq!(from_extractor(&per_type), run.extractor, "PerType import");
+    let consolidated = read_ocel_from_duckdb(&fx.con).unwrap();
+    assert_eq!(
+        from_extractor(&consolidated),
+        run.extractor,
+        "Consolidated read"
+    );
+}
+
 #[test]
 fn case_7_a_text_literal_against_an_integer_column_selects_the_same_rows() {
     // An editor with a text input emits Literal::Text("2"), and `prepare` coerces it to the
@@ -2064,6 +2212,51 @@ fn case_11_all_four_consolidated_emission_paths_agree() {
             "probe {kind:?} must hold view-free too: {} rows\n{sql}",
             rows.len()
         );
+    }
+}
+
+#[test]
+fn a_consolidated_duckdb_file_imports_from_views_and_from_tables() {
+    use crate::{Importable, OCEL};
+
+    let bp = case_11_blueprint();
+    let catalog = attrs_catalog();
+    let fx_extract = Fixture::new(ATTRS);
+    let provider = DuckDbRowProvider {
+        con: &fx_extract.con,
+    };
+    let mut providers: HashMap<String, &dyn RowProvider> = HashMap::new();
+    providers.insert("db".to_string(), &provider);
+    let mut sink = SlimOcelSink::new();
+    extract(&bp, &catalog, &providers, &mut sink).expect("extract");
+    let extractor = from_extractor(sink.ocel());
+
+    let compiled = compile(
+        &bp,
+        &catalog,
+        SqlDialect::DuckDb,
+        EmissionShape::Consolidated,
+    );
+    assert!(compiled.errors().is_empty(), "{:?}", compiled.errors());
+    for (label, sql) in [
+        ("ddl", compiled.ddl()),
+        ("materialize_ddl", compiled.materialize_ddl()),
+    ] {
+        let Fixture { _dir: dir, con } = Fixture::new(ATTRS);
+        con.execute_batch(&sql)
+            .unwrap_or_else(|e| panic!("{label} failed: {e}\n---\n{sql}"));
+        drop(con);
+        let imported = OCEL::import_from_path(dir.path().join("fixture.duckdb"))
+            .unwrap_or_else(|e| panic!("{label}: import failed: {e}"));
+        assert_log_sets_agree(&extractor, &from_extractor(&imported), label, true);
+        let item = imported
+            .object_types
+            .iter()
+            .find(|t| t.name == "Item")
+            .unwrap_or_else(|| panic!("{label}: no object type Item"));
+        let mut declared: Vec<&str> = item.attributes.iter().map(|a| a.name.as_str()).collect();
+        declared.sort_unstable();
+        assert_eq!(declared, ["active", "name"], "{label}");
     }
 }
 
@@ -2642,7 +2835,7 @@ fn matches_against_a_null_boolean_column_is_false_rather_than_matching_false() {
     );
 }
 
-// C2: a naive TIMESTAMP/DATE column read in a predicate or a join key, under a session zone
+// A naive TIMESTAMP/DATE column read in a predicate or a join key, under a session zone
 // that is not UTC.
 //
 // Every other fixture pins `TimeZone='UTC'`, under which an unanchored `src."ts"` and an anchored

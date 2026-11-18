@@ -38,11 +38,16 @@ impl Marking {
     ///
     /// Panics if the place would hold more than `u32::MAX` tokens.
     pub fn add(&mut self, place: PlaceID, tokens: u32) {
-        let total = self
-            .tokens(place)
-            .checked_add(tokens)
+        self.checked_add(place, tokens)
             .expect("token count overflows u32");
+    }
+
+    /// Like [`Marking::add`], but returns `None` and leaves the marking unchanged if the place
+    /// would hold more than `u32::MAX` tokens. Otherwise returns the new token count.
+    pub fn checked_add(&mut self, place: PlaceID, tokens: u32) -> Option<u32> {
+        let total = self.tokens(place).checked_add(tokens)?;
         self.set(place, total);
+        Some(total)
     }
 
     /// The marked places with their tokens, in place order
@@ -57,6 +62,8 @@ impl Marking {
 }
 
 /// Sums the tokens of places that occur more than once
+///
+/// Panics if a place would hold more than `u32::MAX` tokens.
 impl FromIterator<(PlaceID, u32)> for Marking {
     fn from_iter<I: IntoIterator<Item = (PlaceID, u32)>>(iter: I) -> Self {
         let mut marking = Self::new();

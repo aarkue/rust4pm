@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use rustc_hash::FxHashSet;
 
 use itertools::Itertools;
-use macros_process_mining::register_binding;
+use macros_process_mining::{controlled, register_binding};
 use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,7 @@ use crate::{
             ALL_OC_DECLARE_ARC_TYPES,
         },
     },
+    utils::control::{Cancelled, Control},
 };
 
 /// O2O Mode for OC-DECLARE Discovery
@@ -75,7 +76,8 @@ pub struct OCDeclareDiscoveryOptions {
     pub counts_for_filter: (Option<usize>, Option<usize>),
     /// If/how the discovered constraints should be reduced
     pub reduction: OCDeclareReductionMode,
-    /// Determines if the object involvement of discovered constraints should be made more precise/strict after initial discovery and reduction
+    /// Determines if the object involvement of discovered constraints should be made more
+    /// precise/strict after initial discovery and reduction
     pub refinement: bool,
     /// The arrow types to consider when deriving the final constraints
     ///
@@ -99,16 +101,24 @@ impl Default for OCDeclareDiscoveryOptions {
 }
 
 /// Discover behavioral OC-DECLARE constraints from the given OCEL
-#[register_binding(name = "discover_oc_declare")]
-pub fn discover_behavior_constraints(
-    locel: &SlimLinkedOCEL,
+///
+/// Reports progress to a [`Control`] in the stages `"Preparing"`,
+/// `"Finding candidates"` (one unit per activity pair), and, if enabled,
+/// `"Reducing constraints"` (one unit per arc) and `"Refining constraints"` (one unit per
+/// activity pair with arcs).
+#[controlled]
+#[register_binding]
+pub fn discover_oc_declare(
+    ocel: &SlimLinkedOCEL,
     #[bind(default = Default::default())] options: OCDeclareDiscoveryOptions,
-) -> Vec<OCDeclareArc> {
+    ctl: &Control<'_>,
+) -> Result<Vec<OCDeclareArc>, Cancelled> {
+    let preparation = ctl.counter("Preparing", Some(1));
     let mut act_ob_inv: HashMap<String, HashMap<String, ObjectInvolvementCounts>> =
-        get_activity_object_involvements(locel);
+        get_activity_object_involvements(ocel);
     let mut ob_ob_inv: HashMap<String, HashMap<String, ObjectInvolvementCounts>> =
-        get_object_to_object_involvements(locel);
-    let mut ob_ob_rev_inv = get_rev_object_to_object_involvements(locel);
+        get_object_to_object_involvements(ocel);
+    let mut ob_ob_rev_inv = get_rev_object_to_object_involvements(ocel);
     // Everything below, refinement included, reads these maps, so dropping a type here keeps it
     // out of every candidate.
     if let Some(types) = &options.object_types_to_use {
@@ -124,7 +134,9 @@ pub fn discover_behavior_constraints(
         }
     }
     // Built once, shared by every check below
-    let index = E2ORevByTypeIndex::build(locel);
+    let index = E2ORevByTypeIndex::build(ocel);
+    preparation.tick();
+    ctl.check()?;
     let direction = OCDeclareArcType::AS;
     // Names the log lacks (e.g., settings kept from another log) have no involvements to read.
     let acts_to_use: Vec<String> = match &options.acts_to_use {
@@ -133,13 +145,18 @@ pub fn discover_behavior_constraints(
             .filter(|a| act_ob_inv.contains_key(*a))
             .cloned()
             .collect(),
-        None => locel.get_ev_types().map(|et| et.to_string()).collect(),
+        None => ocel.get_ev_types().map(|et| et.to_string()).collect(),
     };
-    let ret = acts_to_use
+    let candidates = ctl.counter(
+        "Finding candidates",
+        Some((acts_to_use.len() * acts_to_use.len()) as u64),
+    );
+    let per_pair: Vec<Vec<OCDeclareArc>> = acts_to_use
         .iter()
         .cartesian_product(acts_to_use.iter())
         .par_bridge()
-        .flat_map(|(act1, act2)| {
+        .map(|(act1, act2)| {
+            ctl.check()?;
             let obj_invs = get_direct_or_indirect_object_involvements(
                 act1,
                 act2,
@@ -155,13 +172,13 @@ pub fn discover_behavior_constraints(
                 direction,
                 &options.counts_for_generation,
                 options.noise_threshold,
-                locel,
+                ocel,
                 &index,
             );
             let old = combine_constraints(
-                act_arcs, act1, act2, direction, &options, locel, true, &index,
-            );
-            let v = old
+                act_arcs, act1, act2, direction, &options, ocel, true, &index, ctl,
+            )?;
+            let v: Vec<OCDeclareArc> = old
                 .clone()
                 // .into_iter()
                 .into_par_iter()
@@ -177,22 +194,27 @@ pub fn discover_behavior_constraints(
                         label,
                         counts: options.counts_for_filter,
                     };
-                    if arc.satisfies_threshold_indexed(locel, options.noise_threshold, Some(&index))
+                    if arc.satisfies_threshold_indexed(ocel, options.noise_threshold, Some(&index))
                     {
                         arc.counts.1 = None;
-                        get_stricter_arrows_for_as(arc, &options, locel, &index)
+                        get_stricter_arrows_for_as(arc, &options, ocel, &index)
                     } else {
                         vec![]
                     }
-                });
-            v
+                })
+                .collect();
+            candidates.tick();
+            Ok(v)
         })
-        .collect();
+        .collect::<Result<_, Cancelled>>()?;
+    let mut ret: Vec<OCDeclareArc> = per_pair.into_iter().flatten().collect();
+    // The parallel collection above has no stable order
+    ret.sort();
 
     let reduced_ret = match options.reduction {
         OCDeclareReductionMode::None => ret,
-        OCDeclareReductionMode::Lossless => reduce_oc_arcs(ret, true),
-        OCDeclareReductionMode::Lossy => reduce_oc_arcs(ret, false),
+        OCDeclareReductionMode::Lossless => ctl.reduce_oc_arcs(ret, true)?,
+        OCDeclareReductionMode::Lossy => ctl.reduce_oc_arcs(ret, false)?,
     };
     if options.refinement {
         refine_oc_arcs_indexed(
@@ -201,11 +223,12 @@ pub fn discover_behavior_constraints(
             &ob_ob_inv,
             &ob_ob_rev_inv,
             &options,
-            locel,
+            ocel,
             &index,
+            ctl,
         )
     } else {
-        reduced_ret
+        Ok(reduced_ret)
     }
 }
 
@@ -267,7 +290,7 @@ pub(crate) fn get_oi_labels<'a>(
                     // Each is also valid!
                     ret.push(each_label);
                     let all_label = OCDeclareArcLabel {
-                        all: any_label.any.clone(),
+                        all: any_label.any,
                         any: vec![],
                         each: vec![],
                     };
@@ -289,7 +312,7 @@ pub(crate) fn get_oi_labels<'a>(
                 // Not multiple? Then add as Each
                 // This is a preference/choice, of course All would also hold on the input data
                 let each_label = OCDeclareArcLabel {
-                    each: any_label.any.clone(),
+                    each: any_label.any,
                     any: vec![],
                     all: vec![],
                 };
@@ -313,11 +336,13 @@ pub(crate) fn combine_constraints<'a>(
     locel: &SlimLinkedOCEL,
     iteration_check: bool,
     index: &E2ORevByTypeIndex,
-) -> FxHashSet<OCDeclareArcLabel> {
+    ctl: &Control<'_>,
+) -> Result<FxHashSet<OCDeclareArcLabel>, Cancelled> {
     let mut changed = true;
     let mut old: FxHashSet<_> = act_arcs.iter().cloned().collect();
     let mut iteration = 1;
     while changed {
+        ctl.check()?;
         let x = 0..act_arcs.len();
         let new_res: FxHashSet<_> = x
             .flat_map(|arc1_i| ((arc1_i + 1)..act_arcs.len()).map(move |arc2_i| (arc1_i, arc2_i)))
@@ -366,7 +391,7 @@ pub(crate) fn combine_constraints<'a>(
     }
     let prev_old = old.clone();
     old.retain(|a: &OCDeclareArcLabel| !prev_old.iter().any(|a2| a != a2 && a.is_dominated_by(a2)));
-    old
+    Ok(old)
 }
 /// Try to find stricter constraints for an AS constraint
 ///
@@ -456,7 +481,9 @@ fn get_stricter_arrows_for_as(
 
 /// Refine OC-DECLARE arcs by trying to find stricter object involvement labels
 ///
-/// Returns a list of refined arcs
+/// Returns a list of refined arcs. Reports progress to a [`Control`] with stage
+/// `"Refining constraints"`, one unit per activity pair with arcs.
+#[controlled]
 pub fn refine_oc_arcs(
     all_arcs: &[OCDeclareArc],
     act_ob_inv: &HashMap<String, HashMap<String, ObjectInvolvementCounts>>,
@@ -464,7 +491,8 @@ pub fn refine_oc_arcs(
     ob_ob_rev_inv: &HashMap<String, HashMap<String, ObjectInvolvementCounts>>,
     options: &OCDeclareDiscoveryOptions,
     locel: &SlimLinkedOCEL,
-) -> Vec<OCDeclareArc> {
+    ctl: &Control<'_>,
+) -> Result<Vec<OCDeclareArc>, Cancelled> {
     refine_oc_arcs_indexed(
         all_arcs,
         act_ob_inv,
@@ -473,6 +501,7 @@ pub fn refine_oc_arcs(
         options,
         locel,
         &E2ORevByTypeIndex::build(locel),
+        ctl,
     )
 }
 
@@ -486,15 +515,17 @@ pub(crate) fn refine_oc_arcs_indexed(
     options: &OCDeclareDiscoveryOptions,
     locel: &SlimLinkedOCEL,
     index: &E2ORevByTypeIndex,
-) -> Vec<OCDeclareArc> {
+    ctl: &Control<'_>,
+) -> Result<Vec<OCDeclareArc>, Cancelled> {
     let act_pairs: HashSet<(_, _)> = all_arcs
         .iter()
         .map(|arc| (arc.from.as_str(), arc.to.as_str()))
         .collect();
-    act_pairs
-        .into_iter()
-        // .par_bridge()
-        .flat_map(|(act1, act2)| {
+    let counter = ctl.counter("Refining constraints", Some(act_pairs.len() as u64));
+    let mut refined = Vec::new();
+    for (act1, act2) in act_pairs {
+        ctl.check()?;
+        refined.extend({
             let arcs = all_arcs
                 .iter()
                 .filter(|arc| arc.from.as_str() == act1 && arc.to.as_str() == act2)
@@ -557,7 +588,8 @@ pub(crate) fn refine_oc_arcs_indexed(
                     locel,
                     false,
                     index,
-                );
+                    ctl,
+                )?;
                 new_arcs.extend(combined.into_iter().map(|a| OCDeclareArc {
                     from: OCDeclareNode::new(act1),
                     to: OCDeclareNode::new(act2),
@@ -567,12 +599,17 @@ pub(crate) fn refine_oc_arcs_indexed(
                 }));
             }
             new_arcs
-        })
-        .collect()
+        });
+        counter.tick();
+    }
+    // `act_pairs` is iterated in hash order
+    refined.sort();
+    Ok(refined)
 }
 /// Returns an iterator over different object type associations
 ///
-/// In particular each item (X,b) consists of an `ObjectTypeAssociation` X and a flag b, indicating if multiple objects are sometimes involved in the source (or through the O2O)
+/// In particular each item (X,b) consists of an `ObjectTypeAssociation` X and a flag b,
+/// indicating if multiple objects are sometimes involved in the source (or through the O2O)
 fn get_direct_or_indirect_object_involvements<'a>(
     act1: &'a str,
     act2: &'a str,
@@ -645,8 +682,15 @@ fn get_direct_or_indirect_object_involvements<'a>(
 /// Reduce OC-DECLARE arcs based on lossless/lossy transitive reduction
 /// considering paths of arbitrary length.
 /// Uses sequential processing to prevent mutual elimination in cycles.
+///
+/// Reports progress to a [`Control`] with stage `"Reducing constraints"`, one unit per arc.
+#[controlled]
 #[register_binding]
-pub fn reduce_oc_arcs(mut arcs: Vec<OCDeclareArc>, lossless: bool) -> Vec<OCDeclareArc> {
+pub fn reduce_oc_arcs(
+    mut arcs: Vec<OCDeclareArc>,
+    lossless: bool,
+    ctl: &Control<'_>,
+) -> Result<Vec<OCDeclareArc>, Cancelled> {
     // Sorting ensures deterministic processing order
     arcs.sort();
     // Adjacency list mapping Node Name -> Indices of outgoing arcs
@@ -659,20 +703,24 @@ pub fn reduce_oc_arcs(mut arcs: Vec<OCDeclareArc>, lossless: bool) -> Vec<OCDecl
     // Track which arcs are still active and can be used
     let mut active = vec![true; arcs.len()];
 
+    let counter = ctl.counter("Reducing constraints", Some(arcs.len() as u64));
     // Process arcs sequentially
     for i in 0..arcs.len() {
+        ctl.check()?;
         // If an arc is found to be redundant, mark it as inactive
         if has_dominating_path(i, &arcs, &adj, &active, lossless) {
             active[i] = false;
         }
+        counter.tick();
     }
 
     // Return only the arcs that remained active
-    arcs.into_iter()
+    Ok(arcs
+        .into_iter()
         .enumerate()
         .filter(|(i, _)| active[*i])
         .map(|(_, arc)| arc)
-        .collect()
+        .collect())
 }
 
 fn has_dominating_path(
@@ -692,11 +740,6 @@ fn has_dominating_path(
     visited.insert(c.from.as_str());
 
     while let Some((curr_node, depth)) = queue.pop_front() {
-        // If we reached the target via a path, 'c' is redundant.
-        if curr_node == c.to.as_str() {
-            return true;
-        }
-
         if let Some(edge_indices) = adj.get(curr_node) {
             for &edge_idx in edge_indices {
                 // Only traverse edges that are currently active
@@ -727,7 +770,11 @@ fn has_dominating_path(
                     }
                 }
 
-                // Push reached node and continue search
+                // Reaching the target over at least one other arc makes 'c' redundant. Checked
+                // here rather than when popping, so a self-loop's own source does not count.
+                if edge.to == c.to {
+                    return true;
+                }
                 if !visited.contains(edge.to.as_str()) {
                     visited.insert(edge.to.as_str());
                     queue.push_back((edge.to.as_str(), depth + 1));
@@ -746,9 +793,6 @@ type ArcTypeAndLabel = (OCDeclareArcType, OCDeclareArcLabel);
 /// i.e., two follow types yield EF, two precede types EP, anything mixed AS
 fn compose_arc_types(a: OCDeclareArcType, b: OCDeclareArcType) -> OCDeclareArcType {
     use OCDeclareArcType::{AS, DF, DP, EF, EP};
-    if a == b {
-        return a;
-    }
     match (a, b) {
         (EF | DF, EF | DF) => EF,
         (EP | DP, EP | DP) => EP,
@@ -898,6 +942,8 @@ pub fn project_oc_arcs(
         }
     }
 
+    // `activities` is iterated in hash order
+    result.sort();
     // Strip dominated duplicates per (from, to) pair
     let snapshot = result.clone();
     result.retain(|a| {
@@ -964,7 +1010,7 @@ mod tests {
             object_types_to_use: Some(vec!["Invoice".into(), "Purchase Order".into()]),
             ..Default::default()
         };
-        let arcs = discover_behavior_constraints(&locel, options);
+        let arcs = discover_oc_declare(&locel, options);
         assert!(!arcs.is_empty());
         let assocs: Vec<_> = arcs
             .iter()
@@ -983,8 +1029,8 @@ mod tests {
         let locel = pm4py_example();
         let mut acts: Vec<String> = locel.get_ev_types().map(String::from).collect();
         acts.push("not in the log".into());
-        let mut unrestricted = discover_behavior_constraints(&locel, Default::default());
-        let mut listed = discover_behavior_constraints(
+        let mut unrestricted = discover_oc_declare(&locel, Default::default());
+        let mut listed = discover_oc_declare(
             &locel,
             OCDeclareDiscoveryOptions {
                 acts_to_use: Some(acts),
@@ -1000,8 +1046,8 @@ mod tests {
     fn listing_every_object_type_matches_no_restriction() {
         let locel = pm4py_example();
         let all = Some(locel.get_ob_types().map(String::from).collect());
-        let mut unrestricted = discover_behavior_constraints(&locel, Default::default());
-        let mut listed = discover_behavior_constraints(
+        let mut unrestricted = discover_oc_declare(&locel, Default::default());
+        let mut listed = discover_oc_declare(
             &locel,
             OCDeclareDiscoveryOptions {
                 object_types_to_use: all,
@@ -1011,5 +1057,105 @@ mod tests {
         unrestricted.sort();
         listed.sort();
         assert_eq!(unrestricted, listed);
+    }
+
+    fn each_order_arc(from: &str, to: &str, arc_type: OCDeclareArcType) -> OCDeclareArc {
+        OCDeclareArc {
+            from: OCDeclareNode::new(from),
+            to: OCDeclareNode::new(to),
+            arc_type,
+            label: OCDeclareArcLabel {
+                each: vec![ObjectTypeAssociation::new_simple("order")],
+                any: vec![],
+                all: vec![],
+            },
+            counts: (Some(1), None),
+        }
+    }
+
+    #[test]
+    fn reduction_keeps_self_loops_without_another_path() {
+        let arcs = vec![
+            each_order_arc("A", "A", OCDeclareArcType::EF),
+            each_order_arc("A", "B", OCDeclareArcType::EF),
+        ];
+        for lossless in [true, false] {
+            assert_eq!(reduce_oc_arcs(arcs.clone(), lossless), arcs);
+        }
+        // A -> B -> A implies the self-loop
+        let mut with_cycle = arcs;
+        with_cycle.push(each_order_arc("B", "A", OCDeclareArcType::EF));
+        let reduced = reduce_oc_arcs(with_cycle, false);
+        assert!(!reduced.iter().any(|a| a.from == a.to));
+    }
+
+    #[test]
+    fn composing_equal_arc_types() {
+        use OCDeclareArcType::{AS, DF, DP, EF, EP};
+        assert_eq!(compose_arc_types(DF, DF), EF);
+        assert_eq!(compose_arc_types(DP, DP), EP);
+        assert_eq!(compose_arc_types(EF, EF), EF);
+        assert_eq!(compose_arc_types(EP, EP), EP);
+        assert_eq!(compose_arc_types(AS, AS), AS);
+    }
+
+    #[test]
+    fn discovered_constraints_are_sorted() {
+        let locel = pm4py_example();
+        for refinement in [false, true] {
+            let arcs = discover_oc_declare(
+                &locel,
+                OCDeclareDiscoveryOptions {
+                    refinement,
+                    ..Default::default()
+                },
+            );
+            assert!(!arcs.is_empty());
+            assert!(arcs.is_sorted(), "refinement: {refinement}");
+        }
+    }
+
+    #[test]
+    fn control_reports_every_stage_and_cancels() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Mutex;
+
+        let locel = pm4py_example();
+        let options = OCDeclareDiscoveryOptions {
+            reduction: OCDeclareReductionMode::Lossless,
+            refinement: true,
+            ..Default::default()
+        };
+        let progress = Mutex::new(Vec::new());
+        let ctl = Control::new().on_progress(|p| progress.lock().unwrap().push(p));
+        let arcs = ctl.discover_oc_declare(&locel, options.clone()).unwrap();
+        drop(ctl);
+        assert_eq!(arcs, discover_oc_declare(&locel, options.clone()));
+        let progress = progress.into_inner().unwrap();
+        let n_acts = locel.get_ev_types().count() as u64;
+        for (stage, total) in [
+            ("Preparing", Some(1)),
+            ("Finding candidates", Some(n_acts * n_acts)),
+            ("Reducing constraints", None),
+            ("Refining constraints", None),
+        ] {
+            let reports: Vec<_> = progress.iter().filter(|p| p.stage == stage).collect();
+            let first = reports.first().unwrap_or_else(|| panic!("no {stage}"));
+            let last = reports.last().unwrap();
+            assert_eq!(first.done, 0, "{stage}");
+            assert_eq!(Some(last.done), last.total, "{stage}");
+            if total.is_some() {
+                assert_eq!(last.total, total, "{stage}");
+            }
+        }
+
+        let flag = AtomicBool::new(true);
+        let ctl = Control::new().cancel_flag(&flag);
+        assert_eq!(
+            ctl.discover_oc_declare(&locel, options.clone()),
+            Err(Cancelled)
+        );
+        flag.store(false, Ordering::Relaxed);
+        assert_eq!(ctl.discover_oc_declare(&locel, options), Ok(arcs));
     }
 }

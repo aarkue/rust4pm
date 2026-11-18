@@ -42,7 +42,7 @@ targets = [
 # If true, metadata will be collected with `--all-features`. Note that this can't
 # be toggled off if true, if you want to conditionally enable `--all-features` it
 # is recommended to pass `--all-features` on the cmd line instead
-all-features = false
+all-features = true
 # If true, metadata will be collected with `--no-default-features`. The same
 # caveat with `all-features` applies
 no-default-features = false
@@ -74,6 +74,16 @@ ignore = [
     #{ id = "RUSTSEC-0000-0000", reason = "you can specify a reason the advisory is ignored" },
     #"a-crate-that-is-yanked@0.1.1", # you can also ignore yanked crate versions if you wish
     #{ crate = "a-crate-that-is-yanked@0.1.1", reason = "you can specify why you are ignoring the yanked crate" },
+    { id = "RUSTSEC-2026-0367", reason = "zip 6 is only a build dependency of libduckdb-sys, unpacking its own bundled sources" },
+    { id = "RUSTSEC-2026-0368", reason = "zip 6 is only a build dependency of libduckdb-sys, unpacking its own bundled sources" },
+    { id = "RUSTSEC-2026-0369", reason = "zip 6 is only a build dependency of libduckdb-sys, unpacking its own bundled sources" },
+    { id = "RUSTSEC-2026-0429", reason = "zip 6 is only a build dependency of libduckdb-sys, unpacking its own bundled sources" },
+    { id = "RUSTSEC-2026-0545", reason = "zip 6 is only a build dependency of libduckdb-sys, unpacking its own bundled sources" },
+    { id = "RUSTSEC-2026-0547", reason = "zip 6 is only a build dependency of libduckdb-sys, unpacking its own bundled sources" },
+    { id = "RUSTSEC-2026-0548", reason = "zip 6 is only a build dependency of libduckdb-sys, unpacking its own bundled sources" },
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained, no replacement; transitive only" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, no replacement in the ecosystem yet" },
+    { id = "RUSTSEC-2026-0555", reason = "chrono-tz is unmaintained, no replacement; transitive via polars" },
 ]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
@@ -94,7 +104,13 @@ allow = [
     "Unicode-3.0",
     "Unlicense",
     "Zlib",
-    #"Apache-2.0 WITH LLVM-exception",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
 ]
 # The confidence threshold for detecting a license from license text.
 # The higher the value, the more closely the license text must be to the

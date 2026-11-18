@@ -32,13 +32,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::process_models::case_centric::dfg::DirectlyFollowsGraph;
 use crate::core::process_models::process_tree::{Node, OperatorType, ProcessTree};
+use crate::utils::control::{Cancelled, Control, Counter, NEVER_CANCELLED};
 
 use super::cut_finder::cut::Cut;
 use super::cut_finder::{
     concurrent_cut, exclusive_choice_cut, loop_cut, sequence_cut, strict_sequence_cut,
 };
 use super::dfg::{ActivityDfg, NoiseFilter};
-use super::{choice, leaf, operator, tau};
+use super::{choice, leaf, operator, tau, STAGE};
 use splits::split_dfg;
 
 mod splits;
@@ -58,14 +59,14 @@ pub struct InductiveMinerDfgOptions {
     /// Whether to collapse nested occurrences of the same associative operator, turning, e.g.,
     /// `→(→(a, b), c)` into `→(a, b, c)`.
     pub fold: bool,
-    /// Whether to try the [tau loops](strict_dfg_tau_loop) before resorting to a flower model.
+    /// Whether to try the tau loops (§6.6.3.3) before resorting to a flower model.
     pub use_tau_loops: bool,
     /// Whether the flower model allows the empty trace, i.e., is `↺(τ, ×(a₁, ..., aₙ))` instead of
     /// the thesis' `↺(×(a₁, ..., aₙ), τ)`. The empty-traces step runs before any fall through, so
     /// allowing one here only loses precision.
     pub flower_accepts_empty: bool,
     /// Whether a lone activity with a self edge becomes a flower instead of `↺(a, τ)`. The
-    /// thesis hands the case to [`strict_dfg_tau_loop`] (§6.6.3.3). With
+    /// thesis hands the case to its tau loops (§6.6.3.3). With
     /// [`flower_accepts_empty`](Self::flower_accepts_empty), this turns `a⁺` into `a*`.
     pub repeated_activity_to_flower: bool,
     /// Whether `IMfd` keeps the single-activity base case despite a self edge when single
@@ -99,7 +100,7 @@ impl InductiveMinerDfgOptions {
 
     /// The settings under which this variant behaves most like `ProM`'s `IMd`.
     /// `ProM` applies the strict sequence cut, sends a lone activity with a self edge to the
-    /// flower instead of to [`strict_dfg_tau_loop`], its flower allows the empty trace, and its
+    /// flower instead of to the tau loops, its flower allows the empty trace, and its
     /// `IMfd` reuses the unfiltered base cases.
     pub fn prom(noise_threshold: f64) -> Self {
         Self {
@@ -127,7 +128,7 @@ impl InductiveMinerDfgOptions {
 ///
 /// Start and end weights are the graph's start and end counts. Empty traces cannot be
 /// represented, so to mine a log that has them, use
-/// [`discover_inductive_tree_with`](super::discover_inductive_tree_with) with
+/// [`discover_inductive_tree`](super::discover_inductive_tree) with
 /// [`InductiveMiner::Dfg`](super::InductiveMiner::Dfg).
 pub fn discover_inductive_tree_from_dfg(
     graph: &DirectlyFollowsGraph<'_>,
@@ -184,6 +185,16 @@ pub(super) fn discover_dfg(
     dfg: &ActivityDfg,
     options: InductiveMinerDfgOptions,
 ) -> ProcessTree {
+    discover_dfg_controlled(labels, dfg, options, &Control::new()).expect(NEVER_CANCELLED)
+}
+
+/// [`discover_dfg`], reporting progress and stopping once `ctl` is cancelled.
+pub(super) fn discover_dfg_controlled(
+    labels: &[String],
+    dfg: &ActivityDfg,
+    options: InductiveMinerDfgOptions,
+    ctl: &Control<'_>,
+) -> Result<ProcessTree, Cancelled> {
     let options = InductiveMinerDfgOptions {
         noise_threshold: options.noise_threshold.clamp(0.0, 1.0),
         ..options
@@ -191,14 +202,12 @@ pub(super) fn discover_dfg(
     let miner = DfgMiner {
         labels,
         options: &options,
+        ctl,
+        steps: ctl.counter(STAGE, None),
     };
-    let tree = ProcessTree::new(miner.mine(dfg));
+    let tree = ProcessTree::new(miner.mine(dfg)?);
 
-    if options.fold {
-        tree.fold()
-    } else {
-        tree
-    }
+    Ok(if options.fold { tree.fold() } else { tree })
 }
 
 /// What the recursion needs besides the current graph.
@@ -206,21 +215,29 @@ struct DfgMiner<'a> {
     /// Activity labels, indexed by global activity id.
     labels: &'a [String],
     options: &'a InductiveMinerDfgOptions,
+    ctl: &'a Control<'a>,
+    steps: Counter<'a, 'a>,
 }
 
 impl DfgMiner<'_> {
     /// Discovers the sub-tree for one (sub)graph.
-    fn mine(&self, dfg: &ActivityDfg) -> Node {
+    fn mine(&self, dfg: &ActivityDfg) -> Result<Node, Cancelled> {
+        self.ctl.check()?;
+        self.steps.tick();
         // Base cases and cut detection assume a graph without empty traces (§6.6.3.5).
         if dfg.empty_traces() > 0 {
             return self.empty_traces(dfg);
         }
         if let Some(base_case) = self.base_case(dfg) {
-            return base_case;
+            return Ok(base_case);
         }
         if let Some(cut) = self.find_cut(dfg) {
             let subgraphs = split_dfg(dfg, &cut);
-            return operator(cut.operator(), subgraphs.iter().map(|sub| self.mine(sub)));
+            let children = subgraphs
+                .iter()
+                .map(|sub| self.mine(sub))
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(operator(cut.operator(), children));
         }
         self.fallthrough(dfg)
     }
@@ -230,18 +247,18 @@ impl DfgMiner<'_> {
     ///
     /// The thesis measures against `|Start(D)|`, which leaves out the empty traces themselves.
     /// Counting them, as `IMf` does, makes both variants decide alike on the same log.
-    fn empty_traces(&self, dfg: &ActivityDfg) -> Node {
+    fn empty_traces(&self, dfg: &ActivityDfg) -> Result<Node, Cancelled> {
         let traces: u64 =
             (0..dfg.len()).map(|a| dfg.start_count(a)).sum::<u64>() + dfg.empty_traces();
         let frequent_enough =
             dfg.empty_traces() as f64 >= traces as f64 * self.options.noise_threshold;
 
         let rest = dfg.without_empty_traces();
-        match (frequent_enough, rest.is_empty()) {
+        Ok(match (frequent_enough, rest.is_empty()) {
             (true, true) => tau(),
-            (true, false) => operator(OperatorType::ExclusiveChoice, [tau(), self.mine(&rest)]),
-            (false, _) => self.mine(&rest),
-        }
+            (true, false) => operator(OperatorType::ExclusiveChoice, [tau(), self.mine(&rest)?]),
+            (false, _) => self.mine(&rest)?,
+        })
     }
 
     /// The two base cases of §6.6.3.3: an empty graph is `τ`, and a single activity without a
@@ -250,7 +267,7 @@ impl DfgMiner<'_> {
     /// `IMfd` keeps the leaf despite a self edge when single executions dominate: with a start
     /// weight `s` and a self edge of weight `w`, the trace lengths read as a geometric
     /// distribution with `p = s / (2s + w)`, and the leaf survives `|p - 0.5| ≤ f` (§6.6.4.3).
-    /// Otherwise the self edge falls to [`strict_dfg_tau_loop`], which turns it into `↺(a, τ)`.
+    /// Otherwise the self edge falls to the tau loops, which turns it into `↺(a, τ)`.
     fn base_case(&self, dfg: &ActivityDfg) -> Option<Node> {
         if dfg.is_empty() {
             return Some(tau());
@@ -302,20 +319,20 @@ impl DfgMiner<'_> {
     ///
     /// The activity fall throughs of IM have no counterpart here, since a graph does not show how
     /// often an activity occurs per trace.
-    fn fallthrough(&self, dfg: &ActivityDfg) -> Node {
+    fn fallthrough(&self, dfg: &ActivityDfg) -> Result<Node, Cancelled> {
         let lone_repeated_activity = self.options.repeated_activity_to_flower && dfg.len() == 1;
         if self.options.use_tau_loops && !lone_repeated_activity {
             if let Some(inner) = strict_dfg_tau_loop(dfg).or_else(|| dfg_tau_loop(dfg)) {
-                return operator(OperatorType::Loop, [self.mine(&inner), tau()]);
+                return Ok(operator(OperatorType::Loop, [self.mine(&inner)?, tau()]));
             }
         }
 
         let flower = choice(self.labels, dfg.activities());
-        if self.options.flower_accepts_empty {
+        Ok(if self.options.flower_accepts_empty {
             operator(OperatorType::Loop, [tau(), flower])
         } else {
             operator(OperatorType::Loop, [flower, tau()])
-        }
+        })
     }
 }
 
@@ -607,14 +624,12 @@ mod test_dfg_miner {
     /// variant does not guarantee that the model replays the log.
     #[test]
     fn test_real_life_logs() {
-        use crate::core::event_data::case_centric::xes::import_xes::{
-            import_xes_path, XESImportOptions,
-        };
         use crate::test_utils::get_test_data_path;
+        use crate::{EventLog, Importable};
 
         for name in ["RepairExample.xes", "Sepsis Cases - Event Log.xes.gz"] {
             let path = get_test_data_path().join("xes").join(name);
-            let log = import_xes_path(path, XESImportOptions::default()).unwrap();
+            let log = EventLog::import_from_path(path).unwrap();
 
             for noise_threshold in [0.0, 0.2] {
                 let tree = super::super::discover_inductive_tree_from_log(

@@ -21,15 +21,14 @@ use crate::core::process_models::object_centric::ocpn::json::{
     JsonArc, JsonArcType, ObjectCentricPetriNetJson,
 };
 use crate::visualization::annotation::{annotated_thickness, node_text};
+use crate::visualization::badges::{badge_node_size, badges_of, push_badges, TypeBadge};
 use crate::visualization::engine::VisualizationError;
 use crate::visualization::graph_build::{GraphAcc, LabelWidth, PLACE_SIZE};
 use crate::visualization::model::{Annotations, LayoutSettings, ModelLayoutRequest, Visualize};
 use crate::visualization::petri_net::{
     arc_edge, arc_text, place_node, transition_node, transition_size, PetriStyle, ARC_WIDTH,
 };
-use crate::visualization::styling::{
-    edge_label, key_color, lighten, push_extra_line, scene_edge, BaseStyle,
-};
+use crate::visualization::styling::{edge_label, key_color, lighten, scene_edge, BaseStyle};
 
 /// A place or transition of an object-centric Petri net drawing, by its index in the flat JSON's
 /// `places` or `transitions`, e.g., `{"kind": "place", "index": 3}`.
@@ -71,6 +70,9 @@ pub struct OcpnBuildOptions {
     /// Labels, layout weights and line widths by node and arc. An arc's label replaces its
     /// weight, and a node's is one more line.
     pub annotations: OcpnAnnotations,
+    /// Object types drawn as a row of badges in the transition of an activity, by activity,
+    /// e.g., types that take part without places of their own. See [`super::badges`].
+    pub badges: BTreeMap<String, Vec<TypeBadge>>,
 }
 
 /// The layout request of an object-centric Petri net.
@@ -163,8 +165,10 @@ impl Visualize for ObjectCentricPetriNetJson {
         for (i, transition) in net.transitions.iter().enumerate() {
             let meta = OcpnNodeRef::Transition(i);
             let note = node_text(options.annotations.nodes.get(&meta));
+            let size = transition_size(transition.label.is_some(), note, measure);
+            let badges = badges_of(&options.badges, transition.label.as_deref());
             let node = Node {
-                size: transition_size(transition.label.is_some(), note, measure),
+                size: badge_node_size(size, badges, note.is_some()),
                 shape: Shape::Box,
                 ..Node::default()
             };
@@ -248,9 +252,12 @@ impl Visualize for ObjectCentricPetriNetJson {
                 &style.petri,
             ),
         };
-        if let Some(note) = node_text(options.annotations.nodes.get(node)) {
-            push_extra_line(&mut n, note, base);
-        }
+        let label = match *node {
+            OcpnNodeRef::Transition(t) => self.transitions[t].label.as_deref(),
+            OcpnNodeRef::Place(_) => None,
+        };
+        let note = node_text(options.annotations.nodes.get(node));
+        push_badges(&mut n, badges_of(&options.badges, label), note, base);
         n
     }
 
@@ -623,5 +630,65 @@ mod tests {
                 assert_eq!(n.rect.w, heuristic_label_width(note), "{node:?}");
             }
         }
+    }
+
+    /// Badges are a row of type-colored discs at the bottom of their activity's transition, which
+    /// grows by the shared badge geometry. Grouped badges come first, the involved ones last.
+    #[test]
+    fn badges_are_a_row_of_discs_in_the_transition() {
+        use crate::visualization::badges::{badge_row_width, BADGE_PADDING, BADGE_ROW_HEIGHT};
+        let net = example();
+        let mut options = OcpnBuildOptions::default();
+        let badges: Vec<TypeBadge> = serde_json::from_value(json!([
+            {"object_type": "customers", "card": "0..1"},
+            {"object_type": "products", "from": "items", "card": "1..*", "from_card": "1..*"},
+            {"object_type": "employees", "from": "items", "card": "1..1"},
+        ]))
+        .unwrap();
+        options
+            .badges
+            .insert("place order".to_string(), badges.clone());
+        let (plain_request, plain) =
+            scene_of(&net, &OcpnBuildOptions::default(), &Default::default());
+        let (request, scene) = scene_of(&net, &options, &Default::default());
+        let at = |r: &OcpnLayoutRequest| r.nodes.iter().position(|n| *n == Transition(0)).unwrap();
+        let (before, after) = (&plain.nodes[at(&plain_request)], &scene.nodes[at(&request)]);
+        assert_eq!(after.rect.h, before.rect.h + BADGE_ROW_HEIGHT);
+        let width = badge_row_width(&badges) + 2.0 * BADGE_PADDING;
+        assert_eq!(after.rect.w, before.rect.w.max(width));
+        let colors: Vec<Vec<_>> = after
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                NodeContent::Glyphs(row) => Some(row),
+                _ => None,
+            })
+            .map(|row| {
+                row.clusters
+                    .iter()
+                    .map(|c| c.color.clone().unwrap())
+                    .collect()
+            })
+            .collect();
+        let color = |t: &str| graphlay::svg::Color::from(key_color("objectType", t));
+        assert_eq!(
+            colors,
+            [
+                vec![color("items"), color("products"), color("employees")],
+                vec![color("customers")]
+            ]
+        );
+        let svg = crate::visualization::engine::render_scene_svg(&scene, None);
+        assert!(svg.contains("stroke-dasharray=\"2.2 1.6\""), "{svg}");
+        assert!(svg.contains("gl-mapsto"));
+
+        use crate::visualization::badges::BADGE_NOTE_HEIGHT;
+        let note = crate::visualization::NodeAnnotation {
+            label: Some("2 days".to_string()),
+        };
+        options.annotations.nodes.insert(Transition(0), note);
+        let (request, scene) = scene_of(&net, &options, &Default::default());
+        let noted = &scene.nodes[at(&request)];
+        assert_eq!(noted.rect.h, after.rect.h + BADGE_NOTE_HEIGHT);
     }
 }

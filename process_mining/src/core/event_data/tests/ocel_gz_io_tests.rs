@@ -1,10 +1,7 @@
 use std::{io::Read, path::Path};
 
 use crate::{
-    core::{
-        event_data::object_centric::ocel_json::import_ocel_json_slice,
-        io::{Exportable, Importable},
-    },
+    core::io::{Exportable, Importable},
     test_utils::get_test_data_path,
     OCEL,
 };
@@ -22,7 +19,7 @@ fn load_sample_ocel() -> OCEL {
         .join("ocel")
         .join("pm4py-ocel20_example.jsonocel");
     let bytes = std::fs::read(&path).unwrap();
-    import_ocel_json_slice(&bytes).unwrap()
+    OCEL::import_from_bytes(&bytes, "json").unwrap()
 }
 
 fn assert_gzip_magic(bytes: &[u8]) {
@@ -68,9 +65,9 @@ fn test_ocel_csv_gz_roundtrip() {
 fn test_ocel_gz_infer_format() {
     let cases = [
         ("log.json.gz", "json.gz"),
-        ("log.jsonocel.gz", "jsonocel.gz"),
+        ("log.jsonocel.gz", "json.gz"),
         ("log.xml.gz", "xml.gz"),
-        ("log.xmlocel.gz", "xmlocel.gz"),
+        ("log.xmlocel.gz", "xml.gz"),
         ("log.ocel.csv.gz", "ocel.csv.gz"),
         ("log.csv.gz", "ocel.csv.gz"),
     ];

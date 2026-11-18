@@ -209,7 +209,15 @@ impl<'a> TypeAttributes<'a> {
 /// Two traces sharing a `concept:name` are still two cases, so the repeat is disambiguated
 /// rather than merged: an OCEL holding two objects under one id is not a well-formed OCEL, and
 /// a sink rejects the second outright.
-fn unique_case_id(trace: &Trace, trace_index: usize, used: &mut HashSet<String>) -> String {
+///
+/// `next_suffix` remembers, per id, where the search for a free suffix left off, so that many
+/// repeats of one id do not each probe every suffix taken before them.
+fn unique_case_id(
+    trace: &Trace,
+    trace_index: usize,
+    used: &mut HashSet<String>,
+    next_suffix: &mut HashMap<String, usize>,
+) -> String {
     let base = trace
         .attributes
         .get_by_key(TRACE_ID_NAME)
@@ -219,13 +227,13 @@ fn unique_case_id(trace: &Trace, trace_index: usize, used: &mut HashSet<String>)
     if used.insert(base.clone()) {
         return base;
     }
-    let mut n = 2;
+    let n = next_suffix.entry(base.clone()).or_insert(2);
     loop {
         let candidate = format!("{base}~{n}");
+        *n += 1;
         if used.insert(candidate.clone()) {
             return candidate;
         }
-        n += 1;
     }
 }
 
@@ -294,10 +302,16 @@ pub fn write_event_log_to_sink<S: ExtractionSink>(
 
     let epoch: DateTime<FixedOffset> = DateTime::UNIX_EPOCH.into();
     let mut used_case_ids: HashSet<String> = HashSet::with_capacity(log.traces.len());
+    let mut next_case_id_suffix: HashMap<String, usize> = HashMap::new();
     let mut report = EventLogWriteReport::default();
 
     for (trace_index, trace) in log.traces.iter().enumerate() {
-        let case_id = unique_case_id(trace, trace_index, &mut used_case_ids);
+        let case_id = unique_case_id(
+            trace,
+            trace_index,
+            &mut used_case_ids,
+            &mut next_case_id_suffix,
+        );
         let attributes: Vec<_> = trace
             .attributes
             .iter()
@@ -585,6 +599,27 @@ mod tests {
     }
 
     #[test]
+    fn repeated_case_ids_resume_from_the_last_suffix() {
+        let mut used = HashSet::new();
+        let mut next_suffix = HashMap::new();
+        // An id that already looks like a suffixed repeat is skipped over, not reused.
+        assert_eq!(
+            unique_case_id(
+                &trace("a~3", vec![], vec![]),
+                0,
+                &mut used,
+                &mut next_suffix
+            ),
+            "a~3"
+        );
+        let ids: Vec<String> = (0..4)
+            .map(|i| unique_case_id(&trace("a", vec![], vec![]), i, &mut used, &mut next_suffix))
+            .collect();
+        assert_eq!(ids, ["a", "a~2", "a~4", "a~5"]);
+        assert_eq!(next_suffix["a"], 6);
+    }
+
+    #[test]
     fn a_xes_file_becomes_a_slim_linked_ocel() {
         use crate::Importable;
 
@@ -622,7 +657,7 @@ mod tests {
 
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("sink.duckdb");
-        let mut sink = DuckDbSink::new(&path).expect("open sink");
+        let mut sink = DuckDbSink::new(&path, &Default::default()).expect("open sink");
         write_event_log_to_sink(&two_event_log(), &mut sink).expect("write");
         ExtractionSink::finalize(&mut sink).expect("finalize");
 
@@ -662,11 +697,8 @@ mod tests {
             "a host asking what the kind accepts must be told about xes"
         );
 
-        let from_path = RegistryItem::load_from_path(
-            &RegistryItemKind::SlimLinkedOCEL,
-            &path.to_string_lossy(),
-        )
-        .expect("load a xes path as a slim linked OCEL");
+        let from_path = RegistryItem::load_from_path(&RegistryItemKind::SlimLinkedOCEL, &path)
+            .expect("load a xes path as a slim linked OCEL");
         assert!(matches!(from_path, RegistryItem::SlimLinkedOCEL(_)));
 
         let slim = RegistryItem::load_from_bytes(&RegistryItemKind::SlimLinkedOCEL, &bytes, "xes")

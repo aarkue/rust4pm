@@ -2,23 +2,26 @@
 
 use super::escaping::escape_reference_part;
 use crate::core::event_data::object_centric::{
+    io::OCELIOError,
     ocel_struct::OCELAttributeValue,
     readable::{OCELLookup, ReadableOCEL},
 };
 use chrono::{DateTime, FixedOffset};
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     io::Write,
 };
 
 /// Options for CSV OCEL Export
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct OCELCSVExportOptions {
     /// Whether to include O2O relationships in the export
     pub include_o2o: bool,
     /// Whether to include object attribute changes as separate rows
     pub include_object_attribute_changes: bool,
-    /// Date format for timestamps (default: RFC3339)
+    /// Date format for timestamps (default: `%Y-%m-%dT%H:%M:%S%.f%z`)
     pub date_format: Option<String>,
 }
 
@@ -32,61 +35,18 @@ impl Default for OCELCSVExportOptions {
     }
 }
 
-/// Error type for CSV export
-#[derive(Debug)]
-pub enum OCELCSVExportError {
-    /// IO error during writing
-    Io(std::io::Error),
-    /// CSV writing error
-    Csv(csv::Error),
-}
-
-impl std::fmt::Display for OCELCSVExportError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(e) => write!(f, "IO error: {e}"),
-            Self::Csv(e) => write!(f, "CSV error: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for OCELCSVExportError {}
-impl From<std::io::Error> for OCELCSVExportError {
-    fn from(e: std::io::Error) -> Self {
-        Self::Io(e)
-    }
-}
-impl From<csv::Error> for OCELCSVExportError {
-    fn from(e: csv::Error) -> Self {
-        Self::Csv(e)
-    }
-}
-
 struct ObjectRef<'a> {
     object_id: &'a str,
     qualifier: &'a str,
     attributes: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
-/// Export OCEL to CSV format
-pub fn export_ocel_csv<W, O>(writer: W, ocel: &O) -> Result<(), OCELCSVExportError>
-where
-    W: Write,
-    O: ReadableOCEL + ?Sized,
-{
-    export_ocel_csv_with_options(writer, ocel, &OCELCSVExportOptions::default())
-}
-
-/// Export OCEL to CSV format with custom options
-pub fn export_ocel_csv_with_options<W, O>(
+/// Export `ocel` to `writer` in the OCEL CSV format.
+pub fn export_ocel_csv<W: Write, O: ReadableOCEL + ?Sized>(
     writer: W,
     ocel: &O,
     options: &OCELCSVExportOptions,
-) -> Result<(), OCELCSVExportError>
-where
-    W: Write,
-    O: ReadableOCEL + ?Sized,
-{
+) -> Result<(), OCELIOError> {
     let mut csv_writer = csv::Writer::from_writer(writer);
     let lookup = ocel.lookup();
 
@@ -116,6 +76,7 @@ where
     // (time, object_id) pairs covered by event rows, so the later object-attribute pass
     // can skip rows that would duplicate an event row's value at the same timestamp.
     let mut event_obj_times: HashSet<(DateTime<FixedOffset>, &str)> = HashSet::new();
+    let mut event_objects: HashSet<&str> = HashSet::new();
 
     for event_cow in ocel.iter_events_sorted_by_time() {
         let event = event_cow.as_ref();
@@ -125,6 +86,7 @@ where
                 continue;
             };
             event_obj_times.insert((event.time, obj_id));
+            event_objects.insert(obj_id);
             if let Some(obj_type) = lookup.object_type_of(obj_id) {
                 let obj_attrs: serde_json::Map<_, _> = lookup
                     .object_attributes(obj_id)
@@ -141,7 +103,7 @@ where
         let event_attrs: HashMap<&str, String> = event
             .attributes
             .iter()
-            .map(|a| (a.name.as_str(), a.value.to_string()))
+            .map(|a| (a.name.as_str(), csv_cell(&a.value)))
             .collect();
         write_record(
             &mut csv_writer,
@@ -150,6 +112,49 @@ where
             Some(event.time),
             &object_refs,
             &event_attrs,
+            &object_type_names,
+            &event_attr_names,
+            options,
+        )?;
+    }
+
+    // Object declaration rows, for the objects no event row names and for initial values, so
+    // that every object is exported and the type of every O2O source is known before its row
+    let epoch: DateTime<FixedOffset> = DateTime::UNIX_EPOCH.into();
+    let mut declared: Vec<(&str, &str)> = lookup
+        .iter_object_ids()
+        .filter_map(|id| Some((lookup.object_type_of(id)?, id)))
+        .collect();
+    declared.sort_unstable();
+    for (obj_type, obj_id) in declared {
+        let initial: serde_json::Map<_, _> = if event_obj_times.contains(&(epoch, obj_id)) {
+            serde_json::Map::new()
+        } else {
+            lookup
+                .object_attributes(obj_id)
+                .filter(|(_, _, t)| *t == epoch)
+                .map(|(name, value, _)| (name.to_string(), ocel_value_to_json(value)))
+                .collect()
+        };
+        if initial.is_empty() && event_objects.contains(obj_id) {
+            continue;
+        }
+        event_obj_times.insert((epoch, obj_id));
+        let object_refs = HashMap::from([(
+            obj_type,
+            vec![ObjectRef {
+                object_id: obj_id,
+                qualifier: "",
+                attributes: Some(initial),
+            }],
+        )]);
+        write_record(
+            &mut csv_writer,
+            "",
+            "",
+            None,
+            &object_refs,
+            &HashMap::new(),
             &object_type_names,
             &event_attr_names,
             options,
@@ -192,10 +197,10 @@ where
             let Some(obj_type) = lookup.object_type_of(obj_id) else {
                 continue;
             };
-            let mut attrs_by_time: HashMap<
+            let mut attrs_by_time: BTreeMap<
                 DateTime<FixedOffset>,
                 Vec<(String, serde_json::Value)>,
-            > = HashMap::new();
+            > = BTreeMap::new();
             for (name, value, time) in lookup.object_attributes(obj_id) {
                 attrs_by_time
                     .entry(time)
@@ -242,7 +247,7 @@ fn write_record<W: Write>(
     object_type_names: &[&str],
     event_attr_names: &[&str],
     options: &OCELCSVExportOptions,
-) -> Result<(), OCELCSVExportError> {
+) -> Result<(), OCELIOError> {
     let mut record: Vec<String> = vec![
         id.to_string(),
         activity.to_string(),
@@ -270,7 +275,7 @@ fn format_timestamp(dt: &DateTime<FixedOffset>, options: &OCELCSVExportOptions) 
         .date_format
         .as_ref()
         .map(|f| dt.format(f).to_string())
-        .unwrap_or_else(|| dt.format("%Y-%m-%dT%H:%M:%S%z").to_string())
+        .unwrap_or_else(|| dt.format("%Y-%m-%dT%H:%M:%S%.f%z").to_string())
 }
 
 fn format_object_refs(refs: &[ObjectRef<'_>]) -> String {
@@ -295,6 +300,14 @@ fn format_object_refs(refs: &[ObjectRef<'_>]) -> String {
         .join("/")
 }
 
+/// A whole float keeps its `.0`, so that it is read back as a float
+fn csv_cell(value: &OCELAttributeValue) -> String {
+    match value {
+        OCELAttributeValue::Float(f) if f.is_finite() && f.fract() == 0.0 => format!("{f}.0"),
+        v => v.to_string(),
+    }
+}
+
 fn ocel_value_to_json(value: &OCELAttributeValue) -> serde_json::Value {
     match value {
         OCELAttributeValue::Time(dt) => serde_json::Value::String(dt.to_rfc3339()),
@@ -308,62 +321,15 @@ fn ocel_value_to_json(value: &OCELAttributeValue) -> serde_json::Value {
     }
 }
 
-/// Export OCEL to a CSV file at the specified path
-pub fn export_ocel_csv_to_path<P, O>(ocel: &O, path: P) -> Result<(), OCELCSVExportError>
-where
-    P: AsRef<std::path::Path>,
-    O: ReadableOCEL + ?Sized,
-{
-    export_ocel_csv(std::io::BufWriter::new(std::fs::File::create(path)?), ocel)
-}
-
-/// Export OCEL to a CSV file at the specified path with options
-pub fn export_ocel_csv_to_path_with_options<P, O>(
-    ocel: &O,
-    path: P,
-    options: &OCELCSVExportOptions,
-) -> Result<(), OCELCSVExportError>
-where
-    P: AsRef<std::path::Path>,
-    O: ReadableOCEL + ?Sized,
-{
-    export_ocel_csv_with_options(
-        std::io::BufWriter::new(std::fs::File::create(path)?),
-        ocel,
-        options,
-    )
-}
-
-/// Export OCEL to a CSV string
-pub fn export_ocel_csv_to_string<O>(ocel: &O) -> Result<String, OCELCSVExportError>
-where
-    O: ReadableOCEL + ?Sized,
-{
-    let mut buf = Vec::new();
-    export_ocel_csv(&mut buf, ocel)?;
-    String::from_utf8(buf).map_err(|e| {
-        OCELCSVExportError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-    })
-}
-
-/// Export OCEL to a CSV string with options
-pub fn export_ocel_csv_to_string_with_options<O>(
-    ocel: &O,
-    options: &OCELCSVExportOptions,
-) -> Result<String, OCELCSVExportError>
-where
-    O: ReadableOCEL + ?Sized,
-{
-    let mut buf = Vec::new();
-    export_ocel_csv_with_options(&mut buf, ocel, options)?;
-    String::from_utf8(buf).map_err(|e| {
-        OCELCSVExportError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn to_csv_string<O: ReadableOCEL + ?Sized>(ocel: &O) -> Result<String, OCELIOError> {
+        let mut buf = Vec::new();
+        export_ocel_csv(&mut buf, ocel, &OCELCSVExportOptions::default())?;
+        Ok(String::from_utf8(buf).unwrap())
+    }
     use crate::core::event_data::object_centric::{
         ocel_csv::import_ocel_csv,
         ocel_struct::{
@@ -379,9 +345,9 @@ e1,place order,2026-01-22T09:57:28+0000,o1,i1#part-of{"price": "5€"}/i2#part-o
 e2,pick item,2026-01-23T09:57:28+0000,,i1,no,outdoor
 e3,produce item,2026-01-24T09:57:28+0000,,i2#target,no,indoor
 e4,send order,2026-01-26T09:57:28+0000,o1,i1/i2,yes,"#;
-        let ocel = import_ocel_csv(csv_input.as_bytes()).unwrap();
-        let exported = export_ocel_csv_to_string(&ocel).unwrap();
-        let reimported = import_ocel_csv(exported.as_bytes()).unwrap();
+        let ocel = import_ocel_csv(csv_input.as_bytes(), &Default::default()).unwrap();
+        let exported = to_csv_string(&ocel).unwrap();
+        let reimported = import_ocel_csv(exported.as_bytes(), &Default::default()).unwrap();
         assert_eq!(ocel.events.len(), reimported.events.len());
         assert_eq!(ocel.objects.len(), reimported.objects.len());
     }
@@ -392,12 +358,12 @@ e4,send order,2026-01-26T09:57:28+0000,o1,i1/i2,yes,"#;
     fn test_event_attributes_are_exported_without_prefix() {
         let csv_input = r#"id,activity,timestamp,ot:item,ea:billable,area
 e1,place order,2026-01-22T09:57:28+0000,i1,no,outdoor"#;
-        let ocel = import_ocel_csv(csv_input.as_bytes()).unwrap();
-        let exported = export_ocel_csv_to_string(&ocel).unwrap();
+        let ocel = import_ocel_csv(csv_input.as_bytes(), &Default::default()).unwrap();
+        let exported = to_csv_string(&ocel).unwrap();
         let header = exported.lines().next().unwrap();
         assert_eq!(header, "id,activity,timestamp,ot:item,area,billable");
 
-        let reimported = import_ocel_csv(exported.as_bytes()).unwrap();
+        let reimported = import_ocel_csv(exported.as_bytes(), &Default::default()).unwrap();
         let attrs = &reimported.events[0].attributes;
         assert_eq!(
             attrs
@@ -412,8 +378,8 @@ e1,place order,2026-01-22T09:57:28+0000,i1,no,outdoor"#;
         );
     }
 
-    /// Regression: object attributes with an "initial value" timestamp (not matching any event
-    /// time) must survive a default CSV roundtrip.
+    /// An object attribute with an initial value, at a time no event has, survives a default CSV
+    /// roundtrip.
     #[test]
     fn test_initial_object_attribute_survives_roundtrip() {
         let initial_time: DateTime<FixedOffset> = DateTime::UNIX_EPOCH.into();
@@ -453,8 +419,8 @@ e1,place order,2026-01-22T09:57:28+0000,i1,no,outdoor"#;
             }],
         };
 
-        let exported = export_ocel_csv_to_string(&ocel).unwrap();
-        let reimported = import_ocel_csv(exported.as_bytes()).unwrap();
+        let exported = to_csv_string(&ocel).unwrap();
+        let reimported = import_ocel_csv(exported.as_bytes(), &Default::default()).unwrap();
 
         let item = reimported
             .objects
@@ -468,5 +434,81 @@ e1,place order,2026-01-22T09:57:28+0000,i1,no,outdoor"#;
             .expect("price attribute must survive roundtrip");
         assert_eq!(price.value, OCELAttributeValue::Float(4.3));
         assert_eq!(price.time, initial_time);
+    }
+
+    /// An object no event names is exported, also when it is the source of an O2O relationship,
+    /// and a whole float stays a float.
+    #[test]
+    fn objects_outside_events_survive_roundtrip() {
+        let t = |s| DateTime::parse_from_rfc3339(s).unwrap();
+        let object = |id: &str, attributes, relationships| OCELObject {
+            id: id.into(),
+            object_type: "item".into(),
+            attributes,
+            relationships,
+        };
+        let ocel = OCEL {
+            event_types: vec![OCELType {
+                name: "e".into(),
+                attributes: vec![OCELTypeAttribute::new(
+                    "w",
+                    &crate::core::event_data::object_centric::OCELAttributeType::Float,
+                )],
+            }],
+            object_types: vec![OCELType {
+                name: "item".into(),
+                attributes: vec![],
+            }],
+            events: vec![OCELEvent::new(
+                "e1",
+                "e",
+                t("2024-01-01T00:00:00Z"),
+                vec![
+                    crate::core::event_data::object_centric::OCELEventAttribute {
+                        name: "w".into(),
+                        value: OCELAttributeValue::Float(5.0),
+                    },
+                ],
+                vec![OCELRelationship::new("i1", "")],
+            )],
+            objects: vec![
+                object("i1", vec![], vec![]),
+                object(
+                    "i2",
+                    vec![OCELObjectAttribute::new("n", 1i64, DateTime::UNIX_EPOCH)],
+                    vec![OCELRelationship::new("i1", "next")],
+                ),
+                object("i3", vec![], vec![]),
+            ],
+        };
+        let exported = to_csv_string(&ocel).unwrap();
+        let back = import_ocel_csv(exported.as_bytes(), &Default::default()).unwrap();
+        let mut ids: Vec<_> = back.objects.iter().map(|o| o.id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, ["i1", "i2", "i3"]);
+        let i2 = back.objects.iter().find(|o| o.id == "i2").unwrap();
+        assert_eq!(i2.relationships, ocel.objects[1].relationships);
+        assert_eq!(i2.attributes, ocel.objects[1].attributes);
+        assert_eq!(
+            back.events[0].attributes[0].value,
+            OCELAttributeValue::Float(5.0)
+        );
+    }
+
+    #[test]
+    fn default_timestamps_have_sub_seconds_only_when_present() {
+        let options = OCELCSVExportOptions::default();
+        let whole = DateTime::parse_from_rfc3339("2024-05-01T10:00:00+02:00").unwrap();
+        let frac = DateTime::parse_from_rfc3339("2024-05-01T10:00:00.25+02:00").unwrap();
+        assert_eq!(
+            format_timestamp(&whole, &options),
+            "2024-05-01T10:00:00+0200"
+        );
+        let written = format_timestamp(&frac, &options);
+        assert_eq!(written, "2024-05-01T10:00:00.250+0200");
+        assert_eq!(
+            crate::core::event_data::timestamp_utils::parse_timestamp(&written, None),
+            Ok(frac)
+        );
     }
 }

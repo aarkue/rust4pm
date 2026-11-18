@@ -1,6 +1,6 @@
 [package]
 name = "process_mining"
-version = "0.6.2"
+version = "0.7.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Process Mining library for working with (object-centric) event data"
@@ -9,12 +9,13 @@ repository = "https://github.com/aarkue/rust4pm"
 documentation = "https://docs.rs/process_mining/"
 readme = "README.md"
 keywords = ["process-mining"]
-rust-version = "1.88"
+# `extraction-dbcon-postgres` needs Rust 1.94 (`sqlx` 0.9) and `dataframes` Rust 1.95 (`polars` 0.55).
+rust-version = "1.89"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-macros_process_mining = { version = "0.6.2", path = "../macros_process_mining" }
+macros_process_mining = { version = "0.7.0", path = "../macros_process_mining" }
 chrono = { version = "0.4.40", features = ["serde"] }
 duckdb = { version = "1.2.1", optional = true, features = ["chrono"] }
 flate2 = "1.1.1"
@@ -22,16 +23,17 @@ itertools = { version = "0.14.0" }
 nalgebra = { version = "0.33.2", optional = true }
 ordered-float = "5.0.0"
 petgraph = "0.8.1"
-polars = { version = "0.51.0", features = ["dtype-slim", "timezones", "partition_by"], optional = true }
-quick-xml = { version = "0.37.4" }
+polars = { version = "0.55.2", features = ["dtype-slim", "timezones", "partition_by"], optional = true }
+quick-xml = { version = "0.42.0" }
 rand = { version = "0.9.1", optional = true }
 rayon = "1.7.0"
 regex = { version = "1.11", optional = true }
-rusqlite = { version = "0.38.0", features = ["bundled","chrono", "serialize", "column_decltype"], optional = true }
+rusqlite = { version = "0.41.1", features = ["bundled","chrono", "serialize", "column_decltype"], optional = true }
 serde_json = "1.0.105"
 serde = {version = "1.0.188", features = ["derive"]}
 serde_with = { version = "3.16.0", features = ["std", "macros", "schemars_1"]}
-tempfile = "3"
+# Only for `ocel-bundle`, which unpacks an archive into a temporary directory.
+tempfile = { version = "3", optional = true }
 uuid = {version = "1.16.0", features = ["v4", "serde"]}
 schemars = { version = "1.1.0", features = ["chrono04", "uuid1"]}
 inventory = { version = "0.3", optional = true }
@@ -42,24 +44,30 @@ csv = "1.4.0"
 # Backends are selected by this crate's own `extraction-dbcon*` features, since not all of them are
 # portable. `dbcon`'s `default` is `[]`, and a `dbcon` with no backend recognizes no connection
 # string, so at least one must be selected.
-dbcon = {version = "0.4.1", optional = true }
+dbcon = { version = "0.5.0", optional = true }
 hashbrown = "0.17.1"
 rustc-hash = "2.1.2"
-zip = { version = "6", default-features = false, features = ["deflate"], optional = true }
+zip = { version = "9", default-features = false, features = ["deflate"], optional = true }
 # `default-features = false` drops the unused `arrow` integration; the bundled format's column
 # types are written through the low-level row-group writer. `zstd` is needed because `parquet`
 # defaults to no block compression, which makes an exported container several times larger than the
 # same log as CSV. `snap` is for reading: Snappy is what most other parquet writers emit.
-parquet = { version = "58", default-features = false, features = [
+parquet = { version = "60", default-features = false, features = [
     "zstd",
     "snap",
 ], optional = true }
 # Only to hand `parquet` an in-memory `ChunkReader`; `parquet` already depends on it.
 bytes = { version = "1", optional = true }
 graphlay = { version = "0.3.1", default-features = false, features = ["svg", "parallel", "serde"], optional = true }
+log = "0.4"
+
+# `Uuid::new_v4` has no source of randomness on wasm32-unknown-unknown without this.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+uuid = { version = "1.16.0", features = ["js"] }
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
+tempfile = "3"
 dhat = "0.3.3"
 
 [features]
@@ -95,6 +103,7 @@ extraction-dbcon = [
 
 # Adds PostgreSQL to `extraction-dbcon`. Separate because `sqlx` does not build for
 # `wasm32-unknown-unknown`, and because a server connection is meaningless from a browser page.
+# Needs Rust 1.94, above the crate's `rust-version`, because `sqlx` 0.9 does.
 extraction-dbcon-postgres = ["extraction-dbcon", "dbcon/postgres"]
 
 # Adds DuckDB to `extraction-dbcon`. Separate for the same reason as PostgreSQL: the `duckdb` crate
@@ -104,13 +113,14 @@ extraction-dbcon-duckdb-bundled = ["extraction-dbcon-duckdb", "dbcon/duckdb-bund
 
 # Enables reading and writing the OCEL 2.0 bundled CSV/Parquet format: a `.ocel.zip` archive or
 # a directory with the same layout, with CSV storage.
-ocel-bundle = ["dep:zip"]
+ocel-bundle = ["dep:zip", "dep:tempfile"]
 
 # Adds Parquet storage to `ocel-bundle`. Separate because `parquet` is a large dependency and
 # a CSV container needs none of it.
 ocel-bundle-parquet = ["ocel-bundle", "dep:parquet", "dep:bytes"]
 
 # Enables polars DataFrame conversion from/to event data structs
+# Needs Rust 1.95, above the crate's `rust-version`, because `polars` 0.55 does (`sysinfo`).
 dataframes = ["dep:polars"]
 
 # Enables event log splitting (+rand dependency)
@@ -151,6 +161,7 @@ features = [
     "bindings",
     "visualization",
 ]
+rustdoc-args = ["--cfg", "docsrs"]
 
 [[example]]
 name = "ocel_duckdb_export"

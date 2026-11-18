@@ -30,25 +30,6 @@ impl<'a> OCDirectlyFollowsGraph<'a> {
             object_type_to_dfg: HashMap::new(),
         }
     }
-
-    ///
-    /// Construct an [`OCDirectlyFollowsGraph`] from an OCEL
-    ///
-    pub fn create_from_ocel<O>(locel: &'a O) -> Self
-    where
-        O: LinkedOCELAccess<'a> + Sync,
-        O::ObjectRepr: Sync,
-        O::EventRepr: Sync,
-    {
-        discover_dfg_from_ocel(locel)
-    }
-
-    ///
-    /// Serialize to JSON string.
-    ///
-    pub fn to_json(self) -> String {
-        serde_json::to_string(&self).unwrap()
-    }
 }
 
 /// Construct an [`OCDirectlyFollowsGraph`] from an OCEL
@@ -58,7 +39,7 @@ impl<'a> OCDirectlyFollowsGraph<'a> {
 /// for each object type.
 ///
 /// [`flatten_ocel_on`]: crate::core::event_data::object_centric::utils::flatten::flatten_ocel_on
-pub fn discover_dfg_from_ocel<'a, O>(ocel: &'a O) -> OCDirectlyFollowsGraph<'a>
+pub fn discover_ocdfg_from<'a, O>(ocel: &'a O) -> OCDirectlyFollowsGraph<'a>
 where
     O: LinkedOCELAccess<'a> + Sync,
     O::ObjectRepr: Sync,
@@ -81,10 +62,10 @@ where
     result
 }
 
-/// [`discover_dfg_from_ocel`] on a [`SlimLinkedOCEL`], which is what the binding takes.
-#[register_binding(name = "discover_dfg_from_ocel")]
-pub fn discover_dfg_from_slim_ocel(ocel: &SlimLinkedOCEL) -> OCDirectlyFollowsGraph<'_> {
-    discover_dfg_from_ocel(ocel)
+/// [`discover_ocdfg_from`] on a [`SlimLinkedOCEL`], which is what the binding takes.
+#[register_binding]
+pub fn discover_ocdfg(ocel: &SlimLinkedOCEL) -> OCDirectlyFollowsGraph<'_> {
+    discover_ocdfg_from(ocel)
 }
 
 /// The activities of an object's events in time order, each event once.
@@ -156,6 +137,7 @@ impl<'a> TypeCounts<'a> {
 mod tests {
     use super::*;
     use crate::core::event_data::object_centric::linked_ocel::IndexLinkedOCEL;
+    use crate::discovery::case_centric::dfg::discover_dfg;
     use crate::test_utils::get_test_data_path;
     use crate::{Importable, OCEL};
 
@@ -166,9 +148,9 @@ mod tests {
         O::EventRepr: Sync,
     {
         use crate::core::event_data::object_centric::utils::flatten::flatten_ocel_on;
-        let model = discover_dfg_from_ocel(locel);
+        let model = discover_ocdfg_from(locel);
         for ob_type in locel.get_ob_types() {
-            let flat = DirectlyFollowsGraph::discover(&flatten_ocel_on(locel, ob_type));
+            let flat = discover_dfg(&flatten_ocel_on(locel, ob_type));
             let dfg = &model.object_type_to_dfg[ob_type];
             assert_eq!(dfg.activities, flat.activities, "{name} {ob_type}");
             assert_eq!(
@@ -202,7 +184,7 @@ mod tests {
             .join("ocel")
             .join("pm4py-ocel20_example.jsonocel");
         let locel = IndexLinkedOCEL::from(OCEL::import_from_path(path).unwrap());
-        let model = discover_dfg_from_ocel(&locel);
+        let model = discover_ocdfg_from(&locel);
         for object_type in locel.get_ob_types() {
             let with_events = locel
                 .get_obs_of_type(object_type)

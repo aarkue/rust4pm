@@ -3,8 +3,10 @@ use super::schema::{ResolvedPathSchema, ResolvedStep};
 use crate::core::event_data::object_centric::linked_ocel::{
     slim_linked_ocel::SlimLinkedOCEL, LinkedOCELAccess,
 };
+use crate::utils::control::{Cancelled, Control, Counter};
 use chrono::{DateTime, FixedOffset, TimeDelta};
 use hashbrown::{HashMap, HashSet};
+use macros_process_mining::controlled;
 use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -59,8 +61,10 @@ pub struct PathConnectionParams {
     pub temporal: TemporalConstraint,
     /// Which target event(s) to keep per source.
     pub selection: EventSelection,
-    /// Global cap on the number of connections: a coarse safety limit, checked between
-    /// sources, so a single high-fan-out source can overshoot it.
+    /// Global cap on the number of connections, taken from sources in source order. The
+    /// path-enumerating scan stops exactly at the cap. The set-based scan (used with
+    /// `dedup_targets` when no type repeats along the schema) checks it between sources, so a
+    /// single high-fan-out source can overshoot it.
     pub max_connections: Option<usize>,
     /// Store only one connection per (source, target) pair.
     pub dedup_targets: bool,
@@ -87,9 +91,8 @@ pub struct ConnectionResult {
     pub connections: Vec<Connection>,
     /// Whether the global `max_connections` limit was hit (results may be incomplete).
     pub limit_reached: bool,
-    /// Whether the selectivity threshold triggered early termination. Best-effort under
-    /// parallel evaluation: it never affects the returned connection set, only whether the
-    /// scan stopped early, so this flag can vary run to run near the threshold.
+    /// Whether the selectivity threshold triggered early termination. Sources after the one
+    /// that triggered it are not scanned.
     pub selectivity_pruned: bool,
 }
 
@@ -101,15 +104,15 @@ pub struct ConnectionResult {
 /// unprocessed source adds one new target and lifts both counts by one. Once that bound falls
 /// below the threshold it can never recover, so the scan stops.
 ///
-/// Best-effort under parallel evaluation: termination only stops the scan early, it never
-/// changes which connections are returned.
+/// Sources are recorded in source order, so where the scan stops does not depend on thread
+/// scheduling.
 struct SelectivityGuard {
     threshold: f64,
     total_sources: usize,
-    processed: AtomicUsize,
-    active: AtomicUsize,
-    support: AtomicUsize,
-    terminated: AtomicBool,
+    processed: usize,
+    active: usize,
+    support: usize,
+    terminated: bool,
 }
 
 impl SelectivityGuard {
@@ -117,32 +120,35 @@ impl SelectivityGuard {
         Self {
             threshold,
             total_sources,
-            processed: AtomicUsize::new(0),
-            active: AtomicUsize::new(0),
-            support: AtomicUsize::new(0),
-            terminated: AtomicBool::new(false),
+            processed: 0,
+            active: 0,
+            support: 0,
+            terminated: false,
         }
-    }
-
-    fn terminated(&self) -> bool {
-        self.terminated.load(Ordering::Relaxed)
     }
 
     /// Record one processed source contributing `num_targets`, updating the termination flag.
-    fn record(&self, num_targets: usize) {
-        let processed = self.processed.fetch_add(1, Ordering::Relaxed) + 1;
+    fn record(&mut self, num_targets: usize) {
+        self.processed += 1;
         if num_targets > 0 {
-            self.active.fetch_add(1, Ordering::Relaxed);
-            self.support.fetch_add(num_targets, Ordering::Relaxed);
+            self.active += 1;
+            self.support += num_targets;
         }
-        let active = self.active.load(Ordering::Relaxed);
-        let support = self.support.load(Ordering::Relaxed);
-        let remaining = self.total_sources.saturating_sub(processed);
-        let denominator = support + remaining;
-        if denominator > 0 && ((active + remaining) as f64 / denominator as f64) < self.threshold {
-            self.terminated.store(true, Ordering::Relaxed);
+        let remaining = self.total_sources.saturating_sub(self.processed);
+        let denominator = self.support + remaining;
+        if denominator > 0
+            && ((self.active + remaining) as f64 / denominator as f64) < self.threshold
+        {
+            self.terminated = true;
         }
     }
+}
+
+/// The scans evaluate one chunk of sources in parallel, then merge its results in source order
+/// and apply the cutoffs there. That keeps the result independent of thread scheduling, and
+/// bounds the work done past a cutoff to one chunk.
+fn source_chunks(sources: &[EntityRef]) -> std::slice::Chunks<'_, EntityRef> {
+    sources.chunks((rayon::current_num_threads() * 64).max(256))
 }
 
 /// All entity references of a given type.
@@ -159,41 +165,72 @@ pub fn get_entities_of_type(ocel: &SlimLinkedOCEL, type_ref: &TypeRef) -> Vec<En
     }
 }
 
+/// Progress stage of [`find_connections`], counting source entities.
+const FIND_STAGE: &str = "Finding connections";
+
+/// Progress stage of [`summarize_connections`], counting source entities.
+const SUMMARIZE_STAGE: &str = "Summarizing connections";
+
 /// Find all connections for a single (resolved) schema across every source-type entity.
 ///
 /// Memory-efficient depth-first traversal: only source-target pairs (with timestamps) are
 /// materialized, using O(schema length) stack per source. See [`PathConnectionParams`].
+///
+/// Reports progress with stage `"Finding connections"`, where `done` counts the source entities
+/// scanned out of all of them.
+#[controlled]
 pub fn find_connections(
     ocel: &SlimLinkedOCEL,
     schema: &ResolvedPathSchema,
     params: &PathConnectionParams,
-) -> ConnectionResult {
+    ctl: &Control<'_>,
+) -> Result<ConnectionResult, Cancelled> {
     let sources = get_entities_of_type(ocel, &schema.source);
-    find_connections_with_sources(ocel, schema, &sources, params)
+    connections_from(ocel, schema, &sources, params, ctl)
 }
 
-/// Like [`find_connections`] but with the source entities supplied by the caller.
-///
-/// Lets a batch caller (e.g. discovery over many schemas of the same source type) collect
-/// the source entities once and reuse them.
-pub fn find_connections_with_sources(
+/// [`find_connections`] from source entities the caller already collected.
+pub(crate) fn connections_from(
     ocel: &SlimLinkedOCEL,
     schema: &ResolvedPathSchema,
     source_entities: &[EntityRef],
     params: &PathConnectionParams,
-) -> ConnectionResult {
+    ctl: &Control<'_>,
+) -> Result<ConnectionResult, Cancelled> {
+    let progress = ctl.counter(FIND_STAGE, Some(source_entities.len() as u64));
+    scan_connections(ocel, schema, source_entities, params, ctl, &progress)
+}
+
+/// Count the sources a scan skipped after a cutoff as done, so a stage shared by several scans
+/// still ends at its total.
+fn finish_scan(progress: &Counter<'_, '_>, total: usize, scanned: usize) {
+    if total > scanned {
+        progress.add((total - scanned) as u64);
+    }
+}
+
+/// [`connections_from`], adding each scanned source chunk to `progress` and
+/// checking `ctl` between chunks.
+pub(super) fn scan_connections(
+    ocel: &SlimLinkedOCEL,
+    schema: &ResolvedPathSchema,
+    source_entities: &[EntityRef],
+    params: &PathConnectionParams,
+    ctl: &Control<'_>,
+    progress: &Counter<'_, '_>,
+) -> Result<ConnectionResult, Cancelled> {
     let total_sources = source_entities.len();
-    if total_sources == 0 {
-        return ConnectionResult {
+    if total_sources == 0 || params.max_connections == Some(0) {
+        finish_scan(progress, total_sources, 0);
+        return Ok(ConnectionResult {
             connections: Vec::new(),
-            limit_reached: false,
+            limit_reached: total_sources > 0,
             selectivity_pruned: false,
-        };
+        });
     }
 
     let bound = temporal_bound(params.temporal);
-    let connection_count = AtomicUsize::new(0);
-    let selectivity = params
+    let mut selectivity = params
         .selectivity_threshold
         .map(|theta| SelectivityGuard::new(theta, total_sources));
 
@@ -207,30 +244,37 @@ pub fn find_connections_with_sources(
         steps: &schema.steps,
         temporal: params.temporal,
         bound,
-        max_connections: params.max_connections,
-        connection_count: &connection_count,
+        cancel: ctl.cancel_flag_ref(),
     };
 
-    let connections: Vec<Connection> = source_entities
-        .par_iter()
-        .flat_map(|&source| {
-            if selectivity.as_ref().is_some_and(|g| g.terminated()) || walk.limit_reached() {
-                return Vec::new();
-            }
-            let source_time = event_time(ocel, &source);
-
-            let (conns, num_targets) = if use_bfs {
-                let targets = reachable_targets(
-                    ocel,
-                    &schema.steps,
-                    params.temporal,
-                    bound,
-                    source,
-                    source_time,
-                );
-                connection_count.fetch_add(targets.len(), Ordering::Relaxed);
-                let num_targets = targets.len();
-                let conns = targets
+    let max = params.max_connections;
+    let mut connections: Vec<Connection> = Vec::new();
+    let mut limit_reached = false;
+    let mut scanned = 0;
+    'scan: for chunk in source_chunks(source_entities) {
+        ctl.check()?;
+        let cap = max.map(|max| max.saturating_sub(connections.len()));
+        // Connections kept per DFS source of the chunk. A source caps itself at what the sources
+        // before it left of `cap`. Their counts only grow, so it never keeps less than the
+        // in-order merge below takes from it.
+        let kept: Vec<AtomicUsize> = match (cap, use_bfs) {
+            (Some(_), false) => chunk.iter().map(|_| AtomicUsize::new(0)).collect(),
+            _ => Vec::new(),
+        };
+        let per_source: Vec<Vec<Connection>> = chunk
+            .par_iter()
+            .enumerate()
+            .map(|(i, &source)| {
+                let source_time = event_time(ocel, &source);
+                if use_bfs {
+                    return reachable_targets(
+                        ocel,
+                        &schema.steps,
+                        params.temporal,
+                        bound,
+                        source,
+                        source_time,
+                    )
                     .into_iter()
                     .map(|target| Connection {
                         source,
@@ -239,45 +283,58 @@ pub fn find_connections_with_sources(
                         target_time: event_time(ocel, &target),
                     })
                     .collect();
-                (conns, num_targets)
-            } else {
+                }
+                let cap = cap.map(|cap| {
+                    let before: usize = kept[..i].iter().map(|k| k.load(Ordering::Relaxed)).sum();
+                    cap.saturating_sub(before)
+                });
                 let mut state = SourceState {
                     source,
                     source_time,
                     visited: vec![source],
                     seen_targets: params.dedup_targets.then(HashSet::new),
                     connections: Vec::new(),
+                    cap,
                 };
                 walk.dfs(&mut state, 0, source, source_time);
-                // Only the selectivity guard reads this; skip the work when it is absent.
-                let num_targets = match (&selectivity, &state.seen_targets) {
-                    (None, _) => 0,
-                    (Some(_), Some(seen)) => seen.len(),
-                    (Some(_), None) => state
-                        .connections
-                        .iter()
-                        .map(|c| c.target)
-                        .collect::<HashSet<_>>()
-                        .len(),
-                };
-                (state.connections, num_targets)
-            };
+                if let Some(k) = kept.get(i) {
+                    k.store(state.connections.len(), Ordering::Relaxed);
+                }
+                state.connections
+            })
+            .collect();
+        // A DFS cut short by the cancel flag holds partial results.
+        ctl.check()?;
 
-            if let Some(guard) = &selectivity {
+        for mut conns in per_source {
+            if let (Some(max), false) = (max, use_bfs) {
+                conns.truncate(max - connections.len());
+            }
+            let num_targets = match &selectivity {
+                None => 0,
+                Some(_) if params.dedup_targets => conns.len(),
+                Some(_) => conns.iter().map(|c| c.target).collect::<HashSet<_>>().len(),
+            };
+            connections.extend(conns);
+            if let Some(guard) = &mut selectivity {
                 guard.record(num_targets);
             }
+            limit_reached = max.is_some_and(|max| connections.len() >= max);
+            if limit_reached || selectivity.as_ref().is_some_and(|g| g.terminated) {
+                break 'scan;
+            }
+        }
+        scanned += chunk.len();
+        progress.add(chunk.len() as u64);
+    }
+    finish_scan(progress, total_sources, scanned);
 
-            conns
-        })
-        .collect();
-
-    let limit_reached = walk.limit_reached();
     let connections = apply_event_selection(connections, params.selection);
-    ConnectionResult {
+    Ok(ConnectionResult {
         connections,
         limit_reached,
-        selectivity_pruned: selectivity.is_some_and(|g| g.terminated()),
-    }
+        selectivity_pruned: selectivity.is_some_and(|g| g.terminated),
+    })
 }
 
 /// Compact, non-materializing summary of one schema's connections for batch discovery.
@@ -315,60 +372,85 @@ struct SummaryAcc {
 /// Summarize a schema's connections without materializing them (see [`ConnectionSummary`]).
 ///
 /// Uses the set-based frontier traversal for the common case; falls back to materializing
-/// via [`find_connections_with_sources`] when repeated types or non-deduped targets require
+/// via `connections_from` when repeated types or non-deduped targets require
 /// the path-enumerating DFS.
+///
+/// Reports progress with stage `"Summarizing connections"`, where `done` counts the source
+/// entities scanned out of all of them.
+#[controlled]
 pub fn summarize_connections(
     ocel: &SlimLinkedOCEL,
     schema: &ResolvedPathSchema,
     source_entities: &[EntityRef],
     params: &PathConnectionParams,
-) -> ConnectionSummary {
+    ctl: &Control<'_>,
+) -> Result<ConnectionSummary, Cancelled> {
+    let progress = ctl.counter(SUMMARIZE_STAGE, Some(source_entities.len() as u64));
+    summarize_scan(ocel, schema, source_entities, params, ctl, &progress)
+}
+
+/// [`summarize_connections`], adding each scanned source chunk to `progress` and checking `ctl`
+/// between chunks.
+pub(super) fn summarize_scan(
+    ocel: &SlimLinkedOCEL,
+    schema: &ResolvedPathSchema,
+    source_entities: &[EntityRef],
+    params: &PathConnectionParams,
+    ctl: &Control<'_>,
+    progress: &Counter<'_, '_>,
+) -> Result<ConnectionSummary, Cancelled> {
     let total_sources = source_entities.len();
-    if total_sources == 0 {
-        return ConnectionSummary::default();
+    if total_sources == 0 || params.max_connections == Some(0) {
+        finish_scan(progress, total_sources, 0);
+        return Ok(ConnectionSummary {
+            limit_reached: total_sources > 0,
+            ..ConnectionSummary::default()
+        });
     }
 
     let use_bfs = params.dedup_targets && has_distinct_types(schema);
     if !use_bfs {
-        return summary_from_connections(&find_connections_with_sources(
+        return Ok(summary_from_connections(&scan_connections(
             ocel,
             schema,
             source_entities,
             params,
-        ));
+            ctl,
+            progress,
+        )?));
     }
 
     let bound = temporal_bound(params.temporal);
-    let connection_count = AtomicUsize::new(0);
-    let selectivity = params
+    let mut selectivity = params
         .selectivity_threshold
         .map(|theta| SelectivityGuard::new(theta, total_sources));
 
-    let acc = source_entities
-        .par_iter()
-        .fold(SummaryAcc::default, |mut acc, &source| {
-            if selectivity.as_ref().is_some_and(|g| g.terminated()) {
-                return acc;
-            }
-            if let Some(max) = params.max_connections {
-                if connection_count.load(Ordering::Relaxed) >= max {
-                    return acc;
-                }
-            }
-            let source_time = event_time(ocel, &source);
-            let targets = reachable_targets(
-                ocel,
-                &schema.steps,
-                params.temporal,
-                bound,
-                source,
-                source_time,
-            );
+    let mut acc = SummaryAcc::default();
+    let mut limit_reached = false;
+    let mut scanned = 0;
+    'scan: for chunk in source_chunks(source_entities) {
+        ctl.check()?;
+        let per_source: Vec<(Option<DateTime<FixedOffset>>, Vec<EntityRef>)> = chunk
+            .par_iter()
+            .map(|&source| {
+                let source_time = event_time(ocel, &source);
+                let targets = reachable_targets(
+                    ocel,
+                    &schema.steps,
+                    params.temporal,
+                    bound,
+                    source,
+                    source_time,
+                );
+                (source_time, targets)
+            })
+            .collect();
+
+        for (&source, (source_time, targets)) in chunk.iter().zip(per_source) {
             let num_targets = targets.len();
             if num_targets > 0 {
                 acc.sources_with_paths += 1;
                 acc.support += num_targets;
-                connection_count.fetch_add(num_targets, Ordering::Relaxed);
                 for &target in &targets {
                     acc.hash ^= pair_hash(source, target);
                     acc.targets.insert(target);
@@ -378,31 +460,28 @@ pub fn summarize_connections(
                     }
                 }
             }
-            if let Some(guard) = &selectivity {
+            if let Some(guard) = &mut selectivity {
                 guard.record(num_targets);
             }
-            acc
-        })
-        .reduce(SummaryAcc::default, |mut a, b| {
-            a.support += b.support;
-            a.sources_with_paths += b.sources_with_paths;
-            a.hash ^= b.hash;
-            a.durations.extend(b.durations);
-            a.targets.extend(b.targets);
-            a
-        });
+            limit_reached = params.max_connections.is_some_and(|max| acc.support >= max);
+            if limit_reached || selectivity.as_ref().is_some_and(|g| g.terminated) {
+                break 'scan;
+            }
+        }
+        scanned += chunk.len();
+        progress.add(chunk.len() as u64);
+    }
+    finish_scan(progress, total_sources, scanned);
 
-    ConnectionSummary {
+    Ok(ConnectionSummary {
         support: acc.support,
         sources_with_paths: acc.sources_with_paths,
         distinct_targets: acc.targets.len(),
         durations: acc.durations,
         hash: acc.hash,
-        limit_reached: params
-            .max_connections
-            .is_some_and(|max| connection_count.load(Ordering::Relaxed) >= max),
-        selectivity_pruned: selectivity.is_some_and(|g| g.terminated()),
-    }
+        limit_reached,
+        selectivity_pruned: selectivity.is_some_and(|g| g.terminated),
+    })
 }
 
 /// Summary from already-materialized connections (the non-BFS fallback path).
@@ -448,8 +527,7 @@ struct Walk<'a> {
     steps: &'a [ResolvedStep],
     temporal: TemporalConstraint,
     bound: Option<TimeDelta>,
-    max_connections: Option<usize>,
-    connection_count: &'a AtomicUsize,
+    cancel: Option<&'a AtomicBool>,
 }
 
 /// Per-source mutable traversal state.
@@ -459,12 +537,19 @@ struct SourceState {
     visited: Vec<EntityRef>,
     seen_targets: Option<HashSet<EntityRef>>,
     connections: Vec<Connection>,
+    /// Stop once this source has this many connections.
+    cap: Option<usize>,
+}
+
+impl SourceState {
+    fn limit_reached(&self) -> bool {
+        self.cap.is_some_and(|cap| self.connections.len() >= cap)
+    }
 }
 
 impl Walk<'_> {
-    fn limit_reached(&self) -> bool {
-        self.max_connections
-            .is_some_and(|max| self.connection_count.load(Ordering::Relaxed) >= max)
+    fn cancelled(&self) -> bool {
+        self.cancel.is_some_and(|c| c.load(Ordering::Relaxed))
     }
 
     fn passes_temporal(
@@ -489,7 +574,7 @@ impl Walk<'_> {
         current: EntityRef,
         last_event_time: Option<DateTime<FixedOffset>>,
     ) {
-        if self.limit_reached() {
+        if state.limit_reached() || self.cancelled() {
             return;
         }
 
@@ -505,7 +590,6 @@ impl Walk<'_> {
                 source_time: state.source_time,
                 target_time: event_time(self.ocel, &current),
             });
-            self.connection_count.fetch_add(1, Ordering::Relaxed);
             return;
         }
 
@@ -524,7 +608,7 @@ impl Walk<'_> {
             state.visited.push(neighbor);
             self.dfs(state, step_idx + 1, neighbor, neighbor_time);
             state.visited.pop();
-            if self.limit_reached() {
+            if state.limit_reached() || self.cancelled() {
                 return;
             }
         }
@@ -688,4 +772,53 @@ fn closeness(c: &Connection) -> (TimeDelta, EntityRef) {
         _ => TimeDelta::MAX,
     };
     (gap, c.target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{enumerate_schemas, TypeGraph, DEFAULT_MAX_SCHEMAS};
+    use super::*;
+    use crate::core::io::Importable;
+    use crate::test_utils::get_test_data_path;
+
+    #[test]
+    fn dfs_stops_once_the_cancel_flag_is_set() {
+        let path = get_test_data_path()
+            .join("ocel")
+            .join("order-management.json");
+        let ocel = SlimLinkedOCEL::import_from_path(&path).unwrap();
+        let graph = TypeGraph::from_linked_ocel(&ocel);
+        let src = TypeRef::Event(graph.event_types[0].clone());
+        let schema = enumerate_schemas(&graph, &src, None, 2, false, None, DEFAULT_MAX_SCHEMAS)
+            .schemas
+            .into_iter()
+            .map(|s| s.resolve(&graph))
+            .find(|s| s.len() == 2)
+            .unwrap();
+        let source = get_entities_of_type(&ocel, &schema.source)[0];
+        let walk_with = |cancel| {
+            let walk = Walk {
+                ocel: &ocel,
+                steps: &schema.steps,
+                temporal: TemporalConstraint::None,
+                bound: None,
+                cancel,
+            };
+            let source_time = event_time(&ocel, &source);
+            let mut state = SourceState {
+                source,
+                source_time,
+                visited: vec![source],
+                seen_targets: None,
+                connections: Vec::new(),
+                cap: None,
+            };
+            walk.dfs(&mut state, 0, source, source_time);
+            state.connections.len()
+        };
+        let flag = AtomicBool::new(false);
+        assert!(walk_with(Some(&flag)) > 0);
+        flag.store(true, Ordering::Relaxed);
+        assert_eq!(walk_with(Some(&flag)), 0);
+    }
 }

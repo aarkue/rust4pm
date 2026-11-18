@@ -2,15 +2,15 @@
 //!
 //! This reads the layout directly instead of going through the extraction engine, keeping
 //! `.ocel.zip` an ordinary [`Importable`](crate::core::io::Importable) format alongside
-//! `.ocel.csv` and `.jsonocel`, readable with no connector and on `wasm32`. The
-//! [`Blueprint`](super::blueprint::blueprint_for) route reads the same layout through the
+//! `.ocel.csv` and `.jsonocel`, readable with no connector and on `wasm32`. The `Blueprint`
+//! route (`blueprint_for`, feature `extraction-blueprint`) reads the same layout through the
 //! extraction engine, for treating a container as a data source in the blueprint editor. Both
 //! share this module's [`meta`](super::meta).
 //!
 //! A directory is read a table at a time straight from disk. An archive is first expanded into a
 //! temporary directory, one entry at a time, since a ZIP entry is only seekable when stored
-//! uncompressed. Peak memory stays flat either way; an archive additionally costs disk for its
-//! expanded size, freed when the [`Container`] drops.
+//! uncompressed. An archive additionally costs disk for its expanded size, freed when the
+//! [`Container`] drops.
 
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -22,6 +22,7 @@ use super::meta::{
     columns, epoch, type_attributes, BundleMeta, StorageFormat, Value, BUNDLE_FORMAT_VERSION,
     META_FILE_NAME, OCEL_VERSION,
 };
+use super::{archive_err, BundleError};
 use crate::core::event_data::object_centric::appendable::AppendableOCEL;
 use crate::core::event_data::object_centric::io::OCELIOError;
 use crate::core::event_data::object_centric::{
@@ -30,76 +31,12 @@ use crate::core::event_data::object_centric::{
 };
 use crate::core::event_data::timestamp_utils::parse_timestamp;
 
-/// Why reading a container failed.
-#[derive(Debug)]
-pub enum BundleImportError {
-    /// The container could not be read: a missing path, an unreadable archive, or one with no
-    /// [`META_FILE_NAME`].
-    Container(String),
-    /// [`META_FILE_NAME`] is not a manifest this build understands.
-    Manifest(serde_json::Error),
-    /// The manifest declares a major version this build does not implement.
-    Version {
-        /// Which manifest field.
-        field: String,
-        /// What the container declares.
-        found: String,
-        /// What this build implements.
-        implemented: String,
-    },
-    /// A table the manifest declares is missing, unreadable, or lacks a column the format fixes.
-    Table {
-        /// The declared path inside the container.
-        file: String,
-        /// What went wrong.
-        detail: String,
-    },
-    /// Parquet storage in a build without the `ocel-bundle-parquet` feature.
-    ParquetUnavailable,
-}
-
-impl std::fmt::Display for BundleImportError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BundleImportError::Container(m) => write!(f, "reading the container failed: {m}"),
-            BundleImportError::Manifest(e) => write!(f, "reading {META_FILE_NAME} failed: {e}"),
-            BundleImportError::Version {
-                field,
-                found,
-                implemented,
-            } => write!(
-                f,
-                "the container declares {field} '{found}', which this build does not implement: it reads '{implemented}'"
-            ),
-            BundleImportError::Table { file, detail } => {
-                write!(f, "reading '{file}' failed: {detail}")
-            }
-            BundleImportError::ParquetUnavailable => write!(
-                f,
-                "this container uses Parquet storage, which needs the 'ocel-bundle-parquet' feature"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for BundleImportError {}
-
-impl From<std::io::Error> for BundleImportError {
-    fn from(e: std::io::Error) -> Self {
-        BundleImportError::Container(e.to_string())
-    }
-}
-
-fn container_err(e: impl std::fmt::Display) -> BundleImportError {
-    BundleImportError::Container(e.to_string())
-}
-
 /// What one entry of an archive may expand to, and what a whole archive may.
 ///
 /// A compressed entry can expand by orders of magnitude, so neither its declared size nor the
 /// archive's own bounds what expanding it costs. Both limits are far above any real container.
-const MAX_ENTRY_BYTES: u64 = 4 << 30;
-const MAX_TOTAL_BYTES: u64 = 16 << 30;
+pub(super) const MAX_ENTRY_BYTES: u64 = 4 << 30;
+pub(super) const MAX_TOTAL_BYTES: u64 = 16 << 30;
 
 /// Copy one archive entry, refusing to write past the limits above. `total` carries the running
 /// count across the entries of one archive.
@@ -108,14 +45,15 @@ fn copy_entry<R: io::Read, W: io::Write>(
     sink: &mut W,
     name: &str,
     total: &mut u64,
-) -> Result<(), BundleImportError> {
+) -> Result<(), OCELIOError> {
     let allowed = MAX_ENTRY_BYTES.min(MAX_TOTAL_BYTES - *total);
     // One byte past the limit, so a copy that fills it exactly is told apart from an overrun.
     let written = io::copy(&mut io::Read::take(entry, allowed + 1), sink)?;
     if written > allowed {
-        return Err(BundleImportError::Container(format!(
-            "'{name}' expands past what a container may hold ({MAX_ENTRY_BYTES} bytes per entry, {MAX_TOTAL_BYTES} in total)"
-        )));
+        return Err(BundleError::EntryTooLarge {
+            entry: name.to_string(),
+        }
+        .into());
     }
     *total += written;
     Ok(())
@@ -144,8 +82,9 @@ impl Container {
     /// Open a directory or a `.ocel.zip` archive.
     ///
     /// # Errors
-    /// See [`BundleImportError`].
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, BundleImportError> {
+    /// [`OCELIOError::Io`] if the path cannot be read, [`OCELIOError::Bundle`] if it is not a
+    /// container this build reads.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, OCELIOError> {
         let path = path.as_ref();
         // The manifest is the only file in an uncompressed container a person can point at, so
         // selecting it means the directory it sits in. A file dialog cannot pick a directory on
@@ -160,11 +99,7 @@ impl Container {
             path
         };
         if path.is_dir() {
-            let manifest = path.join(META_FILE_NAME);
-            let meta = read_manifest(
-                &std::fs::read(&manifest)
-                    .map_err(|e| container_err(format!("{}: {e}", manifest.display())))?,
-            )?;
+            let meta = read_manifest_file(&path.join(META_FILE_NAME))?;
             return Ok(Self {
                 meta,
                 files: Files::Dir {
@@ -174,15 +109,16 @@ impl Container {
             });
         }
 
-        let file = std::fs::File::open(path)
-            .map_err(|e| container_err(format!("{}: {e}", path.display())))?;
-        let mut archive = zip::ZipArchive::new(io::BufReader::new(file)).map_err(container_err)?;
-        let temp = tempfile::tempdir().map_err(container_err)?;
+        let file = std::fs::File::open(path).map_err(|e| {
+            OCELIOError::Io(io::Error::new(e.kind(), format!("{}: {e}", path.display())))
+        })?;
+        let mut archive = zip::ZipArchive::new(io::BufReader::new(file)).map_err(archive_err)?;
+        let temp = tempfile::tempdir()?;
         let root = temp.path().to_path_buf();
 
         let mut total = 0;
         for i in 0..archive.len() {
-            let mut entry = archive.by_index(i).map_err(container_err)?;
+            let mut entry = archive.by_index(i).map_err(archive_err)?;
             // `enclosed_name` rejects an entry that would escape the directory. An archive is
             // untrusted input, and `../` in an entry name is the standard way to abuse one.
             let Some(rel) = entry.enclosed_name() else {
@@ -198,12 +134,10 @@ impl Container {
             // Copied a block at a time, so the peak is a buffer rather than a whole entry.
             let mut sink = io::BufWriter::new(std::fs::File::create(&out)?);
             copy_entry(&mut entry, &mut sink, &rel.to_string_lossy(), &mut total)?;
+            io::Write::flush(&mut sink)?;
         }
 
-        let meta =
-            read_manifest(&std::fs::read(root.join(META_FILE_NAME)).map_err(|e| {
-                container_err(format!("the archive has no {META_FILE_NAME}: {e}"))
-            })?)?;
+        let meta = read_manifest_file(&root.join(META_FILE_NAME))?;
         Ok(Self {
             meta,
             files: Files::Dir {
@@ -217,13 +151,13 @@ impl Container {
     /// Holds every table in memory. Prefer [`Container::open`] where there is a path.
     ///
     /// # Errors
-    /// See [`BundleImportError`].
-    pub fn open_bytes(bytes: &[u8]) -> Result<Self, BundleImportError> {
-        let mut archive = zip::ZipArchive::new(io::Cursor::new(bytes)).map_err(container_err)?;
+    /// [`OCELIOError::Bundle`] if `bytes` are not a container this build reads.
+    pub fn open_bytes(bytes: &[u8]) -> Result<Self, OCELIOError> {
+        let mut archive = zip::ZipArchive::new(io::Cursor::new(bytes)).map_err(archive_err)?;
         let mut files: HashMap<String, Vec<u8>> = HashMap::new();
         let mut total = 0;
         for i in 0..archive.len() {
-            let mut entry = archive.by_index(i).map_err(container_err)?;
+            let mut entry = archive.by_index(i).map_err(archive_err)?;
             let Some(rel) = entry.enclosed_name() else {
                 continue;
             };
@@ -240,7 +174,7 @@ impl Container {
         let meta = read_manifest(
             files
                 .get(META_FILE_NAME)
-                .ok_or_else(|| container_err(format!("the archive has no {META_FILE_NAME}")))?,
+                .ok_or(BundleError::MissingManifest)?,
         )?;
         Ok(Self {
             meta,
@@ -260,19 +194,11 @@ impl Container {
     /// whole log in memory.
     ///
     /// # Errors
-    /// See [`BundleImportError`].
-    pub fn read(&self) -> Result<OCEL, BundleImportError> {
-        let mut ocel = OCEL {
-            event_types: Vec::new(),
-            object_types: Vec::new(),
-            events: Vec::new(),
-            objects: Vec::new(),
-        };
-        self.read_into(&mut ocel).map_err(|e| match e {
-            OCELIOError::BundleImport(e) => e,
-            // `OCEL`'s sink is `Infallible`, so nothing else reaches here.
-            other => BundleImportError::Container(other.to_string()),
-        })?;
+    /// [`OCELIOError::Io`] if a table cannot be read, [`OCELIOError::Bundle`] if the container
+    /// breaks the format.
+    pub fn read(&self) -> Result<OCEL, OCELIOError> {
+        let mut ocel = OCEL::default();
+        self.read_into(&mut ocel)?;
         Ok(ocel)
     }
 
@@ -281,8 +207,11 @@ impl Container {
     /// Relations and attribute changes live in their own tables but are needed when an entity is
     /// appended, so this indexes them first and then streams the entity tables through.
     ///
+    /// The caller is responsible for invoking [`AppendableOCEL::finalize`] afterwards if the
+    /// implementation requires it.
+    ///
     /// # Errors
-    /// See [`BundleImportError`], plus the sink's own error.
+    /// As [`read`](Self::read), plus the sink's own error.
     pub fn read_into<A>(&self, sink: &mut A) -> Result<(), OCELIOError>
     where
         A: AppendableOCEL,
@@ -292,7 +221,7 @@ impl Container {
         // earlier table is missing.
         for (_, file) in self.meta.tables() {
             if !is_contained(file) {
-                return Err(BundleImportError::Table {
+                return Err(BundleError::Table {
                     file: file.to_string(),
                     detail: "a declared path must stay inside the container".to_string(),
                 }
@@ -352,12 +281,15 @@ impl Container {
                     unknown_field.note(&name);
                     continue;
                 };
-                if let Some(value) = row.value(&name, a.value_type.into()) {
-                    changes
-                        .entry(id)
-                        .or_default()
-                        .push(OCELObjectAttribute { name, value, time });
-                }
+                // The row names the attribute, so a missing value is a change to `Null`, not
+                // no change.
+                let value = row
+                    .value(&name, a.value_type.into())
+                    .unwrap_or(OCELAttributeValue::Null);
+                changes
+                    .entry(id)
+                    .or_default()
+                    .push(OCELObjectAttribute { name, value, time });
             }
             unknown_fields.push((file, unknown_field));
         }
@@ -449,9 +381,7 @@ impl Container {
             columns::SOURCE_ID,
             &o2o.keys().map(String::as_str).collect(),
             "no object table declares the object",
-        )?;
-        sink.finalize().map_err(Into::into)?;
-        Ok(())
+        )
     }
 
     /// Fail on the rows of `file` whose `key_column` is in `left_over`.
@@ -464,7 +394,7 @@ impl Container {
         key_column: &str,
         left_over: &HashSet<&str>,
         what: &str,
-    ) -> Result<(), BundleImportError> {
+    ) -> Result<(), OCELIOError> {
         if left_over.is_empty() {
             return Ok(());
         }
@@ -475,72 +405,68 @@ impl Container {
                 dangling.note(&id);
             }
         }
-        dangling.into_error(file, what)
+        Ok(dangling.into_error(file, what)?)
     }
 
     /// The rows of one declared table, once it is known to carry every column in `fixed`.
-    fn table(&self, file: &str, fixed: &[&str]) -> Result<Vec<Row>, BundleImportError> {
-        let missing = || BundleImportError::Table {
+    fn table(&self, file: &str, fixed: &[&str]) -> Result<Vec<Row>, OCELIOError> {
+        let missing = || BundleError::Table {
             file: file.to_string(),
             detail: "no such file in the container".to_string(),
         };
         if !is_contained(file) {
             // A manifest is untrusted input just as an archive's entry names are, and joining a
             // declared path onto the container root is exactly as exploitable.
-            return Err(BundleImportError::Table {
+            return Err(BundleError::Table {
                 file: file.to_string(),
                 detail: "a declared path must stay inside the container".to_string(),
-            });
+            }
+            .into());
         }
         match (&self.files, self.meta.storage_format) {
             (Files::Dir { root, .. }, StorageFormat::Csv) => {
                 let path = root.join(file);
                 if !path.is_file() {
-                    return Err(missing());
+                    return Err(missing().into());
                 }
-                read_csv(std::fs::File::open(path)?, file, fixed)
+                Ok(read_csv(std::fs::File::open(path)?, file, fixed)?)
             }
-            (Files::Memory(files), StorageFormat::Csv) => read_csv(
+            (Files::Memory(files), StorageFormat::Csv) => Ok(read_csv(
                 io::Cursor::new(files.get(file).ok_or_else(missing)?),
                 file,
                 fixed,
-            ),
+            )?),
             #[cfg(feature = "ocel-bundle-parquet")]
             (Files::Dir { root, .. }, StorageFormat::Parquet) => {
                 let path = root.join(file);
                 if !path.is_file() {
-                    return Err(missing());
+                    return Err(missing().into());
                 }
-                read_parquet(std::fs::read(path)?, file, fixed)
+                Ok(read_parquet(std::fs::read(path)?, file, fixed)?)
             }
             #[cfg(feature = "ocel-bundle-parquet")]
-            (Files::Memory(files), StorageFormat::Parquet) => {
-                read_parquet(files.get(file).ok_or_else(missing)?.clone(), file, fixed)
-            }
+            (Files::Memory(files), StorageFormat::Parquet) => Ok(read_parquet(
+                files.get(file).ok_or_else(missing)?.clone(),
+                file,
+                fixed,
+            )?),
             #[cfg(not(feature = "ocel-bundle-parquet"))]
-            (_, StorageFormat::Parquet) => Err(BundleImportError::ParquetUnavailable),
+            (_, StorageFormat::Parquet) => Err(BundleError::ParquetUnavailable.into()),
         }
     }
 }
 
-/// Read a container at `path`.
-///
-/// # Errors
-/// See [`BundleImportError`].
-pub fn import_ocel_bundle(path: impl AsRef<Path>) -> Result<OCEL, BundleImportError> {
-    Container::open(path)?.read()
+/// Read the manifest at `path`. A missing one means `path` is not in a container.
+fn read_manifest_file(path: &Path) -> Result<BundleMeta, OCELIOError> {
+    let bytes = std::fs::read(path).map_err(|e| match e.kind() {
+        io::ErrorKind::NotFound => BundleError::MissingManifest.into(),
+        _ => OCELIOError::Io(e),
+    })?;
+    Ok(read_manifest(&bytes)?)
 }
 
-/// [`import_ocel_bundle`] for an archive already in memory.
-///
-/// # Errors
-/// See [`BundleImportError`].
-pub fn import_ocel_bundle_from_bytes(bytes: &[u8]) -> Result<OCEL, BundleImportError> {
-    Container::open_bytes(bytes)?.read()
-}
-
-fn read_manifest(bytes: &[u8]) -> Result<BundleMeta, BundleImportError> {
-    let meta: BundleMeta = serde_json::from_slice(bytes).map_err(BundleImportError::Manifest)?;
+fn read_manifest(bytes: &[u8]) -> Result<BundleMeta, BundleError> {
+    let meta: BundleMeta = serde_json::from_slice(bytes).map_err(BundleError::Manifest)?;
     check_version("ocelVersion", &meta.ocel_version, OCEL_VERSION)?;
     check_version(
         "bundleFormatVersion",
@@ -553,12 +479,12 @@ fn read_manifest(bytes: &[u8]) -> Result<BundleMeta, BundleImportError> {
 /// Whether `found` is a version this build implements. Only the major must match: a later minor
 /// revision may only add what a reader can ignore, which is also why the manifest is not
 /// `deny_unknown_fields`.
-fn check_version(field: &str, found: &str, implemented: &str) -> Result<(), BundleImportError> {
+fn check_version(field: &str, found: &str, implemented: &str) -> Result<(), BundleError> {
     let major = |v: &str| v.split('.').next().unwrap_or_default().to_string();
     if major(found) == major(implemented) {
         return Ok(());
     }
-    Err(BundleImportError::Version {
+    Err(BundleError::Version {
         field: field.to_string(),
         found: found.to_string(),
         implemented: implemented.to_string(),
@@ -595,7 +521,7 @@ impl Dangling {
         }
     }
 
-    fn into_error(self, file: &str, what: &str) -> Result<(), BundleImportError> {
+    fn into_error(self, file: &str, what: &str) -> Result<(), BundleError> {
         let Some(first) = self.first else {
             return Ok(());
         };
@@ -603,7 +529,7 @@ impl Dangling {
             1 => String::new(),
             n => format!(", and {} further rows like it", n - 1),
         };
-        Err(BundleImportError::Table {
+        Err(BundleError::Table {
             file: file.to_string(),
             detail: format!("{what} '{first}'{more}"),
         })
@@ -619,14 +545,14 @@ struct Row {
 
 impl Row {
     /// A fixed column's text. Absent or empty is an error: the format makes these `required`.
-    fn text(&self, column: &str, file: &str) -> Result<String, BundleImportError> {
+    fn text(&self, column: &str, file: &str) -> Result<String, BundleError> {
         let text = match self.cells.get(column) {
             Some(Value::Text(s)) => s.clone(),
             Some(other) => other.to_string(),
             None => String::new(),
         };
         if text.is_empty() {
-            return Err(BundleImportError::Table {
+            return Err(BundleError::Table {
                 file: file.to_string(),
                 detail: format!("a row has no '{column}'"),
             });
@@ -634,14 +560,14 @@ impl Row {
         Ok(text)
     }
 
-    fn time(&self, column: &str, file: &str) -> Result<DateTime<FixedOffset>, BundleImportError> {
-        let err = |detail: String| BundleImportError::Table {
+    fn time(&self, column: &str, file: &str) -> Result<DateTime<FixedOffset>, BundleError> {
+        let err = |detail: String| BundleError::Table {
             file: file.to_string(),
             detail,
         };
         match self.cells.get(column) {
             Some(Value::Time(t)) => Ok(*t),
-            Some(Value::Text(s)) if !s.is_empty() => parse_timestamp(s, None, false)
+            Some(Value::Text(s)) if !s.is_empty() => parse_timestamp(s, None)
                 .map_err(|_| err(format!("'{s}' in '{column}' is not a timestamp"))),
             _ => Err(err(format!("a row has no '{column}'"))),
         }
@@ -696,7 +622,7 @@ fn coerce(raw: &Value, declared: OCELAttributeType) -> OCELAttributeValue {
                 "false" => OCELAttributeValue::Boolean(false),
                 _ => OCELAttributeValue::String(s.clone()),
             },
-            OCELAttributeType::Time => parse_timestamp(s, None, false).map_or_else(
+            OCELAttributeType::Time => parse_timestamp(s, None).map_or_else(
                 |_| OCELAttributeValue::String(s.clone()),
                 OCELAttributeValue::Time,
             ),
@@ -711,10 +637,10 @@ fn require_columns(
     present: impl Fn(&str) -> bool,
     fixed: &[&str],
     file: &str,
-) -> Result<(), BundleImportError> {
+) -> Result<(), BundleError> {
     for column in fixed {
         if !present(column) {
-            return Err(BundleImportError::Table {
+            return Err(BundleError::Table {
                 file: file.to_string(),
                 detail: format!("the table has no '{column}' column"),
             });
@@ -723,14 +649,10 @@ fn require_columns(
     Ok(())
 }
 
-fn read_csv<R: io::Read>(
-    reader: R,
-    file: &str,
-    fixed: &[&str],
-) -> Result<Vec<Row>, BundleImportError> {
-    let table_err = |e: csv::Error| BundleImportError::Table {
+fn read_csv<R: io::Read>(reader: R, file: &str, fixed: &[&str]) -> Result<Vec<Row>, BundleError> {
+    let table_err = |source| BundleError::Csv {
         file: file.to_string(),
-        detail: e.to_string(),
+        source,
     };
     let mut rdr = csv::Reader::from_reader(reader);
     let header: Vec<String> = rdr
@@ -759,14 +681,14 @@ fn read_csv<R: io::Read>(
 }
 
 #[cfg(feature = "ocel-bundle-parquet")]
-fn read_parquet(bytes: Vec<u8>, file: &str, fixed: &[&str]) -> Result<Vec<Row>, BundleImportError> {
+fn read_parquet(bytes: Vec<u8>, file: &str, fixed: &[&str]) -> Result<Vec<Row>, BundleError> {
     use parquet::basic::{LogicalType, TimeUnit};
     use parquet::file::reader::{FileReader, SerializedFileReader};
     use parquet::record::Field;
 
-    let table_err = |e: parquet::errors::ParquetError| BundleImportError::Table {
+    let table_err = |source| BundleError::Parquet {
         file: file.to_string(),
-        detail: e.to_string(),
+        source,
     };
     let reader = SerializedFileReader::new(bytes::Bytes::from(bytes)).map_err(table_err)?;
     // Timestamps are physically INT64. The logical type says which unit, so it has to be read
@@ -779,7 +701,7 @@ fn read_parquet(bytes: Vec<u8>, file: &str, fixed: &[&str]) -> Result<Vec<Row>, 
         .iter()
         .map(|f| {
             let unit = match f.get_basic_info().logical_type_ref() {
-                Some(LogicalType::Timestamp { unit, .. }) => Some(*unit),
+                Some(LogicalType::Timestamp(ts)) => Some(ts.unit),
                 _ => None,
             };
             (f.name().to_string(), unit)

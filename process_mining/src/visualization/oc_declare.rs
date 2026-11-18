@@ -6,6 +6,7 @@ use graphlay::json::LayoutRequest;
 use graphlay::{
     Direction, Edge, Graph, LabelReservation, LayoutOptions, Node, Preset, Shape, Size,
 };
+use macros_process_mining::register_binding;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -110,12 +111,13 @@ impl OCDeclareBuildOptions {
     }
 }
 
-/// Per activity of `locel`, how many objects of each type one of its events involves, as
+/// Per activity of `ocel`, how many objects of each type one of its events involves, as
 /// [`OCDeclareBuildOptions::involvements`] takes them.
+#[register_binding]
 pub fn oc_declare_involvements(
-    locel: &SlimLinkedOCEL,
+    ocel: &SlimLinkedOCEL,
 ) -> BTreeMap<String, BTreeMap<String, ObjectInvolvementCounts>> {
-    get_activity_object_involvements(locel)
+    get_activity_object_involvements(ocel)
         .into_iter()
         .map(|(activity, types)| (activity, types.into_iter().collect()))
         .collect()
@@ -905,8 +907,8 @@ mod draw {
                     &y.label,
                 ))
             });
-            // With the patch, so a patched margin is the one subtracted. An invalid patch fails later, in
-            // the layout request.
+            // With the patch, so a patched margin is the one subtracted. An invalid patch fails
+            // later, in the layout request.
             let margin = <[OCDeclareArc] as Visualize>::request(Graph::default(), options)
                 .and_then(|request| layout_options_of(&request))
                 .unwrap_or_else(|_| LayoutOptions::process_map())
@@ -1719,7 +1721,7 @@ mod tests {
     #[test]
     fn writes_the_svg_exports() {
         use crate::core::event_data::object_centric::linked_ocel::SlimLinkedOCEL;
-        use crate::discovery::object_centric::oc_declare::discover_behavior_constraints;
+        use crate::discovery::object_centric::oc_declare::discover_oc_declare;
         use crate::test_utils::{get_test_data_path, write_export};
         use crate::{Importable, OCEL};
 
@@ -1763,7 +1765,7 @@ mod tests {
             .join("ocel")
             .join("pm4py-ocel20_example.jsonocel");
         let locel = SlimLinkedOCEL::from_ocel(OCEL::import_from_path(path).unwrap());
-        let arcs = discover_behavior_constraints(&locel, Default::default());
+        let arcs = discover_oc_declare(&locel, Default::default());
         let options = OCDeclareBuildOptions::new().with_involvements_of(&locel);
         let svg = model::svg(arcs.as_slice(), &options, &OCDeclareStyle::default()).unwrap();
         write_export("pm4py-ocel20-OC-DECLARE.svg", &svg);

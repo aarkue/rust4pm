@@ -1,387 +1,215 @@
-use crate::core::event_data::object_centric::ocel_struct::OCEL;
-use crate::core::event_data::object_centric::ocel_struct::{
-    OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute,
-    OCELRelationship, OCELTypeAttribute,
-};
+use crate::core::event_data::object_centric::io::OCELImportOptions;
+use crate::core::event_data::object_centric::ocel_struct::{OCELAttributeValue, OCEL};
 use crate::core::event_data::timestamp_utils::parse_timestamp;
-use std::{collections::HashMap, ffi::CString};
 
+use super::super::import::{import_ocel, resolve_columns, Col, SqlRow, SqlSource};
 use super::super::*;
-use chrono::FixedOffset;
-use rusqlite::{Connection, Params, Row, Rows, Statement};
+use crate::utils::control::Control;
+use chrono::{DateTime, FixedOffset};
+use rusqlite::types::{FromSqlError, ValueRef};
+use rusqlite::{Connection, OpenFlags, Row};
 
-fn try_get_column_date_val(
-    r: &Row<'_>,
-    column_name: &str,
-) -> Result<DateTime<FixedOffset>, rusqlite::Error> {
-    let dt = r.get::<_, DateTime<FixedOffset>>(column_name);
-    dt.or_else(|_e| {
-        r.get::<_, String>(column_name).and_then(|dt_str| {
-            parse_timestamp(&dt_str, None, false).map_err(|_e| rusqlite::Error::InvalidQuery)
-        })
-    })
-}
+impl SqlSource for Connection {
+    type Row<'r> = Row<'r>;
 
-fn get_row_attribute_value(
-    a: &OCELTypeAttribute,
-    r: &Row<'_>,
-) -> Result<OCELAttributeValue, rusqlite::Error> {
-    match OCELAttributeType::from_type_str(&a.value_type) {
-        OCELAttributeType::String => Ok(OCELAttributeValue::String(
-            r.get::<_, String>(a.name.as_str())?,
-        )),
-        OCELAttributeType::Time => {
-            let time_res = try_get_column_date_val(r, &a.name)?;
-            Ok(OCELAttributeValue::Time(time_res))
+    fn db_path(&self) -> Option<&str> {
+        self.path()
+    }
+
+    fn has_table(&self, name: &str) -> Result<bool, OCELIOError> {
+        Ok(self.query_row(
+            "SELECT count(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            [name],
+            |r| r.get(0),
+        )?)
+    }
+
+    fn table_columns(&self, table: &str) -> Result<Vec<(String, String)>, OCELIOError> {
+        let mut s = self.prepare(&format!("PRAGMA table_info({})", quoted_str(table)))?;
+        let columns = s
+            .query([])?
+            .and_then(|x| Ok::<_, rusqlite::Error>((x.get("name")?, x.get("type")?)))
+            .flatten()
+            .collect();
+        Ok(columns)
+    }
+
+    fn select_list(_: &[(String, String)]) -> String {
+        "*".to_string()
+    }
+
+    fn as_text(column: &str) -> String {
+        column.to_string()
+    }
+
+    fn for_each_row<'w>(
+        &self,
+        sql: &str,
+        wanted: &[&'w str],
+        mut each: impl FnMut(&Row<'_>, &[Col<'w>]) -> Result<(), OCELIOError>,
+    ) -> Result<(), OCELIOError> {
+        let mut s = self.prepare(sql)?;
+        let cols = resolve_columns(&s.column_names().collect::<Vec<_>>(), wanted);
+        let mut rows = s.query([])?;
+        while let Some(r) = rows.next()? {
+            each(r, &cols)?;
         }
-        OCELAttributeType::Integer => Ok(OCELAttributeValue::Integer(
-            r.get::<_, i64>(a.name.as_str())?,
-        )),
-        OCELAttributeType::Float => {
-            Ok(OCELAttributeValue::Float(r.get::<_, f64>(a.name.as_str())?))
-        }
-        OCELAttributeType::Boolean => Ok(OCELAttributeValue::Boolean(
-            r.get::<_, bool>(a.name.as_str())?,
-        )),
-        // Or should Null be an Error result?
-        OCELAttributeType::Null => Ok(OCELAttributeValue::Null),
+        Ok(())
+    }
+
+    fn query_count(&self, sql: &str) -> Result<i64, OCELIOError> {
+        Ok(self.query_row(sql, [], |r| r.get(0))?)
     }
 }
 
-/// Import [`OCEL`] log from `SQLite` connection
-///
-/// If you want to import from a filepath, see [`import_ocel_sqlite_from_path`] instead.
-///
-/// Rejects a file whose object-type table has no `ocel_changed_field` column. Use
-/// [`import_ocel_sqlite_from_con_with_options`] to tolerate that instead.
-///
-/// Note: This function is only available if the `ocel-sqlite` feature is enabled.
-///
-pub fn import_ocel_sqlite_from_con(con: Connection) -> Result<OCEL, rusqlite::Error> {
-    import_ocel_sqlite_from_con_with_options(con, SqlOcelImportOptions::default())
+impl SqlRow for Row<'_> {
+    fn text(&self, col: Col<'_>) -> Result<String, OCELIOError> {
+        Ok(self.get(col.index()?)?)
+    }
+
+    fn opt_text(&self, col: Col<'_>) -> Result<Option<String>, OCELIOError> {
+        Ok(self.get(col.index()?)?)
+    }
+
+    fn time(&self, col: Col<'_>) -> Result<DateTime<FixedOffset>, OCELIOError> {
+        let i = col.index()?;
+        if let Ok(time) = self.get::<_, DateTime<FixedOffset>>(i) {
+            return Ok(time);
+        }
+        let text: String = self.get(i)?;
+        parse_timestamp(&text, None).map_err(|_| col.invalid_time(&text))
+    }
+
+    /// Errors only on a cell that has no attribute value at all (a blob, or text that is not
+    /// UTF-8), which is never dropped silently.
+    fn attribute(
+        &self,
+        col: Col<'_>,
+        declared: OCELAttributeType,
+        name: &str,
+    ) -> Result<Option<OCELAttributeValue>, OCELIOError> {
+        let cell = self.get_ref(col.index()?)?;
+        sqlite_cell_to_ocel(cell, declared)
+            .map_err(|e| OCELIOError::Invalid(format!("attribute '{name}': {e}")))
+    }
 }
 
-/// Import [`OCEL`] log from `SQLite` connection, with explicit [`SqlOcelImportOptions`].
+/// Interpret one `SQLite` cell as a value of the `declared` attribute type.
 ///
-/// Note: This function is only available if the `ocel-sqlite` feature is enabled.
-pub fn import_ocel_sqlite_from_con_with_options(
-    con: Connection,
-    options: SqlOcelImportOptions,
-) -> Result<OCEL, rusqlite::Error> {
-    let mut ocel = OCEL {
-        event_types: Vec::default(),
-        object_types: Vec::default(),
-        events: Vec::default(),
-        objects: Vec::default(),
+/// `SQLite` columns are dynamically typed, so the cell's own storage class decides, not the
+/// column's: a value that does not parse as the declared type is kept as what it is (usually a
+/// string) rather than lost. In a non-text column, empty text and `null` are a `Null` value:
+/// rust4pm up to 0.6.2 wrote `Null` as `''`, and some published logs write it as `'null'`.
+fn sqlite_cell_to_ocel(
+    cell: ValueRef<'_>,
+    declared: OCELAttributeType,
+) -> Result<Option<OCELAttributeValue>, FromSqlError> {
+    let text = match cell {
+        ValueRef::Null => return Ok(None),
+        ValueRef::Integer(i) => {
+            return Ok(Some(match declared {
+                OCELAttributeType::Boolean if i == 0 || i == 1 => {
+                    OCELAttributeValue::Boolean(i == 1)
+                }
+                OCELAttributeType::Float => OCELAttributeValue::Float(i as f64),
+                _ => OCELAttributeValue::Integer(i),
+            }))
+        }
+        ValueRef::Real(f) => return Ok(Some(OCELAttributeValue::Float(f))),
+        ValueRef::Text(t) => std::str::from_utf8(t).map_err(|e| FromSqlError::Other(e.into()))?,
+        ValueRef::Blob(_) => return Err(FromSqlError::InvalidType),
     };
-
-    // Parse names of object types (and the table name postfixes)
-    let mut s = con.prepare("SELECT * FROM event_map_type")?;
-    let ev_map_type = query_all::<_>(&mut s, [])?;
-    let ev_type_map: HashMap<String, String> = ev_map_type
-        .and_then(|x| {
-            Ok::<_, rusqlite::Error>((x.get(OCEL_TYPE_MAP_COLUMN)?, x.get(OCEL_TYPE_COLUMN)?))
-        })
-        .flatten()
-        .collect();
-
-    let mut s = con.prepare("SELECT * FROM object_map_type")?;
-    let ob_map_type = query_all::<_>(&mut s, [])?;
-
-    let ob_type_map: HashMap<String, String> = ob_map_type
-        .and_then(|x| {
-            Ok::<_, rusqlite::Error>((x.get(OCEL_TYPE_MAP_COLUMN)?, x.get(OCEL_TYPE_COLUMN)?))
-        })
-        .flatten()
-        .collect();
-
-    let mut object_map: HashMap<String, OCELObject> = HashMap::new();
-    let mut event_map: HashMap<String, OCELEvent> = HashMap::new();
-
-    for (ob_type, ob_type_ocel) in ob_type_map.iter() {
-        let table_name = format!("object_{ob_type}");
-        let mut s =
-            con.prepare(format!("PRAGMA table_info({})", quoted_str(&table_name)).as_str())?;
-        let ob_attr_query = query_all::<_>(&mut s, [])?;
-        let raw_ob_columns: Vec<(String, String)> = ob_attr_query
-            .and_then(|x| Ok::<(String, String), rusqlite::Error>((x.get("name")?, x.get("type")?)))
-            .flatten()
-            .collect();
-        let ObjectTablePlan {
-            attributes: ob_type_attrs,
-            initial_query,
-            changed_query,
-        } = plan_object_table(con.path(), ob_type, &table_name, raw_ob_columns, options)
-            .map_err(rusqlite::Error::InvalidColumnName)?;
-        let mut s = con.prepare(initial_query.as_str())?;
-        let objs = query_all::<_>(&mut s, [])?;
-        objs.and_then(|x| {
-            Ok::<(String, Vec<_>), rusqlite::Error>((
-                x.get(OCEL_ID_COLUMN)?,
-                // We do not really need the time of initial attributes.
-                // try_get_column_date_val(x, OCEL_TIME_COLUMN)?,
-                ob_type_attrs
-                    .iter()
-                    .flat_map(|attr| {
-                        Ok::<(&String, OCELAttributeValue), rusqlite::Error>((
-                            &attr.name,
-                            get_row_attribute_value(attr, x)?,
-                        ))
-                    })
-                    .collect(),
-            ))
-        })
-        .flatten()
-        .for_each(|(ob_id, attrs)| {
-            let mut o = OCELObject {
-                id: ob_id.clone(),
-                object_type: ob_type_ocel.to_string(),
-                attributes: Vec::default(),
-                relationships: Vec::default(),
-            };
-            // Technically time should probably be set to UNIX epoch (1970-01-01 00:00 UTC) for these "initial" attribute values
-            // however there are some OCEL logs for which this does not hold?
-            let time = DateTime::UNIX_EPOCH.into();
-            o.attributes
-                .extend(
-                    attrs
-                        .into_iter()
-                        .map(|(attr_name, attr_value)| OCELObjectAttribute {
-                            name: attr_name.clone(),
-
-                            value: attr_value,
-                            time,
-                        }),
-                );
-            object_map.insert(ob_id, o);
-        });
-        // Get changed attributes
-        if let Some(changed_query) = &changed_query {
-            let mut s = con.prepare(changed_query.as_str())?;
-            let objs = query_all::<_>(&mut s, [])?;
-            objs.and_then(|x| {
-                let changed_field: String = x.get(OCEL_CHANGED_FIELD)?;
-                let changed_val = ob_type_attrs
-                    .iter()
-                    .find(|at| at.name == changed_field)
-                    .ok_or(rusqlite::Error::InvalidQuery)
-                    .and_then(|attr| get_row_attribute_value(attr, x))?;
-                Ok::<(String, _, String, OCELAttributeValue), rusqlite::Error>((
-                    x.get(OCEL_ID_COLUMN)?,
-                    try_get_column_date_val(x, OCEL_TIME_COLUMN)?,
-                    changed_field,
-                    changed_val,
-                ))
-            })
-            .flatten()
-            .for_each(|(ob_id, time, changed_field, changed_val)| {
-                object_map
-                    .entry(ob_id.clone())
-                    .or_insert(OCELObject {
-                        id: ob_id,
-                        object_type: ob_type.clone(),
-                        attributes: Vec::default(),
-                        relationships: Vec::default(),
-                    })
-                    .attributes
-                    .push(OCELObjectAttribute {
-                        name: changed_field,
-                        value: changed_val,
-                        time,
-                    });
-            });
-        }
-
-        let t = OCELType {
-            name: ob_type_ocel.clone(),
-            attributes: ob_type_attrs,
-        };
-        // Add object type to ocel
-        ocel.object_types.push(t);
+    if matches!(
+        declared,
+        OCELAttributeType::String | OCELAttributeType::Null
+    ) {
+        return Ok(Some(OCELAttributeValue::String(text.to_string())));
     }
-
-    for (ev_type, ev_type_ocel) in ev_type_map.iter() {
-        let mut s = con.prepare(
-            format!(
-                "PRAGMA table_info({})",
-                quoted_str(&format!("event_{ev_type}"))
-            )
-            .as_str(),
-        )?;
-        let ev_attr_query = query_all::<_>(&mut s, [])?;
-        let ev_type_attrs: Vec<OCELTypeAttribute> = ev_attr_query
-            .and_then(|x| Ok::<(String, String), rusqlite::Error>((x.get("name")?, x.get("type")?)))
-            .flatten()
-            .filter(|(name, _)| !IGNORED_PRAGMA_COLUMNS.contains(&name.as_str()))
-            .map(|(name, atype)| OCELTypeAttribute {
-                name,
-                value_type: sql_type_to_ocel(&atype).to_type_string(),
-            })
-            .collect();
-        // Next, query events
-        let mut s = con.prepare(
-            format!(
-                "SELECT * FROM {}",
-                quoted_ident(&format!("event_{ev_type}"))
-            )
-            .as_str(),
-        )?;
-        let evs = query_all::<_>(&mut s, [])?;
-        evs.and_then(|x| {
-            Ok::<(String, _, Vec<_>), rusqlite::Error>((
-                x.get(OCEL_ID_COLUMN)?,
-                try_get_column_date_val(x, OCEL_TIME_COLUMN)?,
-                ev_type_attrs
-                    .iter()
-                    .flat_map(|attr| {
-                        Ok::<(&String, OCELAttributeValue), rusqlite::Error>((
-                            &attr.name,
-                            get_row_attribute_value(attr, x)?,
-                        ))
-                    })
-                    .collect(),
-            ))
-        })
-        .flatten()
-        .for_each(|(ev_id, time, attrs)| {
-            let mut e = OCELEvent {
-                id: ev_id.clone(),
-                event_type: ev_type_ocel.to_string(),
-                time,
-                attributes: Vec::default(),
-                relationships: Vec::default(),
-            };
-            e.attributes
-                .extend(
-                    attrs
-                        .into_iter()
-                        .map(|(attr_name, attr_value)| OCELEventAttribute {
-                            name: attr_name.clone(),
-                            value: attr_value,
-                        }),
-                );
-            event_map.insert(ev_id, e);
-        });
-        let t = OCELType {
-            name: ev_type_ocel.clone(),
-            attributes: ev_type_attrs,
-        };
-        ocel.event_types.push(t);
+    if text.is_empty() || text.eq_ignore_ascii_case("null") {
+        return Ok(Some(OCELAttributeValue::Null));
     }
-
-    // E2O Relationships
-    let mut s = con.prepare("SELECT * FROM event_object".to_string().as_str())?;
-    let evs = query_all::<_>(&mut s, [])?;
-    evs.and_then(|x| {
-        Ok::<(String, String, String), rusqlite::Error>((
-            x.get(OCEL_E2O_EVENT_ID_COLUMN)?,
-            x.get(OCEL_E2O_OBJECT_ID_COLUMN)?,
-            x.get(OCEL_REL_QUALIFIER_COLUMN)?,
-        ))
-    })
-    .flatten()
-    .for_each(|(ev_id, ob_id, qualifier)| {
-        if let Some(ev) = event_map.get_mut(&ev_id) {
-            ev.relationships.push(OCELRelationship {
-                object_id: ob_id,
-                qualifier,
-            });
-        } else {
-            eprintln!(
-                "Warning: E2O relationship not added as event with ID {ev_id} was not found."
-            );
-        }
-    });
-
-    // O2O Relationships
-    let mut s = con.prepare("SELECT * FROM object_object".to_string().as_str())?;
-    let evs = query_all::<_>(&mut s, [])?;
-    evs.and_then(|x| {
-            Ok::<(String, String, String), rusqlite::Error>((
-                x.get(OCEL_O2O_SOURCE_ID_COLUMN)?,
-                x.get(OCEL_O2O_TARGET_ID_COLUMN)?,
-                x.get(OCEL_REL_QUALIFIER_COLUMN)?,
-            ))
-        })
-        .flatten()
-        .for_each(|(source_ob_id, target_ob_id, qualifier)| {
-            if let Some(ev) = object_map.get_mut(&source_ob_id) {
-                ev.relationships.push(OCELRelationship {
-                    object_id: target_ob_id,
-                    qualifier,
-                });
-            }else{
-                eprintln!("Warning: O2O relationship not added as object with ID {source_ob_id} was not found.");
+    let parsed = match declared {
+        OCELAttributeType::Integer => text.parse().ok().map(OCELAttributeValue::Integer),
+        OCELAttributeType::Float => text.parse().ok().map(OCELAttributeValue::Float),
+        OCELAttributeType::Boolean => {
+            if text.eq_ignore_ascii_case("true") {
+                Some(OCELAttributeValue::Boolean(true))
+            } else if text.eq_ignore_ascii_case("false") {
+                Some(OCELAttributeValue::Boolean(false))
+            } else {
+                None
             }
-        });
-
-    ocel.objects = object_map.into_values().collect();
-    ocel.events = event_map.into_values().collect();
-    Ok(ocel)
+        }
+        OCELAttributeType::Time => parse_timestamp(text, None)
+            .ok()
+            .map(OCELAttributeValue::Time),
+        OCELAttributeType::String | OCELAttributeType::Null => unreachable!("handled above"),
+    };
+    Ok(Some(parsed.unwrap_or_else(|| {
+        OCELAttributeValue::String(text.to_string())
+    })))
 }
 
-fn query_all<'a, P: Params>(s: &'a mut Statement<'_>, p: P) -> Result<Rows<'a>, rusqlite::Error> {
-    let q = s.query(p)?;
-    Ok(q)
+/// Import an [`OCEL`] from the OCEL 2.0 `SQLite` database `con`.
+pub fn import_ocel_sqlite(
+    con: &Connection,
+    options: &OCELImportOptions,
+) -> Result<OCEL, OCELIOError> {
+    import_ocel(con, options, &Control::new())
 }
 
+/// [`import_ocel_sqlite`] of the file at `path`, reporting to `ctl`.
 ///
-/// Import an [`OCEL`] `SQLite` file from the given path
-///
-/// Note: This function is only available if the `ocel-sqlite` feature is enabled.
-pub fn import_ocel_sqlite_from_path<P: AsRef<std::path::Path>>(
-    path: P,
-) -> Result<OCEL, rusqlite::Error> {
-    let con = Connection::open(path)?;
-    import_ocel_sqlite_from_con(con)
+/// The file is opened read-only, so a missing `path` is an [`OCELIOError::Io`] error and no
+/// empty database is left behind.
+pub(crate) fn import_sqlite_path(
+    path: &std::path::Path,
+    options: &OCELImportOptions,
+    ctl: &Control<'_>,
+) -> Result<OCEL, OCELIOError> {
+    let con = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| match std::fs::metadata(path) {
+        Err(io) => OCELIOError::Io(std::io::Error::new(
+            io.kind(),
+            format!("{}: {io}", path.display()),
+        )),
+        Ok(_) => e.into(),
+    })?;
+    import_ocel(&con, options, ctl)
 }
 
-///
-/// Import an [`OCEL`] `SQLite` file from the given path, with custom options
-///
-/// Note: This function is only available if the `ocel-sqlite` feature is enabled.
-pub fn import_ocel_sqlite_from_path_with_options<P: AsRef<std::path::Path>>(
-    path: P,
-    options: SqlOcelImportOptions,
-) -> Result<OCEL, rusqlite::Error> {
-    let con = Connection::open(path)?;
-    import_ocel_sqlite_from_con_with_options(con, options)
-}
-
-///
-/// Import an [`OCEL`] `SQLite` file from the given byte slice
-///
-/// Note: This function is only available if the `ocel-sqlite` feature is enabled.
-pub fn import_ocel_sqlite_from_slice(bytes: &[u8]) -> Result<OCEL, rusqlite::Error> {
+/// [`import_ocel_sqlite`] of the database file `bytes`, reporting to `ctl`.
+pub(crate) fn import_sqlite_slice(
+    bytes: &[u8],
+    options: &OCELImportOptions,
+    ctl: &Control<'_>,
+) -> Result<OCEL, OCELIOError> {
     let mut con = Connection::open_in_memory()?;
-    deserialize_sqlite_slice(&mut con, bytes, false)?;
-    import_ocel_sqlite_from_con(con)
+    // SQLite gets its own copy, as it may write to and resize the buffer. A file left in WAL mode
+    // has no `-wal` file here, so its header is switched to rollback mode, as the
+    // `sqlite3_deserialize` docs advise, or every read fails with `SQLITE_CANTOPEN`.
+    let mut header = bytes[..bytes.len().min(20)].to_vec();
+    for version in header.iter_mut().skip(18) {
+        if *version == 2 {
+            *version = 1;
+        }
+    }
+    let rest = &bytes[header.len()..];
+    // `sqlite3_malloc64(0)` gives no buffer, which would report empty input as out of memory
+    if !bytes.is_empty() {
+        con.deserialize_read_exact(
+            rusqlite::MAIN_DB,
+            std::io::Read::chain(header.as_slice(), rest),
+            bytes.len(),
+            false,
+        )?;
+    }
+    import_ocel(&con, options, ctl)
 }
 
-fn deserialize_sqlite_slice(
-    con: &mut Connection,
-    data: &[u8],
-    read_only: bool,
-) -> Result<(), rusqlite::Error> {
-    let schema = CString::new("main")?;
-    let sz = data.len().try_into().unwrap();
-    let flags = if read_only {
-        rusqlite::ffi::SQLITE_DESERIALIZE_READONLY
-    } else {
-        rusqlite::ffi::SQLITE_DESERIALIZE_RESIZEABLE
-    };
-    let _rc = unsafe {
-        rusqlite::ffi::sqlite3_deserialize(
-            con.handle(),
-            schema.as_ptr(),
-            data.as_ptr() as *mut u8,
-            sz,
-            sz,
-            flags,
-        )
-    };
-    Ok(())
-}
 #[cfg(test)]
 mod sqlite_tests {
     use std::collections::HashSet;
@@ -391,20 +219,21 @@ mod sqlite_tests {
 
     use crate::{
         core::event_data::object_centric::{
-            ocel_sql::import_ocel_sqlite_from_con,
+            io::OCELIOError,
+            ocel_sql::{import_ocel_sqlite, object_table_fixture},
             ocel_struct::{OCELAttributeValue, OCELObjectAttribute, OCELRelationship},
         },
         test_utils::get_test_data_path,
     };
 
     #[test]
-    fn test_sqlite_ocel() -> Result<(), rusqlite::Error> {
+    fn test_sqlite_ocel() -> Result<(), OCELIOError> {
         let path = get_test_data_path()
             .join("ocel")
             .join("order-management.sqlite");
 
         let con = Connection::open(path).unwrap();
-        let ocel = import_ocel_sqlite_from_con(con)?;
+        let ocel = import_ocel_sqlite(&con, &Default::default())?;
 
         assert_eq!(ocel.objects.len(), 10840);
         assert_eq!(ocel.events.len(), 21008);
@@ -470,6 +299,50 @@ mod sqlite_tests {
 
         Ok(())
     }
+
+    /// Truck, Handling Unit and Forklift have no attributes, so only the `object` table lists
+    /// their objects.
+    #[test]
+    fn container_logistics_imports_every_object() {
+        let path = get_test_data_path()
+            .join("ocel")
+            .join("ContainerLogistics.sqlite");
+        if !path.exists() {
+            eprintln!("Skipping: {} not found", path.display());
+            return;
+        }
+        let ocel =
+            import_ocel_sqlite(&Connection::open(path).unwrap(), &Default::default()).unwrap();
+        assert_eq!(ocel.objects.len(), 13910);
+        assert_eq!(ocel.events.len(), 35413);
+        let mut per_type = std::collections::BTreeMap::new();
+        for o in &ocel.objects {
+            *per_type.entry(o.object_type.as_str()).or_insert(0) += 1;
+        }
+        assert_eq!(
+            per_type.into_iter().collect::<Vec<_>>(),
+            [
+                ("Container", 1999),
+                ("Customer Order", 600),
+                ("Forklift", 3),
+                ("Handling Unit", 10579),
+                ("Transport Document", 596),
+                ("Truck", 6),
+                ("Vehicle", 127),
+            ]
+        );
+        assert_eq!(ocel.object_types.len(), 7);
+        let o2o: usize = ocel.objects.iter().map(|o| o.relationships.len()).sum();
+        assert_eq!(o2o, 15953);
+    }
+
+    #[test]
+    fn objects_listed_only_in_the_object_table_are_imported() {
+        let con = Connection::open_in_memory().unwrap();
+        con.execute_batch(object_table_fixture::SQL).unwrap();
+        let ocel = import_ocel_sqlite(&con, &Default::default()).unwrap();
+        object_table_fixture::check(&ocel);
+    }
 }
 
 #[cfg(test)]
@@ -478,10 +351,8 @@ mod missing_changed_field_tests {
     use rusqlite::Connection;
 
     use crate::core::event_data::object_centric::{
-        ocel_sql::{
-            import_ocel_sqlite_from_con, import_ocel_sqlite_from_con_with_options,
-            SqlOcelImportOptions,
-        },
+        io::OCELImportOptions,
+        ocel_sql::import_ocel_sqlite,
         ocel_struct::{OCELAttributeValue, OCELObjectAttribute},
     };
 
@@ -521,8 +392,8 @@ mod missing_changed_field_tests {
         build_fixture(&path);
 
         let con = Connection::open(&path).unwrap();
-        let ocel =
-            import_ocel_sqlite_from_con(con).expect("a file without the column must still be read");
+        let ocel = import_ocel_sqlite(&con, &Default::default())
+            .expect("a file without the column must still be read");
         assert_eq!(ocel.objects.len(), 2, "both Truck objects must be present");
     }
 
@@ -534,10 +405,11 @@ mod missing_changed_field_tests {
         build_fixture(&path);
 
         let con = Connection::open(&path).unwrap();
-        let err = import_ocel_sqlite_from_con_with_options(
-            con,
-            SqlOcelImportOptions {
-                allow_missing_changed_field: false,
+        let err = import_ocel_sqlite(
+            &con,
+            &OCELImportOptions {
+                strict: true,
+                ..Default::default()
             },
         )
         .unwrap_err();
@@ -572,10 +444,11 @@ mod missing_changed_field_tests {
         build_fixture(&path);
 
         let con = Connection::open(&path).unwrap();
-        let ocel = import_ocel_sqlite_from_con_with_options(
-            con,
-            SqlOcelImportOptions {
-                allow_missing_changed_field: true,
+        let ocel = import_ocel_sqlite(
+            &con,
+            &OCELImportOptions {
+                strict: false,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -628,5 +501,357 @@ mod missing_changed_field_tests {
             .collect();
         attr_names.sort();
         assert_eq!(attr_names, vec!["driver", "ocel_change_field"]);
+    }
+}
+
+#[cfg(test)]
+mod attribute_value_tests {
+    use chrono::{DateTime, FixedOffset};
+    use rusqlite::Connection;
+
+    use crate::core::event_data::object_centric::{
+        io::OCELIOError,
+        ocel_sql::{export_ocel_sqlite_to_path, export_ocel_sqlite_to_vec, import_ocel_sqlite},
+        ocel_struct::{
+            OCELAttributeValue, OCELEvent, OCELEventAttribute, OCELObject, OCELObjectAttribute,
+            OCELType, OCELTypeAttribute, OCEL,
+        },
+    };
+
+    fn time(s: &str) -> DateTime<FixedOffset> {
+        DateTime::parse_from_rfc3339(s).unwrap()
+    }
+
+    fn type_attr(name: &str, value_type: &str) -> OCELTypeAttribute {
+        OCELTypeAttribute {
+            name: name.to_string(),
+            value_type: value_type.to_string(),
+        }
+    }
+
+    fn ob_attr(name: &str, value: OCELAttributeValue, t: &str) -> OCELObjectAttribute {
+        OCELObjectAttribute {
+            name: name.to_string(),
+            value,
+            time: time(t),
+        }
+    }
+
+    fn event(id: &str, note: OCELAttributeValue) -> OCELEvent {
+        OCELEvent {
+            id: id.to_string(),
+            event_type: "ev".to_string(),
+            time: time("2024-01-01T00:00:00+00:00"),
+            attributes: vec![OCELEventAttribute {
+                name: "note".to_string(),
+                value: note,
+            }],
+            relationships: Vec::new(),
+        }
+    }
+
+    fn sorted_events(ocel: &OCEL) -> Vec<OCELEvent> {
+        let mut events = ocel.events.clone();
+        events.sort_by(|a, b| a.id.cmp(&b.id));
+        events
+    }
+
+    /// Every value kind that `SQLite` can hold survives a round trip with its type, including
+    /// booleans and a `Null` entry in an object's attribute history.
+    #[test]
+    fn values_survive_a_sqlite_round_trip() {
+        const EPOCH: &str = "1970-01-01T00:00:00+00:00";
+        let ocel = OCEL {
+            event_types: vec![OCELType {
+                name: "ev".to_string(),
+                attributes: vec![type_attr("note", "string")],
+            }],
+            object_types: vec![OCELType {
+                name: "item".to_string(),
+                attributes: vec![
+                    type_attr("flag", "boolean"),
+                    type_attr("amount", "float"),
+                    type_attr("count", "integer"),
+                    type_attr("due", "time"),
+                    type_attr("label", "string"),
+                ],
+            }],
+            events: vec![
+                event("e1", OCELAttributeValue::String(String::new())),
+                event("e2", OCELAttributeValue::String("text".to_string())),
+            ],
+            objects: vec![OCELObject {
+                id: "i1".to_string(),
+                object_type: "item".to_string(),
+                attributes: vec![
+                    ob_attr("flag", OCELAttributeValue::Boolean(true), EPOCH),
+                    ob_attr("amount", OCELAttributeValue::Float(10.5), EPOCH),
+                    ob_attr("count", OCELAttributeValue::Integer(-3), EPOCH),
+                    ob_attr(
+                        "due",
+                        OCELAttributeValue::Time(time("2024-02-01T12:00:00+00:00")),
+                        EPOCH,
+                    ),
+                    ob_attr("label", OCELAttributeValue::String(String::new()), EPOCH),
+                    ob_attr(
+                        "flag",
+                        OCELAttributeValue::Boolean(false),
+                        "2024-01-02T00:00:00+00:00",
+                    ),
+                    ob_attr(
+                        "amount",
+                        OCELAttributeValue::Null,
+                        "2024-01-03T00:00:00+00:00",
+                    ),
+                    ob_attr(
+                        "label",
+                        OCELAttributeValue::Null,
+                        "2024-01-04T00:00:00+00:00",
+                    ),
+                ],
+                relationships: Vec::new(),
+            }],
+        };
+
+        let back = super::import_sqlite_slice(
+            &export_ocel_sqlite_to_vec(&ocel).unwrap(),
+            &Default::default(),
+            &crate::Control::new(),
+        )
+        .unwrap();
+
+        assert_eq!(sorted_events(&back), ocel.events);
+        assert_eq!(back.objects, ocel.objects);
+    }
+
+    /// SQL has a single `NULL` for both "no value" and "the value `Null`". Outside an attribute
+    /// change it is read as no value, as every published log uses it, so a `Null` event attribute
+    /// comes back absent rather than as a `String("")` indistinguishable from a real empty one.
+    #[test]
+    fn a_null_event_attribute_is_written_as_sql_null() {
+        let ocel = OCEL {
+            event_types: vec![OCELType {
+                name: "ev".to_string(),
+                attributes: vec![type_attr("note", "string")],
+            }],
+            object_types: Vec::new(),
+            events: vec![
+                event("e1", OCELAttributeValue::Null),
+                event("e2", OCELAttributeValue::String(String::new())),
+            ],
+            objects: Vec::new(),
+        };
+        let back = super::import_sqlite_slice(
+            &export_ocel_sqlite_to_vec(&ocel).unwrap(),
+            &Default::default(),
+            &crate::Control::new(),
+        )
+        .unwrap();
+        let events = sorted_events(&back);
+        assert!(events[0].attributes.is_empty(), "{:?}", events[0]);
+        assert_eq!(
+            events[1].attributes[0].value,
+            OCELAttributeValue::String(String::new())
+        );
+    }
+
+    #[test]
+    fn a_wal_mode_file_imports_from_a_slice() {
+        let ocel = OCEL {
+            event_types: vec![OCELType {
+                name: "ev".to_string(),
+                attributes: vec![type_attr("note", "string")],
+            }],
+            object_types: Vec::new(),
+            events: vec![event("e1", OCELAttributeValue::String("x".to_string()))],
+            objects: Vec::new(),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wal.sqlite");
+        crate::core::event_data::object_centric::ocel_sql::export_ocel_sqlite_to_path(&ocel, &path)
+            .unwrap();
+        Connection::open(&path)
+            .unwrap()
+            .pragma_update(None, "journal_mode", "WAL")
+            .unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(bytes[18], 2, "the fixture must be in WAL mode");
+
+        let back = super::import_sqlite_slice(&bytes, &Default::default(), &crate::Control::new())
+            .unwrap();
+        assert_eq!(back.events, ocel.events);
+        assert_eq!(bytes[18], 2);
+
+        let back =
+            super::import_sqlite_path(&path, &Default::default(), &crate::Control::new()).unwrap();
+        assert_eq!(back.events, ocel.events);
+    }
+
+    #[test]
+    fn path_import_opens_read_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.sqlite");
+        let err = <OCEL as crate::Importable>::import_from_path(&missing).unwrap_err();
+        assert!(
+            matches!(&err, OCELIOError::Io(e) if e.kind() == std::io::ErrorKind::NotFound),
+            "{err}"
+        );
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+
+        for name in [
+            "order-management.sqlite",
+            "ContainerLogistics.sqlite",
+            "ocel2-p2p.sqlite",
+        ] {
+            let path = crate::test_utils::get_test_data_path()
+                .join("ocel")
+                .join(name);
+            let ocel = <OCEL as crate::Importable>::import_from_path(&path).unwrap();
+            assert!(!ocel.events.is_empty(), "{name}");
+        }
+    }
+
+    /// Every type an item has gets a `*_map_type` row and a table, declared or not.
+    #[test]
+    fn undeclared_types_are_exported() {
+        let mut ghost = event("e2", OCELAttributeValue::String("x".to_string()));
+        ghost.event_type = "ghost".to_string();
+        let ocel = OCEL {
+            event_types: vec![OCELType {
+                name: "ev".to_string(),
+                attributes: vec![type_attr("note", "string")],
+            }],
+            object_types: Vec::new(),
+            events: vec![
+                event("e1", OCELAttributeValue::String("x".to_string())),
+                ghost,
+            ],
+            objects: vec![OCELObject {
+                id: "o1".to_string(),
+                object_type: "thing".to_string(),
+                attributes: Vec::new(),
+                relationships: Vec::new(),
+            }],
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("undeclared.sqlite");
+        export_ocel_sqlite_to_path(&ocel, &path).unwrap();
+        let con = Connection::open(&path).unwrap();
+        let map_types = |table: &str| -> Vec<String> {
+            let mut s = con
+                .prepare(&format!("SELECT ocel_type FROM {table} ORDER BY ocel_type"))
+                .unwrap();
+            s.query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(map_types("event_map_type"), ["ev", "ghost"]);
+        assert_eq!(map_types("object_map_type"), ["thing"]);
+
+        let back = import_ocel_sqlite(&con, &Default::default()).unwrap();
+        let mut events: Vec<_> = back
+            .events
+            .iter()
+            .map(|e| (e.id.as_str(), e.event_type.as_str()))
+            .collect();
+        events.sort_unstable();
+        assert_eq!(events, [("e1", "ev"), ("e2", "ghost")]);
+        assert_eq!(back.objects.len(), 1);
+        assert_eq!(back.objects[0].object_type, "thing");
+    }
+
+    fn file_with_rows(rows: &str) -> Connection {
+        let con = Connection::open_in_memory().unwrap();
+        con.execute_batch(&format!(
+            "
+            CREATE TABLE event_map_type (ocel_type_map TEXT, ocel_type TEXT);
+            CREATE TABLE object_map_type (ocel_type_map TEXT, ocel_type TEXT);
+            CREATE TABLE event_object (ocel_event_id TEXT, ocel_object_id TEXT, ocel_qualifier TEXT);
+            CREATE TABLE object_object (ocel_source_id TEXT, ocel_target_id TEXT, ocel_qualifier TEXT);
+            CREATE TABLE object_item (
+                ocel_id TEXT,
+                ocel_time TIMESTAMP,
+                ocel_changed_field TEXT,
+                flag BOOLEAN,
+                amount DOUBLE PRECISION,
+                due TIMESTAMP
+            );
+            INSERT INTO object_map_type VALUES ('item', 'item');
+            {rows}
+            "
+        ))
+        .unwrap();
+        con
+    }
+
+    fn attrs_of(ocel: &OCEL, id: &str) -> Vec<(String, OCELAttributeValue, String)> {
+        let mut attrs: Vec<_> = ocel
+            .objects
+            .iter()
+            .find(|o| o.id == id)
+            .unwrap()
+            .attributes
+            .iter()
+            .map(|a| (a.name.clone(), a.value.clone(), a.time.to_rfc3339()))
+            .collect();
+        attrs.sort_by(|a, b| (&a.2, &a.0).cmp(&(&b.2, &b.0)));
+        attrs
+    }
+
+    /// Files written by rust4pm up to 0.6.2 store `Null` as `''` and booleans as
+    /// `'true'`/`'false'` text, and some published logs store `Null` as `'null'`.
+    #[test]
+    fn text_written_into_typed_columns_is_still_read() {
+        let con = file_with_rows(
+            "
+            INSERT INTO object_item VALUES ('i1', '1970-01-01T00:00:00+00:00', NULL, 'true', '', '');
+            INSERT INTO object_item VALUES ('i1', '2024-01-02T00:00:00+00:00', 'flag', 'false', NULL, NULL);
+            INSERT INTO object_item VALUES ('i1', '2024-01-03T00:00:00+00:00', 'amount', NULL, '', NULL);
+            INSERT INTO object_item VALUES ('i1', '2024-01-04T00:00:00+00:00', 'amount', NULL, 'null', NULL);
+            INSERT INTO object_item VALUES ('i1', '2024-01-05T00:00:00+00:00', 'amount', NULL, 'n/a', NULL);
+            ",
+        );
+        let ocel = import_ocel_sqlite(&con, &Default::default()).unwrap();
+        let epoch = "1970-01-01T00:00:00+00:00".to_string();
+        assert_eq!(
+            attrs_of(&ocel, "i1"),
+            vec![
+                ("amount".into(), OCELAttributeValue::Null, epoch.clone()),
+                ("due".into(), OCELAttributeValue::Null, epoch.clone()),
+                ("flag".into(), OCELAttributeValue::Boolean(true), epoch),
+                (
+                    "flag".into(),
+                    OCELAttributeValue::Boolean(false),
+                    "2024-01-02T00:00:00+00:00".into()
+                ),
+                (
+                    "amount".into(),
+                    OCELAttributeValue::Null,
+                    "2024-01-03T00:00:00+00:00".into()
+                ),
+                (
+                    "amount".into(),
+                    OCELAttributeValue::Null,
+                    "2024-01-04T00:00:00+00:00".into()
+                ),
+                // Not a float, but kept as what it is instead of being dropped.
+                (
+                    "amount".into(),
+                    OCELAttributeValue::String("n/a".into()),
+                    "2024-01-05T00:00:00+00:00".into()
+                ),
+            ]
+        );
+    }
+
+    /// A cell that holds no attribute value at all fails the import instead of vanishing.
+    #[test]
+    fn an_unreadable_cell_is_reported() {
+        let con = file_with_rows(
+            "INSERT INTO object_item VALUES ('i1', '1970-01-01T00:00:00+00:00', NULL, NULL, x'00ff', NULL);",
+        );
+        let err = import_ocel_sqlite(&con, &Default::default()).unwrap_err();
+        assert!(err.to_string().contains("amount"), "{err}");
     }
 }

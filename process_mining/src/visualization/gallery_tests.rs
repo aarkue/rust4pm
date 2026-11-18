@@ -5,10 +5,9 @@ use std::collections::BTreeMap;
 use graphlay::Direction;
 
 use crate::core::event_data::case_centric::utils::activity_projection::EventLogActivityProjection;
-use crate::core::event_data::case_centric::xes::import_xes::{import_xes_path, XESImportOptions};
 use crate::core::event_data::object_centric::linked_ocel::{IndexLinkedOCEL, SlimLinkedOCEL};
 use crate::core::event_data::object_centric::type_graph::OcTypeGraph;
-use crate::core::process_models::object_centric::ocdfg::object_centric_dfg_struct::OCDirectlyFollowsGraph;
+use crate::core::process_models::object_centric::ocdfg::object_centric_dfg_struct::discover_ocdfg_from;
 use crate::discovery::case_centric::alphappp::full::{discover_alphappp_net, AlphaPPPConfig};
 use crate::discovery::case_centric::dfg::discover_dfg;
 use crate::discovery::case_centric::inductive_miner::{
@@ -28,11 +27,7 @@ use crate::visualization::{model, LayoutSettings};
 use crate::{EventLog, Importable, OCEL};
 
 fn xes(name: &str) -> EventLog {
-    import_xes_path(
-        get_test_data_path().join("xes").join(name),
-        XESImportOptions::default(),
-    )
-    .unwrap()
+    EventLog::import_from_path(get_test_data_path().join("xes").join(name)).unwrap()
 }
 
 fn ocel(name: &str) -> OCEL {
@@ -50,8 +45,10 @@ fn petri_nets() {
             (InductiveMinerVariant::Imf, "IMf"),
             (InductiveMinerVariant::Imd, "IMd"),
         ] {
-            let net =
-                discover_inductive_net(&projection, variant, 0.2, InductiveMinerPreset::Default);
+            let net = discover_inductive_net(
+                &projection,
+                variant.options(InductiveMinerPreset::Default, 0.2),
+            );
             let svg =
                 model::svg(&net, &PetriBuildOptions::default(), &PetriStyle::default()).unwrap();
             write_export(&format!("{log}-{name}-petri-net.svg"), &svg);
@@ -69,9 +66,7 @@ fn petri_net_variants() {
     let projection = EventLogActivityProjection::from(&xes("RepairExample.xes"));
     let net = discover_inductive_net(
         &projection,
-        InductiveMinerVariant::Imf,
-        0.2,
-        InductiveMinerPreset::Default,
+        InductiveMinerVariant::Imf.options(InductiveMinerPreset::Default, 0.2),
     );
 
     let down = PetriBuildOptions {
@@ -179,7 +174,7 @@ fn object_centric_models() {
         let ocel = ocel(file);
 
         let indexed = IndexLinkedOCEL::from(ocel.clone());
-        let ocdfg = OCDirectlyFollowsGraph::create_from_ocel(&indexed);
+        let ocdfg = discover_ocdfg_from(&indexed);
         let svg = model::svg(
             &ocdfg,
             &OcdfgBuildOptions::default(),

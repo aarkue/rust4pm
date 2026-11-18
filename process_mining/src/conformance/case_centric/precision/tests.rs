@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs::File};
+use std::{
+    collections::HashMap,
+    fs::File,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use flate2::read::GzDecoder;
 
@@ -10,8 +14,8 @@ use super::{
 };
 use crate::{
     conformance::alignments::{
-        align_log, sync_prod_net::SyncProdNetConstructionError, AlignmentMove, AlignmentOptions,
-        AlignmentResult, VariantAlignmentResult,
+        align_variants, sync_prod_net::SyncProdNetConstructionError, AlignmentMove,
+        AlignmentOptions, AlignmentResult, VariantAlignmentResult,
     },
     core::{
         event_data::case_centric::utils::activity_projection::{
@@ -21,6 +25,10 @@ use crate::{
     },
     event_log,
     test_utils::get_test_data_path,
+    utils::{
+        control::{Control, Progress},
+        dijkstra_search::SearchError,
+    },
     AcceptingPetriNet, EventLog, Importable, PetriNet,
 };
 
@@ -405,30 +413,65 @@ fn failed_alignments_are_counted() {
                 max_states: Some(1),
                 ..Default::default()
             },
-            retry_out_of_memory: false,
         },
         ..Default::default()
     };
-    let result = measure(
+    let result = escaping_edges_precision(
         &net(UNUSED_BRANCH, "p0", "pf"),
-        &event_log!(["A", "B"]),
+        &log_to_activity_projection(&event_log!(["A", "B"])),
         &options,
     );
-    assert_eq!(result.unaligned_traces, 1);
-    assert_eq!((result.precision, result.weighted_available), (1.0, 0));
+    assert_eq!(
+        result,
+        Err(PrecisionError::NoTraceAligned(
+            SearchError::LimitReached.into()
+        ))
+    );
+}
+
+#[test]
+fn unreachable_final_marking_is_an_error() {
+    let net = net(SEQUENCE, "p0", "elsewhere");
+    let result = escaping_edges_precision(
+        &net,
+        &log_to_activity_projection(&event_log!(["A", "B"])),
+        &Default::default(),
+    );
+    assert_eq!(
+        result,
+        Err(PrecisionError::NoTraceAligned(
+            SearchError::Unreachable.into()
+        ))
+    );
 }
 
 #[test]
 fn too_long_traces_are_left_out() {
-    let alignments = [VariantAlignmentResult {
+    let net = net(SEQUENCE, "p0", "pf");
+    let mut alignments = align_variants(
+        &net,
+        &log_to_activity_projection(&event_log!(["A", "B"])),
+        &AlignmentOptions::default(),
+    );
+    alignments.push(VariantAlignmentResult {
         activities: Vec::new(),
         frequency: 2,
         result: Err(SyncProdNetConstructionError::TraceTooLong(70_000).into()),
-    }];
-    let net = net(SEQUENCE, "p0", "pf");
+    });
     let result =
         escaping_edges_precision_from_alignments(&net, &alignments, &Default::default()).unwrap();
     assert_eq!(result.unaligned_traces, 2);
+    assert_eq!(result.precision, 1.0);
+    assert!(result.weighted_available > 0);
+
+    let result =
+        escaping_edges_precision_from_alignments(&net, &alignments[1..], &Default::default());
+    assert_eq!(
+        result,
+        Err(PrecisionError::NoTraceAligned(
+            SyncProdNetConstructionError::TraceTooLong(70_000).into()
+        ))
+    );
 }
 
 #[test]
@@ -443,9 +486,9 @@ fn retry_out_of_memory_aligns_what_the_share_could_not() {
             log_paths: LogPaths::Aligned {
                 options: AlignmentOptions {
                     max_memory_mib: Some(1),
+                    retry_out_of_memory,
                     ..Default::default()
                 },
-                retry_out_of_memory,
             },
             ..Default::default()
         };
@@ -461,7 +504,7 @@ fn from_alignments_matches_direct() {
     let net = net(SKIPPABLE, "p0", "pf");
     let log = log_to_activity_projection(&event_log!(["A", "C"], ["A", "B", "E"]));
     let options = EscapingEdgesOptions::default();
-    let alignments = align_log(&net, &log, &AlignmentOptions::default());
+    let alignments = align_variants(&net, &log, &AlignmentOptions::default());
     assert_eq!(
         escaping_edges_precision_from_alignments(&net, &alignments, &options),
         escaping_edges_precision(&net, &log, &options)
@@ -528,7 +571,7 @@ fn pm4py_preset_ignores_trace_ends() {
 
 fn test_data(net: &str, log: &str) -> (AcceptingPetriNet, EventLogActivityProjection) {
     let path = get_test_data_path();
-    let net = AcceptingPetriNet::import_pnml(path.join("petri-net").join(net)).unwrap();
+    let net = AcceptingPetriNet::import_from_path(path.join("petri-net").join(net)).unwrap();
     let log = EventLog::import_from_path(path.join("xes").join(log)).unwrap();
     (net, log_to_activity_projection(&log))
 }
@@ -582,8 +625,8 @@ fn prom_preset_is_close_to_prom_on_its_alignments() {
         .join("rtfm-imf-02-prom-alignments.json.gz");
     let alignments: Vec<VariantAlignmentResult> =
         serde_json::from_reader(GzDecoder::new(File::open(fixture).unwrap())).unwrap();
-    let net =
-        AcceptingPetriNet::import_pnml(path.join("petri-net").join("rtfm-imf-02.apnml")).unwrap();
+    let net = AcceptingPetriNet::import_from_path(path.join("petri-net").join("rtfm-imf-02.apnml"))
+        .unwrap();
     let result =
         escaping_edges_precision_from_alignments(&net, &alignments, &EscapingEdgesOptions::prom())
             .unwrap();
@@ -603,7 +646,7 @@ fn aligned_precision_regression_values() {
         (sepsis(), [(48284, 22648), (63653, 28799)]),
         (rtfm(), [(1961595, 458093), (2622596, 582184)]),
     ] {
-        let alignments = align_log(&net, &log, &AlignmentOptions::default());
+        let alignments = align_variants(&net, &log, &AlignmentOptions::default());
         let without_dead_ends = EscapingEdgesOptions {
             exclude_dead_ends: true,
             ..Default::default()
@@ -758,5 +801,109 @@ fn stopping_counts_as_an_activity() {
             edge(&["A"], PathStep::End),
             edge(&["A", "B", "C"], activity("B"))
         ])
+    );
+}
+
+#[test]
+fn control_reports_alignment_then_measure_progress() {
+    let (net, log) = sepsis();
+    let progress = std::sync::Mutex::new(Vec::new());
+    let ctl = Control::new()
+        .on_progress(|p| progress.lock().unwrap().push(p))
+        .on_partial(|_| panic!("precision emits no partial results"));
+    for options in [
+        EscapingEdgesOptions::default(),
+        EscapingEdgesOptions::pm4py(),
+    ] {
+        progress.lock().unwrap().clear();
+        let result = ctl.escaping_edges_precision(&net, &log, &options).unwrap();
+        assert_eq!(
+            result,
+            escaping_edges_precision(&net, &log, &options).unwrap()
+        );
+        let progress: Vec<Progress> = std::mem::take(&mut progress.lock().unwrap());
+        let variants = log.traces.len() as u64;
+        let max_done = |stage: &str| {
+            progress
+                .iter()
+                .filter(|p| p.stage == stage)
+                .map(|p| (p.done, p.total))
+                .max()
+        };
+        assert_eq!(
+            max_done("Measuring escaping edges"),
+            Some((variants, Some(variants)))
+        );
+        let aligned = matches!(options.log_paths, LogPaths::Aligned { .. });
+        assert_eq!(
+            max_done("Aligning variants"),
+            aligned.then_some((variants, Some(variants)))
+        );
+        // Measuring starts once every variant is aligned
+        let first_measure = progress
+            .iter()
+            .position(|p| p.stage == "Measuring escaping edges")
+            .unwrap();
+        assert!(progress[first_measure..]
+            .iter()
+            .all(|p| p.stage == "Measuring escaping edges"));
+    }
+}
+
+#[test]
+fn control_cancels_precision() {
+    let (net, log) = sepsis();
+    for (options, stage) in [
+        (EscapingEdgesOptions::default(), "Aligning variants"),
+        (EscapingEdgesOptions::pm4py(), "Measuring escaping edges"),
+    ] {
+        let flag = AtomicBool::new(false);
+        let ctl = Control::new()
+            .on_progress(|p| {
+                if p.stage == stage && p.done >= 1 {
+                    flag.store(true, Ordering::Relaxed);
+                }
+            })
+            .cancel_flag(&flag);
+        assert_eq!(
+            ctl.escaping_edges_precision(&net, &log, &options),
+            Err(PrecisionError::Cancelled)
+        );
+    }
+}
+
+#[test]
+fn control_reports_and_cancels_precision_from_alignments() {
+    let net = net(SEQUENCE, "p0", "pf");
+    let alignments = align_variants(
+        &net,
+        &log_to_activity_projection(&event_log!(["A", "B"], ["A"])),
+        &AlignmentOptions::default(),
+    );
+    let seen = std::sync::Mutex::new(Vec::new());
+    let ctl = Control::new().on_progress(|p| seen.lock().unwrap().push((p.stage, p.done, p.total)));
+    let result =
+        ctl.escaping_edges_precision_from_alignments(&net, &alignments, &Default::default());
+    assert_eq!(
+        result,
+        escaping_edges_precision_from_alignments(&net, &alignments, &Default::default())
+    );
+    drop(ctl);
+    assert_eq!(
+        seen.into_inner().unwrap().last().unwrap(),
+        &("Measuring escaping edges".into(), 2, Some(2))
+    );
+
+    let flag = AtomicBool::new(false);
+    let ctl = Control::new()
+        .on_progress(|p| {
+            if p.done >= 1 {
+                flag.store(true, Ordering::Relaxed);
+            }
+        })
+        .cancel_flag(&flag);
+    assert_eq!(
+        ctl.escaping_edges_precision_from_alignments(&net, &alignments, &Default::default()),
+        Err(PrecisionError::Cancelled)
     );
 }
