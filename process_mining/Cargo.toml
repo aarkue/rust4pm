@@ -1,6 +1,6 @@
 [package]
 name = "process_mining"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Process Mining library for working with (object-centric) event data"
@@ -15,7 +15,7 @@ rust-version = "1.89"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-macros_process_mining = { version = "0.7.0", path = "../macros_process_mining" }
+macros_process_mining = { version = "0.7.1", path = "../macros_process_mining" }
 chrono = { version = "0.4.40", features = ["serde"] }
 duckdb = { version = "1.2.1", optional = true, features = ["chrono"] }
 flate2 = "1.1.1"
@@ -145,14 +145,15 @@ all = ["ocel-sqlite","ocel-duckdb-bundled","extraction-blueprint","extraction-db
 
 [package.metadata.docs.rs]
 # The same set as `all`, listed explicitly so a feature docs.rs cannot build can be dropped
-# individually.
+# individually. DuckDB is not bundled: compiling its C++ sources ran the docs.rs build out of
+# memory, and rustdoc does not link, so the system library is never needed.
 features = [
     "ocel-sqlite",
-    "ocel-duckdb-bundled",
+    "ocel-duckdb",
     "extraction-blueprint",
     "extraction-dbcon",
     "extraction-dbcon-postgres",
-    "extraction-dbcon-duckdb-bundled",
+    "extraction-dbcon-duckdb",
     "ocel-bundle",
     "ocel-bundle-parquet",
     "dataframes",

@@ -49,10 +49,11 @@ Whenever a new version of the Rust4PM project is released, the following steps h
   - `cargo test --verbose --all-features`
   - `cargo fmt --all --check`
   - `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
+  - The docs.rs build, with the features of `[package.metadata.docs.rs]`: `RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc --no-deps -p process_mining --features "<those features>"`
   - All checks at once: `export RUSTDOCFLAGS="-D warnings" && cargo clippy --all-targets --all-features -- -D warnings && cargo test --verbose --all-features && cargo fmt --all --check && cargo doc --all-features --no-deps`
 4. Publish the new macro crate version (first) and then the new `process_mining` version (second) to crates.io, finally the updated CLI (`r4pm`)
 5. Build the Python bindings and publish the updated version to PyPi
-6. Export a updated bindings json file (`cargo test export_bindings --features bindings,dataframes,ocel-sqlite`) and add the new version to the docs ([rust4pm.aarkue.eu](https://rust4pm.aarkue.eu/))
+6. Export the bindings and registry kinds of the Python package (`r4pm-full`) in the [r4pm repository](https://github.com/aarkue/r4pm) with `R4PM_EXPORT_DOCS_DIR=<dir> cargo check --release --features full`. In the docs repository ([rust4pm.aarkue.eu](https://rust4pm.aarkue.eu/)), save `<dir>/bindings-shared.json` as `bindings-v<version>.json` and `<dir>/registry-kinds.json` as `registry-kinds-v<version>.json`, and add the version to `src/meta.tsx`
 
 ## `r4pm`
 CLI automatically generated from functions exposed in the `process_mining` crate.

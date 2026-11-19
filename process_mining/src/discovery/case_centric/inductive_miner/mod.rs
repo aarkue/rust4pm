@@ -1320,6 +1320,22 @@ mod test_presets {
         assert_ne!(simple, call("discover_inductive_net", im));
     }
 
+    /// The binding's argument schema states that default, so a host can show it.
+    #[cfg(feature = "bindings")]
+    #[test]
+    fn the_binding_schema_states_the_default_miner() {
+        use crate::bindings::list_functions_meta;
+        let meta = list_functions_meta()
+            .into_iter()
+            .find(|b| b.name == "discover_inductive_net")
+            .unwrap();
+        let (_, miner) = meta.args.iter().find(|(name, _)| name == "miner").unwrap();
+        assert_eq!(
+            miner["default"],
+            serde_json::to_value(default_binding_miner()).unwrap()
+        );
+    }
+
     /// `inductive_miner_options` and the discovery bindings agree on the default threshold.
     #[cfg(feature = "bindings")]
     #[test]

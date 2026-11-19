@@ -1140,12 +1140,22 @@ impl From<&Binding> for BindingMeta {
             name: value.name.to_string(),
             docs: (value.docs)(),
             module: value.module.to_string(),
-            source_path: value.source_path.to_string(),
+            source_path: repo_source_path(value.source_path),
             source_line: value.source_line,
             args: (value.args)(),
             required_args: (value.required_args)(),
             return_type: (value.return_type)(),
         }
+    }
+}
+
+/// The path of a source file relative to the repository root. `file!()` is relative to the
+/// workspace when built there, but absolute (e.g., in the cargo registry) when built as a
+/// dependency.
+fn repo_source_path(path: &str) -> String {
+    match path.strip_prefix(env!("CARGO_MANIFEST_DIR")) {
+        Some(rest) => format!("process_mining{rest}"),
+        None => path.to_string(),
     }
 }
 
@@ -1748,6 +1758,8 @@ pub use model_kinds::OCDeclareModel;
 mod path_schema_bindings;
 mod reflow_bindings;
 pub use reflow_bindings::{ReflowCellRef, ReflowSummary};
+#[doc(hidden)]
+pub mod schema_defaults;
 mod shared_meta;
 pub use shared_meta::{list_functions_meta_shared, BindingsMetaShared};
 mod slim_ocel_bindings;
@@ -1803,6 +1815,16 @@ mod tests {
 
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn source_paths_are_relative_to_the_repository() {
+        let absolute = concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs");
+        assert_eq!(repo_source_path(absolute), "process_mining/src/lib.rs");
+        assert_eq!(
+            repo_source_path("process_mining/src/lib.rs"),
+            "process_mining/src/lib.rs"
+        );
+    }
 
     #[test]
     fn export_bindings() {

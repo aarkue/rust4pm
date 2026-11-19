@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1
+- `OcpnDiscoveryOptions` default to `IMf` at `0.2`, like the other discovery bindings (instead plain IM)
+- Binding argument schemas state the `#[bind(default)]` value as `default`
+- The SVG drawing bindings declare `contentMediaType: image/svg+xml` on their result (`#[register_binding(media_type = "...")]`). This enables better integration of downstream projects in e.g., Jupyter notebooks.
+- docs.rs builds DuckDB unbundled, as compiling it ran the docs build out of memory
+- Binding metadata gives source paths relative to the repository, also when built as a dependency (was the absolute cargo registry path)
+
 ## 0.7.0
 
 ### Breaking changes

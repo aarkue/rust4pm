@@ -40,7 +40,7 @@ macro_rules! model_bindings {
         }
 
         /// Draw the model as a standalone SVG document.
-        #[register_binding(stringify_error)]
+        #[register_binding(stringify_error, media_type = "image/svg+xml")]
         pub fn $svg(
             $model: &$($model_ty)+,
             #[bind(default)] options: $module::$options,
@@ -76,7 +76,7 @@ macro_rules! model_bindings {
 
         /// Draw the model over a layout of its graph as a standalone SVG document, so no [`Scene`]
         /// crosses the binding boundary.
-        #[register_binding(stringify_error)]
+        #[register_binding(stringify_error, media_type = "image/svg+xml")]
         pub fn $svg_from_layout(
             $model: &$($model_ty)+,
             layout: Layout,
@@ -153,7 +153,7 @@ model_bindings! {
 
 /// Draw a scene, e.g., from a `<model>_scene_from_layout`, as a standalone SVG document. Elements
 /// that name no color fall back to `palette`.
-#[register_binding]
+#[register_binding(media_type = "image/svg+xml")]
 pub fn render_scene_svg(scene: Scene, #[bind(default)] palette: Option<Palette>) -> String {
     engine::render_scene_svg(&scene, palette.as_ref())
 }
@@ -218,6 +218,20 @@ mod tests {
                 names.iter().filter(|n| *n == expected).count(),
                 1,
                 "expected exactly one binding named {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn exactly_the_svg_bindings_declare_their_media_type() {
+        for binding in list_functions_meta() {
+            let returns_svg = binding.name.ends_with("_svg") || binding.name.contains("_svg_");
+            let media_type = binding.return_type.get("contentMediaType");
+            assert_eq!(
+                media_type.and_then(|m| m.as_str()),
+                returns_svg.then_some("image/svg+xml"),
+                "contentMediaType of {}",
+                binding.name
             );
         }
     }

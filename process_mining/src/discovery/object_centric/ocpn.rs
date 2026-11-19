@@ -17,17 +17,17 @@ use crate::core::event_data::object_centric::linked_ocel::{LinkedOCELAccess, Sli
 use crate::core::event_data::object_centric::utils::flatten::flatten_ocel_on;
 use crate::core::process_models::object_centric::ocpn::json::ObjectCentricPetriNetJson;
 use crate::core::process_models::object_centric::ocpn::ObjectCentricPetriNet;
-use crate::discovery::case_centric::inductive_miner::InductiveMiner;
+use crate::discovery::case_centric::inductive_miner::{InductiveMiner, InductiveMinerOptions};
 use crate::utils::control::{Cancelled, Control};
 
 /// Settings for object-centric Petri net discovery.
 ///
 /// In JSON, fields left out take their default value.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct OcpnDiscoveryOptions {
-    /// How the Petri net of each object type is discovered from its flattened log. The
-    /// [DFG variant](InductiveMiner::Dfg) reads each log once, which suits large logs.
+    /// How the Petri net of each object type is discovered from its flattened log, by default
+    /// `IMf` at `0.2`, The [DFG variant](InductiveMiner::Dfg) reads log only once, good for large data.
     pub miner: InductiveMiner,
     /// Object types to discover a net for. If this is `None`, every object type of the log is used.
     ///
@@ -45,6 +45,17 @@ pub struct OcpnDiscoveryOptions {
     /// The default `0.0` is the strict reading. A small tolerance keeps data-quality noise from
     /// making arcs variable.
     pub variable_arc_tolerance: f64,
+}
+
+impl Default for OcpnDiscoveryOptions {
+    fn default() -> Self {
+        Self {
+            miner: InductiveMinerOptions::imf(0.2).into(),
+            object_types_to_use: None,
+            activities_to_use: None,
+            variable_arc_tolerance: 0.0,
+        }
+    }
 }
 
 impl OcpnDiscoveryOptions {
@@ -368,6 +379,14 @@ mod test_discover_ocpn {
         let mut expected = all.variable_arcs;
         expected.retain(|object_type, _| object_type == "item");
         assert_eq!(some.variable_arcs, expected);
+    }
+
+    #[test]
+    fn test_options_left_out_of_json_take_imf_at_0_2() {
+        let options: OcpnDiscoveryOptions =
+            serde_json::from_value(serde_json::json!({ "object_types_to_use": ["item"] })).unwrap();
+        assert_eq!(options.miner, InductiveMinerOptions::imf(0.2).into());
+        assert_eq!(options.object_types_to_use, Some(vec!["item".to_string()]));
     }
 
     #[test]

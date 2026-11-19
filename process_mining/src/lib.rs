@@ -19,6 +19,7 @@ extern crate self as process_mining;
 #[cfg(feature = "bindings")]
 #[doc(hidden)]
 pub mod __private {
+    pub use crate::bindings::schema_defaults::sorted_sets;
     pub use {inventory, schemars, serde_json, uuid};
 }
 

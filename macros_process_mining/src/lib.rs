@@ -186,6 +186,9 @@ struct RegisterBindingAttrs {
     debug_output: bool,
     returns_handle: bool,
     controlled: bool,
+    /// `media_type = "..."`: the media type of a returned string, e.g., `image/svg+xml`,
+    /// as `contentMediaType` in the return schema
+    media_type: Option<syn::LitStr>,
 }
 
 impl RegisterBindingAttrs {
@@ -198,10 +201,12 @@ impl RegisterBindingAttrs {
             self.returns_handle = true;
         } else if meta.path.is_ident("controlled") {
             self.controlled = true;
+        } else if meta.path.is_ident("media_type") {
+            self.media_type = Some(meta.value()?.parse()?);
         } else {
             return Err(meta.error(
                 "unknown #[register_binding] option, expected one of `debug_output`, \
-                 `stringify_error`, `returns_handle`",
+                 `stringify_error`, `returns_handle`, `media_type = \"...\"`",
             ));
         }
         Ok(())
@@ -530,7 +535,22 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
                  #mark_mut
              }
         } else {
-            quote! { args_schema.push((#name.to_string(), ::process_mining::__private::serde_json::to_value(::process_mining::__private::schemars::schema_for!(#ty_without_ref)).unwrap())); }
+            // A `#[bind(default)]` value goes into the schema, so hosts can show and use it
+            let set_default = match &opts.default_value {
+                Some(expr) => quote! {
+                    let default_value: #ty_without_ref = #expr;
+                    if let Ok(value) = ::process_mining::__private::serde_json::to_value(&default_value) {
+                        let schema = &mut args_schema.last_mut().unwrap().1;
+                        let value = ::process_mining::__private::sorted_sets(schema, value);
+                        schema["default"] = value;
+                    }
+                },
+                None => quote! {},
+            };
+            quote! {
+                args_schema.push((#name.to_string(), ::process_mining::__private::serde_json::to_value(::process_mining::__private::schemars::schema_for!(#ty_without_ref)).unwrap()));
+                #set_default
+            }
         }
     });
 
@@ -920,6 +940,11 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
+    let set_media_type = match &attrs.media_type {
+        Some(media_type) => quote! { schema["contentMediaType"] = #media_type.into(); },
+        None => quote! {},
+    };
+
     let ret_type_schema = match (&stored_kind, &returned_value_type) {
         (Some(kind), None) => {
             let kind_name = kind.kind_name();
@@ -1015,7 +1040,10 @@ pub fn register_binding(args: TokenStream, item: TokenStream) -> TokenStream {
             }
 
             fn #return_type_fn_name() -> Value {
-                #ret_type_schema
+                #[allow(unused_mut)]
+                let mut schema = #ret_type_schema;
+                #set_media_type
+                schema
             }
 
             ::process_mining::__private::inventory::submit! {

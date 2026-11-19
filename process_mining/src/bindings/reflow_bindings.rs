@@ -133,7 +133,7 @@ mod drawing {
     }
 
     /// Draw an annotated net as a standalone SVG document.
-    #[register_binding(stringify_error)]
+    #[register_binding(stringify_error, media_type = "image/svg+xml")]
     pub fn reflow_annotated_ocpn_svg(
         #[bind(handle)] model: &AnnotatedOcpn,
         #[bind(default)] style: OcpnStyle,
