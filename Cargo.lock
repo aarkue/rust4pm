@@ -1690,9 +1690,9 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "graphlay"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46b97373f53dfbb42a82b9d2a42d32dfc2c4ae3d13f589a61b88e6338381fc77"
+checksum = "0ed2969ffc4a45b29168151bb5f8dc2f5af3644449cc2a568c582b64abf6824b"
 dependencies = [
  "libm",
  "schemars 1.2.1",
